@@ -9,6 +9,7 @@ import (
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/authdb"
 )
 
 func requireObservedSession(ctx context.Context, connection *sql.Conn, authorization domain.Authorization, now float64) error {
@@ -16,7 +17,14 @@ func requireObservedSession(ctx context.Context, connection *sql.Conn, authoriza
 		return domain.ErrExpiredSession
 	}
 	var exists bool
-	err := connection.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users u JOIN access_tokens t ON t.user_id=u.id WHERE u.id=? AND u.token_generation=? AND u.auth_kind='local' AND t.token_hash=? AND t.expires_at>?)", authorization.User.Id, authorization.TokenGeneration, *authorization.TokenHash, now).Scan(&exists)
+	err := func() error {
+		queryResult, err := queries.ObservedSession(ctx, connection, authdb.ObservedSessionParams{ID: int64(authorization.User.Id), TokenGeneration: authorization.TokenGeneration, TokenHash: *authorization.TokenHash, ExpiresAt: now})
+		if err != nil {
+			return err
+		}
+		exists = queryResult
+		return nil
+	}()
 	if err != nil {
 		return err
 	}
@@ -33,7 +41,14 @@ func (repository *Repository) CompleteOidc(ctx context.Context, issuer, subject,
 	var result domain.Authorization
 	err := repository.Immediate(ctx, false, func(connection *sql.Conn) error {
 		var owner identity.Id
-		lookup := connection.QueryRowContext(ctx, "SELECT user_id FROM user_identities WHERE issuer=? AND subject=?", issuer, subject).Scan(&owner)
+		lookup := func() error {
+			queryResult, err := queries.IdentityOwner(ctx, connection, authdb.IdentityOwnerParams{Issuer: issuer, Subject: subject})
+			if err != nil {
+				return err
+			}
+			owner = identity.Id(queryResult)
+			return nil
+		}()
 		if lookup != nil && !errors.Is(lookup, sql.ErrNoRows) {
 			return lookup
 		}
@@ -42,20 +57,34 @@ func (repository *Repository) CompleteOidc(ctx context.Context, issuer, subject,
 				return err
 			}
 			var hasIdentity bool
-			if err := connection.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM user_identities WHERE user_id=?)", link.User.Id).Scan(&hasIdentity); err != nil {
+			if err := func() error {
+				queryResult, err := queries.HasIdentity(ctx, connection, authdb.HasIdentityParams{UserID: int64(link.User.Id)})
+				if err != nil {
+					return err
+				}
+				hasIdentity = queryResult
+				return nil
+			}(); err != nil {
 				return err
 			}
 			if lookup == nil || hasIdentity {
 				return domain.ErrAccountConflict
 			}
 			owner = link.User.Id
-			if _, err := connection.ExecContext(ctx, "INSERT INTO user_identities(user_id,issuer,subject,created_at,last_login_at) VALUES(?,?,?,?,?)", owner, issuer, subject, now, now); err != nil {
+			if _, err := queries.CreateIdentity(ctx, connection, authdb.CreateIdentityParams{UserID: int64(owner), Issuer: issuer, Subject: subject, CreatedAt: now, LastLoginAt: now}); err != nil {
 				return err
 			}
 			audit.Action = "oidc_link"
 		} else if errors.Is(lookup, sql.ErrNoRows) {
 			var exists bool
-			if err := connection.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE email=?)", email).Scan(&exists); err != nil {
+			if err := func() error {
+				queryResult, err := queries.HasEmail(ctx, connection, authdb.HasEmailParams{Email: new(email)})
+				if err != nil {
+					return err
+				}
+				exists = queryResult
+				return nil
+			}(); err != nil {
 				return err
 			}
 			if exists {
@@ -80,10 +109,10 @@ func (repository *Repository) CompleteOidc(ctx context.Context, issuer, subject,
 				return err
 			}
 			owner = user.Id
-			if _, err := connection.ExecContext(ctx, "UPDATE users SET email=?,auth_kind='oidc' WHERE id=?", email, owner); err != nil {
+			if _, err := queries.SetOIDCEmail(ctx, connection, authdb.SetOIDCEmailParams{Email: new(email), ID: int64(owner)}); err != nil {
 				return err
 			}
-			if _, err := connection.ExecContext(ctx, "INSERT INTO user_identities(user_id,issuer,subject,created_at,last_login_at) VALUES(?,?,?,?,?)", owner, issuer, subject, now, now); err != nil {
+			if _, err := queries.CreateIdentity(ctx, connection, authdb.CreateIdentityParams{UserID: int64(owner), Issuer: issuer, Subject: subject, CreatedAt: now, LastLoginAt: now}); err != nil {
 				return err
 			}
 			if err := defaultFolder(ctx, connection, owner, now); err != nil {
@@ -95,7 +124,7 @@ func (repository *Repository) CompleteOidc(ctx context.Context, issuer, subject,
 				return err
 			}
 		}
-		credentials, err := scanCredentials(connection.QueryRowContext(ctx, credentialSelect+" WHERE id=?", owner))
+		credentials, err := decodeCredentials(queries.CredentialsByID(ctx, connection, authdb.CredentialsByIDParams{ID: int64(owner)}))
 		if err != nil {
 			return err
 		}
@@ -104,7 +133,14 @@ func (repository *Repository) CompleteOidc(ctx context.Context, issuer, subject,
 		}
 		if link == nil && credentials.User.AuthKind == "oidc" {
 			var conflict bool
-			if err := connection.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE email=? AND id!=?)", email, owner).Scan(&conflict); err != nil {
+			if err := func() error {
+				queryResult, err := queries.HasOtherEmail(ctx, connection, authdb.HasOtherEmailParams{Email: new(email), ID: int64(owner)})
+				if err != nil {
+					return err
+				}
+				conflict = queryResult
+				return nil
+			}(); err != nil {
 				return err
 			}
 			if !conflict {
@@ -114,7 +150,7 @@ func (repository *Repository) CompleteOidc(ctx context.Context, issuer, subject,
 				credentials.User.Email = &email
 			}
 		}
-		if _, err := connection.ExecContext(ctx, "UPDATE user_identities SET last_login_at=? WHERE issuer=? AND subject=?", now, issuer, subject); err != nil {
+		if _, err := queries.RecordIdentityLogin(ctx, connection, authdb.RecordIdentityLoginParams{LastLoginAt: now, Issuer: issuer, Subject: subject}); err != nil {
 			return err
 		}
 		result = domain.Authorization{User: credentials.User, TokenGeneration: credentials.TokenGeneration}
@@ -134,7 +170,7 @@ func (repository *Repository) UnlinkOidc(ctx context.Context, authorization doma
 		if err := requireObservedSession(ctx, connection, authorization, now); err != nil {
 			return err
 		}
-		result, err := connection.ExecContext(ctx, "DELETE FROM user_identities WHERE user_id=?", authorization.User.Id)
+		result, err := queries.DeleteIdentity(ctx, connection, authdb.DeleteIdentityParams{UserID: int64(authorization.User.Id)})
 		if err != nil {
 			return err
 		}
@@ -145,7 +181,7 @@ func (repository *Repository) UnlinkOidc(ctx context.Context, authorization doma
 		if count == 0 {
 			return domain.ErrAccountConflict
 		}
-		credentials, err := scanCredentials(connection.QueryRowContext(ctx, credentialSelect+" WHERE id=?", authorization.User.Id))
+		credentials, err := decodeCredentials(queries.CredentialsByID(ctx, connection, authdb.CredentialsByIDParams{ID: int64(authorization.User.Id)}))
 		if err != nil {
 			return err
 		}

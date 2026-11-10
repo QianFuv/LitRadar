@@ -14,6 +14,7 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/secrets"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/authdb"
 )
 
 // CnkiSessions persists encrypted state while fencing network completions with monotonic generations.
@@ -60,7 +61,19 @@ type cnkiRow struct {
 
 func (sessions *CnkiSessions) row(ctx context.Context, user identity.Id) (*cnkiRow, error) {
 	var row cnkiRow
-	err := sessions.repository.database.QueryRowContext(ctx, "SELECT session_json,qr_uuid,status,updated_at,last_used_at,generation FROM cnki_sessions WHERE user_id=? AND status<>'empty'", user).Scan(&row.plaintext, &row.qrUuid, &row.status, &row.updated, &row.lastUsed, &row.generation)
+	err := func() error {
+		queryResult, err := queries.CNKISession(ctx, sessions.repository.database, authdb.CNKISessionParams{UserID: int64(user)})
+		if err != nil {
+			return err
+		}
+		row.plaintext = queryResult.SessionJSON
+		row.qrUuid = queryResult.QRUUID
+		row.status = queryResult.Status
+		row.updated = new(queryResult.UpdatedAt)
+		row.lastUsed = queryResult.LastUsedAt
+		row.generation = queryResult.Generation
+		return nil
+	}()
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -132,7 +145,14 @@ func (sessions *CnkiSessions) Reserve(ctx context.Context, user identity.Id) (in
 		return 0, err
 	}
 	var generation int64
-	err = sessions.repository.database.QueryRowContext(ctx, `INSERT INTO cnki_sessions(user_id,session_json,qr_uuid,status,token_expires_at,created_at,updated_at,last_used_at,generation) VALUES(?1,?2,'','empty',NULL,?3,?3,NULL,1) ON CONFLICT(user_id) DO UPDATE SET qr_uuid='',generation=cnki_sessions.generation+1 RETURNING generation`, user, empty, sessions.now()).Scan(&generation)
+	err = func() error {
+		queryResult, err := queries.ReserveCNKISession(ctx, sessions.repository.database, authdb.ReserveCNKISessionParams{UserID: int64(user), SessionJSON: empty, CreatedAt: sessions.now()})
+		if err != nil {
+			return err
+		}
+		generation = queryResult
+		return nil
+	}()
 	return generation, err
 }
 
@@ -164,7 +184,7 @@ func (sessions *CnkiSessions) Complete(ctx context.Context, user identity.Id, ge
 	if err != nil {
 		return nil, err
 	}
-	result, err := sessions.repository.database.ExecContext(ctx, `UPDATE cnki_sessions SET session_json=?1,qr_uuid=?2,status=?3,token_expires_at=?4,updated_at=?5,generation=generation+1 WHERE user_id=?6 AND generation=?7 AND (?8 IS NULL OR qr_uuid=?8)`, encrypted, row.qrUuid, row.status, expires, now, user, generation, expectedQr)
+	result, err := queries.CompleteCNKISession(ctx, sessions.repository.database, authdb.CompleteCNKISessionParams{SessionJSON: encrypted, QRUUID: row.qrUuid, Status: row.status, TokenExpiresAt: expires, UpdatedAt: now, UserID: int64(user), Generation: generation, Column8: expectedQr})
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +207,14 @@ func (sessions *CnkiSessions) Upsert(ctx context.Context, user identity.Id, data
 	if err != nil {
 		return CnkiStatus{}, err
 	}
-	err = sessions.repository.database.QueryRowContext(ctx, `INSERT INTO cnki_sessions(user_id,session_json,qr_uuid,status,token_expires_at,created_at,updated_at,last_used_at,generation) VALUES(?1,?2,?3,?4,?5,?6,?6,NULL,1) ON CONFLICT(user_id) DO UPDATE SET session_json=excluded.session_json,qr_uuid=excluded.qr_uuid,status=excluded.status,token_expires_at=excluded.token_expires_at,updated_at=excluded.updated_at,generation=cnki_sessions.generation+1 RETURNING generation`, user, encrypted, row.qrUuid, row.status, expires, now).Scan(&row.generation)
+	err = func() error {
+		queryResult, err := queries.StoreCNKISession(ctx, sessions.repository.database, authdb.StoreCNKISessionParams{UserID: int64(user), SessionJSON: encrypted, QRUUID: row.qrUuid, Status: row.status, TokenExpiresAt: expires, CreatedAt: now})
+		if err != nil {
+			return err
+		}
+		row.generation = queryResult
+		return nil
+	}()
 	if err != nil {
 		return CnkiStatus{}, err
 	}
@@ -203,11 +230,18 @@ func (sessions *CnkiSessions) Clear(ctx context.Context, user identity.Id) (bool
 	}
 	var existed bool
 	err = sessions.repository.Immediate(ctx, false, func(connection *sql.Conn) error {
-		err := connection.QueryRowContext(ctx, "SELECT status<>'empty' FROM cnki_sessions WHERE user_id=?", user).Scan(&existed)
+		err := func() error {
+			queryResult, err := queries.HasCNKISession(ctx, connection, authdb.HasCNKISessionParams{UserID: int64(user)})
+			if err != nil {
+				return err
+			}
+			existed = queryResult
+			return nil
+		}()
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		_, err = connection.ExecContext(ctx, `INSERT INTO cnki_sessions(user_id,session_json,qr_uuid,status,token_expires_at,created_at,updated_at,last_used_at,generation) VALUES(?1,?2,'','empty',NULL,?3,?3,NULL,1) ON CONFLICT(user_id) DO UPDATE SET session_json=excluded.session_json,qr_uuid='',status='empty',token_expires_at=NULL,updated_at=excluded.updated_at,last_used_at=NULL,generation=cnki_sessions.generation+1`, user, empty, now)
+		_, err = queries.ClearCNKISession(ctx, connection, authdb.ClearCNKISessionParams{UserID: int64(user), SessionJSON: empty, CreatedAt: now})
 		return err
 	})
 	return existed && err == nil, err
@@ -215,7 +249,7 @@ func (sessions *CnkiSessions) Clear(ctx context.Context, user identity.Id) (bool
 
 // TouchUsed records use only for a visible session without changing its generation.
 func (sessions *CnkiSessions) TouchUsed(ctx context.Context, user identity.Id) (bool, error) {
-	result, err := sessions.repository.database.ExecContext(ctx, "UPDATE cnki_sessions SET last_used_at=? WHERE user_id=? AND status<>'empty'", sessions.now(), user)
+	result, err := queries.TouchCNKISession(ctx, sessions.repository.database, authdb.TouchCNKISessionParams{LastUsedAt: new(sessions.now()), UserID: int64(user)})
 	if err != nil {
 		return false, err
 	}

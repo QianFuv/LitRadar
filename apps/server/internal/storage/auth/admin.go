@@ -11,6 +11,7 @@ import (
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/authdb"
 )
 
 var ErrAdminInvitePolicy = errors.New("Invite code expires_at must be in the next 365 days and max_uses must be between 1 and 1000")
@@ -53,42 +54,30 @@ func (invite AdminInviteInfo) LogValue() slog.Value { return slog.StringValue(in
 
 // ListUsers returns administrator dashboard rows in stable identifier order.
 func (repository *Repository) ListUsers(ctx context.Context) ([]AdminUserInfo, error) {
-	rows, err := repository.database.QueryContext(ctx, `SELECT u.id,u.username,u.email,u.auth_kind,EXISTS(SELECT 1 FROM user_identities WHERE user_id=u.id),u.is_admin,u.created_at,u.updated_at,(SELECT COUNT(*) FROM folders f WHERE f.user_id=u.id),(SELECT COUNT(*) FROM favorites fv WHERE fv.user_id=u.id),(SELECT COUNT(*) FROM notification_settings ns WHERE ns.user_id=u.id AND ns.enabled=1) FROM users u ORDER BY u.id`)
+	rows, err := queries.Users(ctx, repository.database)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	result := []AdminUserInfo{}
-	for rows.Next() {
-		var item AdminUserInfo
-		var isAdmin, notifyEnabled int64
-		if err := rows.Scan(&item.Id, &item.Username, &item.Email, &item.AuthKind, &item.IsOidcLinked, &isAdmin, &item.CreatedAt, &item.UpdatedAt, &item.FolderCount, &item.FavoriteCount, &notifyEnabled); err != nil {
-			return nil, err
-		}
-		item.IsAdmin = isAdmin != 0
-		item.NotifyEnabled = notifyEnabled != 0
-		result = append(result, item)
+	result := make([]AdminUserInfo, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, AdminUserInfo{Id: identity.Id(row.ID), Username: row.Username, Email: row.Email, AuthKind: row.AuthKind, IsOidcLinked: row.Exists, IsAdmin: row.IsAdmin != 0, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, FolderCount: row.Count, FavoriteCount: row.Count_2, NotifyEnabled: row.Count_3 != 0})
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 // ListInvites retains all administrator-visible lifecycle states, including deleted creators.
 func (repository *Repository) ListInvites(ctx context.Context, now float64) ([]AdminInviteInfo, error) {
-	rows, err := repository.database.QueryContext(ctx, `SELECT ic.id,ic.code,ic.created_by,ic.used_by,ic.used_at,ic.created_at,uc.username,uu.username,ic.expires_at,ic.revoked_at,ic.max_uses,ic.use_count FROM invite_codes ic LEFT JOIN users uc ON ic.created_by=uc.id LEFT JOIN users uu ON ic.used_by=uu.id ORDER BY ic.created_at DESC`)
+	rows, err := queries.Invites(ctx, repository.database)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	result := []AdminInviteInfo{}
-	for rows.Next() {
-		var item AdminInviteInfo
-		if err := rows.Scan(&item.Id, &item.Code, &item.CreatedBy, &item.UsedBy, &item.UsedAt, &item.CreatedAt, &item.CreatedByName, &item.UsedByName, &item.ExpiresAt, &item.RevokedAt, &item.MaxUses, &item.UseCount); err != nil {
-			return nil, err
-		}
+	result := make([]AdminInviteInfo, 0, len(rows))
+	for _, row := range rows {
+		item := AdminInviteInfo{Id: row.ID, Code: row.Code, CreatedBy: (*identity.Id)(row.CreatedBy), UsedBy: (*identity.Id)(row.UsedBy), UsedAt: row.UsedAt, CreatedAt: row.CreatedAt, CreatedByName: row.Username, UsedByName: row.Username_2, ExpiresAt: row.ExpiresAt, RevokedAt: row.RevokedAt, MaxUses: row.MaxUses, UseCount: row.UseCount}
 		item.Status = (domain.InviteRow{ExpiresAt: item.ExpiresAt, RevokedAt: item.RevokedAt, MaxUses: item.MaxUses, UseCount: item.UseCount}).Response(now).Status
 		result = append(result, item)
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 // CreateAdministratorInvite issues an ownerless invite after checking the actor under the write lock.
@@ -119,7 +108,7 @@ func (repository *Repository) CreateAdministratorInvite(ctx context.Context, act
 		if !domain.ValidInvitePolicy(now, expires, uses) {
 			return ErrAdminInvitePolicy
 		}
-		result, err := connection.ExecContext(ctx, "INSERT INTO invite_codes(code,created_by,created_at,expires_at,max_uses,use_count) VALUES(?,NULL,?,?,?,0)", code, now, expires, uses)
+		result, err := queries.CreateAdministratorInvite(ctx, connection, authdb.CreateAdministratorInviteParams{Code: code, CreatedAt: now, ExpiresAt: expires, MaxUses: uses})
 		if err != nil {
 			return err
 		}
@@ -149,7 +138,7 @@ func (repository *Repository) RevokeAdministratorInvite(ctx context.Context, act
 				return err
 			}
 		}
-		result, err := connection.ExecContext(ctx, "UPDATE invite_codes SET revoked_at=MAX(?,created_at) WHERE id=? AND revoked_at IS NULL", float64(time.Now().UnixNano())/1e9, inviteId)
+		result, err := queries.RevokeAdministratorInvite(ctx, connection, authdb.RevokeAdministratorInviteParams{MAX: float64(time.Now().UnixNano()) / 1e9, ID: inviteId})
 		if err != nil {
 			return err
 		}
