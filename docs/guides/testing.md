@@ -104,7 +104,7 @@ node apps/server/scripts/check-go.mjs
 | `node tests/test.mjs fast`        | Go `-short -count=1` 与 Vitest jsdom；当前仍包含真实进程测试                                                                                      |
 | `node tests/test.mjs integration` | Go 常规全包测试、OpenAPI 幂等和前端 API contract suite                                                                                            |
 | `node tests/test.mjs e2e-smoke`   | 构建静态前端和 Go 应用/fixture，运行真实后端 Chromium 旅程                                                                                        |
-| `node tests/test.mjs all`         | Go 格式、module verify、vet，前端 lint/format/typecheck，integration、jsdom、Browser Mode、fixture 与 full-stack                                  |
+| `node tests/test.mjs all`         | Go 格式、module verify、vet，前端 lint/format/typecheck（`vp check` 的三个步骤），integration、jsdom、Browser Mode、fixture 与 full-stack                                  |
 | `node tests/test.mjs diagnostics` | Go 与前端分别生成无阈值覆盖率报告                                                                                                                 |
 | `node apps/server/scripts/check-go.mjs`       | Windows/Linux 后端发布检查：工具链、race 所需 C 编译器、格式、模块/补丁完整性、vet、无缓存 regular/race，以及 SDK 自身模块和根模块的 regular/race |
 

@@ -221,9 +221,7 @@ node tests/test.mjs diagnostics
 ```bash
 cd apps/client/frontend
 pnpm generate:api:check
-pnpm lint
-pnpm format:check
-pnpm exec tsc --noEmit
+pnpm check
 pnpm test:unit
 pnpm exec playwright install --with-deps chromium
 pnpm test:browser-components
@@ -232,7 +230,7 @@ pnpm test:e2e:full-stack
 pnpm build
 ```
 
-Vitest/jsdom 使用显式 MSW 场景；Browser Mode 验证焦点、Clipboard、IntersectionObserver 和动效等原生语义。Playwright fixture 项目负责拦截式 UI 冒烟测试；full-stack 项目构建前端，通过真实 Go 监听器、HttpOnly Cookie 和临时 SQLite 验证关键旅程。具体覆盖以[测试系统](testing.md)和当前测试文件为准。CI 最多重试 Playwright 一次以取得 trace/video，但重试后通过仍按不稳定测试判定失败。
+`pnpm check` 即 `vp check`，一次完成 Oxfmt 格式检查、Oxlint 检查与 TypeScript 7 类型检查；`pnpm check:fix` 自动格式化并应用可修复的 lint 建议。Vitest/jsdom 使用显式 MSW 场景；Browser Mode 验证焦点、Clipboard、IntersectionObserver 和动效等原生语义。Playwright fixture 项目负责拦截式 UI 冒烟测试；full-stack 项目构建前端，通过真实 Go 监听器、HttpOnly Cookie 和临时 SQLite 验证关键旅程。具体覆盖以[测试系统](testing.md)和当前测试文件为准。CI 最多重试 Playwright 一次以取得 trace/video，但重试后通过仍按不稳定测试判定失败。
 
 ## 部署检查
 

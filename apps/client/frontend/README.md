@@ -17,11 +17,11 @@ CI 与前端构建阶段使用：
 | ----------------- | ----------------------------------------------------------------------- |
 | Node.js           | 26.11.1                                                                 |
 | pnpm              | 12.16.1                                                                 |
-| Vite              | 8.x                                                                     |
+| Vite+（`vp`）     | 1.5.x；内含 Vite 8、Vitest 5、Oxlint、Oxfmt，版本随 Vite+ 锁定          |
 | React Router      | 7.x（声明式路由）                                                       |
 | React / React DOM | 19.2.3                                                                  |
 | Motion for React  | 13.1.1                                                                  |
-| TypeScript        | 5.x                                                                     |
+| TypeScript        | 7.x                                                                     |
 | Tailwind CSS      | 4.x                                                                     |
 | Go                | 1.27.3；生成 OpenAPI、启动后端和 full-stack e2e 时需要，不需要 C 编译器 |
 
@@ -59,7 +59,7 @@ pnpm --filter litradar-frontend dev
 - OpenAPI JSON：`http://localhost:8000/openapi.json`
 - MCP：`http://localhost:8000/mcp`
 
-发布构建执行 `pnpm build`（`tsc` 类型检查后 `vite build`）并写入 `dist/`；`apps/client` 中的 `wails3 task build:server` 与 `build:docker` 把它嵌入静态 linux/amd64 Web 主机和 distroless 镜像。
+发布构建执行 `pnpm build`（`vp build`）并写入 `dist/`；类型检查由 `pnpm check` 负责。兼容基线为去年 1 月 1 日以来发布的全部浏览器版本：`vite.config.ts` 按当前年份生成 browserslist 查询 `since <去年>-01-01`，并由它派生 `build.target` 与 `cssTarget`（2026 年为 Chromium 132、Firefox 134、Safari/iOS 18.3 起）。`apps/client` 中的 `wails3 task build:server` 与 `build:docker` 把它嵌入静态 linux/amd64 Web 主机和 distroless 镜像。
 
 ## 前端网络配置
 
@@ -185,7 +185,7 @@ CI 使用：
 pnpm generate:api:check
 ```
 
-生成命令会运行 Go `litradar openapi` 子命令、生成 TypeScript 类型并格式化产物。不要手工修改 `lib/generated/`。
+生成命令会运行 Go `litradar openapi` 子命令、生成 TypeScript 类型并用 Oxfmt 格式化产物。openapi-typescript 依赖 TypeScript 5/6 的编译器 JS API，而 TypeScript 7 包不再提供该 API，因此脚本把它的 `typescript` 导入解析到 `@typescript/typescript6`。不要手工修改 `lib/generated/`。
 
 `lib/api/` 提供面向页面的请求 facade；`lib/api-contract.tsx` 对认证、运行设置元数据、Provider 能力目录、计划任务和手动推送等控制面响应再做运行时校验。管理页按后端返回的 group、control、apply mode 和 allowed values 渲染全部设置，并按 capability 过滤 Provider 选项。普通页面不应绕过共享 transport 自行复制 Cookie、Bearer、数据库选择或错误解析逻辑。
 
@@ -195,9 +195,7 @@ pnpm generate:api:check
 
 ```bash
 pnpm generate:api:check
-pnpm lint
-pnpm format:check
-pnpm typecheck
+pnpm check
 pnpm test:unit
 pnpm exec playwright install --with-deps chromium
 pnpm test:browser-components
@@ -206,11 +204,13 @@ pnpm test:e2e:full-stack
 pnpm build
 ```
 
+`pnpm check`（`vp check`）依次运行 Oxfmt 格式检查、Oxlint 检查和 TypeScript 7 类型检查；lint、格式和测试配置都在 `vite.config.ts` 的 `lint`、`fmt`、`test` 块中。Oxlint 经 `jsPlugins` 加载 `@stylexjs/eslint-plugin` 与 `oxlint-anti-slop`，生成文件（`lib/generated/`、Wails 绑定、路由树）不参与 lint。`pnpm knip` 检查未使用的文件、依赖与导出。
+
 测试边界：
 
 - `unit-jsdom` 通过 `tests/setup.tsx` 注册 handler-free MSW server；每个套件显式安装所需领域场景，未声明请求直接失败。
 - `component-browser` 运行需要真实 Chromium 的原生语义与动效套件；普通组件行为仍留在 jsdom。动效套件验证真实退出生命周期、reduced-motion override 与抽屉焦点归还。
-- `fixture-chromium` 构建后在 `127.0.0.1:3100` 启动 `vite preview` 并使用页面路由 fixture；`full-stack-chromium` 构建 `dist/`，启动实际 Go 服务、临时 SQLite 与代理到该服务的 `vite preview`，目录内禁止请求拦截。
+- `fixture-chromium` 构建后在 `127.0.0.1:3100` 启动 `vp preview` 并使用页面路由 fixture；`full-stack-chromium` 构建 `dist/`，启动实际 Go 服务、临时 SQLite 与代理到该服务的 `vp preview`，目录内禁止请求拦截。
 - Playwright 本地零重试；CI 最多一次重试以保留 trace/video，并通过 `failOnFlakyTests` 让 retry-pass 仍失败。
 - 覆盖率排除生成代码和 `components/ui/`，只作独立诊断，不设置完成阈值。
 
