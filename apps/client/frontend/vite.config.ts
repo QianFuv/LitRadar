@@ -13,7 +13,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import tailwindcss from '@tailwindcss/vite';
-import react from '@vitejs/plugin-react';
+import babel from '@rolldown/plugin-babel';
+import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import browserslist from 'browserslist';
 import { defineConfig, type ProxyOptions } from 'vite-plus';
 import { playwright } from 'vite-plus/test/browser-playwright';
@@ -170,7 +171,7 @@ const OUTPUT_PATTERNS = [
 ];
 
 export default defineConfig(({ mode }) => ({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), babel({ presets: [reactCompilerPreset()] }), tailwindcss()],
   resolve: {
     alias: [
       ...(mode === NATIVE_MODE

@@ -294,7 +294,7 @@ function moveProvider(order: string[], index: number, offset: -1 | 1): string[] 
  * @returns Ordered Provider editor.
  */
 function ProviderOrderEditor({ label, providers, order, onChange }: ProviderOrderEditorProps) {
-  const availableProviders = providers.filter((provider) => !order.includes(provider.name));
+  const nextAvailableProvider = providers.find((provider) => !order.includes(provider.name));
 
   return (
     <ol className="space-y-2">
@@ -370,8 +370,10 @@ function ProviderOrderEditor({ label, providers, order, onChange }: ProviderOrde
           variant="ghost"
           size="sm"
           className="text-primary hover:text-primary"
-          disabled={availableProviders.length === 0}
-          onClick={() => onChange([...order, availableProviders[0].name])}
+          disabled={!nextAvailableProvider}
+          onClick={() => {
+            if (nextAvailableProvider) onChange([...order, nextAvailableProvider.name]);
+          }}
         >
           <Plus className="size-4" />
           添加 Provider
