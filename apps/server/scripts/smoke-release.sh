@@ -37,7 +37,6 @@ curl --fail --silent http://127.0.0.1:8000/docs/ >/dev/null
 test ! -e web
 curl --fail --silent http://127.0.0.1:8000/openapi.json >/dev/null
 test -f data/meta/chinese_journals.csv
-test ! -e libsimple.so
 curl --fail --silent --cookie-jar cookies -H 'Content-Type: application/json' --data '{"username":"static_smoke","password":"SyntheticArchivePassword!2026"}' http://127.0.0.1:8000/api/auth/login >/dev/null
 curl --fail --silent --cookie cookies --get --data-urlencode db=smoke.sqlite --data-urlencode q=科技金融 http://127.0.0.1:8000/api/articles > search.json
 grep '科技金融' search.json >/dev/null

@@ -34,6 +34,8 @@ const SEARCH_SMOKE_TITLES = [
   "免签政策与外商直接投资",
   "区域与双边经贸规则演变及其对我国经济的影响研究",
 ];
+const LEGACY_SEARCH_TABLE =
+  "CREATE VIRTUAL TABLE article_search USING fts5(article_id UNINDEXED, title, abstract_text, doi, pmid, authors, journal_title, content = '', contentless_delete = 1, tokenize = 'unicode61 remove_diacritics 2');";
 const CFP_PAGE_EVAL =
   "JSON.stringify({protocol:'litradar.cfp.page.v1',finalUrl:location.href,html:document.documentElement.outerHTML})";
 const REMOVED_APPLICATION_ENVIRONMENT_NAMES = [
@@ -725,21 +727,16 @@ async function installSearchMaintenanceFixture(imageReference) {
     ),
     "utf8",
   );
-  const schema = /const ContentTables = `([\s\S]*?)`/.exec(declaration)?.[1];
-  assertInvariant(
-    schema?.includes("tokenize = 'simple 0'"),
-    "current content schema is unavailable",
-  );
+  const tables =
+    /const ContentTables = `([\s\S]*?)` \+ SearchTable \+ `([\s\S]*?)`/.exec(
+      declaration,
+    );
+  assertInvariant(tables, "current content schema is unavailable");
   const fixturePath = path.join(REPORT_ROOT, "search-fixture.sqlite");
   await fs.rm(fixturePath, { force: true });
   const database = new DatabaseSync(fixturePath);
   try {
-    database.exec(
-      schema.replace(
-        "tokenize = 'simple 0'",
-        "tokenize = 'unicode61 remove_diacritics 2'",
-      ),
-    );
+    database.exec(tables[1] + LEGACY_SEARCH_TABLE + tables[2]);
     database.exec(
       "PRAGMA user_version=8; INSERT INTO journals(journal_id,catalog_id,title,title_aliases_json,issns_json) VALUES(1,'smoke','Smoke Journal','[]','[]'); INSERT INTO journal_identity_keys VALUES('catalog_id','smoke','smoke');",
     );
@@ -747,7 +744,11 @@ async function installSearchMaintenanceFixture(imageReference) {
       "INSERT INTO articles(article_id,journal_id,title,abstract_text,authors_json,date) VALUES(?,1,?,?,'[]','2026-09-16')",
     );
     SEARCH_SMOKE_TITLES.forEach((title, index) =>
-      insert.run(index + 1, title, index === 0 ? "Café résumé" : ""),
+      insert.run(
+        index + 1,
+        title,
+        index === 0 ? "Café résumé 10.1000/ABC_9" : "",
+      ),
     );
     database.exec(
       "INSERT INTO article_listing(article_id,journal_id,date) SELECT article_id,journal_id,date FROM articles; INSERT INTO article_search(rowid,article_id,title,abstract_text,journal_title) SELECT article_id,article_id,title,abstract_text,'Smoke Journal' FROM articles;",
@@ -804,7 +805,7 @@ async function installSearchMaintenanceFixture(imageReference) {
 }
 
 /**
- * Verify Chinese phrases, Latin folding and disabled pinyin through the real authenticated API.
+ * Verify Chinese phrases, Latin folding, identifier phrases and disabled pinyin through the real authenticated API.
  *
  * @param {string} baseUrl - Isolated loopback service URL.
  * @param {string} sessionCookie - Disposable smoke administrator session.
@@ -818,7 +819,10 @@ async function verifySearchQueries(baseUrl, sessionCookie) {
     ["免签政策", 3],
     ["经贸规则", 4],
     ["cafe", 1],
+    ["CAFÉ", 1],
     ["résumé", 1],
+    ["10.1000/abc_9", 1],
+    ["10.1000/abc_8", null],
     ["ke ji jin rong", null],
     ["kejijinrong", null],
     ["ke", null],
@@ -852,6 +856,7 @@ async function verifySearchQueries(baseUrl, sessionCookie) {
     chinesePhrases: true,
     noPinyinAliases: true,
     latinFolding: true,
+    identifierPhrases: true,
     canonicalTitles: true,
   };
 }
@@ -1438,7 +1443,7 @@ async function runSmoke(imageReference) {
     containerName,
     "sh",
     "-c",
-    "test ! -e /usr/lib/litradar/libsimple.so && test ! -e /usr/local/bin/libsimple.so && test ! -e /app/libsimple.so && test -f /app/data/meta/ccf_computer_journals.csv && test -f /app/data/meta/chinese_journals.csv && test -f /app/data/meta/english_journals.csv",
+    "test -f /app/data/meta/ccf_computer_journals.csv && test -f /app/data/meta/chinese_journals.csv && test -f /app/data/meta/english_journals.csv",
   ]);
   await runDocker([
     "exec",

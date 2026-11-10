@@ -4,10 +4,6 @@
  * @module dev
  */
 
-import {
-  buildSimple,
-  simpleBuildEnvironment,
-} from "../apps/server/scripts/build-simple-tokenizer.mjs";
 import { spawn } from "node:child_process";
 import { access, mkdir, stat } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -64,14 +60,13 @@ async function checkPort(port) {
  * @param {string} command - Executable path or name.
  * @param {string[]} args - Literal command arguments.
  * @param {string} cwd - Child working directory.
- * @param {NodeJS.ProcessEnv} [environment=process.env] - Child compiler input identity.
  * @returns {{child: import('node:child_process').ChildProcess, exited: Promise<object>}} Child lifecycle.
  */
-function startChild(label, command, args, cwd, environment = process.env) {
+function startChild(label, command, args, cwd) {
   const child = spawn(command, args, {
     cwd,
     stdio: "inherit",
-    env: { ...environment, CGO_ENABLED: "1" },
+    env: { ...process.env, CGO_ENABLED: "1" },
     windowsHide: true,
     shell: false,
     detached: process.platform !== "win32",
@@ -91,8 +86,6 @@ function startChild(label, command, args, cwd, environment = process.env) {
  * @returns {Promise<string | undefined>} Built executable, or undefined after interruption.
  */
 async function buildBackend() {
-  await buildSimple(WORKSPACE_ROOT);
-  if (isStopping) return;
   const directory = path.join(WORKSPACE_ROOT, "target", "go");
   await mkdir(directory, { recursive: true });
   const executable = path.join(
@@ -112,7 +105,6 @@ async function buildBackend() {
       "./apps/server",
     ],
     WORKSPACE_ROOT,
-    simpleBuildEnvironment(WORKSPACE_ROOT),
   );
   const result = await Promise.race([build.exited, INTERRUPTED]);
   if (isStopping) return;

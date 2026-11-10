@@ -75,9 +75,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.cache.outputs.build }}
-          key: go-build-${{ runner.os }}-${{ runner.arch }}-${{ env.GOTOOLCHAIN }}-${{ matrix.lane }}-${{ steps.cache.outputs.compiler }}-${{ hashFiles('go.mod', 'go.sum', 'third_party/**/go.mod', 'third_party/**/go.sum', 'third_party/simple-static/**', 'third_party/go-sqlite3/*.h', 'apps/server/scripts/build-simple-tokenizer.mjs', 'apps/server/scripts/go-check-plan.mjs') }}-${{ inputs.source_ref || github.sha }}
+          key: go-build-${{ runner.os }}-${{ runner.arch }}-${{ env.GOTOOLCHAIN }}-${{ matrix.lane }}-${{ steps.cache.outputs.compiler }}-${{ hashFiles('go.mod', 'go.sum', 'third_party/**/go.mod', 'third_party/**/go.sum', 'apps/server/scripts/go-check-plan.mjs') }}-${{ inputs.source_ref || github.sha }}
           restore-keys: |
-            go-build-${{ runner.os }}-${{ runner.arch }}-${{ env.GOTOOLCHAIN }}-${{ matrix.lane }}-${{ steps.cache.outputs.compiler }}-${{ hashFiles('go.mod', 'go.sum', 'third_party/**/go.mod', 'third_party/**/go.sum', 'third_party/simple-static/**', 'third_party/go-sqlite3/*.h', 'apps/server/scripts/build-simple-tokenizer.mjs', 'apps/server/scripts/go-check-plan.mjs') }}-
+            go-build-${{ runner.os }}-${{ runner.arch }}-${{ env.GOTOOLCHAIN }}-${{ matrix.lane }}-${{ steps.cache.outputs.compiler }}-${{ hashFiles('go.mod', 'go.sum', 'third_party/**/go.mod', 'third_party/**/go.sum', 'apps/server/scripts/go-check-plan.mjs') }}-
 
       - name: Run complete Go verification lane
         id: quality

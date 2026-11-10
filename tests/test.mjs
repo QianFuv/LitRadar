@@ -2,10 +2,6 @@
  * Run the five repository test layers with cross-platform failure and signal propagation.
  */
 
-import {
-  buildSimple,
-  simpleBuildEnvironment,
-} from "../apps/server/scripts/build-simple-tokenizer.mjs";
 import { SERVER_PACKAGES } from "../apps/server/scripts/go-check-plan.mjs";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
@@ -437,13 +433,6 @@ try {
     ...(isCi ? { CI: "true", LITRADAR_TEST_CI: "true" } : {}),
   };
   const definitions = stepsForMode(mode, isCi);
-  if (definitions.some((definition) => definition.command === "go")) {
-    await buildSimple(WORKSPACE_ROOT, true);
-    Object.assign(
-      sharedEnv,
-      simpleBuildEnvironment(WORKSPACE_ROOT, { ...process.env, ...sharedEnv }),
-    );
-  }
   for (const definition of definitions) {
     try {
       results.push(await runStep(definition, sharedEnv));

@@ -61,11 +61,6 @@ jobs:
         id: install_frontend_dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build pinned search tokenizer
-        id: build_pinned_search_tokenizer
-        run: node apps/server/scripts/build-simple-tokenizer.mjs
-        working-directory: .
-
       - name: Check frontend contracts and static quality
         id: frontend_static
         run: |

@@ -172,11 +172,6 @@ assert(
   "Rendered pixels did not respond to JavaScript",
 );
 
-assert(
-  !fs.existsSync(path.join(root, "simple.dll")),
-  "Package must not depend on a Simple DLL",
-);
-
 const isolated = fs.mkdtempSync(path.join(report, "executable-only-"));
 const executable = path.join(isolated, "litradar.exe");
 fs.copyFileSync(path.join(root, "litradar.exe"), executable);
@@ -184,18 +179,22 @@ fs.cpSync(path.join(root, "assets/meta"), path.join(isolated, "assets/meta"), {
   recursive: true,
 });
 fs.mkdirSync(path.join(isolated, "data/index"), { recursive: true });
-const schema = /const ContentTables = `([\s\S]*?)`/.exec(
-  fs.readFileSync("apps/server/internal/storage/indexschema/schema.go", "utf8"),
-)[1];
+const tables =
+  /const ContentTables = `([\s\S]*?)` \+ SearchTable \+ `([\s\S]*?)`/.exec(
+    fs.readFileSync(
+      "apps/server/internal/storage/indexschema/schema.go",
+      "utf8",
+    ),
+  );
+assert(tables, "current content schema is unavailable");
 const fixture = new DatabaseSync(
   path.join(isolated, "data/index/smoke.sqlite"),
 );
 try {
   fixture.exec(
-    schema.replace(
-      "tokenize = 'simple 0'",
-      "tokenize = 'unicode61 remove_diacritics 2'",
-    ),
+    tables[1] +
+      "CREATE VIRTUAL TABLE article_search USING fts5(article_id UNINDEXED, title, abstract_text, doi, pmid, authors, journal_title, content = '', contentless_delete = 1, tokenize = 'unicode61 remove_diacritics 2');" +
+      tables[2],
   );
   fixture.exec(
     "PRAGMA user_version=8; INSERT INTO journals(journal_id,catalog_id,title,title_aliases_json,issns_json) VALUES(1,'smoke','Smoke Journal','[]','[]'); INSERT INTO journal_identity_keys VALUES('catalog_id','smoke','smoke');",
@@ -242,7 +241,6 @@ run(
   { env: isolatedEnvironment, input: password + "\n" },
 );
 assert(!fs.existsSync(path.join(isolated, "web")));
-assert(!fs.existsSync(path.join(isolated, "simple.dll")));
 
 const reservation = net.createServer();
 await new Promise((resolve, reject) => {
@@ -379,8 +377,8 @@ fs.writeFileSync(
         "openapi",
         "anonymous-auth",
         "metadata",
-        "static-tokenizer-authenticated-search",
-        "executable-only-no-web-or-simple",
+        "tokenized-authenticated-search",
+        "executable-only-no-web",
         "helper-javascript",
         "private-network-denied",
         "helper-renderer",

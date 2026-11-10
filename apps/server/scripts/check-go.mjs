@@ -8,47 +8,21 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { goCheckPlan } from "./go-check-plan.mjs";
-import {
-  buildSimple,
-  simpleBuildEnvironment,
-} from "./build-simple-tokenizer.mjs";
 
 assert(process.argv.length <= 3, "Expected at most one Go check lane");
 const checks = goCheckPlan(process.argv[2]);
-await buildSimple(process.cwd(), true);
 const directory = path.resolve("test-results/go");
 fs.mkdirSync(directory, { recursive: true });
 const environment = {
-  ...simpleBuildEnvironment(),
+  ...process.env,
   CGO_ENABLED: "1",
   GOWORK: "off",
   GOENV: "off",
   GOFLAGS: "",
   GOTOOLCHAIN: "go1.27.3",
 };
-/** Identify static archive, compiler metadata and SQLite headers for every release check. */
-function nativeInputs() {
-  const candidates = [
-    "target/simple-tokenizer/libsimple.a",
-    "target/simple-tokenizer/inputs.json",
-    "third_party/go-sqlite3/sqlite3-binding.h",
-    "third_party/go-sqlite3/sqlite3ext.h",
-    "third_party/simple-static/CMakeLists.txt",
-  ];
-  return candidates.map((filename) => ({
-    filename,
-    sha256: createHash("sha256")
-      .update(fs.readFileSync(filename))
-      .digest("hex"),
-  }));
-}
-const originalNativeInputs = nativeInputs();
-fs.writeFileSync(
-  path.join(directory, "native-inputs.json"),
-  JSON.stringify(originalNativeInputs, null, 2) + "\n",
-);
 const results = [];
 for (const [id, executable, argumentsList] of checks) {
   const log = path.join(directory, `${id}.log`);
@@ -105,10 +79,5 @@ for (const [id, executable, argumentsList] of checks) {
       compiler.stdout + compiler.stderr,
     );
   }
-  assert.deepEqual(
-    nativeInputs(),
-    originalNativeInputs,
-    "Native tokenizer changed during verification",
-  );
   console.log(`${id}: Passed`);
 }

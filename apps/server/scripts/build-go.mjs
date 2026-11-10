@@ -3,15 +3,10 @@ import { execFileSync } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  buildSimple,
-  simpleBuildEnvironment,
-} from "./build-simple-tokenizer.mjs";
 
 const ROOT = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const OUTPUT = path.join(ROOT, "target", "go");
 await mkdir(OUTPUT, { recursive: true });
-await buildSimple(ROOT);
 for (const command of ["litradar", "litradar-fixture"]) {
   const filename = path.join(
     OUTPUT,
@@ -34,7 +29,7 @@ for (const command of ["litradar", "litradar-fixture"]) {
     {
       cwd: ROOT,
       env: {
-        ...simpleBuildEnvironment(ROOT),
+        ...process.env,
         CGO_ENABLED: "1",
         GOWORK: "off",
         GOENV: "off",

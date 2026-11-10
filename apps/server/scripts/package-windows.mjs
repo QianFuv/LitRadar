@@ -7,10 +7,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseVersion } from "../../../scripts/release-version.mjs";
 import { assertReleasePlatform } from "../../../scripts/release-platform.mjs";
-import {
-  buildSimple,
-  simpleBuildEnvironment,
-} from "./build-simple-tokenizer.mjs";
 
 const SERVER_SOURCE_PATHS = [
   "go.mod",
@@ -136,9 +132,8 @@ async function dependencyArchive(key, definition) {
   return archive;
 }
 
-await buildSimple(source);
 const environment = {
-  ...simpleBuildEnvironment(source),
+  ...process.env,
   CGO_ENABLED: "1",
   GOWORK: "off",
   GOENV: "off",
@@ -182,10 +177,6 @@ fs.copyFileSync(
 );
 const inventory = path.join(directory, "licenses/go-inventory");
 fs.mkdirSync(inventory, { recursive: true });
-fs.copyFileSync(
-  path.join(source, "target/simple-tokenizer/inputs.json"),
-  path.join(inventory, "simple-inputs.json"),
-);
 fs.writeFileSync(
   path.join(inventory, "binary-modules.txt"),
   run("go", ["version", "-m", path.join(directory, "litradar.exe")], {
