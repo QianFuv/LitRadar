@@ -12,11 +12,13 @@ import (
 	"time"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/runtime/observability"
+	"github.com/QianFuv/LitRadar/apps/server/internal/telemetry"
 )
 
 // ServeHTTP applies the public security, correlation, CORS and cache contract.
 func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	started := time.Now()
+	request = request.WithContext(telemetry.WithCollector(request.Context(), handler.telemetry))
 	var identifier [16]byte
 	_, _ = rand.Read(identifier[:])
 	identifier[6] = identifier[6]&0x0f | 0x40
@@ -70,7 +72,9 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		response.WriteHeader(http.StatusNotFound)
 	}
 	response.finish()
-	logRequest(request, id, label, response.status, time.Since(started))
+	duration := time.Since(started)
+	handler.telemetry.Http(label, methodLabel(request.Method), response.status, duration)
+	logRequest(request, id, label, response.status, duration)
 }
 
 type policyResponse struct {

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/storage"
@@ -16,6 +17,7 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/search"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/weekly"
+	"github.com/QianFuv/LitRadar/apps/server/internal/telemetry"
 )
 
 // ErrLegacyWeeklyLimit directs oversized legacy responses to the paginated endpoints.
@@ -209,7 +211,7 @@ type WeeklyArticlePageParams struct {
 }
 
 // WeeklyArticles validates the selected journal before loading every publication in the fixed window.
-func WeeklyArticles(ctx context.Context, configuration config.Config, params WeeklyArticlePageParams, cache *weekly.Cache) (domain.Page[domain.WeeklyArticle], error) {
+func WeeklyArticles(ctx context.Context, configuration config.Config, params WeeklyArticlePageParams, cache *weekly.Cache) (result domain.Page[domain.WeeklyArticle], failure error) {
 	empty := domain.Page[domain.WeeklyArticle]{}
 	end, name, err := validateWeeklyArticleParams(params)
 	if err != nil {
@@ -220,6 +222,17 @@ func WeeklyArticles(ctx context.Context, configuration config.Config, params Wee
 		return empty, err
 	}
 	defer database.Close()
+	if params.Query != nil && strings.TrimSpace(*params.Query) != "" {
+		if collector := telemetry.FromContext(ctx); collector != nil {
+			started := time.Now()
+			shape := telemetry.SearchShape("weekly", "simple", name, *params.Query)
+			defer func() {
+				shape.IsError = failure != nil
+				shape.Hits = telemetry.Magnitude(int64(len(result.Items)))
+				collector.Record(time.Now(), shape, time.Since(started))
+			}()
+		}
+	}
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		return empty, err

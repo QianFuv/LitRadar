@@ -33,6 +33,11 @@ func FromProjectRoot(root string) Config {
 	return Config{root, filepath.Join(root, "data", "index"), filepath.Join(root, "data", "index-control"), filepath.Join(root, "data", "meta"), filepath.Join(root, "data", "auth.sqlite")}
 }
 
+// TelemetryDbPath locates disposable load data independently of credential overrides.
+func (config Config) TelemetryDbPath() string {
+	return filepath.Join(config.ProjectRoot, "data", "telemetry.sqlite")
+}
+
 // WithAuthDbPath overrides only the explicitly selected credential database.
 func (config Config) WithAuthDbPath(filename string) Config {
 	config.AuthDbPath = filename

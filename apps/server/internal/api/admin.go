@@ -21,9 +21,11 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/scheduler"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/settings"
+	"github.com/QianFuv/LitRadar/apps/server/internal/telemetry"
 )
 
 type adminHandlers struct {
+	telemetry *telemetry.Collector
 	auth      *authHandlers
 	storage   config.Config
 	scheduler *scheduler.Repository
@@ -69,7 +71,7 @@ func adminInvite(value storage.AdminInviteInfo) adminInviteResponse {
 }
 
 func (handlers *adminHandlers) routes() []route {
-	routes := []route{}
+	routes := []route{{openapi.Operation{Method: "GET", Path: "/api/admin/telemetry", Id: "telemetry"}, handlers.loadTelemetry}}
 	for _, operation := range []openapi.Operation{
 		{Method: "GET", Path: "/api/admin/users", Id: "list_users"},
 		{Method: "PUT", Path: "/api/admin/users/{user_id}/admin", Id: "set_admin"},

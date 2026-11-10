@@ -5356,5 +5356,78 @@
         }
       }
     }
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/telemetry",
+    "operation": {
+      "tags": [
+        "admin"
+      ],
+      "summary": "Return anonymous hourly load and search-shape telemetry.",
+      "operationId": "telemetry",
+      "responses": {
+        "200": {
+          "description": "Durable and pending load; approximate histogram upper-bound percentiles in milliseconds. HTTP errors include 4xx and 5xx. Search hits use total when available, otherwise returned page/candidate count.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TelemetryResponse"
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Invalid period or kind"
+        },
+        "401": {
+          "description": "Authentication required"
+        },
+        "403": {
+          "description": "Administrator required"
+        },
+        "503": {
+          "description": "Telemetry unavailable"
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ],
+      "parameters": [
+        {
+          "in": "query",
+          "name": "period",
+          "required": false,
+          "description": "UTC hour-aligned window including the current partial hour. Default 24h.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "24h",
+              "7d",
+              "30d"
+            ],
+            "default": "24h"
+          }
+        },
+        {
+          "in": "query",
+          "name": "kind",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "http",
+              "mcp",
+              "search"
+            ]
+          }
+        }
+      ]
+    }
   }
 ]

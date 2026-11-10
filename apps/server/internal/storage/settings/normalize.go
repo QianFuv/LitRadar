@@ -72,6 +72,8 @@ func normalizeScalarSetting(definition *definition, value string) (string, error
 		return strings.TrimSpace(value), nil
 	case "Boolean":
 		return normalizeBoolean(definition.Field, value, definition.Default)
+	case "TelemetryRetentionDays":
+		return normalizeBoundedInteger(value, 3650, "Load telemetry retention days must be between 1 and 3650")
 	case "AuditRetentionDays":
 		return normalizeBoundedInteger(value, 3650, "Security audit retention days must be between 1 and 3650")
 	case "DeliveryWorkerConcurrency":

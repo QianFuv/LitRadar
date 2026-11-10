@@ -20,6 +20,7 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/favorites"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/query"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/weekly"
+	"github.com/QianFuv/LitRadar/apps/server/internal/telemetry"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -29,6 +30,7 @@ var declarations []byte
 
 // Services shares initialized repositories and the API storage admission limit.
 type Services struct {
+	Telemetry *telemetry.Collector
 	Storage   config.Config
 	Favorites *favorites.Repository
 	Pool      *executor.Pool
@@ -57,7 +59,12 @@ func NewServer(services Services) (*sdk.Server, error) {
 		if !knownTool(tool.Name) {
 			return nil, fmt.Errorf("unbound MCP tool %q", tool.Name)
 		}
-		server.AddTool(&sdk.Tool{Name: tool.Name, Description: tool.Description, InputSchema: tool.InputSchema}, func(ctx context.Context, request *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+		server.AddTool(&sdk.Tool{Name: tool.Name, Description: tool.Description, InputSchema: tool.InputSchema}, func(ctx context.Context, request *sdk.CallToolRequest) (result *sdk.CallToolResult, failure error) {
+			started := time.Now()
+			defer func() {
+				services.Telemetry.Mcp(tool.Name, failure != nil || result != nil && result.IsError, time.Since(started))
+			}()
+			ctx = telemetry.WithCollector(ctx, services.Telemetry)
 			input, err := decodeInput(request.Params.Arguments, schema)
 			if err != nil {
 				return toolError("failed to deserialize parameters: " + err.Error()), nil

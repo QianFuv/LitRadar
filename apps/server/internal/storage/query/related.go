@@ -3,14 +3,17 @@ package query
 import (
 	"context"
 	"database/sql"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/storage"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/search"
+	"github.com/QianFuv/LitRadar/apps/server/internal/telemetry"
 )
 
 // RelatedArticleMaxLimit bounds related-article responses.
@@ -276,7 +279,7 @@ func relatedTitleKey(title string) string {
 
 // relatedArticleIds ranks matching rowids on a connection that is released before enrichment,
 // because index databases are opened with a single connection.
-func relatedArticleIds(ctx context.Context, database *sql.DB, filename string, title string, id int64, limit int64) ([]int64, error) {
+func relatedArticleIds(ctx context.Context, database *sql.DB, filename string, title string, id int64, limit int64) (result []int64, failure error) {
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		return nil, err
@@ -285,6 +288,16 @@ func relatedArticleIds(ctx context.Context, database *sql.DB, filename string, t
 	terms := relatedTerms(title)
 	if len(terms) == 0 {
 		return []int64{}, nil
+	}
+	if collector := telemetry.FromContext(ctx); collector != nil {
+		started := time.Now()
+		shape := telemetry.SearchShape("related", "advanced", filepath.Base(filename), relatedAny(terms))
+		shape.HitCountBasis = "candidates"
+		defer func() {
+			shape.IsError = failure != nil
+			shape.Hits = telemetry.Magnitude(int64(len(result)))
+			collector.Record(time.Now(), shape, time.Since(started))
+		}()
 	}
 	costs := make([]int, len(terms))
 	for index, term := range terms {

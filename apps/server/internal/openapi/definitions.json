@@ -4563,6 +4563,231 @@
             "type": "string"
           }
         }
+      },
+      "TelemetrySeries": {
+        "type": "object",
+        "required": [
+          "kind",
+          "name",
+          "is_error",
+          "uses_prefix",
+          "uses_boolean",
+          "calls",
+          "errors",
+          "error_rate",
+          "p50_ms",
+          "p95_ms",
+          "p99_ms"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "http",
+              "mcp",
+              "search"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string"
+          },
+          "status_class": {
+            "type": "string",
+            "enum": [
+              "2xx",
+              "3xx",
+              "4xx",
+              "5xx"
+            ]
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "simple",
+              "advanced"
+            ]
+          },
+          "database": {
+            "type": "string"
+          },
+          "term_count": {
+            "type": "string",
+            "enum": [
+              "0",
+              "1",
+              "2-4",
+              "5-9",
+              "10+"
+            ]
+          },
+          "hits": {
+            "type": "string",
+            "enum": [
+              "0",
+              "1-9",
+              "10-99",
+              "100-999",
+              "1000+"
+            ]
+          },
+          "is_error": {
+            "type": "boolean"
+          },
+          "uses_prefix": {
+            "type": "boolean"
+          },
+          "uses_boolean": {
+            "type": "boolean"
+          },
+          "calls": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "errors": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "error_rate": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "p50_ms": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0
+          },
+          "p95_ms": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0
+          },
+          "p99_ms": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0
+          },
+          "hit_count_basis": {
+            "type": "string",
+            "enum": [
+              "total",
+              "returned",
+              "candidates"
+            ]
+          }
+        }
+      },
+      "TelemetryHour": {
+        "type": "object",
+        "required": [
+          "hour",
+          "kind",
+          "calls",
+          "errors"
+        ],
+        "properties": {
+          "hour": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "http",
+              "mcp",
+              "search"
+            ]
+          },
+          "calls": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "errors": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "TelemetrySearchShape": {
+        "type": "object",
+        "required": [
+          "feature",
+          "value",
+          "calls"
+        ],
+        "properties": {
+          "feature": {
+            "type": "string",
+            "enum": [
+              "endpoint",
+              "mode",
+              "database",
+              "term_count",
+              "uses_prefix",
+              "uses_boolean",
+              "hits",
+              "hit_count_basis"
+            ]
+          },
+          "value": {
+            "type": "string"
+          },
+          "calls": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "TelemetryResponse": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "from",
+          "to",
+          "series",
+          "hourly",
+          "search_shapes"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TelemetrySeries"
+            }
+          },
+          "hourly": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TelemetryHour"
+            }
+          },
+          "search_shapes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TelemetrySearchShape"
+            }
+          }
+        }
       }
     },
     "securitySchemes": {

@@ -204,6 +204,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/admin/telemetry': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Return anonymous hourly load and search-shape telemetry. */
+    get: operations['telemetry'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/admin/users': {
     parameters: {
       query?: never;
@@ -3546,6 +3563,73 @@ export interface components {
       /** @description Structured revocation failure detail. */
       detail: components['schemas']['SessionRevocationErrorDetail'];
     };
+    TelemetryHour: {
+      /** Format: int64 */
+      calls: number;
+      /** Format: int64 */
+      errors: number;
+      /** Format: date-time */
+      hour: string;
+      /** @enum {string} */
+      kind: 'http' | 'mcp' | 'search';
+    };
+    TelemetryResponse: {
+      enabled: boolean;
+      /** Format: date-time */
+      from: string;
+      hourly: components['schemas']['TelemetryHour'][];
+      search_shapes: components['schemas']['TelemetrySearchShape'][];
+      series: components['schemas']['TelemetrySeries'][];
+      /** Format: date-time */
+      to: string;
+    };
+    TelemetrySearchShape: {
+      /** Format: int64 */
+      calls: number;
+      /** @enum {string} */
+      feature:
+        | 'endpoint'
+        | 'mode'
+        | 'database'
+        | 'term_count'
+        | 'uses_prefix'
+        | 'uses_boolean'
+        | 'hits'
+        | 'hit_count_basis';
+      value: string;
+    };
+    TelemetrySeries: {
+      /** Format: int64 */
+      calls: number;
+      database?: string;
+      /** Format: double */
+      error_rate: number;
+      /** Format: int64 */
+      errors: number;
+      /** @enum {string} */
+      hit_count_basis?: 'total' | 'returned' | 'candidates';
+      /** @enum {string} */
+      hits?: '0' | '1-9' | '10-99' | '100-999' | '1000+';
+      is_error: boolean;
+      /** @enum {string} */
+      kind: 'http' | 'mcp' | 'search';
+      method?: string;
+      /** @enum {string} */
+      mode?: 'simple' | 'advanced';
+      name: string;
+      /** Format: double */
+      p50_ms: number;
+      /** Format: double */
+      p95_ms: number;
+      /** Format: double */
+      p99_ms: number;
+      /** @enum {string} */
+      status_class?: '2xx' | '3xx' | '4xx' | '5xx';
+      /** @enum {string} */
+      term_count?: '0' | '1' | '2-4' | '5-9' | '10+';
+      uses_boolean: boolean;
+      uses_prefix: boolean;
+    };
     /** @description Access token creation request. */
     TokenCreateRequest: {
       /** @description Token display name. */
@@ -4150,6 +4234,58 @@ export interface operations {
         content: {
           'application/json': components['schemas']['AdminStatsResponse'];
         };
+      };
+    };
+  };
+  telemetry: {
+    parameters: {
+      query?: {
+        kind?: 'http' | 'mcp' | 'search';
+        /** @description UTC hour-aligned window including the current partial hour. Default 24h. */
+        period?: '24h' | '7d' | '30d';
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Durable and pending load; approximate histogram upper-bound percentiles in milliseconds. HTTP errors include 4xx and 5xx. Search hits use total when available, otherwise returned page/candidate count. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TelemetryResponse'];
+        };
+      };
+      /** @description Invalid period or kind */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Authentication required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Administrator required */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Telemetry unavailable */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
     };
   };

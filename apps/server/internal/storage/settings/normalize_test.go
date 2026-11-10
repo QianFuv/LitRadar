@@ -7,7 +7,7 @@ import (
 )
 
 func TestRegistryDefaultsAndSecretFlags(t *testing.T) {
-	if len(definitions) != 25 {
+	if len(definitions) != 27 {
 		t.Fatal("managed setting inventory changed")
 	}
 	for _, definition := range definitions {

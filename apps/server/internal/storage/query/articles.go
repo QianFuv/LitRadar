@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
@@ -14,6 +16,7 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/search"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
+	"github.com/QianFuv/LitRadar/apps/server/internal/telemetry"
 	native "modernc.org/sqlite"
 )
 
@@ -192,7 +195,7 @@ func (filter *filter) articleCursor(cursor *string, direction string) error {
 }
 
 // ListArticles searches the dedicated projections and enriches only the selected bounded identifiers.
-func ListArticles(ctx context.Context, configuration config.Config, name *string, params ArticleListParams) (domain.Page[domain.Article], error) {
+func ListArticles(ctx context.Context, configuration config.Config, name *string, params ArticleListParams) (result domain.Page[domain.Article], failure error) {
 	empty := domain.Page[domain.Article]{}
 	if err := validatePagination(params.Limit, params.Offset); err != nil {
 		return empty, err
@@ -205,6 +208,25 @@ func ListArticles(ctx context.Context, configuration config.Config, name *string
 		return empty, err
 	}
 	defer database.Close()
+	if params.Query != nil && strings.TrimSpace(*params.Query) != "" {
+		if collector := telemetry.FromContext(ctx); collector != nil {
+			filename, resolveError := configuration.ResolveIndexDbPath(name)
+			if resolveError == nil {
+				started := time.Now()
+				shape := telemetry.SearchShape("articles", string(params.SearchMode), filepath.Base(filename), *params.Query)
+				defer func() {
+					shape.IsError = failure != nil
+					hits := int64(len(result.Items))
+					if result.Page.Total != nil {
+						hits = *result.Page.Total
+						shape.HitCountBasis = "total"
+					}
+					shape.Hits = telemetry.Magnitude(hits)
+					collector.Record(time.Now(), shape, time.Since(started))
+				}()
+			}
+		}
+	}
 	base, ratings, match, err := articleFilters(params)
 	if err != nil {
 		return empty, err
@@ -383,7 +405,7 @@ func applyArticleRatings(ctx context.Context, database *sql.DB, base *filter, ra
 }
 
 // emptyRatedArticlePage validates cursor before MATCH and constructs a successful empty result.
-func emptyRatedArticlePage(ctx context.Context, database *sql.DB, match string, shouldCount bool, params ArticleListParams) (domain.Page[domain.Article], error) {
+func emptyRatedArticlePage(ctx context.Context, database *sql.DB, match string, shouldCount bool, params ArticleListParams) (result domain.Page[domain.Article], failure error) {
 	empty := domain.Page[domain.Article]{}
 	var total *int64
 	if params.Cursor != nil {
@@ -447,7 +469,7 @@ func collectArticlePositions(ctx context.Context, database *sql.DB, base filter,
 }
 
 // selectArticlePage retains distinct rated-empty, counted and cursor-selection paths.
-func selectArticlePage(ctx context.Context, database *sql.DB, base, ratings filter, match, direction string, params ArticleListParams) (domain.Page[domain.Article], error) {
+func selectArticlePage(ctx context.Context, database *sql.DB, base, ratings filter, match, direction string, params ArticleListParams) (result domain.Page[domain.Article], failure error) {
 	empty := domain.Page[domain.Article]{}
 	shouldCount := shouldCountArticles(params)
 	hasEligible, err := applyArticleRatings(ctx, database, &base, ratings)

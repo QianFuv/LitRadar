@@ -25,6 +25,7 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/favorites"
 	migration "github.com/QianFuv/LitRadar/apps/server/internal/storage/migrations/auth"
+	"github.com/QianFuv/LitRadar/apps/server/internal/telemetry"
 )
 
 type wireClient struct {
@@ -107,6 +108,7 @@ func toolText(t *testing.T, result map[string]any) string {
 	return entry["text"].(string)
 }
 
+// TestAuthenticatedToolsEnforceCurrentIdentity checks authenticated tool behavior and load outcomes.
 func TestAuthenticatedToolsEnforceCurrentIdentity(t *testing.T) {
 	ctx := context.Background()
 	configuration := config.FromProjectRoot(t.TempDir())
@@ -123,7 +125,8 @@ func TestAuthenticatedToolsEnforceCurrentIdentity(t *testing.T) {
 	folders := favorites.New(repository)
 	adminFolder, readerFolder := authenticatedToolFolders(t, ctx, folders, actors)
 	pool := executor.New(8, 30*time.Second)
-	server, err := mcp.NewServer(mcp.Services{configuration, folders, pool})
+	collector := telemetry.New()
+	server, err := mcp.NewServer(mcp.Services{Storage: configuration, Favorites: folders, Pool: pool, Telemetry: collector})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,6 +142,19 @@ func TestAuthenticatedToolsEnforceCurrentIdentity(t *testing.T) {
 	assertDatabaseToolBasenames(t, &client, configuration, actors.adminToken.Token)
 	assertRevokedToolCredential(t, ctx, &client, service, actors.readerToken.Token)
 	assertClosedToolAuthentication(t, &client, pool, actors.adminToken.Token)
+	now := time.Now().UTC().Truncate(time.Hour)
+	report, err := collector.Read(ctx, now, now.Add(time.Hour), "mcp")
+	if err != nil || len(report.Series) == 0 {
+		t.Fatal(report, err)
+	}
+	calls, failures := uint64(0), uint64(0)
+	for _, series := range report.Series {
+		calls += series.Calls
+		failures += series.Errors
+	}
+	if failures == 0 || calls <= failures {
+		t.Fatal("MCP successes and failures not observed", report)
+	}
 }
 
 // authenticatedActors shares credentials across phases of one authenticated MCP session.

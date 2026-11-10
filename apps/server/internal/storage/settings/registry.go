@@ -9,6 +9,8 @@ type definition struct {
 }
 
 var definitions = []definition{
+	{Field: "telemetry_enabled", Label: "Load telemetry enabled", Description: "Collect anonymous HTTP, MCP and search-shape load in data/telemetry.sqlite. Changes apply after service restart.", Group: "observability", Control: "boolean", ApplyMode: "restart_required", InputType: "boolean", AllowedValues: []string{"true", "false"}, Default: "true", Parser: "Boolean"},
+	{Field: "telemetry_retention_days", Label: "Load telemetry retention days", Description: "Retain anonymous hourly load for 1 to 3650 days. Changes apply after service restart.", Group: "observability", Control: "text", ApplyMode: "restart_required", InputType: "number", AllowedValues: []string{}, Default: "90", Parser: "TelemetryRetentionDays"},
 	{Field: "oidc_issuer_url", Label: "OIDC issuer URL", Description: "OpenID Connect issuer; HTTPS required outside development.", Group: "single_sign_on", Control: "text", ApplyMode: "next_request", InputType: "url", AllowedValues: []string{}, Parser: "OidcUrl"},
 	{Field: "oidc_client_id", Label: "OIDC client ID", Description: "Confidential OpenID Connect client identifier.", Group: "single_sign_on", Control: "text", ApplyMode: "next_request", InputType: "text", AllowedValues: []string{}, Parser: "TrimmedText"},
 	{Field: "oidc_client_secret", Label: "OIDC client secret", Description: "Confidential OpenID Connect client secret.", Group: "single_sign_on", Control: "text", ApplyMode: "next_request", InputType: "password", IsSecret: true, AllowedValues: []string{}, Parser: "TrimmedText"},

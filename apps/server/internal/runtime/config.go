@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"strconv"
 	"strings"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/api"
@@ -14,6 +15,8 @@ import (
 
 // Config carries explicit launch settings separately from persisted server policy.
 type Config struct {
+	IsTelemetryEnabled                        bool
+	TelemetryRetentionDays                    int
 	Storage                                   config.Config
 	Host                                      string
 	Port                                      uint16
@@ -27,7 +30,7 @@ type Config struct {
 func NewConfig(projectRoot, host string, port uint16, secretKeyFile string) (Config, error) {
 	configuration := Config{Storage: config.FromProjectRoot(projectRoot), Host: host, Port: port, SecretKeyFile: secretKeyFile, SchedulerIntervalSeconds: 30}
 	values := []settings.Value{}
-	for _, field := range []string{"cors_allowed_origins", "mcp_allowed_hosts", "mcp_allowed_origins", "secure_cookies", "trusted_proxy_cidrs", "auth_rate_limit_policy"} {
+	for _, field := range []string{"cors_allowed_origins", "mcp_allowed_hosts", "mcp_allowed_origins", "secure_cookies", "trusted_proxy_cidrs", "auth_rate_limit_policy", "telemetry_enabled", "telemetry_retention_days"} {
 		value, _ := settings.Default(field)
 		values = append(values, settings.Value{Field: field, Value: value})
 	}
@@ -84,6 +87,10 @@ func commaValues(value string) []string {
 // applyCanonicalRuntimeSetting applies one policy field after its known-setting normalization.
 func (configuration *Config) applyCanonicalRuntimeSetting(field, canonical string) error {
 	switch field {
+	case "telemetry_enabled":
+		configuration.IsTelemetryEnabled = canonical == "true"
+	case "telemetry_retention_days":
+		configuration.TelemetryRetentionDays, _ = strconv.Atoi(canonical)
 	case "cors_allowed_origins":
 		configuration.ApiOptions.CorsOrigins = commaValues(canonical)
 	case "mcp_allowed_hosts":

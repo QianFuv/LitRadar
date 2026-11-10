@@ -24,11 +24,13 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/secrets"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/settings"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/weekly"
+	"github.com/QianFuv/LitRadar/apps/server/internal/telemetry"
 )
 
 // Services borrows migrated repositories, the deployment key and independently bounded executors.
 // The host owns their lifetime and drains all outstanding work before closing them.
 type Services struct {
+	Telemetry                          *telemetry.Collector
 	Storage                            config.Config
 	Auth                               *authstorage.Repository
 	Cfp                                *cfp.Repository
@@ -52,10 +54,11 @@ type Options struct {
 
 // Handler serves the complete REST and stateful MCP surface using borrowed services.
 type Handler struct {
-	routes   []compiledRoute
-	document []byte
-	mcp      *mcpcompat.Handler
-	options  Options
+	telemetry *telemetry.Collector
+	routes    []compiledRoute
+	document  []byte
+	mcp       *mcpcompat.Handler
+	options   Options
 }
 
 // New composes concrete operations and verifies their OpenAPI bindings before serving.
@@ -85,7 +88,7 @@ func New(services Services, options Options) (*Handler, error) {
 		(&favoriteHandlers{favoriteRepository, services.Storage, authenticator, services.StoragePool}).graphRoutes(),
 		(&publicHandlers{services.Storage, services.StoragePool, services.Scheduler}).routes(),
 		(&cnkiHandlers{sessions: sessions, authenticator: authenticator, pool: services.StoragePool, upstream: services.UpstreamPool, newClient: liveCnkiClient(options.ProviderProxy.ForProvider(sources.ZjlibProviderName))}).routes(),
-		(&adminHandlers{auth: authHandlers, storage: services.Storage, scheduler: services.Scheduler, settings: settingsRepository}).routes(),
+		(&adminHandlers{auth: authHandlers, storage: services.Storage, scheduler: services.Scheduler, settings: settingsRepository, telemetry: services.Telemetry}).routes(),
 		(&cfpHandlers{services.Storage, services.Cfp, services.Codec, authenticator, services.StoragePool}).routes(),
 		(&articleHandlers{storage: services.Storage, authenticator: authenticator, settings: settingsRepository, sessions: sessions, providers: providers, pool: services.StoragePool, upstream: services.UpstreamPool}).routes(),
 		(&trackingHandlers{storage: services.Storage, repository: services.Delivery, favorites: favoriteRepository, settings: settingsRepository, codec: services.Codec, authenticator: authenticator, pool: services.StoragePool}).routes(),
@@ -102,7 +105,7 @@ func New(services Services, options Options) (*Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	server, err := mcp.NewServer(mcp.Services{Storage: services.Storage, Favorites: favoriteRepository, Pool: services.StoragePool})
+	server, err := mcp.NewServer(mcp.Services{Storage: services.Storage, Favorites: favoriteRepository, Pool: services.StoragePool, Telemetry: services.Telemetry})
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +114,7 @@ func New(services Services, options Options) (*Handler, error) {
 	options.McpHosts = slices.Clone(options.McpHosts)
 	options.McpOrigins = slices.Clone(options.McpOrigins)
 	handler := mcpcompat.NewWithPolicy(server, authenticator.McpAuthorize, mcpcompat.HostOriginPolicy{AllowedHosts: options.McpHosts, AllowedOrigins: options.McpOrigins})
-	return &Handler{routes: compileRoutes(routes), document: document, mcp: handler, options: options}, nil
+	return &Handler{telemetry: services.Telemetry, routes: compileRoutes(routes), document: document, mcp: handler, options: options}, nil
 }
 
 // validateApiServices checks borrowed resources before validating router options.

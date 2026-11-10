@@ -43,14 +43,20 @@ func Serve(ctx context.Context, configuration Config) (result error) {
 	return prepared.Run(ctx)
 }
 
-// Run serves the prepared listener and joins all four components before releasing resources.
+// Run serves the prepared listener and joins all components before releasing resources.
 func (prepared *Prepared) Run(ctx context.Context) (result error) {
 	defer func() { result = errors.Join(result, prepared.Close()) }()
 	if prepared.listener == nil {
 		return errors.New("service listener is not prepared")
 	}
-	slog.InfoContext(ctx, "service.ready", "event", "service.ready", "component", "runtime", "component_count", 4)
-	return coordinate(ctx, []component{{"api", prepared.runHttp}, {"scheduler", prepared.runScheduler}, {"audit_retention", prepared.runAuditRetention}, {"delivery_dispatcher", prepared.runManualDispatcher}})
+	slog.InfoContext(ctx, "service.ready", "event", "service.ready", "component", "runtime", "component_count", 5)
+	return coordinate(ctx, []component{{"telemetry", func(ctx context.Context) error {
+		prepared.services.Telemetry.Run(ctx)
+		if prepared.services.Telemetry == nil {
+			<-ctx.Done()
+		}
+		return nil
+	}}, {"api", prepared.runHttp}, {"scheduler", prepared.runScheduler}, {"audit_retention", prepared.runAuditRetention}, {"delivery_dispatcher", prepared.runManualDispatcher}})
 }
 
 func coordinate(ctx context.Context, components []component) error {

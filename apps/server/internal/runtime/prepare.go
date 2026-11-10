@@ -23,6 +23,7 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/scheduler"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/secrets"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/settings"
+	"github.com/QianFuv/LitRadar/apps/server/internal/telemetry"
 )
 
 // Prepared owns the listener, API resources and deployment key until all service work drains.
@@ -95,6 +96,13 @@ func prepareResources(ctx context.Context, configuration Config) (_ *Prepared, e
 	if err != nil {
 		return nil, err
 	}
+	if configuration.IsTelemetryEnabled {
+		prepared.services.Telemetry, err = telemetry.Open(ctx, configuration.Storage.TelemetryDbPath(), configuration.TelemetryRetentionDays)
+		if err != nil {
+			slog.WarnContext(ctx, "telemetry.open.failed", "component", "telemetry")
+			err = nil
+		}
+	}
 	prepared.services.StoragePool = executor.New(8, 30*time.Second)
 	prepared.services.UpstreamPool = executor.New(4, 30*time.Second)
 	prepared.services.KdfPool = executor.New(2, 30*time.Second)
@@ -144,6 +152,7 @@ func (prepared *Prepared) Close() error {
 		if prepared.services.Auth != nil {
 			prepared.closeError = errors.Join(prepared.closeError, prepared.services.Auth.Close())
 		}
+		prepared.services.Telemetry.Close()
 		if prepared.services.Codec != nil {
 			prepared.services.Codec.Close()
 		}
