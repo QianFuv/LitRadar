@@ -12,9 +12,13 @@ import (
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/auth"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/favoritesdb"
+	dbtypes "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/types"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 )
+
+var queries favoritesdb.Queries
 
 // ErrDuplicateFolder preserves the uniqueness failure presented to folder owners.
 var ErrDuplicateFolder = errors.New("Folder name already exists")
@@ -118,15 +122,6 @@ func constraint(err error) error {
 
 type scanner interface{ Scan(...any) error }
 
-func scanFolder(row scanner) (Folder, error) {
-	var id, tracking, count storage.Integer
-	var name storage.Text
-	var created storage.Number
-	if err := row.Scan(&id, &name, &tracking, &created, &count); err != nil {
-		return Folder{}, err
-	}
-	return Folder{int64(id), string(name), tracking != 0, int64(count), float64(created)}, nil
-}
 func scanFavorite(row scanner) (Favorite, error) {
 	var id, folder, article storage.Integer
 	var name, note storage.Text
@@ -137,8 +132,7 @@ func scanFavorite(row scanner) (Favorite, error) {
 	return Favorite{int64(id), int64(folder), Reference{identity.Id(article), string(name)}, string(note), float64(created)}, nil
 }
 func ensureFolder(ctx context.Context, connection *sql.Conn, owner identity.Id, folder int64, missing error) error {
-	var id storage.Integer
-	err := connection.QueryRowContext(ctx, "SELECT id FROM folders WHERE id=? AND user_id=?", folder, owner).Scan(&id)
+	_, err := queries.FolderID(ctx, connection, favoritesdb.FolderIDParams{ID: storage.Integer(folder), UserID: storage.Integer(owner)})
 	if errors.Is(err, sql.ErrNoRows) {
 		return missing
 	}
@@ -155,11 +149,11 @@ func (repository *Repository) CreateFolder(ctx context.Context, owner identity.I
 	err = repository.auth.Immediate(ctx, false, func(connection *sql.Conn) error {
 		now := nowSeconds()
 		if isTracking {
-			if _, err := connection.ExecContext(ctx, "UPDATE folders SET is_tracking=0,updated_at=? WHERE user_id=?", now, owner); err != nil {
+			if _, err := queries.ClearTracking(ctx, connection, favoritesdb.ClearTrackingParams{UpdatedAt: storage.Number(now), UserID: storage.Integer(owner)}); err != nil {
 				return err
 			}
 		}
-		result, err := connection.ExecContext(ctx, "INSERT INTO folders(user_id,name,is_tracking,created_at,updated_at) VALUES(?,?,?,?,?)", owner, name, isTracking, now, now)
+		result, err := queries.CreateFolder(ctx, connection, favoritesdb.CreateFolderParams{UserID: storage.Integer(owner), Name: storage.Text(name), IsTracking: storage.Integer(dbtypes.Boolean(isTracking)), CreatedAt: storage.Number(now), UpdatedAt: storage.Number(now)})
 		if err != nil {
 			return constraint(err)
 		}
@@ -177,19 +171,14 @@ func (repository *Repository) CreateFolder(ctx context.Context, owner identity.I
 func (repository *Repository) ListFolders(ctx context.Context, owner identity.Id) ([]Folder, error) {
 	result := []Folder{}
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
-		rows, err := connection.QueryContext(ctx, "SELECT f.id,f.name,f.is_tracking,f.created_at,COUNT(fav.id) FROM folders f LEFT JOIN favorites fav ON fav.folder_id=f.id WHERE f.user_id=? GROUP BY f.id ORDER BY f.created_at", owner)
+		rows, err := queries.Folders(ctx, connection, favoritesdb.FoldersParams{UserID: storage.Integer(owner)})
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-		for rows.Next() {
-			item, err := scanFolder(rows)
-			if err != nil {
-				return err
-			}
-			result = append(result, item)
+		for _, row := range rows {
+			result = append(result, Folder{int64(row.ID), string(row.Name), row.IsTracking != 0, row.Count, float64(row.CreatedAt)})
 		}
-		return rows.Err()
+		return nil
 	})
 	return result, err
 }
@@ -202,7 +191,7 @@ func (repository *Repository) RenameFolder(ctx context.Context, owner identity.I
 	}
 	var changed bool
 	err = repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
-		result, err := connection.ExecContext(ctx, "UPDATE folders SET name=?,updated_at=? WHERE id=? AND user_id=?", name, nowSeconds(), folder, owner)
+		result, err := queries.RenameFolder(ctx, connection, favoritesdb.RenameFolderParams{Name: storage.Text(name), UpdatedAt: storage.Number(nowSeconds()), ID: storage.Integer(folder), UserID: storage.Integer(owner)})
 		if err != nil {
 			return constraint(err)
 		}
@@ -217,7 +206,8 @@ func (repository *Repository) RenameFolder(ctx context.Context, owner identity.I
 func (repository *Repository) TrackingFolder(ctx context.Context, owner identity.Id) (*Folder, error) {
 	var result *Folder
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
-		folder, err := scanFolder(connection.QueryRowContext(ctx, "SELECT id,name,is_tracking,created_at,0 FROM folders WHERE user_id=? AND is_tracking=1 LIMIT 1", owner))
+		row, err := queries.TrackingFolder(ctx, connection, favoritesdb.TrackingFolderParams{UserID: storage.Integer(owner)})
+		folder := Folder{int64(row.ID), string(row.Name), row.IsTracking != 0, row.Column5, float64(row.CreatedAt)}
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
@@ -241,10 +231,10 @@ func (repository *Repository) SetTrackingFolder(ctx context.Context, owner ident
 			return err
 		}
 		now := nowSeconds()
-		if _, err := connection.ExecContext(ctx, "UPDATE folders SET is_tracking=0,updated_at=? WHERE user_id=?", now, owner); err != nil {
+		if _, err := queries.ClearTracking(ctx, connection, favoritesdb.ClearTrackingParams{UpdatedAt: storage.Number(now), UserID: storage.Integer(owner)}); err != nil {
 			return err
 		}
-		result, err := connection.ExecContext(ctx, "UPDATE folders SET is_tracking=1,updated_at=? WHERE id=? AND user_id=?", now, folder, owner)
+		result, err := queries.SetTrackingFolder(ctx, connection, favoritesdb.SetTrackingFolderParams{UpdatedAt: storage.Number(now), ID: storage.Integer(folder), UserID: storage.Integer(owner)})
 		if err != nil {
 			return err
 		}
@@ -272,7 +262,14 @@ func (repository *Repository) DeleteFolder(ctx context.Context, owner identity.I
 	changed := false
 	err := repository.auth.Immediate(ctx, false, func(connection *sql.Conn) error {
 		var tracking storage.Integer
-		err := connection.QueryRowContext(ctx, "SELECT is_tracking FROM folders WHERE id=? AND user_id=?", folder, owner).Scan(&tracking)
+		err := func() error {
+			queryResult, err := queries.FolderTracking(ctx, connection, favoritesdb.FolderTrackingParams{ID: storage.Integer(folder), UserID: storage.Integer(owner)})
+			if err != nil {
+				return err
+			}
+			tracking = storage.Integer(queryResult)
+			return nil
+		}()
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
@@ -282,7 +279,16 @@ func (repository *Repository) DeleteFolder(ctx context.Context, owner identity.I
 		if tracking != 0 {
 			var method storage.Text
 			var token, sync storage.Integer
-			err := connection.QueryRowContext(ctx, "SELECT delivery_method,pushplus_token<>'',sync_to_tracking_folder<>0 FROM notification_settings WHERE user_id=?", owner).Scan(&method, &token, &sync)
+			err := func() error {
+				queryResult, err := queries.NotificationDependency(ctx, connection, favoritesdb.NotificationDependencyParams{UserID: storage.Integer(owner)})
+				if err != nil {
+					return err
+				}
+				method = storage.Text(queryResult.DeliveryMethod)
+				token = storage.Integer(dbtypes.Boolean(queryResult.Column2))
+				sync = storage.Integer(dbtypes.Boolean(queryResult.Column3))
+				return nil
+			}()
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
@@ -300,7 +306,7 @@ func (repository *Repository) DeleteFolder(ctx context.Context, owner identity.I
 				}
 			}
 		}
-		result, err := connection.ExecContext(ctx, "DELETE FROM folders WHERE id=? AND user_id=?", folder, owner)
+		result, err := queries.DeleteFolder(ctx, connection, favoritesdb.DeleteFolderParams{ID: storage.Integer(folder), UserID: storage.Integer(owner)})
 		if err != nil {
 			return err
 		}
@@ -328,9 +334,9 @@ func (repository *Repository) AddFavorite(ctx context.Context, owner identity.Id
 			return err
 		}
 		var err error
-		favorite, err = scanFavorite(connection.QueryRowContext(ctx, "INSERT INTO favorites(user_id,folder_id,article_id,db_name,note,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(user_id,folder_id,article_id,db_name) DO NOTHING RETURNING id,folder_id,article_id,db_name,note,created_at", owner, folder, value.ArticleId, value.DbName, value.Note, nowSeconds()))
+		favorite, err = favoriteInsert(ctx, connection, owner, folder, value)
 		if errors.Is(err, sql.ErrNoRows) {
-			favorite, err = scanFavorite(connection.QueryRowContext(ctx, "SELECT id,folder_id,article_id,db_name,note,created_at FROM favorites WHERE user_id=? AND folder_id=? AND article_id=? AND db_name=?", owner, folder, value.ArticleId, value.DbName))
+			favorite, err = favoriteLookup(ctx, connection, owner, folder, value.Reference)
 		}
 		return err
 	})
@@ -350,7 +356,7 @@ func (repository *Repository) RemoveFavorite(ctx context.Context, owner identity
 	}
 	changed := false
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
-		result, err := connection.ExecContext(ctx, "DELETE FROM favorites WHERE user_id=? AND folder_id=? AND article_id=? AND db_name=?", owner, folder, value.ArticleId, value.DbName)
+		result, err := queries.RemoveFavorite(ctx, connection, favoritesdb.RemoveFavoriteParams{UserID: storage.Integer(owner), FolderID: storage.Integer(folder), ArticleID: storage.Integer(value.ArticleId), DBName: storage.Text(value.DbName)})
 		if err != nil {
 			return err
 		}
@@ -410,4 +416,18 @@ func (repository *Repository) CountFavorites(ctx context.Context, owner identity
 		return connection.QueryRowContext(ctx, statement, values...).Scan(&count)
 	})
 	return int64(count), err
+}
+
+func favoriteInsert(ctx context.Context, connection *sql.Conn, owner identity.Id, folder int64, item Add) (Favorite, error) {
+	row, err := queries.AddFavorite(ctx, connection, favoritesdb.AddFavoriteParams{UserID: storage.Integer(owner), FolderID: storage.Integer(folder), ArticleID: storage.Integer(item.ArticleId), DBName: storage.Text(item.DbName), Note: storage.Text(item.Note), CreatedAt: storage.Number(nowSeconds())})
+	return decodeFavorite(favoritesdb.FavoriteRow(row)), err
+}
+
+func favoriteLookup(ctx context.Context, connection *sql.Conn, owner identity.Id, folder int64, item Reference) (Favorite, error) {
+	row, err := queries.Favorite(ctx, connection, favoritesdb.FavoriteParams{UserID: storage.Integer(owner), FolderID: storage.Integer(folder), ArticleID: storage.Integer(item.ArticleId), DBName: storage.Text(item.DbName)})
+	return decodeFavorite(row), err
+}
+
+func decodeFavorite(row favoritesdb.FavoriteRow) Favorite {
+	return Favorite{int64(row.ID), int64(row.FolderID), Reference{identity.Id(row.ArticleID), string(row.DBName)}, string(row.Note), float64(row.CreatedAt)}
 }

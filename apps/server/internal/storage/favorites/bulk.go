@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/favoritesdb"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
@@ -46,7 +47,7 @@ func (repository *Repository) BulkAdd(ctx context.Context, owner identity.Id, fo
 		if err := ensureFolder(ctx, connection, owner, folder, ErrFolderNotFound); err != nil {
 			return err
 		}
-		statement, err := connection.PrepareContext(ctx, "INSERT OR IGNORE INTO favorites(user_id,folder_id,article_id,db_name,note,created_at) VALUES(?,?,?,?,?,?)")
+		statement, err := connection.PrepareContext(ctx, favoritesdb.BulkAdd)
 		if err != nil {
 			return err
 		}
@@ -93,7 +94,7 @@ func (repository *Repository) BulkRemove(ctx context.Context, owner identity.Id,
 		if err := ensureFolder(ctx, connection, owner, folder, ErrFolderNotFound); err != nil {
 			return err
 		}
-		statement, err := connection.PrepareContext(ctx, "DELETE FROM favorites WHERE user_id=? AND folder_id=? AND article_id=? AND db_name=?")
+		statement, err := connection.PrepareContext(ctx, favoritesdb.BulkRemove)
 		if err != nil {
 			return err
 		}
@@ -148,7 +149,7 @@ func (repository *Repository) BulkMove(ctx context.Context, owner identity.Id, s
 		if err := ensureFolder(ctx, connection, owner, target, ErrTargetFolderNotFound); err != nil {
 			return err
 		}
-		insert, err := connection.PrepareContext(ctx, "INSERT OR IGNORE INTO favorites(user_id,folder_id,article_id,db_name,note,created_at) SELECT user_id,?,article_id,db_name,note,? FROM favorites WHERE user_id=? AND folder_id=? AND article_id=? AND db_name=?")
+		insert, err := connection.PrepareContext(ctx, favoritesdb.BulkMove)
 		if err != nil {
 			return err
 		}
@@ -160,10 +161,17 @@ func (repository *Repository) BulkMove(ctx context.Context, owner identity.Id, s
 			}
 		}
 		var before storage.Integer
-		if err := connection.QueryRowContext(ctx, "SELECT total_changes()").Scan(&before); err != nil {
+		if err := func() error {
+			queryResult, err := queries.TotalChanges(ctx, connection)
+			if err != nil {
+				return err
+			}
+			before = storage.Integer(queryResult)
+			return nil
+		}(); err != nil {
 			return err
 		}
-		remove, err := connection.PrepareContext(ctx, "DELETE FROM favorites WHERE user_id=? AND folder_id=? AND article_id=? AND db_name=?")
+		remove, err := connection.PrepareContext(ctx, favoritesdb.BulkRemove)
 		if err != nil {
 			return err
 		}
@@ -173,7 +181,14 @@ func (repository *Repository) BulkMove(ctx context.Context, owner identity.Id, s
 				return err
 			}
 		}
-		return connection.QueryRowContext(ctx, "SELECT total_changes()-?", before).Scan(&count)
+		return func() error {
+			queryResult, err := queries.MovedCount(ctx, connection, favoritesdb.MovedCountParams{Column1: before})
+			if err != nil {
+				return err
+			}
+			count = storage.Integer(queryResult)
+			return nil
+		}()
 	})
 	if err != nil {
 		return 0, err
@@ -200,20 +215,14 @@ func (repository *Repository) IsFavorited(ctx context.Context, owner identity.Id
 	}
 	result := []Membership{}
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
-		rows, err := connection.QueryContext(ctx, "SELECT fav.folder_id,f.name FROM favorites fav JOIN folders f ON fav.folder_id=f.id WHERE fav.user_id=? AND fav.article_id=? AND fav.db_name=?", owner, item.ArticleId, item.DbName)
+		rows, err := queries.Memberships(ctx, connection, favoritesdb.MembershipsParams{UserID: storage.Integer(owner), ArticleID: storage.Integer(item.ArticleId), DBName: storage.Text(item.DbName)})
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-		for rows.Next() {
-			var id storage.Integer
-			var name storage.Text
-			if err := rows.Scan(&id, &name); err != nil {
-				return err
-			}
-			result = append(result, Membership{int64(id), string(name)})
+		for _, row := range rows {
+			result = append(result, Membership{int64(row.FolderID), string(row.Name)})
 		}
-		return rows.Err()
+		return nil
 	})
 	return result, err
 }
