@@ -2,7 +2,7 @@
  * Generated API value types and explicit sparse metadata accepted by the browser UI.
  */
 
-import type { components } from '@/lib/generated/api-schema';
+import type { components, operations } from '@/lib/generated/api-schema';
 
 type ApiSchemas = components['schemas'];
 
@@ -106,3 +106,12 @@ export type AnnouncementCreate = Required<Omit<ApiSchemas['AnnouncementCreate'],
   priority: AnnouncementPriority;
 };
 export type AnnouncementUpdate = Partial<AnnouncementCreate>;
+
+type TelemetryQuery = NonNullable<operations['telemetry']['parameters']['query']>;
+
+export type TelemetryResponse = ApiSchemas['TelemetryResponse'];
+export type TelemetrySeries = ApiSchemas['TelemetrySeries'];
+export type TelemetryHour = ApiSchemas['TelemetryHour'];
+export type TelemetrySearchShape = ApiSchemas['TelemetrySearchShape'];
+export type TelemetryPeriod = NonNullable<TelemetryQuery['period']>;
+export type TelemetryKind = NonNullable<TelemetryQuery['kind']>;

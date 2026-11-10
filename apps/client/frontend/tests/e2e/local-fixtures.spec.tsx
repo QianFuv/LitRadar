@@ -500,6 +500,33 @@ async function serveAdministratorApi(route: Route): Promise<void> {
     await fulfillJson(route, []);
     return;
   }
+  if (pathname === '/api/admin/telemetry') {
+    await fulfillJson(route, {
+      enabled: true,
+      from: '2026-11-09T12:00:00Z',
+      to: '2026-11-10T12:00:00Z',
+      series: [
+        {
+          kind: 'http',
+          name: '/api/articles',
+          method: 'GET',
+          status_class: '2xx',
+          is_error: false,
+          uses_prefix: false,
+          uses_boolean: false,
+          calls: 12,
+          errors: 0,
+          error_rate: 0,
+          p50_ms: 4.096,
+          p95_ms: 8.192,
+          p99_ms: 16.384,
+        },
+      ],
+      hourly: [{ hour: '2026-11-10T11:00:00Z', kind: 'http', calls: 12, errors: 0 }],
+      search_shapes: [],
+    });
+    return;
+  }
   if (pathname === '/api/admin/provider-catalog') {
     await fulfillJson(route, { catalogs: [], providers: [] });
     return;
@@ -810,8 +837,14 @@ async function verifiesAdministratorCenter(page: Page): Promise<void> {
   await expect(page.getByRole('heading', { name: '概览', exact: true })).toBeVisible();
   await expect(adminDialog.locator('[data-motion-section-header="overview"]')).toBeVisible();
   const desktopCategories = adminDialog.getByRole('navigation', { name: '管理分类' });
-  await expect(desktopCategories.getByRole('button')).toHaveCount(6);
+  await expect(desktopCategories.getByRole('button')).toHaveCount(7);
   await page.screenshot({ path: '../../../output/ui/admin-center-desktop.png', fullPage: true });
+
+  await desktopCategories.getByRole('button', { name: '负载' }).click();
+  await expect(page).toHaveURL('/?q=graph&admin=load');
+  await expect(adminDialog.getByRole('table', { name: /调用排行/ })).toContainText('/api/articles');
+  await expect(adminDialog.locator('[data-telemetry-trend="http"]')).toBeVisible();
+  await page.screenshot({ path: '../../../output/ui/admin-load-desktop.png', fullPage: true });
 
   await desktopCategories.getByRole('button', { name: '用户' }).click();
   await expect(page).toHaveURL('/?q=graph&admin=users');

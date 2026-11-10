@@ -6,6 +6,7 @@ import {
   BellRing,
   Clock3,
   Gift,
+  Layers,
   ShieldCheck,
   SlidersVertical,
   Users,
@@ -15,6 +16,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { AnnouncementsCard } from '@/components/admin/announcements-card';
 import { AdminInviteCodesCard } from '@/components/admin/invite-codes-card';
+import { LoadTelemetryCard } from '@/components/admin/load-telemetry-card';
 import { AdminOverviewCard } from '@/components/admin/overview-card';
 import { RuntimeSettingsCard } from '@/components/admin/runtime-settings-card';
 import { ScheduledTasksCard } from '@/components/admin/scheduled-tasks-card';
@@ -47,6 +49,12 @@ const ADMIN_SECTIONS = [
     icon: ShieldCheck,
     id: 'overview',
     label: '概览',
+  },
+  {
+    description: '接口负载、延迟与检索形态',
+    icon: Layers,
+    id: 'load',
+    label: '负载',
   },
   {
     description: '账号、权限与密码维护',
@@ -203,10 +211,10 @@ export function AdminCenterDialog() {
       activeSection={activeSection}
       centerIcon={ShieldCheck}
       contentWidth="wide"
-      centerSubtitle="用户、邀请、运行配置、计划任务与公告"
+      centerSubtitle="负载、用户、邀请、运行配置、计划任务与公告"
       centerTitle="管理面板"
       contentLabelSuffix="管理内容"
-      dialogDescription="在一个弹窗中管理系统概览、用户、邀请码、运行配置、计划任务和公告。"
+      dialogDescription="在一个弹窗中管理系统概览、负载统计、用户、邀请码、运行配置、计划任务和公告。"
       navigationLabel="管理分类"
       open={isDialogOpen}
       onOpenChange={(open) => {
@@ -226,6 +234,9 @@ export function AdminCenterDialog() {
     >
       <AdminPanel isActive={activeSection === 'overview'} label="概览面板">
         <AdminOverviewCard isEnabled />
+      </AdminPanel>
+      <AdminPanel isActive={activeSection === 'load'} label="负载面板">
+        <LoadTelemetryCard isEnabled />
       </AdminPanel>
       <AdminPanel isActive={activeSection === 'users'} label="用户面板">
         <AdminUsersCard currentUserId={user.id} isEnabled />

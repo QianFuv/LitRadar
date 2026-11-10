@@ -5,6 +5,7 @@
 /** Stable identifiers accepted by the administrator query parameter. */
 export const ADMIN_SECTION_IDS = [
   'overview',
+  'load',
   'users',
   'invite-codes',
   'runtime-settings',

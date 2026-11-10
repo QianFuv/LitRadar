@@ -45,6 +45,10 @@ vi.mock('@/components/admin/overview-card', () => ({
   AdminOverviewCard: () => <div>overview card marker</div>,
 }));
 
+vi.mock('@/components/admin/load-telemetry-card', () => ({
+  LoadTelemetryCard: () => <div>load telemetry card marker</div>,
+}));
+
 vi.mock('@/components/admin/users-card', () => ({
   AdminUsersCard: () => (
     <label>
@@ -102,9 +106,10 @@ async function navigatesPersistentAdministratorPanels(): Promise<void> {
   expect(await screen.findByRole('dialog', { name: '管理面板' })).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: '概览' })).toBeInTheDocument();
   expect(screen.getAllByRole('navigation', { name: '管理分类' })).toHaveLength(1);
-  expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(6);
+  expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(7);
   expect(screen.getByText('overview card marker')).toBeInTheDocument();
   for (const marker of [
+    'load telemetry card marker',
     'user card marker',
     'invite codes card marker',
     'runtime settings card marker',
@@ -220,7 +225,7 @@ async function defersUnvisitedPanelsForDirectLinks(): Promise<void> {
   adminCenterMocks.searchParams = new URLSearchParams('admin=scheduled-tasks');
   const view = renderWithQuery(<AdminCenterDialog />);
   expect(await screen.findByText('scheduled tasks card marker')).toBeInTheDocument();
-  expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(6);
+  expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(7);
   expect(screen.queryByText('overview card marker')).not.toBeInTheDocument();
   expect(screen.queryByText('user card marker')).not.toBeInTheDocument();
   const scheduler = screen.getByTestId('scheduler-panel');

@@ -25,6 +25,9 @@ import type {
   AnnouncementCreate,
   AnnouncementInfo,
   AnnouncementUpdate,
+  TelemetryKind,
+  TelemetryPeriod,
+  TelemetryResponse,
 } from '@/lib/api/types';
 
 /**
@@ -34,6 +37,28 @@ import type {
  */
 export function adminGetStats(): Promise<AdminStats> {
   return requestJson<AdminStats>(buildApiUrl('/api/admin/stats'), undefined, '获取统计信息失败');
+}
+
+/**
+ * Fetch anonymous hourly load and search-shape telemetry for one UTC window.
+ *
+ * @param period - UTC hour-aligned window ending at the next hour boundary.
+ * @param kind - Optional interface kind filter, or null for every kind.
+ * @returns Load telemetry report.
+ */
+export function adminGetTelemetry(
+  period: TelemetryPeriod,
+  kind: TelemetryKind | null,
+): Promise<TelemetryResponse> {
+  const params = new URLSearchParams({ period });
+  if (kind) {
+    params.set('kind', kind);
+  }
+  return requestJson<TelemetryResponse>(
+    buildApiUrl('/api/admin/telemetry', params),
+    undefined,
+    '获取负载统计失败',
+  );
 }
 
 /**
