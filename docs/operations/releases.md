@@ -99,8 +99,10 @@ original workflow resumes publication and updates latest only after publication.
 
 The Linux package targets Ubuntu 26.04 on amd64. It contains the native Go
 server binary,
-the catalog bundle, Obscura and its worker, and third-party notices. It is a
-dynamically linked distribution, not a standalone static binary. Install the system dependencies first:
+the catalog bundle, Obscura and its worker, and third-party notices. The Go
+server binary has no C runtime dependency, but the bundled Obscura binaries and
+the system Poppler tools are dynamically linked, so the distribution is not
+standalone. Install the system dependencies first:
 
 ```sh
 sudo apt-get update
@@ -156,7 +158,7 @@ selects its own directory and packaged helpers while preserving explicit helper
 overrides. All CLI commands remain available. Keep `data/` and `secrets/` across
 upgrades; do not unpack over a running service.
 
-Server executables tokenize search text in Go and contain no UI. Client binaries embed the shared Vite build. Release archives contain no external `web/` or SQLite tokenizer libraries. Windows packaging statically links the GCC runtime; Linux retains system C/C++ runtime dependencies. Obscura, Poppler, CA certificates and metadata catalogs retain their documented separate deployment requirements. Go inventory includes the toolchain, compiler and module identity. Smoke tests relocate the executable into a fresh root and verify migration of a legacy `unicode61` v8 index and authenticated search.
+Server executables tokenize search text in Go and contain no UI. Client binaries embed the shared Vite build. Release archives contain no external `web/` or SQLite tokenizer libraries. Server executables are built with CGO disabled, so they need no C compiler at build time and no C runtime library at run time. Obscura, Poppler, CA certificates and metadata catalogs retain their documented separate deployment requirements. Go inventory includes the toolchain and module identity. Smoke tests relocate the executable into a fresh root and verify migration of a legacy `unicode61` v8 index and authenticated search.
 
 ## Run the Web client binary
 

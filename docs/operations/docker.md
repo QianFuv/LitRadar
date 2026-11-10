@@ -37,7 +37,7 @@ Wails Server Build 的 runtime 端点未经认证；Web host 不注册任何服�
 
 ## 镜像内容与源码构建
 
-服务端 Dockerfile 使用固定 Ubuntu digest、Go 归档校验和与 CA 包版本，不安装 Node.js，也不构建 UI。`apps/server` 使用 CGO、`sqlite_fts5,sqlite_dbstat` 编译，服务端镜像包含 Obscura v0.2.4、Poppler、不可变 Meta bundle、许可证和 Go 构建清单。服务端 `/` 与 UI 路径返回 404，`/docs/`、API、MCP、健康检查可用。
+服务端 Dockerfile 使用固定 Ubuntu digest、Go 归档校验和与 CA 包版本，不安装 Node.js，也不构建 UI。`apps/server` 以 `CGO_ENABLED=0` 编译为纯 Go 二进制，构建阶段不安装 C 编译器或交叉编译工具链。服务端镜像包含 Obscura v0.2.4、Poppler、不可变 Meta bundle、许可证和 Go 构建清单。服务端 `/` 与 UI 路径返回 404，`/docs/`、API、MCP、健康检查可用。
 
 客户端先在根目录构建 Vite，再由独立 Dockerfile 将 `frontend/dist` 嵌入 linux/amd64 Wails Web host，并放入 distroless 镜像。两个应用运行镜像均不需要 Node.js。
 

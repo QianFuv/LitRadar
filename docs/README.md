@@ -57,7 +57,7 @@
 ## 包级文档
 
 - [前端包说明](../apps/client/frontend/README.md)：`apps/client/frontend/` 的启动、目录、API 契约和测试
-- [go-sdk 补丁](../third_party/go-sdk-patches/README.md)、[go-sqlite3 补丁](../third_party/go-sqlite3-patches/README.md)：vendored 依赖的本地补丁说明
+- [go-sdk 补丁](../third_party/go-sdk-patches/README.md)：vendored 依赖的本地补丁说明
 
 `docs/third-party/` 保存随镜像和发行包分发的第三方许可证与固定发行记录，不是阅读文档。
 

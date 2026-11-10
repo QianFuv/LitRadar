@@ -94,7 +94,7 @@ curl --fail --output /dev/null http://localhost:8000/
 
 ## 本地开发
 
-项目使用 Go 1.27.3（启用 CGO，需要与 Go 目标匹配的 C 编译器，Windows 使用 MinGW GCC）、Node.js 26.11.1 和 pnpm 12.16.1。环境准备和开发命令见[开发指南](docs/guides/development.md)，前端内部结构见[前端说明](apps/client/frontend/README.md)。
+项目使用 Go 1.27.3（服务端以 `CGO_ENABLED=0` 构建，不需要 C 编译器；只有 race 测试需要 CGO 和 C 编译器）、Node.js 26.11.1 和 pnpm 12.16.1。环境准备和开发命令见[开发指南](docs/guides/development.md)，前端内部结构见[前端说明](apps/client/frontend/README.md)。
 
 开发时在根目录运行 `pnpm dev`，由 `scripts/dev.mjs` 一起启动 Vite（8000）和 Go 服务端（8001）。根目录维护唯一 `pnpm-lock.yaml`。
 

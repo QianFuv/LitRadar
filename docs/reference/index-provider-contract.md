@@ -254,11 +254,11 @@ API 用 `307 Temporary Redirect` 或文档响应返回结果，并设置 `Cache-
 7. 运行 Provider switch fixture，证明共享 alias 复用同一 ID，且新 Provider 使用独立 anchor/run namespace。
 8. 对发出 HTTP 的实现覆盖受管直连、显式代理失败不直连回退，以及多进程 request/参数/环境/日志不含代理秘密。
 
-修改内置实现后，在仓库根目录运行以下检查（需要 CGO 与 C 编译器）；应通过相关测试且 `go vet` 无告警：
+修改内置实现后，在仓库根目录运行以下检查（不需要 C 编译器）；应通过相关测试且 `go vet` 无告警：
 
 ```bash
-go test -count=1 -tags sqlite_fts5,sqlite_dbstat ./apps/server/internal/domain/... ./apps/server/internal/provider/... ./apps/server/internal/sources/... ./apps/server/internal/index/...
-go vet -tags sqlite_fts5,sqlite_dbstat ./apps/server/internal/provider/... ./apps/server/internal/sources/... ./apps/server/internal/index/...
+go test -count=1 ./apps/server/internal/domain/... ./apps/server/internal/provider/... ./apps/server/internal/sources/... ./apps/server/internal/index/...
+go vet ./apps/server/internal/provider/... ./apps/server/internal/sources/... ./apps/server/internal/index/...
 ```
 
 ## 更换索引 Provider

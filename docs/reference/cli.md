@@ -7,7 +7,7 @@ Go 服务端的可执行文件为 `litradar`；Wails 客户端独立发布。本
 以下调用形式是语法示意，将 `<subcommand>` 和 `<arguments>` 替换为后文的命令与参数。在仓库根目录使用本地源码：
 
 ```bash
-go run -tags sqlite_fts5,sqlite_dbstat ./apps/server <subcommand> <arguments>
+go run ./apps/server <subcommand> <arguments>
 ```
 
 已安装二进制：

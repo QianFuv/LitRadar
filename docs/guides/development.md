@@ -8,14 +8,14 @@ CI 和容器使用以下主版本：
 
 | 工具    | 版本/来源                                      |
 | ------- | ---------------------------------------------- |
-| Go      | 1.27.3，CGO_ENABLED=1，需 C 编译器             |
+| Go      | 1.27.3，CGO_ENABLED=0，无需 C 编译器           |
 | Node.js | 26.11.1                                        |
 | pnpm    | 12.16.1                                        |
 | Docker  | 当前 Docker Engine / Docker Desktop 与 Compose |
 
 Go 依赖由 `go.mod` / `go.sum` 与 `third_party/` 的固定补丁锁定，前端依赖由根目录 `pnpm-lock.yaml` 锁定。不要在普通开发任务中绕过 lockfile。
 
-Go 命令固定使用 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、`GOFLAGS=""`、`GOTOOLCHAIN=go1.27.3`。Windows 原生构建要求 PATH 中有匹配的 MinGW GCC；生产镜像直接使用 Obscura 官方 v0.2.4 的 render + stealth 二进制及配套 worker。
+Go 命令固定使用 `CGO_ENABLED=0`、`GOWORK=off`、`GOENV=off`、`GOFLAGS=""`、`GOTOOLCHAIN=go1.27.3`。SQLite 驱动 `modernc.org/sqlite` 是纯 Go 实现，构建、运行、测试和打包都不需要 C 编译器或 SQLite 构建 tags。只有 `-race` 测试需要 `CGO_ENABLED=1` 和与 Go 目标匹配的 C 编译器（Windows 使用 MinGW GCC）；生产镜像直接使用 Obscura 官方 v0.2.4 的 render + stealth 二进制及配套 worker。
 
 pnpm 会转发已有的 `NODE_OPTIONS`，并为子进程关闭 Node.js 实验性 Web Storage，使测试中的 jsdom 浏览器存储与 Node.js 宿主存储隔离。
 
@@ -64,7 +64,7 @@ pnpm dev
 在仓库根目录运行：
 
 ```bash
-go run -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./apps/server serve \
+go run -mod=readonly ./apps/server serve \
   --development \
   --host 127.0.0.1 \
   --port 8001 \
@@ -91,7 +91,7 @@ go run -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./apps/server serve \
 IFS= read -r -s -p 'Admin password: ' ADMIN_PASSWORD
 printf '\n'
 printf '%s\n' "$ADMIN_PASSWORD" |
-  go run -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./apps/server admin bootstrap \
+  go run -mod=readonly ./apps/server admin bootstrap \
     --username admin \
     --password-stdin
 unset ADMIN_PASSWORD
@@ -121,12 +121,12 @@ pnpm dev
 开发时优先选择单个小型 CSV 或离线 fixture。真实索引和投递会访问外部服务：
 
 ```bash
-go run -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./apps/server index \
+go run -mod=readonly ./apps/server index \
   --secret-key-file secrets/litradar.key \
   --file chinese_journals.csv \
   --update
 
-go run -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./apps/server notify \
+go run -mod=readonly ./apps/server notify \
   --secret-key-file secrets/litradar.key \
   --dry-run
 ```
@@ -206,7 +206,7 @@ node tests/test.mjs integration
 node tests/test.mjs all
 ```
 
-Backend CI 在 Windows 和 Linux 执行 `node apps/server/scripts/check-go.mjs`，固定 Go 1.27.3、CGO 与两个 SQLite tags，运行格式、模块/补丁完整性、vet、无缓存常规和 race 测试，以及两个补丁依赖在自身模块和根模块中的测试。全模块常规与 race 测试每条最多 25 分钟（单包 `-timeout=20m`），其他命令每条最多 15 分钟；失败即停止，不会自动重试。
+Backend CI 在 Windows 和 Linux 执行 `node apps/server/scripts/check-go.mjs`，固定 Go 1.27.3，运行格式、模块/补丁完整性、vet、无缓存常规和 race 测试，以及 go-sdk 补丁依赖在自身模块和根模块中的测试。常规检查使用 `CGO_ENABLED=0`，不需要 C 编译器；race 检查使用 `CGO_ENABLED=1`，需要 C 编译器。全模块常规与 race 测试每条最多 25 分钟（单包 `-timeout=20m`），其他命令每条最多 15 分钟；失败即停止，不会自动重试。
 
 覆盖率只在每周/手动诊断中分别生成 Go 和前端报告，不设阈值：
 
@@ -283,7 +283,7 @@ API 在汇总与文章分页请求之间共享解析后的每周更新清单。�
 修改相关逻辑时，在仓库根运行正确性与确定性过期测试：
 
 ```bash
-go test -count=1 -race -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./apps/server/internal/storage/weekly ./apps/server/internal/storage/query
+go test -count=1 -race -mod=readonly ./apps/server/internal/storage/weekly ./apps/server/internal/storage/query
 ```
 
 Go 版本的容器性能画像使用 `node apps/server/tests/profiling/go-image.mjs`，要求已构建 `litradar:go-test-amd64`。

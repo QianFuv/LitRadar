@@ -88,7 +88,7 @@ Playwright 有两个独立角色：
 
 ## 统一命令
 
-先安装 Go 1.27.3、Node.js 26.11.1 和前端锁定依赖，以及 CGO 所需、与 Go 目标匹配的 C 编译器（Windows 使用 MinGW GCC）。Go 检查固定 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、空 `GOFLAGS` 和 `GOTOOLCHAIN=go1.27.3`。
+先安装 Go 1.27.3、Node.js 26.11.1 和前端锁定依赖。只有 race 检查需要 CGO 和与 Go 目标匹配的 C 编译器（Windows 使用 MinGW GCC）。Go 检查固定 `CGO_ENABLED=0`（race 检查改用 `CGO_ENABLED=1`）、`GOWORK=off`、`GOENV=off`、空 `GOFLAGS` 和 `GOTOOLCHAIN=go1.27.3`。
 
 ```bash
 npm install --global pnpm@12.16.1
@@ -106,11 +106,11 @@ node apps/server/scripts/check-go.mjs
 | `node tests/test.mjs e2e-smoke`   | 构建静态前端和 Go 应用/fixture，运行真实后端 Chromium 旅程                                                                                        |
 | `node tests/test.mjs all`         | Go 格式、module verify、vet，前端 lint/format/typecheck，integration、jsdom、Browser Mode、fixture 与 full-stack                                  |
 | `node tests/test.mjs diagnostics` | Go 与前端分别生成无阈值覆盖率报告                                                                                                                 |
-| `node apps/server/scripts/check-go.mjs`       | Windows/Linux 后端发布检查：工具链、native 输入、格式、模块/补丁完整性、vet、无缓存 regular/race，以及 SDK/SQLite 自身模块和根模块的 regular/race |
+| `node apps/server/scripts/check-go.mjs`       | Windows/Linux 后端发布检查：工具链、race 所需 C 编译器、格式、模块/补丁完整性、vet、无缓存 regular/race，以及 SDK 自身模块和根模块的 regular/race |
 
 `all` 不包含 race 或替换依赖包测试；后两者由 `check-go.mjs` 提供。`--ci` 设置 CI 环境与前端 JUnit 路径，不生成 Go JUnit。安装浏览器依赖使用 `pnpm --dir app exec playwright install --with-deps chromium`。
 
-聚焦 Go 检查使用 `go test -count=1 -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./相关包`；涉及并发时增加 `-race`。前端可在 `apps/client/frontend/` 单独运行 `pnpm generate:api:check`、`pnpm test:unit`、`pnpm test:browser-components`、`pnpm test:e2e:fixtures` 或 `pnpm test:e2e:full-stack`。
+聚焦 Go 检查使用 `go test -count=1 -mod=readonly ./相关包`；涉及并发时增加 `-race`（需 `CGO_ENABLED=1` 与 C 编译器）。前端可在 `apps/client/frontend/` 单独运行 `pnpm generate:api:check`、`pnpm test:unit`、`pnpm test:browser-components`、`pnpm test:e2e:fixtures` 或 `pnpm test:e2e:full-stack`。
 
 容器边界必须测试将要发布的确切本地镜像：
 

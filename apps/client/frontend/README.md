@@ -13,17 +13,17 @@
 
 CI 与前端构建阶段使用：
 
-| 工具              | 版本                                                                             |
-| ----------------- | -------------------------------------------------------------------------------- |
-| Node.js           | 26.11.1                                                                          |
-| pnpm              | 12.16.1                                                                          |
-| Vite              | 8.x                                                                              |
-| React Router      | 7.x（声明式路由）                                                                |
-| React / React DOM | 19.2.3                                                                           |
-| Motion for React  | 13.1.1                                                                           |
-| TypeScript        | 5.x                                                                              |
-| Tailwind CSS      | 4.x                                                                              |
-| Go                | 1.27.3；生成 OpenAPI、启动后端和 full-stack e2e 时需要，另需 CGO 使用的 C 编译器 |
+| 工具              | 版本                                                                    |
+| ----------------- | ----------------------------------------------------------------------- |
+| Node.js           | 26.11.1                                                                 |
+| pnpm              | 12.16.1                                                                 |
+| Vite              | 8.x                                                                     |
+| React Router      | 7.x（声明式路由）                                                       |
+| React / React DOM | 19.2.3                                                                  |
+| Motion for React  | 13.1.1                                                                  |
+| TypeScript        | 5.x                                                                     |
+| Tailwind CSS      | 4.x                                                                     |
+| Go                | 1.27.3；生成 OpenAPI、启动后端和 full-stack e2e 时需要，不需要 C 编译器 |
 
 依赖由仓库根目录的 pnpm workspace `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Query、nuqs、next-themes、Radix UI、Motion、class-variance-authority 和 lucide-react。Motion 只通过 `components/ui/motion.tsx` 的 `LazyMotion` / `domAnimation` 封装进入业务代码；Radix portal 的浮层过渡仍由共享 CSS motion token 驱动。
 
@@ -33,10 +33,10 @@ CI 与前端构建阶段使用：
 
 需要分开启动时，使用以下命令。
 
-在仓库根目录启动只监听 loopback 8001 的统一 Go 应用（需要 CGO 与 C 编译器，见[开发指南](../../../docs/guides/development.md#工具链)）；HTTP 和内嵌调度共享该进程：
+在仓库根目录启动只监听 loopback 8001 的统一 Go 应用（工具链见[开发指南](../../../docs/guides/development.md#工具链)）；HTTP 和内嵌调度共享该进程：
 
 ```bash
-go run -tags sqlite_fts5,sqlite_dbstat ./apps/server serve \
+go run ./apps/server serve \
   --development \
   --host 127.0.0.1 \
   --port 8001 \

@@ -31,8 +31,9 @@ so a failed upload cannot be presented as success. The same heading, source/plat
 fields and check/status/duration table apply to all stages; existing frontend timing
 and flaky-test policy, and informational coverage policy, remain visible.
 
-Go caches explicitly name the root and both replacement modules' `go.mod`/`go.sum`
-inputs. The existing backend compiler/lane/native partitioning remains. pnpm names
+Go caches explicitly name the root and go-sdk replacement module's `go.mod`/`go.sum`
+inputs. Backend compilation caches remain partitioned by lane and, for the race
+lane, compiler identity. pnpm names
 the root lockfile. BuildKit
 uses the `litradar-linux-amd64` cache scope and hashes Dockerfile, build contexts,
 arguments and pinned bases through its own cache graph. Cached bytes never replace
@@ -44,8 +45,10 @@ tests, source-bound frontend verification or platform smoke acceptance.
 - Backend jobs run independent `regular` and `race` lanes on Linux and Windows.
   The regular lane owns formatting, module/dependency verification, explicit vet,
   full root tests and replacement-module regular tests. The race lane runs the
-  full root and replacement-module race suites. Both record compiler identity and
-  diagnostics. Integration/SQLite/process tests remain in the full Go suites;
+  full root and replacement-module race suites. The regular lane builds with
+  `CGO_ENABLED=0` and needs no C compiler; the race lane uses `CGO_ENABLED=1`,
+  because Go's race detector requires cgo, and records compiler identity. Both
+  record diagnostics. Integration/SQLite/process tests remain in the full Go suites;
   neither lane uses `-short`.
 - The two existing `Backend / Go checks (<os>)` names remain aggregate gates. Each
   requires the entire four-job matrix to succeed; failure, cancellation or skip
@@ -60,23 +63,21 @@ tests, source-bound frontend verification or platform smoke acceptance.
 
 `node apps/server/scripts/check-go.mjs` still runs all checks locally. Pass `regular` or `race`
 to reproduce one CI lane. Do not run both lanes concurrently in the same working
-directory: they share generated native files and diagnostic paths. Hosted matrix
+directory: they share diagnostic paths. Hosted matrix
 jobs have separate checkouts.
 
 ## Cache and artifact ownership
 
-Backend module caches explicitly include the root and both local replacement
-modules' manifests. Compilation caches are separated by OS, architecture, exact
-Go toolchain, lane, compiler and native build configuration; the final key includes
+Backend module caches explicitly include the root and go-sdk local replacement
+module manifests. Compilation caches are separated by OS, architecture, exact
+Go toolchain, lane and race-lane compiler identity; the final key includes
 the source commit. Compatible prefix restores accelerate a new commit, which then
 saves its own completed cache instead of freezing the first build under an
-unchanged dependency key. Go still validates source inputs internally, and the
-existing native archive/header fingerprint remains in `CGO_CFLAGS`.
+unchanged dependency key. Go still validates source inputs internally.
 
 Tests retain `-count=1`. Only root regular tests disable implicit vet, after the
 same-config explicit `go vet` succeeds; race-selected files and dependency module
-graphs retain their own vet behavior. Native outputs are rebuilt and checked,
-rather than trusted because a cache path exists.
+graphs retain their own vet behavior.
 
 Vite and pnpm caches remain distinct from test/build artifacts. Publication
 continues transferring the exact smoke-tested Linux image and both platform
@@ -140,5 +141,5 @@ Publication verifies source and SHA-256 inventories before loading client image 
   compilation caches without mixing regular and race writers.
 - [Go test and caching](https://pkg.go.dev/cmd/go#hdr-Test_packages) documents
   implicit vet; [Go build caching](https://pkg.go.dev/cmd/go#hdr-Build_and_test_caching)
-  explains cgo external-library invalidation limitations. Native fingerprints and
-  uncached test execution remain necessary here.
+  explains cgo external-library invalidation limitations. Uncached test execution
+  remains necessary here.
