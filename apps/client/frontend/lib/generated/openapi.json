@@ -1,6 +1,12 @@
 {
   "components": {
     "schemas": {
+      "AddedResponse": {
+        "additionalProperties": false,
+        "properties": { "added": { "format": "int64", "type": "integer" } },
+        "required": ["added"],
+        "type": "object"
+      },
       "AdminInviteCodeCreate": {
         "additionalProperties": false,
         "properties": {
@@ -19,64 +25,24 @@
         },
         "type": "object"
       },
-      "AdminInviteCodeInfo": {
+      "AdminInviteResponse": {
         "additionalProperties": false,
         "properties": {
-          "code": { "description": "Raw invite code.", "type": "string" },
-          "created_at": {
-            "description": "Creation timestamp.",
-            "format": "double",
-            "type": "number"
-          },
-          "created_by": {
-            "description": "Creator user identifier.",
-            "format": "int64",
-            "type": ["integer", "null"]
-          },
-          "created_by_name": { "description": "Creator username.", "type": ["string", "null"] },
-          "expires_at": {
-            "description": "Absolute expiration timestamp.",
-            "format": "double",
-            "type": "number"
-          },
-          "id": {
-            "description": "Invite code row identifier.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "max_uses": {
-            "description": "Maximum permitted registrations.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "revoked_at": {
-            "description": "Optional irreversible revocation timestamp.",
-            "format": "double",
-            "type": ["number", "null"]
-          },
-          "status": {
-            "description": "Current lifecycle state.",
-            "enum": ["active", "expired", "revoked", "exhausted"],
-            "type": "string"
-          },
-          "use_count": {
-            "description": "Number of committed registrations.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "used_at": {
-            "description": "Consumption timestamp.",
-            "format": "double",
-            "type": ["number", "null"]
-          },
-          "used_by": {
-            "description": "Consumer user identifier.",
-            "format": "int64",
-            "type": ["integer", "null"]
-          },
-          "used_by_name": { "description": "Consumer username.", "type": ["string", "null"] }
+          "code": { "type": "string" },
+          "created_at": { "format": "double", "type": "number" },
+          "created_by": { "format": "int64", "type": ["integer", "null"] },
+          "created_by_name": { "type": ["string", "null"] },
+          "expires_at": { "format": "double", "type": "number" },
+          "id": { "format": "int64", "type": "integer" },
+          "max_uses": { "format": "int64", "type": "integer" },
+          "revoked_at": { "format": "double", "type": ["number", "null"] },
+          "status": { "enum": ["active", "expired", "revoked", "exhausted"], "type": "string" },
+          "use_count": { "format": "int64", "type": "integer" },
+          "used_at": { "format": "double", "type": ["number", "null"] },
+          "used_by": { "format": "int64", "type": ["integer", "null"] },
+          "used_by_name": { "type": ["string", "null"] }
         },
-        "required": ["code", "created_at", "expires_at", "id", "max_uses", "status", "use_count"],
+        "required": ["id", "code", "status", "expires_at", "max_uses", "use_count", "created_at"],
         "type": "object"
       },
       "AdminResetPassword": {
@@ -95,92 +61,68 @@
         "required": ["is_admin"],
         "type": "object"
       },
-      "AdminStatsResponse": {
+      "AdminStats": {
         "additionalProperties": false,
         "properties": {
-          "auth": {
-            "$ref": "#/components/schemas/AuthStats",
-            "description": "Auth database statistics."
-          },
-          "index": {
-            "$ref": "#/components/schemas/IndexStats",
-            "description": "Index database statistics."
-          },
-          "push": {
-            "description": "Push-state statistics.",
-            "items": { "$ref": "#/components/schemas/PushStats" },
-            "type": "array"
-          }
+          "auth": { "$ref": "#/components/schemas/AuthStats" },
+          "index": { "$ref": "#/components/schemas/IndexStats" },
+          "push": { "items": { "$ref": "#/components/schemas/PushStats" }, "type": "array" }
         },
         "required": ["auth", "index", "push"],
         "type": "object"
       },
-      "AdminUserInfo": {
+      "AdminUserResponse": {
         "additionalProperties": false,
         "properties": {
-          "auth_kind": {
-            "description": "Account credential kind.",
-            "enum": ["local", "oidc"],
-            "type": "string"
-          },
-          "created_at": {
-            "description": "Creation timestamp.",
-            "format": "double",
-            "type": "number"
-          },
-          "email": {
-            "description": "Normalized unique account email; null when unset.",
-            "type": ["string", "null"]
-          },
-          "favorite_count": {
-            "description": "Number of favorites owned by the user.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "folder_count": {
-            "description": "Number of folders owned by the user.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "id": { "description": "User row identifier.", "format": "int64", "type": "integer" },
-          "is_admin": {
-            "description": "Whether the user has admin privileges.",
-            "type": "boolean"
-          },
-          "is_oidc_linked": {
-            "description": "Whether an external OIDC identity is linked.",
-            "type": "boolean"
-          },
-          "notify_enabled": {
-            "description": "Whether enabled notification settings exist.",
-            "type": "boolean"
-          },
-          "updated_at": {
-            "description": "Last update timestamp.",
-            "format": "double",
-            "type": "number"
-          },
-          "username": { "description": "Username.", "type": "string" }
+          "auth_kind": { "enum": ["local", "oidc"], "type": "string" },
+          "created_at": { "format": "double", "type": "number" },
+          "email": { "type": ["string", "null"] },
+          "favorite_count": { "format": "int64", "type": "integer" },
+          "folder_count": { "format": "int64", "type": "integer" },
+          "id": { "format": "int64", "type": "integer" },
+          "is_admin": { "type": "boolean" },
+          "is_oidc_linked": { "type": "boolean" },
+          "notify_enabled": { "type": "boolean" },
+          "updated_at": { "format": "double", "type": "number" },
+          "username": { "type": "string" }
         },
         "required": [
-          "created_at",
-          "favorite_count",
-          "folder_count",
-          "id",
-          "is_admin",
-          "notify_enabled",
-          "updated_at",
-          "username",
           "email",
           "auth_kind",
-          "is_oidc_linked"
+          "is_oidc_linked",
+          "id",
+          "username",
+          "is_admin",
+          "created_at",
+          "updated_at",
+          "folder_count",
+          "favorite_count",
+          "notify_enabled"
         ],
+        "type": "object"
+      },
+      "Announcement": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": { "format": "double", "type": "number" },
+          "enabled": { "type": "boolean" },
+          "id": { "format": "int64", "type": "integer" },
+          "message": { "type": "string" },
+          "priority": { "type": "string" },
+          "title": { "type": "string" },
+          "updated_at": { "format": "double", "type": "number" }
+        },
+        "required": ["id", "title", "message", "priority", "enabled", "created_at", "updated_at"],
         "type": "object"
       },
       "AnnouncementCreate": {
         "additionalProperties": false,
         "properties": {
-          "enabled": { "description": "Whether the announcement is visible.", "type": "boolean" },
+          "enabled": {
+            "default": true,
+            "description": "Whether the announcement is visible.",
+            "type": "boolean"
+          },
           "message": {
             "description": "Announcement message body.",
             "maxLength": 10000,
@@ -188,6 +130,7 @@
             "type": "string"
           },
           "priority": {
+            "default": "normal",
             "description": "Priority label.",
             "maxLength": 16,
             "minLength": 1,
@@ -201,34 +144,6 @@
           }
         },
         "required": ["message", "title"],
-        "type": "object"
-      },
-      "AnnouncementInfo": {
-        "additionalProperties": false,
-        "properties": {
-          "created_at": {
-            "description": "Creation timestamp as a Unix epoch float.",
-            "format": "double",
-            "type": "number"
-          },
-          "enabled": {
-            "description": "Whether the announcement is visible to public clients.",
-            "type": "boolean"
-          },
-          "id": { "description": "Announcement identifier.", "format": "int64", "type": "integer" },
-          "message": { "description": "Announcement body text.", "type": "string" },
-          "priority": {
-            "description": "Priority label used for display ordering.",
-            "type": "string"
-          },
-          "title": { "description": "Announcement title.", "type": "string" },
-          "updated_at": {
-            "description": "Last update timestamp as a Unix epoch float.",
-            "format": "double",
-            "type": "number"
-          }
-        },
-        "required": ["created_at", "enabled", "id", "message", "priority", "title", "updated_at"],
         "type": "object"
       },
       "AnnouncementUpdate": {
@@ -256,99 +171,57 @@
         },
         "type": "object"
       },
-      "ArticleAccessAction": {
+      "Article": {
         "additionalProperties": false,
         "properties": {
-          "available": { "description": "Whether the action is available.", "type": "boolean" },
-          "label": { "description": "Display label.", "type": "string" },
-          "message": { "description": "Optional message.", "type": ["string", "null"] },
-          "requires_login": { "description": "Whether login is required.", "type": "boolean" }
+          "abstract": { "type": ["string", "null"] },
+          "article_id": { "type": "string" },
+          "authors": { "items": { "type": "string" }, "type": "array" },
+          "date": { "type": ["string", "null"] },
+          "date_precision": { "enum": ["year", "month", "day"], "type": ["string", "null"] },
+          "doi": { "type": ["string", "null"] },
+          "end_page": { "type": ["string", "null"] },
+          "in_press": { "type": ["boolean", "null"] },
+          "issue_id": { "format": "int64", "type": ["integer", "null"] },
+          "journal_id": { "type": "string" },
+          "journal_title": { "type": "string" },
+          "number": { "type": ["string", "null"] },
+          "open_access": { "type": ["boolean", "null"] },
+          "pmid": { "type": ["string", "null"] },
+          "publication_year": { "format": "int64", "type": ["integer", "null"] },
+          "retraction_dois": { "items": { "type": "string" }, "type": "array" },
+          "start_page": { "type": ["string", "null"] },
+          "title": { "type": "string" },
+          "volume": { "type": ["string", "null"] }
         },
-        "required": ["available", "label", "requires_login"],
+        "required": [
+          "article_id",
+          "journal_id",
+          "title",
+          "authors",
+          "retraction_dois",
+          "journal_title"
+        ],
         "type": "object"
       },
-      "ArticleAccessResponse": {
+      "ArticleAccess": {
         "additionalProperties": false,
         "properties": {
-          "abstract_page": {
-            "$ref": "#/components/schemas/ArticleAccessAction",
-            "description": "Abstract-page action."
-          },
-          "fulltext": {
-            "$ref": "#/components/schemas/ArticleAccessAction",
-            "description": "Full-text action."
-          }
+          "abstract_page": { "$ref": "#/components/schemas/ArticleAction" },
+          "fulltext": { "$ref": "#/components/schemas/ArticleAction" }
         },
         "required": ["abstract_page", "fulltext"],
         "type": "object"
       },
-      "ArticlePage": {
+      "ArticleAction": {
         "additionalProperties": false,
         "properties": {
-          "items": {
-            "description": "Article records.",
-            "items": { "$ref": "#/components/schemas/ArticleRecord" },
-            "type": "array"
-          },
-          "page": { "$ref": "#/components/schemas/PageMeta", "description": "Pagination metadata." }
+          "available": { "type": "boolean" },
+          "label": { "type": "string" },
+          "message": { "type": ["string", "null"] },
+          "requires_login": { "type": "boolean" }
         },
-        "required": ["items", "page"],
-        "type": "object"
-      },
-      "ArticleRecord": {
-        "additionalProperties": false,
-        "properties": {
-          "abstract": { "description": "Abstract text.", "type": ["string", "null"] },
-          "article_id": { "description": "Article identifier.", "type": "string" },
-          "authors": {
-            "description": "Authors text.",
-            "items": { "type": "string" },
-            "type": "array"
-          },
-          "date": { "description": "Article date.", "type": ["string", "null"] },
-          "date_precision": {
-            "description": "Precision represented by the article date.",
-            "enum": ["year", "month", "day"],
-            "type": ["string", "null"]
-          },
-          "doi": { "description": "DOI.", "type": ["string", "null"] },
-          "end_page": { "description": "End page.", "type": ["string", "null"] },
-          "in_press": { "description": "In-press flag.", "type": ["boolean", "null"] },
-          "issue_id": {
-            "description": "Issue identifier.",
-            "format": "int64",
-            "type": ["integer", "null"]
-          },
-          "journal_id": { "description": "Journal identifier.", "type": "string" },
-          "journal_title": { "description": "Journal title.", "type": "string" },
-          "number": { "description": "Issue number.", "type": ["string", "null"] },
-          "open_access": { "description": "Open-access flag.", "type": ["boolean", "null"] },
-          "pmid": { "description": "PubMed identifier.", "type": ["string", "null"] },
-          "publication_year": {
-            "description": "Publication year.",
-            "format": "int64",
-            "type": ["integer", "null"]
-          },
-          "retraction_dois": {
-            "description": "Retraction DOIs in lexical order without duplicates.",
-            "items": { "type": "string" },
-            "type": "array"
-          },
-          "start_page": { "description": "Start page.", "type": ["string", "null"] },
-          "title": {
-            "description": "Source title; an empty string means unavailable title metadata on a DOI-identified record.",
-            "type": "string"
-          },
-          "volume": { "description": "Issue volume.", "type": ["string", "null"] }
-        },
-        "required": [
-          "article_id",
-          "authors",
-          "journal_id",
-          "journal_title",
-          "retraction_dois",
-          "title"
-        ],
+        "required": ["available", "label", "requires_login"],
         "type": "object"
       },
       "AuthProvidersResponse": {
@@ -363,310 +236,150 @@
       "AuthStats": {
         "additionalProperties": false,
         "properties": {
-          "active_announcements": {
-            "description": "Enabled announcement count.",
-            "format": "int64",
-            "type": "integer"
+          "active_announcements": { "format": "int64", "type": "integer" },
+          "active_tokens": { "format": "int64", "type": "integer" },
+          "admin_count": { "format": "int64", "type": "integer" },
+          "notification_subscribers": { "format": "int64", "type": "integer" },
+          "scheduled_tasks": { "format": "int64", "type": "integer" },
+          "total_favorites": { "format": "int64", "type": "integer" },
+          "total_folders": { "format": "int64", "type": "integer" },
+          "total_invite_codes": { "format": "int64", "type": "integer" },
+          "total_users": { "format": "int64", "type": "integer" },
+          "unused_invite_codes": { "format": "int64", "type": "integer" },
+          "used_invite_codes": { "format": "int64", "type": "integer" }
+        },
+        "required": [
+          "total_users",
+          "admin_count",
+          "total_folders",
+          "total_favorites",
+          "total_invite_codes",
+          "used_invite_codes",
+          "unused_invite_codes",
+          "active_tokens",
+          "notification_subscribers",
+          "scheduled_tasks",
+          "active_announcements"
+        ],
+        "type": "object"
+      },
+      "CNKILoginPollRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "interval_seconds": {
+            "default": 2,
+            "description": "Poll interval in seconds.",
+            "format": "double",
+            "type": "number"
           },
-          "active_tokens": {
-            "description": "Unexpired access tokens.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "admin_count": {
-            "description": "Users with admin privileges.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "notification_subscribers": {
-            "description": "Enabled notification settings.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "scheduled_tasks": {
-            "description": "Scheduled task count.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "total_favorites": {
-            "description": "Total favorites.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "total_folders": {
-            "description": "Total folders.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "total_invite_codes": {
-            "description": "Total invite codes.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "total_users": {
-            "description": "Total registered users.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "unused_invite_codes": {
-            "description": "Unused invite codes.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "used_invite_codes": {
-            "description": "Used invite codes.",
+          "timeout_seconds": {
+            "default": 180,
+            "description": "Poll timeout in seconds.",
             "format": "int64",
             "type": "integer"
           }
         },
-        "required": [
-          "active_announcements",
-          "active_tokens",
-          "admin_count",
-          "notification_subscribers",
-          "scheduled_tasks",
-          "total_favorites",
-          "total_folders",
-          "total_invite_codes",
-          "total_users",
-          "unused_invite_codes",
-          "used_invite_codes"
-        ],
+        "type": "object"
+      },
+      "CapabilityInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "article_abstract": { "type": "boolean" },
+          "article_full_text": { "type": "boolean" },
+          "index_content": { "type": "boolean" },
+          "name": { "type": "string" }
+        },
+        "required": ["name", "index_content", "article_abstract", "article_full_text"],
         "type": "object"
       },
       "CfpCatalogResponse": {
         "additionalProperties": false,
         "properties": {
-          "database": { "description": "Canonical selected database filename.", "type": "string" },
-          "evaluatedAt": {
-            "description": "UTC Unix instant used to evaluate every state in this response.",
-            "format": "int64",
-            "type": "integer"
-          },
+          "database": { "type": "string" },
+          "evaluatedAt": { "format": "int64", "type": "integer" },
           "items": {
-            "description": "Lightweight journals matching the optional search, without notice bodies.",
             "items": { "$ref": "#/components/schemas/CfpJournalSummary" },
             "type": "array"
           },
-          "summary": {
-            "$ref": "#/components/schemas/CfpCatalogSummary",
-            "description": "Whole-database summary."
-          }
+          "summary": { "$ref": "#/components/schemas/CfpCatalogSummary" }
         },
-        "required": ["database", "evaluatedAt", "items", "summary"],
+        "required": ["database", "evaluatedAt", "summary", "items"],
         "type": "object"
       },
       "CfpCatalogSummary": {
         "additionalProperties": false,
         "properties": {
-          "adaptedJournals": {
-            "description": "Journals with a reviewed snapshot or scoped empty statement.",
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "currentNotices": {
-            "description": "Notices excluding closed and historical calls.",
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "journals": {
-            "description": "Complete maintained journal count, including journals without indexed articles.",
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "notices": {
-            "description": "All stored notices associated with this database.",
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          }
+          "adaptedJournals": { "format": "int64", "minimum": 0, "type": "integer" },
+          "currentNotices": { "format": "int64", "minimum": 0, "type": "integer" },
+          "journals": { "format": "int64", "minimum": 0, "type": "integer" },
+          "notices": { "format": "int64", "minimum": 0, "type": "integer" }
         },
-        "required": ["adaptedJournals", "currentNotices", "journals", "notices"],
-        "type": "object"
-      },
-      "CfpDate": {
-        "additionalProperties": false,
-        "properties": {
-          "date": {
-            "description": "ISO calendar date, with no invented time of day.",
-            "type": "string"
-          },
-          "isExclusive": {
-            "description": "Whether the source says strictly before this date.",
-            "type": "boolean"
-          },
-          "isOptional": { "description": "Whether this milestone is optional.", "type": "boolean" },
-          "originalText": { "description": "Untranslated source clause.", "type": "string" },
-          "stage": {
-            "description": "Purpose of this date.",
-            "enum": [
-              "paper",
-              "abstract",
-              "proposal",
-              "opens",
-              "revision",
-              "decision",
-              "publication",
-              "event",
-              "registration"
-            ],
-            "type": "string"
-          }
-        },
-        "required": ["date", "isExclusive", "isOptional", "originalText", "stage"],
+        "required": ["journals", "adaptedJournals", "notices", "currentNotices"],
         "type": "object"
       },
       "CfpJournalSummary": {
         "additionalProperties": false,
         "properties": {
-          "allIssns": {
-            "description": "All maintained print and electronic ISSNs for display and journal search.",
-            "items": { "type": "string" },
-            "type": "array"
-          },
-          "area": {
-            "description": "Maintained subject area, if available.",
-            "type": ["string", "null"]
-          },
-          "canRefresh": {
-            "description": "Whether a backend discovery adapter can attempt automatic refresh.",
-            "type": "boolean"
-          },
-          "catalogAliases": {
-            "description": "Maintained historical aliases in the selected catalog.",
-            "items": { "type": "string" },
-            "type": "array"
-          },
-          "catalogId": {
-            "description": "Canonical maintained catalog ID used by the notice endpoint.",
-            "type": "string"
-          },
-          "checkedOn": {
-            "description": "Last verified original-source date, if adapted.",
-            "type": ["string", "null"]
-          },
-          "coverage": {
-            "description": "Reviewed-source coverage.",
-            "enum": ["adapted", "unadapted"],
-            "type": "string"
-          },
-          "currentCount": {
-            "description": "Notices remaining after the default closed/historical filter.",
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "lastAttempt": {
-            "description": "Latest acquisition attempt Unix timestamp.",
-            "format": "int64",
-            "type": ["integer", "null"]
-          },
-          "lastError": {
-            "description": "Sanitized latest failure reason.",
-            "type": ["string", "null"]
-          },
-          "lastSuccess": {
-            "description": "Last successful live acquisition Unix timestamp.",
-            "format": "int64",
-            "type": ["integer", "null"]
-          },
-          "noticeCount": {
-            "description": "Total stored notices, including closed and historical calls.",
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          },
+          "allIssns": { "items": { "type": "string" }, "type": "array" },
+          "area": { "type": ["string", "null"] },
+          "canRefresh": { "type": "boolean" },
+          "catalogAliases": { "items": { "type": "string" }, "type": "array" },
+          "catalogId": { "type": "string" },
+          "checkedOn": { "type": ["string", "null"] },
+          "coverage": { "enum": ["adapted", "unadapted"], "type": "string" },
+          "currentCount": { "format": "int64", "minimum": 0, "type": "integer" },
+          "lastAttempt": { "format": "int64", "type": ["integer", "null"] },
+          "lastError": { "type": ["string", "null"] },
+          "lastSuccess": { "format": "int64", "type": ["integer", "null"] },
+          "noticeCount": { "format": "int64", "minimum": 0, "type": "integer" },
           "refreshStatus": {
-            "description": "Latest acquisition status, including interrupted lease detection.",
             "enum": ["snapshot", "success", "failed", "refreshing", "unsupported", "unadapted"],
             "type": "string"
           },
-          "sourceStatement": {
-            "description": "Untranslated scoped statement that no matching calls are listed.",
-            "type": ["string", "null"]
-          },
-          "sourceUrl": {
-            "description": "Original source URL associated with a scoped publisher statement.",
-            "type": ["string", "null"]
-          },
+          "sourceStatement": { "type": ["string", "null"] },
+          "sourceUrl": { "type": ["string", "null"] },
           "stateCounts": {
             "additionalProperties": { "format": "int64", "type": "integer" },
-            "description": "Backend-computed counts for each availability state.",
             "type": "object"
           },
-          "title": {
-            "description": "Journal title from the selected metadata database.",
-            "type": "string"
-          },
-          "titleAliases": {
-            "description": "Maintained journal title aliases for search.",
-            "items": { "type": "string" },
-            "type": "array"
-          }
+          "title": { "type": "string" },
+          "titleAliases": { "items": { "type": "string" }, "type": "array" }
         },
         "required": [
-          "allIssns",
-          "canRefresh",
-          "catalogAliases",
           "catalogId",
-          "coverage",
-          "currentCount",
-          "noticeCount",
-          "refreshStatus",
-          "stateCounts",
+          "catalogAliases",
+          "allIssns",
+          "titleAliases",
           "title",
-          "titleAliases"
+          "coverage",
+          "noticeCount",
+          "currentCount",
+          "stateCounts",
+          "canRefresh",
+          "refreshStatus"
         ],
         "type": "object"
       },
       "CfpNoticePage": {
         "additionalProperties": false,
         "properties": {
-          "evaluatedAt": {
-            "description": "Fixed UTC Unix evaluation instant shared across cursor pages.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "items": {
-            "description": "Original notice records in stable source order.",
-            "items": { "$ref": "#/components/schemas/CfpNoticeView" },
-            "type": "array"
-          },
-          "journal": {
-            "$ref": "#/components/schemas/CfpJournalSummary",
-            "description": "Metadata, coverage and source freshness for the journal."
-          },
-          "page": {
-            "$ref": "#/components/schemas/PageMeta",
-            "description": "Standard API pagination metadata, with a scope-bound next cursor."
-          }
+          "evaluatedAt": { "format": "int64", "type": "integer" },
+          "items": { "items": { "$ref": "#/components/schemas/CfpNoticeView" }, "type": "array" },
+          "journal": { "$ref": "#/components/schemas/CfpJournalSummary" },
+          "page": { "$ref": "#/components/schemas/PageMeta" }
         },
-        "required": ["evaluatedAt", "items", "journal", "page"],
+        "required": ["journal", "evaluatedAt", "items", "page"],
         "type": "object"
       },
       "CfpNoticeView": {
         "additionalProperties": false,
         "properties": {
-          "checkedOn": { "description": "Last verified original-source date.", "type": "string" },
-          "dates": {
-            "description": "Validated dates, including non-submission milestones.",
-            "items": { "$ref": "#/components/schemas/CfpDate" },
-            "type": "array"
-          },
+          "checkedOn": { "type": "string" },
+          "dates": { "items": { "$ref": "#/components/schemas/Date" }, "type": "array" },
           "entryDeadline": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/CfpDate",
-                "description": "Earliest mandatory initial submission deadline."
-              },
-              { "type": "null" }
-            ]
+            "anyOf": [{ "$ref": "#/components/schemas/Date" }, { "type": "null" }]
           },
           "entryStage": {
-            "description": "Default initial submission stage.",
             "enum": [
               "paper",
               "abstract",
@@ -680,33 +393,16 @@
             ],
             "type": "string"
           },
-          "id": {
-            "description": "Stable legacy-compatible URL/title identity within a journal.",
-            "type": "string"
-          },
-          "isHistorical": {
-            "description": "Whether this announcement is an archival record.",
-            "type": "boolean"
-          },
+          "id": { "type": "string" },
+          "isHistorical": { "type": "boolean" },
           "kind": {
-            "description": "Classified kind of call.",
             "enum": ["special_issue", "general", "proposal", "conference_linked"],
             "type": "string"
           },
-          "rawDateText": {
-            "description": "Unresolved original timeline; never interpreted as perpetual availability.",
-            "type": "string"
-          },
-          "requirements": {
-            "description": "Original instructions, empty if unavailable.",
-            "type": "string"
-          },
-          "scope": {
-            "description": "Original topic excerpt, empty if unavailable.",
-            "type": "string"
-          },
+          "rawDateText": { "type": "string" },
+          "requirements": { "type": "string" },
+          "scope": { "type": "string" },
           "sourceStatus": {
-            "description": "Explicit closed or invitation-only source constraint.",
             "enum": [
               "open",
               "upcoming",
@@ -718,9 +414,8 @@
             ],
             "type": ["string", "null"]
           },
-          "sourceUrl": { "description": "Original public announcement URL.", "type": "string" },
+          "sourceUrl": { "type": "string" },
           "state": {
-            "description": "Availability evaluated at the page's fixed instant.",
             "enum": [
               "open",
               "upcoming",
@@ -732,30 +427,23 @@
             ],
             "type": "string"
           },
-          "timeZone": {
-            "description": "Explicit IANA timezone, if supplied by the source.",
-            "type": ["string", "null"]
-          },
-          "title": { "description": "Original announcement title.", "type": "string" },
-          "topicYear": {
-            "description": "Explicit annual topic year, when applicable.",
-            "format": "int32",
-            "type": ["integer", "null"]
-          }
+          "timeZone": { "type": ["string", "null"] },
+          "title": { "type": "string" },
+          "topicYear": { "format": "int32", "type": ["integer", "null"] }
         },
         "required": [
+          "state",
+          "id",
+          "title",
+          "scope",
+          "requirements",
+          "kind",
+          "sourceUrl",
           "checkedOn",
           "dates",
           "entryStage",
-          "id",
           "isHistorical",
-          "kind",
-          "rawDateText",
-          "requirements",
-          "scope",
-          "sourceUrl",
-          "title",
-          "state"
+          "rawDateText"
         ],
         "type": "object"
       },
@@ -768,87 +456,92 @@
         "required": ["new_password", "old_password"],
         "type": "object"
       },
-      "CnkiLoginPollRequest": {
+      "CnkiPollResponse": {
         "additionalProperties": false,
         "properties": {
-          "interval_seconds": {
-            "description": "Poll interval in seconds.",
-            "format": "double",
-            "type": "number"
-          },
-          "timeout_seconds": {
-            "description": "Poll timeout in seconds.",
-            "format": "int64",
-            "type": "integer"
+          "session": { "$ref": "#/components/schemas/CnkiStatus" },
+          "status": { "type": "string" }
+        },
+        "required": ["status", "session"],
+        "type": "object"
+      },
+      "CnkiStartResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "qr_code": { "type": "string" },
+          "session": { "$ref": "#/components/schemas/CnkiStatus" },
+          "status": { "type": "string" },
+          "uuid": { "type": "string" }
+        },
+        "required": ["uuid", "status", "qr_code", "session"],
+        "type": "object"
+      },
+      "CnkiStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "configured": { "type": "boolean" },
+          "cookie_names": { "items": { "type": "string" }, "type": "array" },
+          "expires_at": { "format": "double", "type": ["number", "null"] },
+          "has_bff_user_token": { "type": "boolean" },
+          "last_used_at": { "format": "double", "type": ["number", "null"] },
+          "seconds_remaining": { "format": "int64", "type": ["integer", "null"] },
+          "status": { "type": "string" },
+          "updated_at": { "format": "double", "type": ["number", "null"] }
+        },
+        "required": ["configured", "status", "has_bff_user_token", "cookie_names"],
+        "type": "object"
+      },
+      "CountResponse": {
+        "additionalProperties": false,
+        "properties": { "count": { "format": "int64", "type": "integer" } },
+        "required": ["count"],
+        "type": "object"
+      },
+      "Date": {
+        "additionalProperties": false,
+        "properties": {
+          "date": { "type": "string" },
+          "isExclusive": { "type": "boolean" },
+          "isOptional": { "type": "boolean" },
+          "originalText": { "type": "string" },
+          "stage": {
+            "enum": [
+              "paper",
+              "abstract",
+              "proposal",
+              "opens",
+              "revision",
+              "decision",
+              "publication",
+              "event",
+              "registration"
+            ],
+            "type": "string"
           }
         },
+        "required": ["date", "stage", "originalText", "isExclusive", "isOptional"],
         "type": "object"
       },
-      "CnkiLoginPollResponse": {
+      "Distribution": {
         "additionalProperties": false,
         "properties": {
-          "session": {
-            "$ref": "#/components/schemas/CnkiSessionStatusResponse",
-            "description": "Safe session status."
+          "calls": { "format": "int64", "minimum": 0, "type": "integer" },
+          "feature": {
+            "enum": [
+              "endpoint",
+              "mode",
+              "database",
+              "term_count",
+              "uses_prefix",
+              "uses_boolean",
+              "hits",
+              "hit_count_basis"
+            ],
+            "type": "string"
           },
-          "status": { "description": "Poll status.", "type": "string" }
+          "value": { "type": "string" }
         },
-        "required": ["session", "status"],
-        "type": "object"
-      },
-      "CnkiLoginStartResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "qr_code": { "description": "QR code URL or payload.", "type": "string" },
-          "session": {
-            "$ref": "#/components/schemas/CnkiSessionStatusResponse",
-            "description": "Safe session status."
-          },
-          "status": { "description": "Upstream login status.", "type": "string" },
-          "uuid": { "description": "QR UUID.", "type": "string" }
-        },
-        "required": ["qr_code", "session", "status", "uuid"],
-        "type": "object"
-      },
-      "CnkiSessionStatusResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "configured": {
-            "description": "Whether a session-like row is configured.",
-            "type": "boolean"
-          },
-          "cookie_names": {
-            "description": "Stored cookie names without cookie values.",
-            "items": { "type": "string" },
-            "type": "array"
-          },
-          "expires_at": {
-            "description": "Token expiration timestamp.",
-            "format": "double",
-            "type": ["number", "null"]
-          },
-          "has_bff_user_token": {
-            "description": "Whether a BFF user token is present.",
-            "type": "boolean"
-          },
-          "last_used_at": {
-            "description": "Last-use timestamp.",
-            "format": "double",
-            "type": ["number", "null"]
-          },
-          "seconds_remaining": {
-            "description": "Seconds remaining until expiration.",
-            "format": "int64",
-            "type": ["integer", "null"]
-          },
-          "status": { "description": "Safe status label.", "type": "string" },
-          "updated_at": {
-            "description": "Row update timestamp.",
-            "format": "double",
-            "type": ["number", "null"]
-          }
-        },
-        "required": ["configured", "cookie_names", "has_bff_user_token", "status"],
+        "required": ["feature", "value", "calls"],
         "type": "object"
       },
       "EmailUpdateRequest": {
@@ -885,7 +578,7 @@
           "errors": {
             "description": "Optional list of individual error details",
             "items": { "$ref": "#/components/schemas/ErrorDetail" },
-            "type": ["array", "null"]
+            "type": "array"
           },
           "instance": {
             "description": "A URI reference that identifies the specific occurrence of the problem.",
@@ -928,20 +621,41 @@
         "required": ["article_id"],
         "type": "object"
       },
-      "FavoriteArticlePage": {
+      "FavoriteArticle": {
         "additionalProperties": false,
         "properties": {
-          "items": {
-            "description": "Favorite rows in descending creation time and row-id order.",
-            "items": { "$ref": "#/components/schemas/FavoriteArticleResponse" },
-            "type": "array"
-          },
-          "page": {
-            "$ref": "#/components/schemas/PageMeta",
-            "description": "Cursor continuation metadata without an expensive total count."
-          }
+          "abstract": { "type": ["string", "null"] },
+          "article_id": { "type": "string" },
+          "authors": { "items": { "type": "string" }, "type": ["array", "null"] },
+          "created_at": { "format": "double", "type": "number" },
+          "date": { "type": ["string", "null"] },
+          "db_name": { "type": "string" },
+          "doi": { "type": ["string", "null"] },
+          "eissn": { "type": ["string", "null"] },
+          "folder_id": { "format": "int64", "type": "integer" },
+          "id": { "format": "int64", "type": "integer" },
+          "in_press": { "type": ["boolean", "null"] },
+          "issn": { "type": ["string", "null"] },
+          "issue_id": { "format": "int64", "type": ["integer", "null"] },
+          "journal_id": { "type": ["string", "null"] },
+          "journal_title": { "type": ["string", "null"] },
+          "metadata_status": { "enum": ["available", "missing", "unavailable"], "type": "string" },
+          "note": { "type": "string" },
+          "number": { "type": ["string", "null"] },
+          "open_access": { "type": ["boolean", "null"] },
+          "publication_year": { "format": "int64", "type": ["integer", "null"] },
+          "title": { "type": ["string", "null"] },
+          "volume": { "type": ["string", "null"] }
         },
-        "required": ["items", "page"],
+        "required": [
+          "metadata_status",
+          "id",
+          "folder_id",
+          "note",
+          "created_at",
+          "article_id",
+          "db_name"
+        ],
         "type": "object"
       },
       "FavoriteArticleRef": {
@@ -955,79 +669,6 @@
           }
         },
         "required": ["article_id"],
-        "type": "object"
-      },
-      "FavoriteArticleResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "abstract": { "description": "Article abstract text.", "type": ["string", "null"] },
-          "article_id": { "description": "Article identifier.", "type": "string" },
-          "authors": {
-            "description": "Ordered article author names.",
-            "items": { "type": "string" },
-            "type": ["array", "null"]
-          },
-          "created_at": {
-            "description": "Favorite creation timestamp.",
-            "format": "double",
-            "type": "number"
-          },
-          "date": { "description": "Article publication date.", "type": ["string", "null"] },
-          "db_name": { "description": "Source index database name.", "type": "string" },
-          "doi": { "description": "Article DOI.", "type": ["string", "null"] },
-          "eissn": { "description": "Journal electronic ISSN.", "type": ["string", "null"] },
-          "folder_id": {
-            "description": "Folder row identifier.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "id": { "description": "Favorite row identifier.", "format": "int64", "type": "integer" },
-          "in_press": {
-            "description": "In-press flag from the index database.",
-            "type": ["boolean", "null"]
-          },
-          "issn": { "description": "Journal ISSN.", "type": ["string", "null"] },
-          "issue_id": {
-            "description": "Issue identifier from the index database.",
-            "format": "int64",
-            "type": ["integer", "null"]
-          },
-          "journal_id": {
-            "description": "Journal identifier from the index database.",
-            "type": ["string", "null"]
-          },
-          "journal_title": { "description": "Journal title.", "type": ["string", "null"] },
-          "metadata_status": {
-            "description": "Availability of the referenced index article metadata.",
-            "enum": ["available", "missing", "unavailable"],
-            "type": "string"
-          },
-          "note": { "description": "User note text.", "type": "string" },
-          "number": { "description": "Issue number.", "type": ["string", "null"] },
-          "open_access": {
-            "description": "Open-access flag from the index database.",
-            "type": ["boolean", "null"]
-          },
-          "publication_year": {
-            "description": "Article publication year.",
-            "format": "int64",
-            "type": ["integer", "null"]
-          },
-          "title": {
-            "description": "Article title from the index database.",
-            "type": ["string", "null"]
-          },
-          "volume": { "description": "Issue volume.", "type": ["string", "null"] }
-        },
-        "required": [
-          "article_id",
-          "created_at",
-          "db_name",
-          "folder_id",
-          "id",
-          "metadata_status",
-          "note"
-        ],
         "type": "object"
       },
       "FavoriteBatchCheckRequest": {
@@ -1048,13 +689,12 @@
         "required": ["article_ids"],
         "type": "object"
       },
-      "FavoriteBatchCheckResponse": {
+      "FavoriteBatchMembership": {
         "additionalProperties": false,
         "properties": {
-          "article_id": { "description": "Article identifier that was checked.", "type": "string" },
+          "article_id": { "type": "string" },
           "folders": {
-            "description": "Folder memberships for the article.",
-            "items": { "$ref": "#/components/schemas/FavoriteCheckResponse" },
+            "items": { "$ref": "#/components/schemas/FavoriteMembership" },
             "type": "array"
           }
         },
@@ -1072,18 +712,6 @@
           }
         },
         "required": ["articles"],
-        "type": "object"
-      },
-      "FavoriteBulkAddResult": {
-        "additionalProperties": false,
-        "properties": {
-          "added": {
-            "description": "Number of inserted favorite rows.",
-            "format": "int64",
-            "type": "integer"
-          }
-        },
-        "required": ["added"],
         "type": "object"
       },
       "FavoriteBulkMove": {
@@ -1117,65 +745,105 @@
         "required": ["articles"],
         "type": "object"
       },
-      "FavoriteBulkResult": {
+      "FavoriteFavorite": {
         "additionalProperties": false,
         "properties": {
-          "count": {
-            "description": "Number of affected favorite rows.",
-            "format": "int64",
-            "type": "integer"
-          }
+          "article_id": { "type": "string" },
+          "created_at": { "format": "double", "type": "number" },
+          "db_name": { "type": "string" },
+          "folder_id": { "format": "int64", "type": "integer" },
+          "id": { "format": "int64", "type": "integer" },
+          "note": { "type": "string" }
         },
-        "required": ["count"],
+        "required": ["id", "folder_id", "note", "created_at", "article_id", "db_name"],
         "type": "object"
       },
-      "FavoriteCheckResponse": {
+      "FavoriteFolder": {
         "additionalProperties": false,
         "properties": {
-          "folder_id": {
-            "description": "Folder row identifier.",
-            "format": "int64",
-            "type": "integer"
+          "article_count": { "format": "int64", "type": "integer" },
+          "created_at": { "format": "double", "type": "number" },
+          "id": { "format": "int64", "type": "integer" },
+          "is_tracking": { "type": "boolean" },
+          "name": { "type": "string" }
+        },
+        "required": ["id", "name", "is_tracking", "article_count", "created_at"],
+        "type": "object"
+      },
+      "FavoriteGraph": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": { "format": "double", "type": "number" },
+          "db_name": { "type": "string" },
+          "graph": { "additionalProperties": {}, "type": "object" },
+          "id": { "format": "int64", "type": "integer" },
+          "node_count": { "format": "int64", "type": "integer" },
+          "root_article_id": { "format": "int64", "type": "integer" },
+          "title": { "type": "string" },
+          "updated_at": { "format": "double", "type": "number" }
+        },
+        "required": [
+          "graph",
+          "id",
+          "title",
+          "db_name",
+          "root_article_id",
+          "node_count",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "FavoriteGraphPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": { "$ref": "#/components/schemas/FavoriteGraphSummary" },
+            "type": "array"
           },
-          "folder_name": { "description": "Folder display name.", "type": "string" }
+          "next_cursor": { "type": ["string", "null"] }
+        },
+        "required": ["items", "next_cursor"],
+        "type": "object"
+      },
+      "FavoriteGraphSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": { "format": "double", "type": "number" },
+          "db_name": { "type": "string" },
+          "id": { "format": "int64", "type": "integer" },
+          "node_count": { "format": "int64", "type": "integer" },
+          "root_article_id": { "format": "int64", "type": "integer" },
+          "title": { "type": "string" },
+          "updated_at": { "format": "double", "type": "number" }
+        },
+        "required": [
+          "id",
+          "title",
+          "db_name",
+          "root_article_id",
+          "node_count",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "FavoriteMembership": {
+        "additionalProperties": false,
+        "properties": {
+          "folder_id": { "format": "int64", "type": "integer" },
+          "folder_name": { "type": "string" }
         },
         "required": ["folder_id", "folder_name"],
         "type": "object"
       },
-      "FavoriteResponse": {
+      "FavoritePageArticle": {
         "additionalProperties": false,
         "properties": {
-          "article_id": { "description": "Article identifier.", "type": "string" },
-          "created_at": {
-            "description": "Creation timestamp.",
-            "format": "double",
-            "type": "number"
-          },
-          "db_name": { "description": "Source index database name.", "type": "string" },
-          "folder_id": {
-            "description": "Folder row identifier.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "id": { "description": "Favorite row identifier.", "format": "int64", "type": "integer" },
-          "note": { "description": "User note text.", "type": "string" }
+          "items": { "items": { "$ref": "#/components/schemas/FavoriteArticle" }, "type": "array" },
+          "page": { "$ref": "#/components/schemas/PageMeta" }
         },
-        "required": ["article_id", "created_at", "db_name", "folder_id", "id", "note"],
-        "type": "object"
-      },
-      "FavoriteTrackingResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "folder_id": {
-            "description": "Tracking folder identifier, or null when none is configured.",
-            "format": "int64",
-            "type": ["integer", "null"]
-          },
-          "folder_name": {
-            "description": "Tracking folder display name, or null when none is configured.",
-            "type": ["string", "null"]
-          }
-        },
+        "required": ["items", "page"],
         "type": "object"
       },
       "FolderCreate": {
@@ -1208,267 +876,223 @@
         "required": ["name"],
         "type": "object"
       },
-      "FolderResponse": {
+      "FolderSummary": {
         "additionalProperties": false,
         "properties": {
-          "article_count": {
-            "description": "Number of favorite rows in the folder.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "created_at": {
-            "description": "Creation timestamp.",
-            "format": "double",
-            "type": "number"
-          },
-          "id": { "description": "Folder row identifier.", "format": "int64", "type": "integer" },
-          "is_tracking": {
-            "description": "Whether the folder receives tracking pushes.",
-            "type": "boolean"
-          },
-          "name": { "description": "Folder display name.", "type": "string" }
+          "id": { "format": "int64", "type": "integer" },
+          "name": { "type": "string" }
         },
-        "required": ["article_count", "created_at", "id", "is_tracking", "name"],
+        "required": ["id", "name"],
         "type": "object"
       },
       "HealthResponse": {
         "additionalProperties": false,
-        "properties": {
-          "status": {
-            "description": "Service status value.",
-            "enum": ["ok", "unhealthy"],
-            "type": "string"
-          }
-        },
+        "properties": { "status": { "enum": ["ok", "unhealthy"], "type": "string" } },
         "required": ["status"],
+        "type": "object"
+      },
+      "Hour": {
+        "additionalProperties": false,
+        "properties": {
+          "calls": { "format": "int64", "minimum": 0, "type": "integer" },
+          "errors": { "format": "int64", "minimum": 0, "type": "integer" },
+          "hour": { "format": "date-time", "type": "string" },
+          "kind": { "enum": ["http", "mcp", "search"], "type": "string" }
+        },
+        "required": ["hour", "kind", "calls", "errors"],
         "type": "object"
       },
       "IndexDatabaseStats": {
         "additionalProperties": false,
         "properties": {
-          "articles": { "description": "Article count.", "format": "int64", "type": "integer" },
-          "db_name": { "description": "Database file name.", "type": "string" },
-          "error": {
-            "description": "Whether the database failed to read.",
-            "type": ["boolean", "null"]
-          },
-          "issues": { "description": "Issue count.", "format": "int64", "type": "integer" },
-          "journals": { "description": "Journal count.", "format": "int64", "type": "integer" }
+          "articles": { "format": "int64", "type": "integer" },
+          "db_name": { "type": "string" },
+          "error": { "type": ["boolean", "null"] },
+          "issues": { "format": "int64", "type": "integer" },
+          "journals": { "format": "int64", "type": "integer" }
         },
-        "required": ["articles", "db_name", "issues", "journals"],
+        "required": ["db_name", "articles", "journals", "issues"],
+        "type": "object"
+      },
+      "IndexJob": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "enum": ["index"], "type": "string" },
+          "metadata_file": {
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*\\.csv$",
+            "type": ["string", "null"]
+          },
+          "notify": { "type": "boolean" },
+          "push": { "type": "boolean" }
+        },
+        "required": ["kind"],
         "type": "object"
       },
       "IndexStats": {
         "additionalProperties": false,
         "properties": {
           "databases": {
-            "description": "Per-database statistics.",
             "items": { "$ref": "#/components/schemas/IndexDatabaseStats" },
             "type": "array"
           },
-          "total_articles": {
-            "description": "Total article count.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "total_journals": {
-            "description": "Total journal count.",
-            "format": "int64",
-            "type": "integer"
-          }
+          "total_articles": { "format": "int64", "type": "integer" },
+          "total_journals": { "format": "int64", "type": "integer" }
         },
         "required": ["databases", "total_articles", "total_journals"],
         "type": "object"
       },
-      "InviteCodeResponse": {
+      "Info": {
         "additionalProperties": false,
         "properties": {
-          "code": { "description": "Raw invite code.", "type": "string" },
-          "created_at": {
-            "description": "Invite code creation timestamp.",
-            "format": "double",
-            "type": "number"
-          },
-          "expires_at": {
-            "description": "Absolute expiration timestamp.",
-            "format": "double",
-            "type": "number"
-          },
-          "id": {
-            "description": "Invite code row identifier.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "max_uses": {
-            "description": "Maximum permitted registrations.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "revoked_at": {
-            "description": "Optional irreversible revocation timestamp.",
-            "format": "double",
-            "type": ["number", "null"]
-          },
-          "status": {
-            "description": "Current lifecycle state.",
-            "enum": ["active", "expired", "revoked", "exhausted"],
+          "allowed_values": { "items": { "type": "string" }, "type": "array" },
+          "apply_mode": {
+            "enum": ["next_request", "next_command", "restart_required"],
             "type": "string"
           },
-          "use_count": {
-            "description": "Number of committed registrations.",
-            "format": "int64",
-            "type": "integer"
+          "control": {
+            "enum": [
+              "text",
+              "secret_pool",
+              "string_list",
+              "boolean",
+              "select",
+              "index_provider_routes",
+              "provider_order",
+              "provider_proxy_policy"
+            ],
+            "type": "string"
           },
-          "used": { "description": "Whether the invite code has been consumed.", "type": "boolean" }
+          "description": { "type": "string" },
+          "field": { "type": "string" },
+          "group": {
+            "enum": [
+              "source_access",
+              "provider_routing",
+              "server_security",
+              "single_sign_on",
+              "observability"
+            ],
+            "type": "string"
+          },
+          "has_value": { "type": "boolean" },
+          "input_type": { "type": "string" },
+          "is_secret": { "type": "boolean" },
+          "label": { "type": "string" },
+          "masked_value": { "type": "string" },
+          "secret_items": {
+            "items": { "$ref": "#/components/schemas/SecretItem" },
+            "type": "array"
+          },
+          "source": { "type": "string" },
+          "updated_at": { "format": "double", "type": ["number", "null"] },
+          "value": { "type": "string" }
         },
         "required": [
-          "code",
-          "created_at",
-          "expires_at",
-          "id",
-          "max_uses",
-          "status",
-          "use_count",
-          "used"
+          "field",
+          "label",
+          "description",
+          "group",
+          "control",
+          "apply_mode",
+          "allowed_values",
+          "input_type",
+          "is_secret",
+          "value",
+          "has_value",
+          "masked_value",
+          "source"
         ],
         "type": "object"
       },
       "InviteRequiredResponse": {
         "additionalProperties": false,
         "properties": {
-          "bootstrap_required": {
-            "description": "Whether a local administrator bootstrap must run before invites can be issued.",
-            "type": "boolean"
-          },
-          "required": {
-            "description": "Whether registration requires an invite code.",
-            "type": "boolean"
-          }
+          "bootstrap_required": { "type": "boolean" },
+          "required": { "type": "boolean" }
         },
-        "required": ["bootstrap_required", "required"],
+        "required": ["required", "bootstrap_required"],
         "type": "object"
       },
-      "IssuePage": {
+      "InviteResponse": {
         "additionalProperties": false,
         "properties": {
-          "items": {
-            "description": "Issue records.",
-            "items": { "$ref": "#/components/schemas/IssueRecord" },
-            "type": "array"
-          },
-          "page": { "$ref": "#/components/schemas/PageMeta", "description": "Pagination metadata." }
+          "code": { "type": "string" },
+          "created_at": { "format": "double", "type": "number" },
+          "expires_at": { "format": "double", "type": "number" },
+          "id": { "format": "int64", "type": "integer" },
+          "max_uses": { "format": "int64", "type": "integer" },
+          "revoked_at": { "format": "double", "type": ["number", "null"] },
+          "status": { "enum": ["active", "expired", "revoked", "exhausted"], "type": "string" },
+          "use_count": { "format": "int64", "type": "integer" },
+          "used": { "type": "boolean" }
         },
-        "required": ["items", "page"],
+        "required": [
+          "id",
+          "code",
+          "used",
+          "status",
+          "expires_at",
+          "max_uses",
+          "use_count",
+          "created_at"
+        ],
         "type": "object"
       },
-      "IssueRecord": {
+      "Issue": {
         "additionalProperties": false,
         "properties": {
-          "date": { "description": "Issue date.", "type": ["string", "null"] },
-          "date_precision": {
-            "description": "Precision represented by the issue date.",
-            "enum": ["year", "month", "day"],
-            "type": ["string", "null"]
-          },
-          "issue_id": { "description": "Issue identifier.", "format": "int64", "type": "integer" },
-          "journal_id": { "description": "Journal identifier.", "type": "string" },
-          "number": { "description": "Number.", "type": ["string", "null"] },
-          "publication_year": {
-            "description": "Publication year.",
-            "format": "int64",
-            "type": ["integer", "null"]
-          },
-          "title": { "description": "Issue title.", "type": ["string", "null"] },
-          "volume": { "description": "Volume.", "type": ["string", "null"] }
+          "date": { "type": ["string", "null"] },
+          "date_precision": { "enum": ["year", "month", "day"], "type": ["string", "null"] },
+          "issue_id": { "format": "int64", "type": "integer" },
+          "journal_id": { "type": "string" },
+          "number": { "type": ["string", "null"] },
+          "publication_year": { "format": "int64", "type": ["integer", "null"] },
+          "title": { "type": ["string", "null"] },
+          "volume": { "type": ["string", "null"] }
         },
         "required": ["issue_id", "journal_id"],
         "type": "object"
       },
+      "IssuedToken": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": { "format": "double", "type": "number" },
+          "id": { "format": "int64", "type": "integer" },
+          "name": { "type": "string" },
+          "token": { "type": "string" }
+        },
+        "required": ["id", "token", "name", "expires_at"],
+        "type": "object"
+      },
+      "Journal": {
+        "additionalProperties": false,
+        "properties": {
+          "abs_rank": { "type": ["string", "null"] },
+          "abs_rating": { "type": ["string", "null"] },
+          "area": { "type": ["string", "null"] },
+          "catalog_id": { "type": "string" },
+          "eissn": { "type": ["string", "null"] },
+          "fms_rank": { "type": ["string", "null"] },
+          "fms_rating": { "type": ["string", "null"] },
+          "fmscn_rank": { "type": ["string", "null"] },
+          "fmscn_rating": { "type": ["string", "null"] },
+          "has_articles": { "type": "boolean" },
+          "issn": { "type": ["string", "null"] },
+          "issns": { "items": { "type": "string" }, "type": "array" },
+          "journal_id": { "type": "string" },
+          "title": { "type": "string" },
+          "title_aliases": { "items": { "type": "string" }, "type": "array" },
+          "utd_rank": { "type": ["string", "null"] },
+          "utd_rating": { "type": ["string", "null"] }
+        },
+        "required": ["journal_id", "catalog_id", "title", "title_aliases", "issns", "has_articles"],
+        "type": "object"
+      },
       "JournalOption": {
         "additionalProperties": false,
-        "properties": {
-          "journal_id": { "description": "Journal identifier.", "type": "string" },
-          "title": { "description": "Journal title.", "type": "string" }
-        },
+        "properties": { "journal_id": { "type": "string" }, "title": { "type": "string" } },
         "required": ["journal_id", "title"],
-        "type": "object"
-      },
-      "JournalPage": {
-        "additionalProperties": false,
-        "properties": {
-          "items": {
-            "description": "Journal records.",
-            "items": { "$ref": "#/components/schemas/JournalRecord" },
-            "type": "array"
-          },
-          "page": { "$ref": "#/components/schemas/PageMeta", "description": "Pagination metadata." }
-        },
-        "required": ["items", "page"],
-        "type": "object"
-      },
-      "JournalRatingOptions": {
-        "additionalProperties": false,
-        "properties": {
-          "abs_rating": {
-            "description": "ABS grade choices; '4*' is an exact label rather than a wildcard.",
-            "items": { "$ref": "#/components/schemas/ValueCount" },
-            "type": "array"
-          },
-          "fms_rating": {
-            "description": "FMS grade choices.",
-            "items": { "$ref": "#/components/schemas/ValueCount" },
-            "type": "array"
-          },
-          "fmscn_rating": {
-            "description": "FMS China grade choices.",
-            "items": { "$ref": "#/components/schemas/ValueCount" },
-            "type": "array"
-          },
-          "utd_rating": {
-            "description": "UTD grade choices, excluding unrated journals.",
-            "items": { "$ref": "#/components/schemas/ValueCount" },
-            "type": "array"
-          }
-        },
-        "required": ["abs_rating", "fms_rating", "fmscn_rating", "utd_rating"],
-        "type": "object"
-      },
-      "JournalRecord": {
-        "additionalProperties": false,
-        "properties": {
-          "abs_rank": { "description": "ABS rank.", "type": ["string", "null"] },
-          "abs_rating": { "description": "ABS rating.", "type": ["string", "null"] },
-          "area": { "description": "Journal area.", "type": ["string", "null"] },
-          "catalog_id": {
-            "description": "Immutable maintained catalog identifier.",
-            "type": "string"
-          },
-          "eissn": { "description": "Electronic ISSN.", "type": ["string", "null"] },
-          "fms_rank": { "description": "FMS rank.", "type": ["string", "null"] },
-          "fms_rating": { "description": "FMS rating.", "type": ["string", "null"] },
-          "fmscn_rank": { "description": "FMS China rank.", "type": ["string", "null"] },
-          "fmscn_rating": { "description": "FMS China rating.", "type": ["string", "null"] },
-          "has_articles": {
-            "description": "Whether the content database currently contains articles for the journal.",
-            "type": "boolean"
-          },
-          "issn": { "description": "Print ISSN.", "type": ["string", "null"] },
-          "issns": {
-            "description": "All maintained ISSNs.",
-            "items": { "type": "string" },
-            "type": "array"
-          },
-          "journal_id": { "description": "Journal identifier.", "type": "string" },
-          "title": { "description": "Journal title.", "type": "string" },
-          "title_aliases": {
-            "description": "Maintained title aliases.",
-            "items": { "type": "string" },
-            "type": "array"
-          },
-          "utd_rank": { "description": "UTD rank.", "type": ["string", "null"] },
-          "utd_rating": { "description": "UTD rating.", "type": ["string", "null"] }
-        },
-        "required": ["catalog_id", "has_articles", "issns", "journal_id", "title", "title_aliases"],
         "type": "object"
       },
       "LoginRequest": {
@@ -1486,85 +1110,37 @@
       "LoginResponse": {
         "additionalProperties": false,
         "properties": {
-          "expires_at": {
-            "description": "Session expiration timestamp.",
-            "format": "double",
-            "type": "number"
-          },
-          "user": {
-            "$ref": "#/components/schemas/UserResponse",
-            "description": "Authenticated user."
-          }
+          "expires_at": { "format": "double", "type": "number" },
+          "user": { "$ref": "#/components/schemas/UserResponse" }
         },
-        "required": ["expires_at", "user"],
+        "required": ["user", "expires_at"],
         "type": "object"
       },
       "LogoutResponse": {
         "additionalProperties": false,
         "properties": {
-          "ok": { "description": "Whether the operation succeeded.", "type": "boolean" },
-          "user_id": {
-            "description": "Authenticated user identifier.",
-            "format": "int64",
-            "type": "integer"
-          }
+          "ok": { "type": "boolean" },
+          "user_id": { "format": "int64", "type": "integer" }
         },
         "required": ["ok", "user_id"],
         "type": "object"
       },
-      "ManualWeeklyPushStatus": {
+      "ManualPushStatus": {
         "additionalProperties": false,
         "properties": {
-          "can_cancel": {
-            "description": "Whether the current job still accepts cancellation.",
-            "type": "boolean"
-          },
-          "can_retry": {
-            "description": "Whether starting a new run cannot replay an ambiguous external outcome.",
-            "type": "boolean"
-          },
-          "cancellation_requested": {
-            "description": "Whether durable cancellation has been requested.",
-            "type": "boolean"
-          },
-          "deadline_at": {
-            "description": "Absolute Unix timestamp after which the job must stop.",
-            "format": "double",
-            "type": ["number", "null"]
-          },
-          "finished_at": {
-            "description": "Unix timestamp when the job finished.",
-            "format": "double",
-            "type": ["number", "null"]
-          },
-          "folder_id": {
-            "description": "Tracking folder identifier when applicable.",
-            "format": "int64",
-            "type": ["integer", "null"]
-          },
-          "folder_name": {
-            "description": "Tracking folder name when applicable.",
-            "type": ["string", "null"]
-          },
-          "job_id": { "description": "Background job identifier.", "type": ["string", "null"] },
-          "message": { "description": "Human-readable status message.", "type": "string" },
-          "pushed": {
-            "description": "Number of pushed or tracking-folder-synced articles.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "selected": {
-            "description": "Number of selected articles.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "started_at": {
-            "description": "Unix timestamp when the job started.",
-            "format": "double",
-            "type": ["number", "null"]
-          },
+          "can_cancel": { "type": "boolean" },
+          "can_retry": { "type": "boolean" },
+          "cancellation_requested": { "type": "boolean" },
+          "deadline_at": { "format": "double", "type": ["number", "null"] },
+          "finished_at": { "format": "double", "type": ["number", "null"] },
+          "folder_id": { "format": "int64", "type": ["integer", "null"] },
+          "folder_name": { "type": ["string", "null"] },
+          "job_id": { "type": ["string", "null"] },
+          "message": { "type": "string" },
+          "pushed": { "format": "int64", "type": "integer" },
+          "selected": { "format": "int64", "type": "integer" },
+          "started_at": { "format": "double", "type": ["number", "null"] },
           "status": {
-            "description": "Durable job status.",
             "enum": [
               "idle",
               "pending",
@@ -1577,24 +1153,17 @@
             ],
             "type": "string"
           },
-          "summary": {
-            "description": "AI-generated summary text when available.",
-            "type": "string"
-          },
-          "total_candidates": {
-            "description": "Number of candidate articles considered by AI selection.",
-            "format": "int64",
-            "type": ["integer", "null"]
-          }
+          "summary": { "type": "string" },
+          "total_candidates": { "format": "int64", "type": ["integer", "null"] }
         },
         "required": [
+          "status",
+          "message",
+          "cancellation_requested",
           "can_cancel",
           "can_retry",
-          "cancellation_requested",
-          "message",
           "pushed",
           "selected",
-          "status",
           "summary"
         ],
         "type": "object"
@@ -1620,21 +1189,11 @@
       "NativeLoginResponse": {
         "additionalProperties": false,
         "properties": {
-          "expires_at": {
-            "description": "Unix expiration timestamp in seconds, 90 days after issuance.",
-            "format": "double",
-            "type": "number"
-          },
-          "token": {
-            "description": "Personal access token for Authorization: Bearer.",
-            "type": "string"
-          },
-          "user": {
-            "$ref": "#/components/schemas/UserResponse",
-            "description": "Authenticated user."
-          }
+          "expires_at": { "format": "double", "type": "number" },
+          "token": { "type": "string" },
+          "user": { "$ref": "#/components/schemas/UserResponse" }
         },
-        "required": ["expires_at", "user", "token"],
+        "required": ["token", "expires_at", "user"],
         "type": "object"
       },
       "NativeOIDCExchangeRequest": {
@@ -1667,108 +1226,60 @@
       "NotificationSettingsResponse": {
         "additionalProperties": false,
         "properties": {
-          "ai_api_key_mask": {
-            "description": "Fixed non-secret mask when a primary AI API key is configured.",
-            "type": "string"
-          },
-          "ai_backup_api_key_mask": {
-            "description": "Fixed non-secret mask when a backup AI API key is configured.",
-            "type": "string"
-          },
-          "ai_backup_base_url": { "description": "Backup AI endpoint base URL.", "type": "string" },
-          "ai_backup_model": { "description": "Backup AI model.", "type": "string" },
-          "ai_backup_system_prompt": {
-            "description": "Backup AI system prompt.",
-            "type": "string"
-          },
-          "ai_base_url": { "description": "Primary AI endpoint base URL.", "type": "string" },
-          "ai_model": { "description": "Primary AI model.", "type": "string" },
-          "ai_retry_attempts": {
-            "description": "Retry attempts per AI endpoint.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "ai_system_prompt": { "description": "Primary AI system prompt.", "type": "string" },
-          "created_at": {
-            "description": "Creation timestamp.",
-            "format": "double",
-            "type": "number"
-          },
-          "delivery_method": { "description": "Delivery method.", "type": "string" },
-          "directions": {
-            "description": "Research direction preferences.",
-            "items": { "type": "string" },
-            "type": "array"
-          },
-          "enabled": { "description": "Whether recommendations are enabled.", "type": "boolean" },
-          "has_ai_api_key": {
-            "description": "Whether a primary AI API key is configured.",
-            "type": "boolean"
-          },
-          "has_ai_backup_api_key": {
-            "description": "Whether a backup AI API key is configured.",
-            "type": "boolean"
-          },
-          "has_pushplus_token": {
-            "description": "Whether a PushPlus token is configured.",
-            "type": "boolean"
-          },
-          "id": { "description": "Settings row identifier.", "format": "int64", "type": "integer" },
-          "keywords": {
-            "description": "Keyword preferences.",
-            "items": { "type": "string" },
-            "type": "array"
-          },
-          "pushplus_channel": { "description": "PushPlus channel.", "type": "string" },
-          "pushplus_template": { "description": "PushPlus template.", "type": "string" },
-          "pushplus_token_mask": {
-            "description": "Fixed non-secret mask when a PushPlus token is configured.",
-            "type": "string"
-          },
-          "pushplus_topic": { "description": "PushPlus topic.", "type": "string" },
-          "selected_databases": {
-            "description": "Selected index database names.",
-            "items": { "type": "string" },
-            "type": "array"
-          },
-          "sync_to_tracking_folder": {
-            "description": "Whether PushPlus delivery also syncs to the tracking folder.",
-            "type": "boolean"
-          },
-          "updated_at": {
-            "description": "Last update timestamp.",
-            "format": "double",
-            "type": "number"
-          },
-          "user_id": { "description": "User row identifier.", "format": "int64", "type": "integer" }
+          "ai_api_key_mask": { "type": "string" },
+          "ai_backup_api_key_mask": { "type": "string" },
+          "ai_backup_base_url": { "type": "string" },
+          "ai_backup_model": { "type": "string" },
+          "ai_backup_system_prompt": { "type": "string" },
+          "ai_base_url": { "type": "string" },
+          "ai_model": { "type": "string" },
+          "ai_retry_attempts": { "format": "int64", "type": "integer" },
+          "ai_system_prompt": { "type": "string" },
+          "created_at": { "format": "double", "type": "number" },
+          "delivery_method": { "type": "string" },
+          "directions": { "items": { "type": "string" }, "type": "array" },
+          "enabled": { "type": "boolean" },
+          "has_ai_api_key": { "type": "boolean" },
+          "has_ai_backup_api_key": { "type": "boolean" },
+          "has_pushplus_token": { "type": "boolean" },
+          "id": { "format": "int64", "type": "integer" },
+          "keywords": { "items": { "type": "string" }, "type": "array" },
+          "pushplus_channel": { "type": "string" },
+          "pushplus_template": { "type": "string" },
+          "pushplus_token_mask": { "type": "string" },
+          "pushplus_topic": { "type": "string" },
+          "selected_databases": { "items": { "type": "string" }, "type": "array" },
+          "sync_to_tracking_folder": { "type": "boolean" },
+          "updated_at": { "format": "double", "type": "number" },
+          "user_id": { "format": "int64", "type": "integer" }
         },
         "required": [
+          "id",
+          "user_id",
+          "keywords",
+          "directions",
+          "selected_databases",
+          "delivery_method",
+          "has_pushplus_token",
+          "pushplus_token_mask",
+          "pushplus_template",
+          "pushplus_topic",
+          "pushplus_channel",
+          "sync_to_tracking_folder",
+          "ai_base_url",
+          "has_ai_api_key",
           "ai_api_key_mask",
-          "ai_backup_api_key_mask",
+          "ai_model",
+          "ai_system_prompt",
           "ai_backup_base_url",
+          "has_ai_backup_api_key",
+          "ai_backup_api_key_mask",
           "ai_backup_model",
           "ai_backup_system_prompt",
-          "ai_base_url",
-          "ai_model",
           "ai_retry_attempts",
-          "ai_system_prompt",
-          "created_at",
-          "delivery_method",
-          "directions",
           "enabled",
-          "has_ai_api_key",
-          "has_ai_backup_api_key",
-          "has_pushplus_token",
-          "id",
-          "keywords",
-          "pushplus_channel",
-          "pushplus_template",
-          "pushplus_token_mask",
-          "pushplus_topic",
-          "selected_databases",
-          "sync_to_tracking_folder",
-          "updated_at",
-          "user_id"
+          "created_at",
+          "updated_at"
         ],
         "type": "object"
       },
@@ -1805,6 +1316,7 @@
           },
           "ai_model": { "description": "Primary AI model.", "maxLength": 200, "type": "string" },
           "ai_retry_attempts": {
+            "default": 3,
             "description": "Retry attempts per AI endpoint.",
             "format": "int64",
             "maximum": 10,
@@ -1816,14 +1328,22 @@
             "maxLength": 10000,
             "type": "string"
           },
-          "delivery_method": { "description": "Delivery method.", "type": "string" },
+          "delivery_method": {
+            "default": "folder",
+            "description": "Delivery method.",
+            "type": "string"
+          },
           "directions": {
             "description": "Research direction preferences.",
             "items": { "type": "string" },
             "maxItems": 100,
             "type": "array"
           },
-          "enabled": { "description": "Whether recommendations are enabled.", "type": "boolean" },
+          "enabled": {
+            "default": true,
+            "description": "Whether recommendations are enabled.",
+            "type": "boolean"
+          },
           "keywords": {
             "description": "Keyword preferences.",
             "items": { "type": "string" },
@@ -1831,11 +1351,13 @@
             "type": "array"
           },
           "pushplus_channel": {
+            "default": "wechat",
             "description": "PushPlus channel.",
             "maxLength": 64,
             "type": "string"
           },
           "pushplus_template": {
+            "default": "markdown",
             "description": "PushPlus template.",
             "maxLength": 64,
             "type": "string"
@@ -1862,7 +1384,7 @@
         },
         "type": "object"
       },
-      "OIDCLinkResponse": {
+      "OidcLinkResponse": {
         "additionalProperties": false,
         "properties": { "authorization_url": { "type": "string" } },
         "required": ["authorization_url"],
@@ -1870,69 +1392,64 @@
       },
       "OkResponse": {
         "additionalProperties": false,
-        "properties": {
-          "ok": { "description": "Whether the operation succeeded.", "type": "boolean" }
-        },
+        "properties": { "ok": { "type": "boolean" } },
         "required": ["ok"],
+        "type": "object"
+      },
+      "PageArticle": {
+        "additionalProperties": false,
+        "properties": {
+          "items": { "items": { "$ref": "#/components/schemas/Article" }, "type": "array" },
+          "page": { "$ref": "#/components/schemas/PageMeta" }
+        },
+        "required": ["items", "page"],
+        "type": "object"
+      },
+      "PageIssue": {
+        "additionalProperties": false,
+        "properties": {
+          "items": { "items": { "$ref": "#/components/schemas/Issue" }, "type": "array" },
+          "page": { "$ref": "#/components/schemas/PageMeta" }
+        },
+        "required": ["items", "page"],
+        "type": "object"
+      },
+      "PageJournal": {
+        "additionalProperties": false,
+        "properties": {
+          "items": { "items": { "$ref": "#/components/schemas/Journal" }, "type": "array" },
+          "page": { "$ref": "#/components/schemas/PageMeta" }
+        },
+        "required": ["items", "page"],
         "type": "object"
       },
       "PageMeta": {
         "additionalProperties": false,
         "properties": {
-          "has_more": {
-            "description": "Whether another page may exist.",
-            "type": ["boolean", "null"]
-          },
-          "limit": { "description": "Page size.", "format": "int64", "type": "integer" },
-          "next_cursor": {
-            "description": "Keyset cursor for the next page.",
-            "type": ["string", "null"]
-          },
-          "offset": { "description": "Offset row count.", "format": "int64", "type": "integer" },
-          "total": {
-            "description": "Total rows when requested.",
-            "format": "int64",
-            "type": ["integer", "null"]
-          }
+          "has_more": { "type": ["boolean", "null"] },
+          "limit": { "format": "int64", "type": "integer" },
+          "next_cursor": { "type": ["string", "null"] },
+          "offset": { "format": "int64", "type": "integer" },
+          "total": { "format": "int64", "type": ["integer", "null"] }
         },
         "required": ["limit", "offset"],
         "type": "object"
       },
-      "ProviderCapabilityInfo": {
+      "PageWeeklyArticle": {
         "additionalProperties": false,
         "properties": {
-          "article_abstract": {
-            "description": "Whether the Provider can resolve an online abstract page.",
-            "type": "boolean"
-          },
-          "article_full_text": {
-            "description": "Whether the Provider can resolve online full text.",
-            "type": "boolean"
-          },
-          "index_content": {
-            "description": "Whether the Provider can build canonical index content.",
-            "type": "boolean"
-          },
-          "name": { "description": "Stable lowercase runtime Provider name.", "type": "string" }
+          "items": { "items": { "$ref": "#/components/schemas/WeeklyArticle" }, "type": "array" },
+          "page": { "$ref": "#/components/schemas/PageMeta" }
         },
-        "required": ["article_abstract", "article_full_text", "index_content", "name"],
+        "required": ["items", "page"],
         "type": "object"
       },
-      "ProviderCatalogInfo": {
+      "ProviderCatalog": {
         "additionalProperties": false,
         "properties": {
-          "csv_filename": {
-            "description": "Metadata CSV filename when present.",
-            "type": ["string", "null"]
-          },
-          "database_filename": {
-            "description": "Content SQLite filename when present.",
-            "type": ["string", "null"]
-          },
-          "stem": {
-            "description": "Canonical catalog stem shared by CSV and SQLite files.",
-            "type": "string"
-          }
+          "csv_filename": { "type": ["string", "null"] },
+          "database_filename": { "type": ["string", "null"] },
+          "stem": { "type": "string" }
         },
         "required": ["stem"],
         "type": "object"
@@ -1941,46 +1458,44 @@
         "additionalProperties": false,
         "properties": {
           "catalogs": {
-            "description": "Discovered metadata and content catalogs.",
-            "items": { "$ref": "#/components/schemas/ProviderCatalogInfo" },
+            "items": { "$ref": "#/components/schemas/ProviderCatalog" },
             "type": "array"
           },
           "providers": {
-            "description": "Logical Providers and their aggregate capabilities.",
-            "items": { "$ref": "#/components/schemas/ProviderCapabilityInfo" },
+            "items": { "$ref": "#/components/schemas/CapabilityInfo" },
             "type": "array"
           }
         },
-        "required": ["catalogs", "providers"],
+        "required": ["providers", "catalogs"],
         "type": "object"
       },
       "PushStats": {
         "additionalProperties": false,
         "properties": {
-          "db_name": { "description": "State file stem.", "type": "string" },
-          "delivered_count": {
-            "description": "Delivered article count.",
-            "format": "int64",
-            "minimum": 0,
-            "type": ["integer", "null"]
-          },
-          "last_completed": {
-            "description": "Last completed run timestamp.",
-            "type": ["string", "null"]
-          },
+          "db_name": { "type": "string" },
+          "delivered_count": { "format": "int64", "minimum": 0, "type": ["integer", "null"] },
+          "last_completed": { "type": ["string", "null"] },
           "status": {
-            "description": "Push state status.",
             "enum": ["idle", "running", "completed", "failed", "skipped", "unknown", "error"],
             "type": "string"
           },
-          "user_results": {
-            "description": "User result count.",
-            "format": "int64",
-            "minimum": 0,
-            "type": ["integer", "null"]
-          }
+          "user_results": { "format": "int64", "minimum": 0, "type": ["integer", "null"] }
         },
         "required": ["db_name", "status"],
+        "type": "object"
+      },
+      "RatingOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "abs_rating": { "items": { "$ref": "#/components/schemas/ValueCount" }, "type": "array" },
+          "fms_rating": { "items": { "$ref": "#/components/schemas/ValueCount" }, "type": "array" },
+          "fmscn_rating": {
+            "items": { "$ref": "#/components/schemas/ValueCount" },
+            "type": "array"
+          },
+          "utd_rating": { "items": { "$ref": "#/components/schemas/ValueCount" }, "type": "array" }
+        },
+        "required": ["utd_rating", "abs_rating", "fms_rating", "fmscn_rating"],
         "type": "object"
       },
       "RegisterRequest": {
@@ -1998,34 +1513,6 @@
           "username": { "description": "Requested username.", "type": "string" }
         },
         "required": ["invite_code", "password", "username"],
-        "type": "object"
-      },
-      "RelationGraphFavorite": {
-        "additionalProperties": false,
-        "properties": {
-          "created_at": { "format": "double", "type": "number" },
-          "db_name": { "type": "string" },
-          "graph": {
-            "additionalProperties": {},
-            "description": "Verbatim JSON object snapshot, at most 2 MiB encoded.",
-            "type": "object"
-          },
-          "id": { "format": "int64", "type": "integer" },
-          "node_count": { "format": "int64", "type": "integer" },
-          "root_article_id": { "format": "int64", "type": "integer" },
-          "title": { "type": "string" },
-          "updated_at": { "format": "double", "type": "number" }
-        },
-        "required": [
-          "id",
-          "title",
-          "db_name",
-          "root_article_id",
-          "node_count",
-          "created_at",
-          "updated_at",
-          "graph"
-        ],
         "type": "object"
       },
       "RelationGraphFavoriteCreate": {
@@ -2049,40 +1536,6 @@
         "required": ["title", "db_name", "root_article_id", "node_count", "graph"],
         "type": "object"
       },
-      "RelationGraphFavoritePage": {
-        "additionalProperties": false,
-        "properties": {
-          "items": {
-            "items": { "$ref": "#/components/schemas/RelationGraphFavoriteSummary" },
-            "type": "array"
-          },
-          "next_cursor": { "type": ["string", "null"] }
-        },
-        "required": ["items", "next_cursor"],
-        "type": "object"
-      },
-      "RelationGraphFavoriteSummary": {
-        "additionalProperties": false,
-        "properties": {
-          "created_at": { "format": "double", "type": "number" },
-          "db_name": { "type": "string" },
-          "id": { "format": "int64", "type": "integer" },
-          "node_count": { "format": "int64", "type": "integer" },
-          "root_article_id": { "format": "int64", "type": "integer" },
-          "title": { "type": "string" },
-          "updated_at": { "format": "double", "type": "number" }
-        },
-        "required": [
-          "id",
-          "title",
-          "db_name",
-          "root_article_id",
-          "node_count",
-          "created_at",
-          "updated_at"
-        ],
-        "type": "object"
-      },
       "RelationGraphFavoriteUpdate": {
         "additionalProperties": false,
         "properties": {
@@ -2101,19 +1554,50 @@
         },
         "type": "object"
       },
-      "RuntimeSecretItemInfo": {
+      "Report": {
         "additionalProperties": false,
         "properties": {
-          "masked_value": {
-            "description": "Human-readable prefix mask that never contains the complete secret.",
+          "enabled": { "type": "boolean" },
+          "from": { "format": "date-time", "type": "string" },
+          "hourly": { "items": { "$ref": "#/components/schemas/Hour" }, "type": "array" },
+          "search_shapes": {
+            "items": { "$ref": "#/components/schemas/Distribution" },
+            "type": "array"
+          },
+          "series": { "items": { "$ref": "#/components/schemas/Summary" }, "type": "array" },
+          "to": { "format": "date-time", "type": "string" }
+        },
+        "required": ["enabled", "from", "to", "series", "hourly", "search_shapes"],
+        "type": "object"
+      },
+      "Run": {
+        "additionalProperties": false,
+        "properties": {
+          "claimed_at": { "format": "double", "type": ["number", "null"] },
+          "finished_at": { "format": "double", "type": ["number", "null"] },
+          "id": { "format": "int64", "type": "integer" },
+          "scheduled_for": { "format": "int64", "type": "integer" },
+          "started_at": { "format": "double", "type": ["number", "null"] },
+          "status": {
+            "enum": [
+              "idle",
+              "pending",
+              "claimed",
+              "running",
+              "success",
+              "failed",
+              "timed_out",
+              "error",
+              "unknown",
+              "cancelled"
+            ],
             "type": "string"
           },
-          "reference": {
-            "description": "Opaque authenticated reference accepted by a pool removal update.",
-            "type": "string"
-          }
+          "task_id": { "format": "int64", "type": "integer" },
+          "task_name": { "type": "string" },
+          "worker_id": { "type": ["string", "null"] }
         },
-        "required": ["masked_value", "reference"],
+        "required": ["id", "task_id", "task_name", "scheduled_for", "status"],
         "type": "object"
       },
       "RuntimeSecretPoolUpdate": {
@@ -2132,90 +1616,6 @@
         },
         "type": "object"
       },
-      "RuntimeSettingInfo": {
-        "additionalProperties": false,
-        "properties": {
-          "allowed_values": {
-            "description": "Finite allowed values for selection controls.",
-            "items": { "type": "string" },
-            "type": "array"
-          },
-          "apply_mode": {
-            "description": "Lifecycle point at which changes become effective.",
-            "enum": ["next_request", "next_command", "restart_required"],
-            "type": "string"
-          },
-          "control": {
-            "description": "Requested frontend control.",
-            "enum": [
-              "text",
-              "secret_pool",
-              "string_list",
-              "boolean",
-              "select",
-              "index_provider_routes",
-              "provider_order",
-              "provider_proxy_policy"
-            ],
-            "type": "string"
-          },
-          "description": { "description": "Human-readable description.", "type": "string" },
-          "field": { "description": "API field name.", "type": "string" },
-          "group": {
-            "description": "Functional administrator configuration group.",
-            "enum": [
-              "source_access",
-              "provider_routing",
-              "server_security",
-              "single_sign_on",
-              "observability"
-            ],
-            "type": "string"
-          },
-          "has_value": {
-            "description": "Whether a credential value is configured.",
-            "type": "boolean"
-          },
-          "input_type": { "description": "Frontend input type.", "type": "string" },
-          "is_secret": {
-            "description": "Whether the value contains credentials.",
-            "type": "boolean"
-          },
-          "label": { "description": "Human-readable label.", "type": "string" },
-          "masked_value": {
-            "description": "Fixed non-secret mask when a credential value is configured.",
-            "type": "string"
-          },
-          "secret_items": {
-            "description": "Individually manageable masked entries for a secret pool.",
-            "items": { "$ref": "#/components/schemas/RuntimeSecretItemInfo" },
-            "type": "array"
-          },
-          "source": { "description": "Effective setting source.", "type": "string" },
-          "updated_at": {
-            "description": "Database update timestamp.",
-            "format": "double",
-            "type": ["number", "null"]
-          },
-          "value": { "description": "Effective setting value.", "type": "string" }
-        },
-        "required": [
-          "allowed_values",
-          "apply_mode",
-          "control",
-          "description",
-          "field",
-          "group",
-          "has_value",
-          "input_type",
-          "is_secret",
-          "label",
-          "masked_value",
-          "source",
-          "value"
-        ],
-        "type": "object"
-      },
       "RuntimeSettingsUpdate": {
         "additionalProperties": false,
         "properties": {
@@ -2232,89 +1632,67 @@
         },
         "type": "object"
       },
-      "ScheduledIndexSpec": {
-        "additionalProperties": false,
-        "properties": {
-          "kind": { "enum": ["index"], "type": "string" },
-          "metadata_file": {
-            "description": "Optional metadata CSV basename.",
-            "maxLength": 128,
-            "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*\\.csv$",
-            "type": ["string", "null"]
-          },
-          "notify": {
-            "description": "Whether notification delivery runs after indexing succeeds.",
-            "type": "boolean"
-          },
-          "push": {
-            "description": "Whether push delivery runs after indexing succeeds.",
-            "type": "boolean"
-          }
-        },
-        "required": ["kind"],
-        "type": "object"
-      },
-      "ScheduledNotifySpec": {
-        "additionalProperties": false,
-        "properties": {
-          "database": {
-            "description": "Optional index database basename.",
-            "maxLength": 128,
-            "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*\\.sqlite$",
-            "type": ["string", "null"]
-          },
-          "kind": { "enum": ["notify"], "type": "string" },
-          "max_candidates": {
-            "description": "Optional upper bound for recommendation candidates.",
-            "format": "int64",
-            "maximum": 1000,
-            "minimum": 1,
-            "type": ["integer", "null"]
-          }
-        },
-        "required": ["kind"],
-        "type": "object"
-      },
-      "ScheduledPushSpec": {
-        "additionalProperties": false,
-        "properties": {
-          "database": {
-            "description": "Optional index database basename.",
-            "maxLength": 128,
-            "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*\\.sqlite$",
-            "type": ["string", "null"]
-          },
-          "kind": { "enum": ["push"], "type": "string" },
-          "max_candidates": {
-            "description": "Optional upper bound for recommendation candidates.",
-            "format": "int64",
-            "maximum": 1000,
-            "minimum": 1,
-            "type": ["integer", "null"]
-          }
-        },
-        "required": ["kind"],
-        "type": "object"
-      },
       "ScheduledTaskCreate": {
         "additionalProperties": false,
         "properties": {
           "coalesce": {
+            "default": true,
             "description": "Whether missed slots are collapsed to the latest slot.",
             "type": "boolean"
           },
           "cron": { "description": "Five-field cron expression.", "type": "string" },
-          "enabled": { "description": "Whether the task is enabled.", "type": "boolean" },
+          "enabled": {
+            "default": true,
+            "description": "Whether the task is enabled.",
+            "type": "boolean"
+          },
           "job": {
             "description": "Validated job specification.",
             "oneOf": [
-              { "$ref": "#/components/schemas/ScheduledIndexSpec" },
-              { "$ref": "#/components/schemas/ScheduledNotifySpec" },
-              { "$ref": "#/components/schemas/ScheduledPushSpec" }
+              { "$ref": "#/components/schemas/IndexJob" },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "database": {
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*\\.sqlite$",
+                    "type": ["string", "null"]
+                  },
+                  "kind": { "enum": ["notify"], "type": "string" },
+                  "max_candidates": {
+                    "format": "int64",
+                    "maximum": 1000,
+                    "minimum": 1,
+                    "type": ["integer", "null"]
+                  }
+                },
+                "required": ["kind"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "database": {
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*\\.sqlite$",
+                    "type": ["string", "null"]
+                  },
+                  "kind": { "enum": ["push"], "type": "string" },
+                  "max_candidates": {
+                    "format": "int64",
+                    "maximum": 1000,
+                    "minimum": 1,
+                    "type": ["integer", "null"]
+                  }
+                },
+                "required": ["kind"],
+                "type": "object"
+              }
             ]
           },
           "name": { "description": "Display name.", "type": "string" },
           "timeout_seconds": {
+            "default": 3600,
             "description": "Maximum execution time in seconds.",
             "format": "int64",
             "maximum": 86400,
@@ -2322,156 +1700,12 @@
             "type": "integer"
           },
           "timezone": {
+            "default": "UTC",
             "description": "Explicit IANA time zone used for cron evaluation.",
             "type": "string"
           }
         },
         "required": ["cron", "job", "name"],
-        "type": "object"
-      },
-      "ScheduledTaskInfo": {
-        "additionalProperties": false,
-        "properties": {
-          "coalesce": {
-            "description": "Whether missed slots are collapsed to the latest slot.",
-            "type": "boolean"
-          },
-          "created_at": {
-            "description": "Creation timestamp.",
-            "format": "double",
-            "type": "number"
-          },
-          "cron": { "description": "Five-field cron expression.", "type": "string" },
-          "enabled": { "description": "Whether the task is enabled.", "type": "boolean" },
-          "id": {
-            "description": "Scheduled task row identifier.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "job": {
-            "anyOf": [
-              {
-                "description": "Validated job specification, absent only for a migrated legacy row.",
-                "oneOf": [
-                  { "$ref": "#/components/schemas/ScheduledIndexSpec" },
-                  { "$ref": "#/components/schemas/ScheduledNotifySpec" },
-                  { "$ref": "#/components/schemas/ScheduledPushSpec" }
-                ]
-              },
-              { "type": "null" }
-            ]
-          },
-          "last_run_at": {
-            "description": "Last run timestamp.",
-            "format": "double",
-            "type": ["number", "null"]
-          },
-          "last_status": {
-            "description": "Last run status.",
-            "enum": [
-              "idle",
-              "pending",
-              "claimed",
-              "running",
-              "success",
-              "failed",
-              "timed_out",
-              "error",
-              "unknown",
-              "cancelled"
-            ],
-            "type": "string"
-          },
-          "legacy_command": {
-            "description": "Read-only command text retained from a legacy row for administrator review.",
-            "type": ["string", "null"]
-          },
-          "name": { "description": "Display name.", "type": "string" },
-          "timeout_seconds": {
-            "description": "Maximum execution time in seconds.",
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "timezone": {
-            "description": "Explicit IANA time zone used for cron evaluation.",
-            "type": "string"
-          },
-          "updated_at": {
-            "description": "Last update timestamp.",
-            "format": "double",
-            "type": "number"
-          }
-        },
-        "required": [
-          "coalesce",
-          "created_at",
-          "cron",
-          "enabled",
-          "id",
-          "last_status",
-          "name",
-          "timeout_seconds",
-          "timezone",
-          "updated_at"
-        ],
-        "type": "object"
-      },
-      "ScheduledTaskRunInfo": {
-        "additionalProperties": false,
-        "properties": {
-          "claimed_at": {
-            "description": "Claim timestamp.",
-            "format": "double",
-            "type": ["number", "null"]
-          },
-          "finished_at": {
-            "description": "Terminal or unknown-state timestamp.",
-            "format": "double",
-            "type": ["number", "null"]
-          },
-          "id": { "description": "Run row identifier.", "format": "int64", "type": "integer" },
-          "scheduled_for": {
-            "description": "UTC Unix timestamp of the scheduled minute or explicit manual request.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "started_at": {
-            "description": "Execution start timestamp.",
-            "format": "double",
-            "type": ["number", "null"]
-          },
-          "status": {
-            "description": "Durable run status.",
-            "enum": [
-              "idle",
-              "pending",
-              "claimed",
-              "running",
-              "success",
-              "failed",
-              "timed_out",
-              "error",
-              "unknown",
-              "cancelled"
-            ],
-            "type": "string"
-          },
-          "task_id": {
-            "description": "Scheduled task row identifier.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "task_name": {
-            "description": "Task name captured when the slot was queued.",
-            "type": "string"
-          },
-          "worker_id": {
-            "description": "Worker identifier currently owning the run.",
-            "type": ["string", "null"]
-          }
-        },
-        "required": ["id", "scheduled_for", "status", "task_id", "task_name"],
         "type": "object"
       },
       "ScheduledTaskUpdate": {
@@ -2484,16 +1718,47 @@
           },
           "enabled": { "description": "Optional enabled flag.", "type": ["boolean", "null"] },
           "job": {
-            "anyOf": [
+            "description": "Optional replacement job specification.",
+            "oneOf": [
+              { "$ref": "#/components/schemas/IndexJob" },
               {
-                "description": "Optional replacement job specification.",
-                "oneOf": [
-                  { "$ref": "#/components/schemas/ScheduledIndexSpec" },
-                  { "$ref": "#/components/schemas/ScheduledNotifySpec" },
-                  { "$ref": "#/components/schemas/ScheduledPushSpec" }
-                ]
+                "additionalProperties": false,
+                "properties": {
+                  "database": {
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*\\.sqlite$",
+                    "type": ["string", "null"]
+                  },
+                  "kind": { "enum": ["notify"], "type": "string" },
+                  "max_candidates": {
+                    "format": "int64",
+                    "maximum": 1000,
+                    "minimum": 1,
+                    "type": ["integer", "null"]
+                  }
+                },
+                "required": ["kind"],
+                "type": "object"
               },
-              { "type": "null" }
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "database": {
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*\\.sqlite$",
+                    "type": ["string", "null"]
+                  },
+                  "kind": { "enum": ["push"], "type": "string" },
+                  "max_candidates": {
+                    "format": "int64",
+                    "maximum": 1000,
+                    "minimum": 1,
+                    "type": ["integer", "null"]
+                  }
+                },
+                "required": ["kind"],
+                "type": "object"
+              }
             ]
           },
           "name": {
@@ -2514,103 +1779,23 @@
         },
         "type": "object"
       },
-      "SchedulerStatusResponse": {
+      "SecretItem": {
         "additionalProperties": false,
-        "properties": {
-          "last_checked_at": {
-            "description": "Last completed scheduler wall-clock check.",
-            "format": "double",
-            "type": ["number", "null"]
-          },
-          "recent_runs": {
-            "description": "Recent durable task runs ordered from newest to oldest.",
-            "items": { "$ref": "#/components/schemas/ScheduledTaskRunInfo" },
-            "type": "array"
-          },
-          "workers": {
-            "description": "Known worker heartbeats ordered from newest to oldest.",
-            "items": { "$ref": "#/components/schemas/SchedulerWorkerInfo" },
-            "type": "array"
-          }
-        },
-        "required": ["recent_runs", "workers"],
+        "properties": { "masked_value": { "type": "string" }, "reference": { "type": "string" } },
+        "required": ["reference", "masked_value"],
         "type": "object"
       },
-      "SchedulerWorkerInfo": {
+      "Status": {
         "additionalProperties": false,
         "properties": {
-          "heartbeat_at": {
-            "description": "Most recent heartbeat timestamp.",
-            "format": "double",
-            "type": "number"
-          },
-          "is_healthy": {
-            "description": "Whether the heartbeat is within the health threshold.",
-            "type": "boolean"
-          },
-          "started_at": {
-            "description": "Worker start timestamp.",
-            "format": "double",
-            "type": "number"
-          },
-          "worker_id": { "description": "Stable worker process identifier.", "type": "string" }
+          "last_checked_at": { "format": "double", "type": ["number", "null"] },
+          "recent_runs": { "items": { "$ref": "#/components/schemas/Run" }, "type": "array" },
+          "workers": { "items": { "$ref": "#/components/schemas/Worker" }, "type": "array" }
         },
-        "required": ["heartbeat_at", "is_healthy", "started_at", "worker_id"],
+        "required": ["workers", "recent_runs"],
         "type": "object"
       },
-      "TelemetryHour": {
-        "additionalProperties": false,
-        "properties": {
-          "calls": { "format": "int64", "minimum": 0, "type": "integer" },
-          "errors": { "format": "int64", "minimum": 0, "type": "integer" },
-          "hour": { "format": "date-time", "type": "string" },
-          "kind": { "enum": ["http", "mcp", "search"], "type": "string" }
-        },
-        "required": ["hour", "kind", "calls", "errors"],
-        "type": "object"
-      },
-      "TelemetryResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "enabled": { "type": "boolean" },
-          "from": { "format": "date-time", "type": "string" },
-          "hourly": { "items": { "$ref": "#/components/schemas/TelemetryHour" }, "type": "array" },
-          "search_shapes": {
-            "items": { "$ref": "#/components/schemas/TelemetrySearchShape" },
-            "type": "array"
-          },
-          "series": {
-            "items": { "$ref": "#/components/schemas/TelemetrySeries" },
-            "type": "array"
-          },
-          "to": { "format": "date-time", "type": "string" }
-        },
-        "required": ["enabled", "from", "to", "series", "hourly", "search_shapes"],
-        "type": "object"
-      },
-      "TelemetrySearchShape": {
-        "additionalProperties": false,
-        "properties": {
-          "calls": { "format": "int64", "minimum": 0, "type": "integer" },
-          "feature": {
-            "enum": [
-              "endpoint",
-              "mode",
-              "database",
-              "term_count",
-              "uses_prefix",
-              "uses_boolean",
-              "hits",
-              "hit_count_basis"
-            ],
-            "type": "string"
-          },
-          "value": { "type": "string" }
-        },
-        "required": ["feature", "value", "calls"],
-        "type": "object"
-      },
-      "TelemetrySeries": {
+      "Summary": {
         "additionalProperties": false,
         "properties": {
           "calls": { "format": "int64", "minimum": 0, "type": "integer" },
@@ -2633,17 +1818,109 @@
           "uses_prefix": { "type": "boolean" }
         },
         "required": [
-          "kind",
-          "name",
-          "is_error",
-          "uses_prefix",
-          "uses_boolean",
           "calls",
           "errors",
           "error_rate",
           "p50_ms",
           "p95_ms",
-          "p99_ms"
+          "p99_ms",
+          "kind",
+          "name",
+          "is_error",
+          "uses_prefix",
+          "uses_boolean"
+        ],
+        "type": "object"
+      },
+      "Task": {
+        "additionalProperties": false,
+        "properties": {
+          "coalesce": { "type": "boolean" },
+          "created_at": { "format": "double", "type": "number" },
+          "cron": { "type": "string" },
+          "enabled": { "type": "boolean" },
+          "id": { "format": "int64", "type": "integer" },
+          "job": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  { "$ref": "#/components/schemas/IndexJob" },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "database": {
+                        "maxLength": 128,
+                        "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*\\.sqlite$",
+                        "type": ["string", "null"]
+                      },
+                      "kind": { "enum": ["notify"], "type": "string" },
+                      "max_candidates": {
+                        "format": "int64",
+                        "maximum": 1000,
+                        "minimum": 1,
+                        "type": ["integer", "null"]
+                      }
+                    },
+                    "required": ["kind"],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "database": {
+                        "maxLength": 128,
+                        "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*\\.sqlite$",
+                        "type": ["string", "null"]
+                      },
+                      "kind": { "enum": ["push"], "type": "string" },
+                      "max_candidates": {
+                        "format": "int64",
+                        "maximum": 1000,
+                        "minimum": 1,
+                        "type": ["integer", "null"]
+                      }
+                    },
+                    "required": ["kind"],
+                    "type": "object"
+                  }
+                ]
+              },
+              { "type": "null" }
+            ]
+          },
+          "last_run_at": { "format": "double", "type": ["number", "null"] },
+          "last_status": {
+            "enum": [
+              "idle",
+              "pending",
+              "claimed",
+              "running",
+              "success",
+              "failed",
+              "timed_out",
+              "error",
+              "unknown",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "legacy_command": { "type": ["string", "null"] },
+          "name": { "type": "string" },
+          "timeout_seconds": { "format": "int64", "minimum": 0, "type": "integer" },
+          "timezone": { "type": "string" },
+          "updated_at": { "format": "double", "type": "number" }
+        },
+        "required": [
+          "id",
+          "name",
+          "cron",
+          "timezone",
+          "timeout_seconds",
+          "coalesce",
+          "enabled",
+          "last_status",
+          "created_at",
+          "updated_at"
         ],
         "type": "object"
       },
@@ -2652,6 +1929,7 @@
         "properties": {
           "name": { "description": "Token display name.", "maxLength": 100, "type": "string" },
           "ttl": {
+            "default": 604800,
             "description": "Requested token TTL in seconds.",
             "format": "int64",
             "maximum": 31536000,
@@ -2661,50 +1939,23 @@
         },
         "type": "object"
       },
-      "TokenCreateResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "expires_at": {
-            "description": "Token expiration timestamp.",
-            "format": "double",
-            "type": "number"
-          },
-          "id": { "description": "Token row identifier.", "format": "int64", "type": "integer" },
-          "name": { "description": "Token display name.", "type": "string" },
-          "token": {
-            "description": "Raw token value returned only at creation time.",
-            "type": "string"
-          }
-        },
-        "required": ["expires_at", "id", "name", "token"],
-        "type": "object"
-      },
       "TokenInfo": {
         "additionalProperties": false,
         "properties": {
-          "created_at": {
-            "description": "Token creation timestamp.",
-            "format": "double",
-            "type": "number"
-          },
-          "expires_at": {
-            "description": "Token expiration timestamp.",
-            "format": "double",
-            "type": "number"
-          },
-          "id": { "description": "Token row identifier.", "format": "int64", "type": "integer" },
-          "name": { "description": "Token display name.", "type": "string" }
+          "created_at": { "format": "double", "type": "number" },
+          "expires_at": { "format": "double", "type": "number" },
+          "id": { "format": "int64", "type": "integer" },
+          "name": { "type": "string" }
         },
-        "required": ["created_at", "expires_at", "id", "name"],
+        "required": ["id", "name", "expires_at", "created_at"],
         "type": "object"
       },
-      "TrackingFolderSummary": {
+      "TrackingFolderResponse": {
         "additionalProperties": false,
         "properties": {
-          "id": { "description": "Folder row identifier.", "format": "int64", "type": "integer" },
-          "name": { "description": "Folder display name.", "type": "string" }
+          "folder_id": { "format": "int64", "type": ["integer", "null"] },
+          "folder_name": { "type": ["string", "null"] }
         },
-        "required": ["id", "name"],
         "type": "object"
       },
       "TrackingSetRequest": {
@@ -2722,183 +1973,96 @@
       "TrackingStatusResponse": {
         "additionalProperties": false,
         "properties": {
-          "notification_configured": {
-            "description": "Whether notification settings exist for the user.",
-            "type": "boolean"
-          },
-          "total_folders": {
-            "description": "Total folder count.",
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          },
+          "notification_configured": { "type": "boolean" },
+          "total_folders": { "format": "int64", "minimum": 0, "type": "integer" },
           "tracking_folder": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/TrackingFolderSummary",
-                "description": "Current tracking folder summary."
-              },
-              { "type": "null" }
-            ]
+            "anyOf": [{ "$ref": "#/components/schemas/FolderSummary" }, { "type": "null" }]
           },
-          "weekly_articles_available": {
-            "description": "Number of weekly article ids currently available.",
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          }
+          "weekly_articles_available": { "format": "int64", "minimum": 0, "type": "integer" }
         },
-        "required": ["notification_configured", "total_folders", "weekly_articles_available"],
+        "required": ["total_folders", "weekly_articles_available", "notification_configured"],
         "type": "object"
       },
       "UserResponse": {
         "additionalProperties": false,
         "properties": {
-          "auth_kind": {
-            "description": "Account credential kind.",
-            "enum": ["local", "oidc"],
-            "type": "string"
-          },
-          "email": {
-            "description": "Normalized unique account email; null when unset.",
-            "type": ["string", "null"]
-          },
-          "id": { "description": "User identifier.", "format": "int64", "type": "integer" },
-          "is_admin": {
-            "description": "Whether the user has admin privileges.",
-            "type": "boolean"
-          },
-          "is_oidc_linked": {
-            "description": "Whether an external OIDC identity is linked.",
-            "type": "boolean"
-          },
-          "username": { "description": "Login username.", "type": "string" }
+          "auth_kind": { "enum": ["local", "oidc"], "type": "string" },
+          "email": { "type": ["string", "null"] },
+          "id": { "format": "int64", "type": "integer" },
+          "is_admin": { "type": "boolean" },
+          "is_oidc_linked": { "type": "boolean" },
+          "username": { "type": "string" }
         },
-        "required": ["id", "is_admin", "username", "email", "auth_kind", "is_oidc_linked"],
+        "required": ["email", "auth_kind", "is_oidc_linked", "id", "username", "is_admin"],
         "type": "object"
       },
       "ValueCount": {
         "additionalProperties": false,
         "properties": {
-          "count": { "description": "Row count.", "format": "int64", "type": "integer" },
-          "value": { "description": "Label value.", "type": "string" }
+          "count": { "format": "int64", "type": "integer" },
+          "value": { "type": "string" }
         },
-        "required": ["count", "value"],
+        "required": ["value", "count"],
         "type": "object"
       },
-      "WeeklyArticlePage": {
+      "WeeklyArticle": {
         "additionalProperties": false,
         "properties": {
-          "items": {
-            "description": "Weekly article records.",
-            "items": { "$ref": "#/components/schemas/WeeklyArticleRecord" },
-            "type": "array"
-          },
-          "page": {
-            "$ref": "#/components/schemas/PageMeta",
-            "description": "Descending date and article-id pagination metadata."
-          }
+          "abstract": { "type": ["string", "null"] },
+          "article_id": { "type": "string" },
+          "authors": { "items": { "type": "string" }, "type": "array" },
+          "date": { "type": ["string", "null"] },
+          "date_precision": { "enum": ["year", "month", "day"], "type": ["string", "null"] },
+          "doi": { "type": ["string", "null"] },
+          "in_press": { "type": ["boolean", "null"] },
+          "issue_id": { "format": "int64", "type": ["integer", "null"] },
+          "journal_id": { "type": "string" },
+          "journal_title": { "type": "string" },
+          "number": { "type": ["string", "null"] },
+          "open_access": { "type": ["boolean", "null"] },
+          "publication_year": { "format": "int64", "type": ["integer", "null"] },
+          "title": { "type": "string" },
+          "volume": { "type": ["string", "null"] }
         },
-        "required": ["items", "page"],
+        "required": ["article_id", "journal_id", "title", "authors", "journal_title"],
         "type": "object"
       },
-      "WeeklyArticleRecord": {
+      "WeeklyDatabaseWeeklyJournalSummary": {
         "additionalProperties": false,
         "properties": {
-          "abstract": { "description": "Abstract text.", "type": ["string", "null"] },
-          "article_id": { "description": "Article identifier.", "type": "string" },
-          "authors": {
-            "description": "Authors text.",
-            "items": { "type": "string" },
-            "type": "array"
-          },
-          "date": { "description": "Article date.", "type": ["string", "null"] },
-          "date_precision": {
-            "description": "Precision represented by the article date.",
-            "enum": ["year", "month", "day"],
-            "type": ["string", "null"]
-          },
-          "doi": { "description": "DOI.", "type": ["string", "null"] },
-          "in_press": { "description": "In-press flag.", "type": ["boolean", "null"] },
-          "issue_id": {
-            "description": "Issue identifier.",
-            "format": "int64",
-            "type": ["integer", "null"]
-          },
-          "journal_id": { "description": "Journal identifier.", "type": "string" },
-          "journal_title": { "description": "Journal title.", "type": "string" },
-          "number": { "description": "Issue number.", "type": ["string", "null"] },
-          "open_access": { "description": "Open-access flag.", "type": ["boolean", "null"] },
-          "publication_year": {
-            "description": "Publication year.",
-            "format": "int64",
-            "type": ["integer", "null"]
-          },
-          "title": { "description": "Article title.", "type": "string" },
-          "volume": { "description": "Issue volume.", "type": ["string", "null"] }
-        },
-        "required": ["article_id", "authors", "journal_id", "journal_title", "title"],
-        "type": "object"
-      },
-      "WeeklyDatabaseSummary": {
-        "additionalProperties": false,
-        "properties": {
-          "db_name": { "description": "Database filename.", "type": "string" },
-          "generated_at": {
-            "description": "Generated timestamp from the newest included manifest.",
-            "type": "string"
-          },
+          "db_name": { "type": "string" },
+          "generated_at": { "type": "string" },
           "journals": {
-            "description": "Journal summaries ordered by count and label.",
             "items": { "$ref": "#/components/schemas/WeeklyJournalSummary" },
             "type": "array"
           },
-          "new_article_count": {
-            "description": "New article count within the fixed window.",
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "run_id": {
-            "description": "Source run identifier from the newest included manifest.",
-            "type": ["string", "null"]
-          }
+          "new_article_count": { "format": "int64", "minimum": 0, "type": "integer" },
+          "run_id": { "type": ["string", "null"] }
         },
-        "required": ["db_name", "generated_at", "journals", "new_article_count"],
+        "required": ["db_name", "generated_at", "new_article_count", "journals"],
         "type": "object"
       },
-      "WeeklyDatabaseUpdate": {
+      "WeeklyDatabaseWeeklyJournalUpdate": {
         "additionalProperties": false,
         "properties": {
-          "db_name": { "description": "Database filename.", "type": "string" },
-          "generated_at": { "description": "Generated timestamp.", "type": "string" },
+          "db_name": { "type": "string" },
+          "generated_at": { "type": "string" },
           "journals": {
-            "description": "Journal groups.",
             "items": { "$ref": "#/components/schemas/WeeklyJournalUpdate" },
             "type": "array"
           },
-          "new_article_count": {
-            "description": "New article count.",
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "run_id": { "description": "Source run identifier.", "type": ["string", "null"] }
+          "new_article_count": { "format": "int64", "minimum": 0, "type": "integer" },
+          "run_id": { "type": ["string", "null"] }
         },
-        "required": ["db_name", "generated_at", "journals", "new_article_count"],
+        "required": ["db_name", "generated_at", "new_article_count", "journals"],
         "type": "object"
       },
       "WeeklyJournalSummary": {
         "additionalProperties": false,
         "properties": {
-          "journal_id": { "description": "Journal identifier.", "type": "string" },
-          "journal_title": { "description": "Journal title.", "type": ["string", "null"] },
-          "new_article_count": {
-            "description": "New article count within the fixed window.",
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          }
+          "journal_id": { "type": "string" },
+          "journal_title": { "type": ["string", "null"] },
+          "new_article_count": { "format": "int64", "minimum": 0, "type": "integer" }
         },
         "required": ["journal_id", "new_article_count"],
         "type": "object"
@@ -2907,67 +2071,63 @@
         "additionalProperties": false,
         "properties": {
           "articles": {
-            "description": "Weekly articles.",
-            "items": { "$ref": "#/components/schemas/WeeklyArticleRecord" },
+            "items": { "$ref": "#/components/schemas/WeeklyArticle" },
             "type": "array"
           },
-          "journal_id": { "description": "Journal identifier.", "type": "string" },
-          "journal_title": { "description": "Journal title.", "type": ["string", "null"] },
-          "new_article_count": {
-            "description": "New article count.",
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          }
+          "journal_id": { "type": "string" },
+          "journal_title": { "type": ["string", "null"] },
+          "new_article_count": { "format": "int64", "minimum": 0, "type": "integer" }
         },
         "required": ["articles", "journal_id", "new_article_count"],
         "type": "object"
       },
-      "WeeklyUpdatesResponse": {
+      "WeeklyResponseWeeklyJournalSummary": {
         "additionalProperties": false,
         "properties": {
           "databases": {
-            "description": "Database update groups.",
-            "items": { "$ref": "#/components/schemas/WeeklyDatabaseUpdate" },
+            "items": { "$ref": "#/components/schemas/WeeklyDatabaseWeeklyJournalSummary" },
             "type": "array"
           },
-          "generated_at": { "description": "Response generated timestamp.", "type": "string" },
-          "window_end": { "description": "Window end timestamp.", "type": "string" },
-          "window_start": { "description": "Window start timestamp.", "type": "string" }
+          "generated_at": { "type": "string" },
+          "window_end": { "type": "string" },
+          "window_start": { "type": "string" }
         },
-        "required": ["databases", "generated_at", "window_end", "window_start"],
+        "required": ["generated_at", "window_start", "window_end", "databases"],
         "type": "object"
       },
-      "WeeklyUpdatesSummaryResponse": {
+      "WeeklyResponseWeeklyJournalUpdate": {
         "additionalProperties": false,
         "properties": {
           "databases": {
-            "description": "Database update summaries.",
-            "items": { "$ref": "#/components/schemas/WeeklyDatabaseSummary" },
+            "items": { "$ref": "#/components/schemas/WeeklyDatabaseWeeklyJournalUpdate" },
             "type": "array"
           },
-          "generated_at": { "description": "Response generated timestamp.", "type": "string" },
-          "window_end": {
-            "description": "Fixed window end timestamp for article-page requests.",
-            "type": "string"
-          },
-          "window_start": { "description": "Window start timestamp.", "type": "string" }
+          "generated_at": { "type": "string" },
+          "window_end": { "type": "string" },
+          "window_start": { "type": "string" }
         },
-        "required": ["databases", "generated_at", "window_end", "window_start"],
+        "required": ["generated_at", "window_start", "window_end", "databases"],
+        "type": "object"
+      },
+      "Worker": {
+        "additionalProperties": false,
+        "properties": {
+          "heartbeat_at": { "format": "double", "type": "number" },
+          "is_healthy": { "type": "boolean" },
+          "started_at": { "format": "double", "type": "number" },
+          "worker_id": { "type": "string" }
+        },
+        "required": ["worker_id", "started_at", "heartbeat_at", "is_healthy"],
         "type": "object"
       },
       "YearSummary": {
         "additionalProperties": false,
         "properties": {
-          "issue_count": { "description": "Issue count.", "format": "int64", "type": "integer" },
-          "journal_count": {
-            "description": "Journal count.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "year": { "description": "Publication year.", "format": "int64", "type": "integer" }
+          "issue_count": { "format": "int64", "type": "integer" },
+          "journal_count": { "format": "int64", "type": "integer" },
+          "year": { "format": "int64", "type": "integer" }
         },
-        "required": ["issue_count", "journal_count", "year"],
+        "required": ["year", "issue_count", "journal_count"],
         "type": "object"
       }
     },
@@ -2992,7 +2152,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": { "$ref": "#/components/schemas/AnnouncementInfo" },
+                  "items": { "$ref": "#/components/schemas/Announcement" },
                   "type": "array"
                 }
               }
@@ -3131,7 +2291,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/AnnouncementInfo" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/Announcement" } }
             },
             "description": "OK"
           },
@@ -3425,7 +2585,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/AnnouncementInfo" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/Announcement" } }
             },
             "description": "OK"
           },
@@ -3559,7 +2719,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": { "$ref": "#/components/schemas/AdminInviteCodeInfo" },
+                  "items": { "$ref": "#/components/schemas/AdminInviteResponse" },
                   "type": "array"
                 }
               }
@@ -3693,12 +2853,7 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {
-                "anyOf": [
-                  { "$ref": "#/components/schemas/AdminInviteCodeCreate" },
-                  { "type": "null" }
-                ]
-              }
+              "schema": { "$ref": "#/components/schemas/AdminInviteCodeCreate" }
             }
           }
         },
@@ -3706,7 +2861,7 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/AdminInviteCodeInfo" }
+                "schema": { "$ref": "#/components/schemas/AdminInviteResponse" }
               }
             },
             "description": "OK"
@@ -4120,10 +3275,7 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {
-                  "items": { "$ref": "#/components/schemas/RuntimeSettingInfo" },
-                  "type": "array"
-                }
+                "schema": { "items": { "$ref": "#/components/schemas/Info" }, "type": "array" }
               }
             },
             "description": "OK"
@@ -4263,10 +3415,7 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {
-                  "items": { "$ref": "#/components/schemas/RuntimeSettingInfo" },
-                  "type": "array"
-                }
+                "schema": { "items": { "$ref": "#/components/schemas/Info" }, "type": "array" }
               }
             },
             "description": "OK"
@@ -4400,10 +3549,7 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {
-                  "items": { "$ref": "#/components/schemas/ScheduledTaskInfo" },
-                  "type": "array"
-                }
+                "schema": { "items": { "$ref": "#/components/schemas/Task" }, "type": "array" }
               }
             },
             "description": "OK"
@@ -4540,7 +3686,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/ScheduledTaskInfo" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/Task" } }
             },
             "description": "OK"
           },
@@ -4834,7 +3980,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/ScheduledTaskInfo" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/Task" } }
             },
             "description": "OK"
           },
@@ -4966,9 +4112,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/SchedulerStatusResponse" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/Status" } }
             },
             "description": "OK"
           },
@@ -5100,9 +4244,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/AdminStatsResponse" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/AdminStats" } }
             },
             "description": "OK"
           },
@@ -5254,7 +4396,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/TelemetryResponse" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/Report" } }
             },
             "description": "OK"
           },
@@ -5388,7 +4530,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": { "$ref": "#/components/schemas/AdminUserInfo" },
+                  "items": { "$ref": "#/components/schemas/AdminUserResponse" },
                   "type": "array"
                 }
               }
@@ -5973,7 +5115,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": { "$ref": "#/components/schemas/AnnouncementInfo" },
+                  "items": { "$ref": "#/components/schemas/Announcement" },
                   "type": "array"
                 }
               }
@@ -6318,7 +5460,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/ArticlePage" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/PageArticle" } }
             },
             "description": "OK"
           },
@@ -6470,7 +5612,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/ArticleRecord" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/Article" } }
             },
             "description": "OK"
           },
@@ -6620,7 +5762,15 @@
           }
         ],
         "responses": {
-          "307": { "description": "Temporary Redirect" },
+          "307": {
+            "description": "Temporary Redirect",
+            "headers": {
+              "Cache-Control": { "schema": { "type": "string" } },
+              "Content-Disposition": { "schema": { "type": "string" } },
+              "Content-Type": { "schema": { "type": "string" } },
+              "Location": { "schema": { "type": "string" } }
+            }
+          },
           "400": {
             "content": {
               "application/problem+json": {
@@ -6769,9 +5919,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/ArticleAccessResponse" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/ArticleAccess" } }
             },
             "description": "OK"
           },
@@ -6921,7 +6069,25 @@
           }
         ],
         "responses": {
-          "200": { "description": "OK" },
+          "200": {
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "contentEncoding": "binary",
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "Cache-Control": { "schema": { "type": "string" } },
+              "Content-Disposition": { "schema": { "type": "string" } },
+              "Content-Type": { "schema": { "type": "string" } },
+              "Location": { "schema": { "type": "string" } }
+            }
+          },
           "307": { "description": "Temporary redirect to a full-text target." },
           "400": {
             "content": {
@@ -7087,10 +6253,7 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {
-                  "items": { "$ref": "#/components/schemas/ArticleRecord" },
-                  "type": "array"
-                }
+                "schema": { "items": { "$ref": "#/components/schemas/Article" }, "type": "array" }
               }
             },
             "description": "OK"
@@ -7636,10 +6799,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    { "$ref": "#/components/schemas/InviteCodeResponse" },
-                    { "type": "null" }
-                  ]
+                  "anyOf": [{ "$ref": "#/components/schemas/InviteResponse" }, { "type": "null" }]
                 }
               }
             },
@@ -7772,9 +6932,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/InviteCodeResponse" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/InviteResponse" } }
             },
             "description": "OK"
           },
@@ -7907,9 +7065,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/InviteCodeResponse" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/InviteResponse" } }
             },
             "description": "OK"
           },
@@ -8185,7 +7341,8 @@
             "content": {
               "application/json": { "schema": { "$ref": "#/components/schemas/LoginResponse" } }
             },
-            "description": "OK"
+            "description": "OK",
+            "headers": { "Set-Cookie": { "schema": { "type": "string" } } }
           },
           "400": {
             "content": {
@@ -8318,7 +7475,8 @@
             "content": {
               "application/json": { "schema": { "$ref": "#/components/schemas/LogoutResponse" } }
             },
-            "description": "OK"
+            "description": "OK",
+            "headers": { "Set-Cookie": { "schema": { "type": "string" } } }
           },
           "400": {
             "content": {
@@ -8451,7 +7609,8 @@
             "content": {
               "application/json": { "schema": { "$ref": "#/components/schemas/LogoutResponse" } }
             },
-            "description": "OK"
+            "description": "OK",
+            "headers": { "Set-Cookie": { "schema": { "type": "string" } } }
           },
           "400": {
             "content": {
@@ -8853,12 +8012,31 @@
       "get": {
         "operationId": "oidc_callback",
         "parameters": [
-          { "explode": false, "in": "query", "name": "state", "schema": { "type": "string" } },
-          { "explode": false, "in": "query", "name": "code", "schema": { "type": "string" } },
+          {
+            "explode": true,
+            "in": "query",
+            "name": "state",
+            "schema": { "items": { "type": "string" }, "type": "array" }
+          },
+          {
+            "explode": true,
+            "in": "query",
+            "name": "code",
+            "schema": { "items": { "type": "string" }, "type": "array" }
+          },
           { "explode": false, "in": "query", "name": "error", "schema": { "type": "string" } }
         ],
         "responses": {
-          "302": { "description": "Found" },
+          "302": {
+            "description": "Found",
+            "headers": {
+              "Cache-Control": { "schema": { "type": "string" } },
+              "Content-Type": { "schema": { "type": "string" } },
+              "Location": { "schema": { "type": "string" } },
+              "Referrer-Policy": { "schema": { "type": "string" } },
+              "Set-Cookie": { "schema": { "type": "string" } }
+            }
+          },
           "400": {
             "content": {
               "application/problem+json": {
@@ -8989,7 +8167,12 @@
             "content": {
               "application/json": { "schema": { "$ref": "#/components/schemas/UserResponse" } }
             },
-            "description": "OK"
+            "description": "OK",
+            "headers": {
+              "Cache-Control": { "schema": { "type": "string" } },
+              "Referrer-Policy": { "schema": { "type": "string" } },
+              "Set-Cookie": { "schema": { "type": "string" } }
+            }
           },
           "400": {
             "content": {
@@ -9117,9 +8300,14 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/OIDCLinkResponse" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/OidcLinkResponse" } }
             },
-            "description": "OK"
+            "description": "OK",
+            "headers": {
+              "Cache-Control": { "schema": { "type": "string" } },
+              "Referrer-Policy": { "schema": { "type": "string" } },
+              "Set-Cookie": { "schema": { "type": "string" } }
+            }
           },
           "400": {
             "content": {
@@ -9260,7 +8448,16 @@
           }
         ],
         "responses": {
-          "302": { "description": "Found" },
+          "302": {
+            "description": "Found",
+            "headers": {
+              "Cache-Control": { "schema": { "type": "string" } },
+              "Content-Type": { "schema": { "type": "string" } },
+              "Location": { "schema": { "type": "string" } },
+              "Referrer-Policy": { "schema": { "type": "string" } },
+              "Set-Cookie": { "schema": { "type": "string" } }
+            }
+          },
           "400": {
             "content": {
               "application/problem+json": {
@@ -9402,7 +8599,12 @@
                 "schema": { "$ref": "#/components/schemas/NativeLoginResponse" }
               }
             },
-            "description": "OK"
+            "description": "OK",
+            "headers": {
+              "Cache-Control": { "schema": { "type": "string" } },
+              "Referrer-Policy": { "schema": { "type": "string" } },
+              "Set-Cookie": { "schema": { "type": "string" } }
+            }
           },
           "400": {
             "content": {
@@ -9531,29 +8733,53 @@
         "operationId": "oidc_native_login",
         "parameters": [
           {
-            "explode": false,
+            "explode": true,
             "in": "query",
             "name": "redirect_uri",
             "required": true,
-            "schema": { "type": "string" }
+            "schema": {
+              "items": { "type": "string" },
+              "maxItems": 1,
+              "minItems": 1,
+              "type": "array"
+            }
           },
           {
-            "explode": false,
+            "explode": true,
             "in": "query",
             "name": "code_challenge",
             "required": true,
-            "schema": { "maxLength": 43, "minLength": 43, "type": "string" }
+            "schema": {
+              "items": { "maxLength": 43, "minLength": 43, "type": "string" },
+              "maxItems": 1,
+              "minItems": 1,
+              "type": "array"
+            }
           },
           {
-            "explode": false,
+            "explode": true,
             "in": "query",
             "name": "state",
             "required": true,
-            "schema": { "pattern": "^[A-Za-z0-9._~-]{16,128}$", "type": "string" }
+            "schema": {
+              "items": { "pattern": "^[A-Za-z0-9._~-]{16,128}$", "type": "string" },
+              "maxItems": 1,
+              "minItems": 1,
+              "type": "array"
+            }
           }
         ],
         "responses": {
-          "302": { "description": "Found" },
+          "302": {
+            "description": "Found",
+            "headers": {
+              "Cache-Control": { "schema": { "type": "string" } },
+              "Content-Type": { "schema": { "type": "string" } },
+              "Location": { "schema": { "type": "string" } },
+              "Referrer-Policy": { "schema": { "type": "string" } },
+              "Set-Cookie": { "schema": { "type": "string" } }
+            }
+          },
           "400": {
             "content": {
               "application/problem+json": {
@@ -9686,7 +8912,12 @@
                 "schema": { "$ref": "#/components/schemas/AuthProvidersResponse" }
               }
             },
-            "description": "OK"
+            "description": "OK",
+            "headers": {
+              "Cache-Control": { "schema": { "type": "string" } },
+              "Referrer-Policy": { "schema": { "type": "string" } },
+              "Set-Cookie": { "schema": { "type": "string" } }
+            }
           },
           "400": {
             "content": {
@@ -10095,9 +9326,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/TokenCreateResponse" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/IssuedToken" } }
             },
             "description": "OK"
           },
@@ -10720,7 +9949,7 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/CnkiLoginPollRequest" }
+              "schema": { "$ref": "#/components/schemas/CNKILoginPollRequest" }
             }
           },
           "required": true
@@ -10728,9 +9957,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/CnkiLoginPollResponse" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/CnkiPollResponse" } }
             },
             "description": "OK"
           },
@@ -10863,9 +10090,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/CnkiLoginStartResponse" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/CnkiStartResponse" } }
             },
             "description": "OK"
           },
@@ -10998,9 +10223,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/CnkiSessionStatusResponse" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/CnkiStatus" } }
             },
             "description": "OK"
           },
@@ -11131,9 +10354,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/CnkiSessionStatusResponse" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/CnkiStatus" } }
             },
             "description": "OK"
           },
@@ -11284,7 +10505,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": { "$ref": "#/components/schemas/FavoriteCheckResponse" },
+                  "items": { "$ref": "#/components/schemas/FavoriteMembership" },
                   "type": "array"
                 }
               }
@@ -11429,7 +10650,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": { "$ref": "#/components/schemas/FavoriteBatchCheckResponse" },
+                  "items": { "$ref": "#/components/schemas/FavoriteBatchMembership" },
                   "type": "array"
                 }
               }
@@ -11566,7 +10787,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": { "$ref": "#/components/schemas/FolderResponse" },
+                  "items": { "$ref": "#/components/schemas/FavoriteFolder" },
                   "type": "array"
                 }
               }
@@ -11705,7 +10926,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/FolderResponse" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/FavoriteFolder" } }
             },
             "description": "OK"
           },
@@ -12160,7 +11381,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": { "$ref": "#/components/schemas/FavoriteArticleResponse" },
+                  "items": { "$ref": "#/components/schemas/FavoriteArticle" },
                   "type": "array"
                 }
               }
@@ -12312,7 +11533,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/FavoriteResponse" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/FavoriteFavorite" } }
             },
             "description": "OK"
           },
@@ -12463,9 +11684,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/FavoriteBulkAddResult" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/AddedResponse" } }
             },
             "description": "OK"
           },
@@ -12616,9 +11835,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/FavoriteBulkResult" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/CountResponse" } }
             },
             "description": "OK"
           },
@@ -12769,9 +11986,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/FavoriteBulkResult" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/CountResponse" } }
             },
             "description": "OK"
           },
@@ -12941,7 +12156,7 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/FavoriteArticlePage" }
+                "schema": { "$ref": "#/components/schemas/FavoritePageArticle" }
               }
             },
             "description": "OK"
@@ -13244,7 +12459,12 @@
           }
         ],
         "responses": {
-          "200": { "description": "OK" },
+          "200": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/CountResponse" } }
+            },
+            "description": "OK"
+          },
           "400": {
             "content": {
               "application/problem+json": {
@@ -13391,7 +12611,39 @@
           }
         ],
         "responses": {
-          "200": { "description": "OK" },
+          "200": {
+            "content": {
+              "application/x-bibtex": {
+                "schema": {
+                  "contentEncoding": "binary",
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "application/x-research-info-systems": {
+                "schema": {
+                  "contentEncoding": "binary",
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "application/xml": {
+                "schema": {
+                  "contentEncoding": "binary",
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "Content-Disposition": { "schema": { "type": "string" } },
+              "Content-Type": { "schema": { "type": "string" } }
+            }
+          },
           "400": {
             "content": {
               "application/problem+json": {
@@ -13541,9 +12793,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/RelationGraphFavoritePage" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/FavoriteGraphPage" } }
             },
             "description": "OK"
           },
@@ -13681,9 +12931,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/RelationGraphFavorite" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/FavoriteGraph" } }
             },
             "description": "OK"
           },
@@ -13961,9 +13209,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/RelationGraphFavorite" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/FavoriteGraph" } }
             },
             "description": "OK"
           },
@@ -14109,9 +13355,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/RelationGraphFavorite" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/FavoriteGraph" } }
             },
             "description": "OK"
           },
@@ -14244,7 +13488,7 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/FavoriteTrackingResponse" }
+                "schema": { "$ref": "#/components/schemas/TrackingFolderResponse" }
               }
             },
             "description": "OK"
@@ -14569,7 +13813,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/IssuePage" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/PageIssue" } }
             },
             "description": "OK"
           },
@@ -14721,7 +13965,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/IssueRecord" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/Issue" } }
             },
             "description": "OK"
           },
@@ -14960,7 +14204,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/JournalPage" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/PageJournal" } }
             },
             "description": "OK"
           },
@@ -15112,7 +14356,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/JournalRecord" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/Journal" } }
             },
             "description": "OK"
           },
@@ -15690,9 +14934,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/JournalRatingOptions" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/RatingOptions" } }
             },
             "description": "OK"
           },
@@ -16235,9 +15477,7 @@
         "responses": {
           "202": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/ManualWeeklyPushStatus" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/ManualPushStatus" } }
             },
             "description": "Accepted"
           },
@@ -16378,9 +15618,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/ManualWeeklyPushStatus" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/ManualPushStatus" } }
             },
             "description": "OK"
           },
@@ -16521,9 +15759,7 @@
         "responses": {
           "202": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/ManualWeeklyPushStatus" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/ManualPushStatus" } }
             },
             "description": "Accepted"
           },
@@ -16664,9 +15900,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/ManualWeeklyPushStatus" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/ManualPushStatus" } }
             },
             "description": "OK"
           },
@@ -16798,9 +16032,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/ManualWeeklyPushStatus" }
-              }
+              "application/json": { "schema": { "$ref": "#/components/schemas/ManualPushStatus" } }
             },
             "description": "OK"
           },
@@ -17068,7 +16300,7 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/WeeklyUpdatesResponse" }
+                "schema": { "$ref": "#/components/schemas/WeeklyResponseWeeklyJournalUpdate" }
               }
             },
             "description": "OK"
@@ -17272,7 +16504,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/WeeklyArticlePage" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/PageWeeklyArticle" } }
             },
             "description": "OK"
           },
@@ -17406,7 +16638,7 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/WeeklyUpdatesSummaryResponse" }
+                "schema": { "$ref": "#/components/schemas/WeeklyResponseWeeklyJournalSummary" }
               }
             },
             "description": "OK"

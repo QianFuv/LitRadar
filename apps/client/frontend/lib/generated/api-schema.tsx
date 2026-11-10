@@ -1880,6 +1880,10 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    AddedResponse: {
+      /** Format: int64 */
+      added: number;
+    };
     AdminInviteCodeCreate: {
       /**
        * Format: double
@@ -1892,62 +1896,29 @@ export interface components {
        */
       max_uses?: number | null;
     };
-    AdminInviteCodeInfo: {
-      /** @description Raw invite code. */
+    AdminInviteResponse: {
       code: string;
-      /**
-       * Format: double
-       * @description Creation timestamp.
-       */
+      /** Format: double */
       created_at: number;
-      /**
-       * Format: int64
-       * @description Creator user identifier.
-       */
+      /** Format: int64 */
       created_by?: number | null;
-      /** @description Creator username. */
       created_by_name?: string | null;
-      /**
-       * Format: double
-       * @description Absolute expiration timestamp.
-       */
+      /** Format: double */
       expires_at: number;
-      /**
-       * Format: int64
-       * @description Invite code row identifier.
-       */
+      /** Format: int64 */
       id: number;
-      /**
-       * Format: int64
-       * @description Maximum permitted registrations.
-       */
+      /** Format: int64 */
       max_uses: number;
-      /**
-       * Format: double
-       * @description Optional irreversible revocation timestamp.
-       */
+      /** Format: double */
       revoked_at?: number | null;
-      /**
-       * @description Current lifecycle state.
-       * @enum {string}
-       */
+      /** @enum {string} */
       status: 'active' | 'expired' | 'revoked' | 'exhausted';
-      /**
-       * Format: int64
-       * @description Number of committed registrations.
-       */
+      /** Format: int64 */
       use_count: number;
-      /**
-       * Format: double
-       * @description Consumption timestamp.
-       */
+      /** Format: double */
       used_at?: number | null;
-      /**
-       * Format: int64
-       * @description Consumer user identifier.
-       */
+      /** Format: int64 */
       used_by?: number | null;
-      /** @description Consumer username. */
       used_by_name?: string | null;
     };
     AdminResetPassword: {
@@ -1958,90 +1929,57 @@ export interface components {
       /** @description Replacement admin flag. */
       is_admin: boolean;
     };
-    AdminStatsResponse: {
-      /** @description Auth database statistics. */
+    AdminStats: {
       auth: components['schemas']['AuthStats'];
-      /** @description Index database statistics. */
       index: components['schemas']['IndexStats'];
-      /** @description Push-state statistics. */
       push: components['schemas']['PushStats'][];
     };
-    AdminUserInfo: {
-      /**
-       * @description Account credential kind.
-       * @enum {string}
-       */
+    AdminUserResponse: {
+      /** @enum {string} */
       auth_kind: 'local' | 'oidc';
-      /**
-       * Format: double
-       * @description Creation timestamp.
-       */
+      /** Format: double */
       created_at: number;
-      /** @description Normalized unique account email; null when unset. */
       email: string | null;
-      /**
-       * Format: int64
-       * @description Number of favorites owned by the user.
-       */
+      /** Format: int64 */
       favorite_count: number;
-      /**
-       * Format: int64
-       * @description Number of folders owned by the user.
-       */
+      /** Format: int64 */
       folder_count: number;
-      /**
-       * Format: int64
-       * @description User row identifier.
-       */
+      /** Format: int64 */
       id: number;
-      /** @description Whether the user has admin privileges. */
       is_admin: boolean;
-      /** @description Whether an external OIDC identity is linked. */
       is_oidc_linked: boolean;
-      /** @description Whether enabled notification settings exist. */
       notify_enabled: boolean;
-      /**
-       * Format: double
-       * @description Last update timestamp.
-       */
+      /** Format: double */
       updated_at: number;
-      /** @description Username. */
       username: string;
     };
+    Announcement: {
+      /** Format: double */
+      created_at: number;
+      enabled: boolean;
+      /** Format: int64 */
+      id: number;
+      message: string;
+      priority: string;
+      title: string;
+      /** Format: double */
+      updated_at: number;
+    };
     AnnouncementCreate: {
-      /** @description Whether the announcement is visible. */
-      enabled?: boolean;
+      /**
+       * @description Whether the announcement is visible.
+       * @default true
+       */
+      enabled: boolean;
       /** @description Announcement message body. */
       message: string;
-      /** @description Priority label. */
-      priority?: string;
-      /** @description Announcement title. */
-      title: string;
-    };
-    AnnouncementInfo: {
       /**
-       * Format: double
-       * @description Creation timestamp as a Unix epoch float.
+       * @description Priority label.
+       * @default normal
        */
-      created_at: number;
-      /** @description Whether the announcement is visible to public clients. */
-      enabled: boolean;
-      /**
-       * Format: int64
-       * @description Announcement identifier.
-       */
-      id: number;
-      /** @description Announcement body text. */
-      message: string;
-      /** @description Priority label used for display ordering. */
       priority: string;
       /** @description Announcement title. */
       title: string;
-      /**
-       * Format: double
-       * @description Last update timestamp as a Unix epoch float.
-       */
-      updated_at: number;
     };
     AnnouncementUpdate: {
       /** @description Optional enabled flag. */
@@ -2053,186 +1991,227 @@ export interface components {
       /** @description Optional replacement title. */
       title?: string | null;
     };
-    ArticleAccessAction: {
-      /** @description Whether the action is available. */
-      available: boolean;
-      /** @description Display label. */
-      label: string;
-      /** @description Optional message. */
-      message?: string | null;
-      /** @description Whether login is required. */
-      requires_login: boolean;
-    };
-    ArticleAccessResponse: {
-      /** @description Abstract-page action. */
-      abstract_page: components['schemas']['ArticleAccessAction'];
-      /** @description Full-text action. */
-      fulltext: components['schemas']['ArticleAccessAction'];
-    };
-    ArticlePage: {
-      /** @description Article records. */
-      items: components['schemas']['ArticleRecord'][];
-      /** @description Pagination metadata. */
-      page: components['schemas']['PageMeta'];
-    };
-    ArticleRecord: {
-      /** @description Abstract text. */
+    Article: {
       abstract?: string | null;
-      /** @description Article identifier. */
       article_id: string;
-      /** @description Authors text. */
       authors: string[];
-      /** @description Article date. */
       date?: string | null;
-      /**
-       * @description Precision represented by the article date.
-       * @enum {string|null}
-       */
+      /** @enum {string|null} */
       date_precision?: 'year' | 'month' | 'day' | null;
-      /** @description DOI. */
       doi?: string | null;
-      /** @description End page. */
       end_page?: string | null;
-      /** @description In-press flag. */
       in_press?: boolean | null;
-      /**
-       * Format: int64
-       * @description Issue identifier.
-       */
+      /** Format: int64 */
       issue_id?: number | null;
-      /** @description Journal identifier. */
       journal_id: string;
-      /** @description Journal title. */
       journal_title: string;
-      /** @description Issue number. */
       number?: string | null;
-      /** @description Open-access flag. */
       open_access?: boolean | null;
-      /** @description PubMed identifier. */
       pmid?: string | null;
-      /**
-       * Format: int64
-       * @description Publication year.
-       */
+      /** Format: int64 */
       publication_year?: number | null;
-      /** @description Retraction DOIs in lexical order without duplicates. */
       retraction_dois: string[];
-      /** @description Start page. */
       start_page?: string | null;
-      /** @description Source title; an empty string means unavailable title metadata on a DOI-identified record. */
       title: string;
-      /** @description Issue volume. */
       volume?: string | null;
+    };
+    ArticleAccess: {
+      abstract_page: components['schemas']['ArticleAction'];
+      fulltext: components['schemas']['ArticleAction'];
+    };
+    ArticleAction: {
+      available: boolean;
+      label: string;
+      message?: string | null;
+      requires_login: boolean;
     };
     AuthProvidersResponse: {
       oidc_display_name: string;
       oidc_enabled: boolean;
     };
     AuthStats: {
-      /**
-       * Format: int64
-       * @description Enabled announcement count.
-       */
+      /** Format: int64 */
       active_announcements: number;
-      /**
-       * Format: int64
-       * @description Unexpired access tokens.
-       */
+      /** Format: int64 */
       active_tokens: number;
-      /**
-       * Format: int64
-       * @description Users with admin privileges.
-       */
+      /** Format: int64 */
       admin_count: number;
-      /**
-       * Format: int64
-       * @description Enabled notification settings.
-       */
+      /** Format: int64 */
       notification_subscribers: number;
-      /**
-       * Format: int64
-       * @description Scheduled task count.
-       */
+      /** Format: int64 */
       scheduled_tasks: number;
-      /**
-       * Format: int64
-       * @description Total favorites.
-       */
+      /** Format: int64 */
       total_favorites: number;
-      /**
-       * Format: int64
-       * @description Total folders.
-       */
+      /** Format: int64 */
       total_folders: number;
-      /**
-       * Format: int64
-       * @description Total invite codes.
-       */
+      /** Format: int64 */
       total_invite_codes: number;
-      /**
-       * Format: int64
-       * @description Total registered users.
-       */
+      /** Format: int64 */
       total_users: number;
-      /**
-       * Format: int64
-       * @description Unused invite codes.
-       */
+      /** Format: int64 */
       unused_invite_codes: number;
-      /**
-       * Format: int64
-       * @description Used invite codes.
-       */
+      /** Format: int64 */
       used_invite_codes: number;
     };
+    CapabilityInfo: {
+      article_abstract: boolean;
+      article_full_text: boolean;
+      index_content: boolean;
+      name: string;
+    };
     CfpCatalogResponse: {
-      /** @description Canonical selected database filename. */
       database: string;
-      /**
-       * Format: int64
-       * @description UTC Unix instant used to evaluate every state in this response.
-       */
+      /** Format: int64 */
       evaluatedAt: number;
-      /** @description Lightweight journals matching the optional search, without notice bodies. */
       items: components['schemas']['CfpJournalSummary'][];
-      /** @description Whole-database summary. */
       summary: components['schemas']['CfpCatalogSummary'];
     };
     CfpCatalogSummary: {
-      /**
-       * Format: int64
-       * @description Journals with a reviewed snapshot or scoped empty statement.
-       */
+      /** Format: int64 */
       adaptedJournals: number;
-      /**
-       * Format: int64
-       * @description Notices excluding closed and historical calls.
-       */
+      /** Format: int64 */
       currentNotices: number;
-      /**
-       * Format: int64
-       * @description Complete maintained journal count, including journals without indexed articles.
-       */
+      /** Format: int64 */
       journals: number;
-      /**
-       * Format: int64
-       * @description All stored notices associated with this database.
-       */
+      /** Format: int64 */
       notices: number;
     };
-    CfpDate: {
-      /** @description ISO calendar date, with no invented time of day. */
-      date: string;
-      /** @description Whether the source says strictly before this date. */
-      isExclusive: boolean;
-      /** @description Whether this milestone is optional. */
-      isOptional: boolean;
-      /** @description Untranslated source clause. */
-      originalText: string;
+    CfpJournalSummary: {
+      allIssns: string[];
+      area?: string | null;
+      canRefresh: boolean;
+      catalogAliases: string[];
+      catalogId: string;
+      checkedOn?: string | null;
+      /** @enum {string} */
+      coverage: 'adapted' | 'unadapted';
+      /** Format: int64 */
+      currentCount: number;
+      /** Format: int64 */
+      lastAttempt?: number | null;
+      lastError?: string | null;
+      /** Format: int64 */
+      lastSuccess?: number | null;
+      /** Format: int64 */
+      noticeCount: number;
+      /** @enum {string} */
+      refreshStatus: 'snapshot' | 'success' | 'failed' | 'refreshing' | 'unsupported' | 'unadapted';
+      sourceStatement?: string | null;
+      sourceUrl?: string | null;
+      stateCounts: {
+        [key: string]: number;
+      };
+      title: string;
+      titleAliases: string[];
+    };
+    CfpNoticePage: {
+      /** Format: int64 */
+      evaluatedAt: number;
+      items: components['schemas']['CfpNoticeView'][];
+      journal: components['schemas']['CfpJournalSummary'];
+      page: components['schemas']['PageMeta'];
+    };
+    CfpNoticeView: {
+      checkedOn: string;
+      dates: components['schemas']['Date'][];
+      entryDeadline?: components['schemas']['Date'] | null;
+      /** @enum {string} */
+      entryStage:
+        | 'paper'
+        | 'abstract'
+        | 'proposal'
+        | 'opens'
+        | 'revision'
+        | 'decision'
+        | 'publication'
+        | 'event'
+        | 'registration';
+      id: string;
+      isHistorical: boolean;
+      /** @enum {string} */
+      kind: 'special_issue' | 'general' | 'proposal' | 'conference_linked';
+      rawDateText: string;
+      requirements: string;
+      scope: string;
+      /** @enum {string|null} */
+      sourceStatus?:
+        | 'open'
+        | 'upcoming'
+        | 'closed'
+        | 'historical'
+        | 'invitation_only'
+        | 'undated'
+        | 'uncertain'
+        | null;
+      sourceUrl: string;
+      /** @enum {string} */
+      state:
+        | 'open'
+        | 'upcoming'
+        | 'closed'
+        | 'historical'
+        | 'invitation_only'
+        | 'undated'
+        | 'uncertain';
+      timeZone?: string | null;
+      title: string;
+      /** Format: int32 */
+      topicYear?: number | null;
+    };
+    ChangePasswordRequest: {
+      /** @description Replacement password. */
+      new_password: string;
+      /** @description Current password. */
+      old_password: string;
+    };
+    CNKILoginPollRequest: {
       /**
-       * @description Purpose of this date.
-       * @enum {string}
+       * Format: double
+       * @description Poll interval in seconds.
+       * @default 2
        */
+      interval_seconds: number;
+      /**
+       * Format: int64
+       * @description Poll timeout in seconds.
+       * @default 180
+       */
+      timeout_seconds: number;
+    };
+    CnkiPollResponse: {
+      session: components['schemas']['CnkiStatus'];
+      status: string;
+    };
+    CnkiStartResponse: {
+      qr_code: string;
+      session: components['schemas']['CnkiStatus'];
+      status: string;
+      uuid: string;
+    };
+    CnkiStatus: {
+      configured: boolean;
+      cookie_names: string[];
+      /** Format: double */
+      expires_at?: number | null;
+      has_bff_user_token: boolean;
+      /** Format: double */
+      last_used_at?: number | null;
+      /** Format: int64 */
+      seconds_remaining?: number | null;
+      status: string;
+      /** Format: double */
+      updated_at?: number | null;
+    };
+    CountResponse: {
+      /** Format: int64 */
+      count: number;
+    };
+    Date: {
+      date: string;
+      isExclusive: boolean;
+      isOptional: boolean;
+      originalText: string;
+      /** @enum {string} */
       stage:
         | 'paper'
         | 'abstract'
@@ -2244,212 +2223,20 @@ export interface components {
         | 'event'
         | 'registration';
     };
-    CfpJournalSummary: {
-      /** @description All maintained print and electronic ISSNs for display and journal search. */
-      allIssns: string[];
-      /** @description Maintained subject area, if available. */
-      area?: string | null;
-      /** @description Whether a backend discovery adapter can attempt automatic refresh. */
-      canRefresh: boolean;
-      /** @description Maintained historical aliases in the selected catalog. */
-      catalogAliases: string[];
-      /** @description Canonical maintained catalog ID used by the notice endpoint. */
-      catalogId: string;
-      /** @description Last verified original-source date, if adapted. */
-      checkedOn?: string | null;
-      /**
-       * @description Reviewed-source coverage.
-       * @enum {string}
-       */
-      coverage: 'adapted' | 'unadapted';
-      /**
-       * Format: int64
-       * @description Notices remaining after the default closed/historical filter.
-       */
-      currentCount: number;
-      /**
-       * Format: int64
-       * @description Latest acquisition attempt Unix timestamp.
-       */
-      lastAttempt?: number | null;
-      /** @description Sanitized latest failure reason. */
-      lastError?: string | null;
-      /**
-       * Format: int64
-       * @description Last successful live acquisition Unix timestamp.
-       */
-      lastSuccess?: number | null;
-      /**
-       * Format: int64
-       * @description Total stored notices, including closed and historical calls.
-       */
-      noticeCount: number;
-      /**
-       * @description Latest acquisition status, including interrupted lease detection.
-       * @enum {string}
-       */
-      refreshStatus: 'snapshot' | 'success' | 'failed' | 'refreshing' | 'unsupported' | 'unadapted';
-      /** @description Untranslated scoped statement that no matching calls are listed. */
-      sourceStatement?: string | null;
-      /** @description Original source URL associated with a scoped publisher statement. */
-      sourceUrl?: string | null;
-      /** @description Backend-computed counts for each availability state. */
-      stateCounts: {
-        [key: string]: number;
-      };
-      /** @description Journal title from the selected metadata database. */
-      title: string;
-      /** @description Maintained journal title aliases for search. */
-      titleAliases: string[];
-    };
-    CfpNoticePage: {
-      /**
-       * Format: int64
-       * @description Fixed UTC Unix evaluation instant shared across cursor pages.
-       */
-      evaluatedAt: number;
-      /** @description Original notice records in stable source order. */
-      items: components['schemas']['CfpNoticeView'][];
-      /** @description Metadata, coverage and source freshness for the journal. */
-      journal: components['schemas']['CfpJournalSummary'];
-      /** @description Standard API pagination metadata, with a scope-bound next cursor. */
-      page: components['schemas']['PageMeta'];
-    };
-    CfpNoticeView: {
-      /** @description Last verified original-source date. */
-      checkedOn: string;
-      /** @description Validated dates, including non-submission milestones. */
-      dates: components['schemas']['CfpDate'][];
-      entryDeadline?: components['schemas']['CfpDate'] | null;
-      /**
-       * @description Default initial submission stage.
-       * @enum {string}
-       */
-      entryStage:
-        | 'paper'
-        | 'abstract'
-        | 'proposal'
-        | 'opens'
-        | 'revision'
-        | 'decision'
-        | 'publication'
-        | 'event'
-        | 'registration';
-      /** @description Stable legacy-compatible URL/title identity within a journal. */
-      id: string;
-      /** @description Whether this announcement is an archival record. */
-      isHistorical: boolean;
-      /**
-       * @description Classified kind of call.
-       * @enum {string}
-       */
-      kind: 'special_issue' | 'general' | 'proposal' | 'conference_linked';
-      /** @description Unresolved original timeline; never interpreted as perpetual availability. */
-      rawDateText: string;
-      /** @description Original instructions, empty if unavailable. */
-      requirements: string;
-      /** @description Original topic excerpt, empty if unavailable. */
-      scope: string;
-      /**
-       * @description Explicit closed or invitation-only source constraint.
-       * @enum {string|null}
-       */
-      sourceStatus?:
-        | 'open'
-        | 'upcoming'
-        | 'closed'
-        | 'historical'
-        | 'invitation_only'
-        | 'undated'
-        | 'uncertain'
-        | null;
-      /** @description Original public announcement URL. */
-      sourceUrl: string;
-      /**
-       * @description Availability evaluated at the page's fixed instant.
-       * @enum {string}
-       */
-      state:
-        | 'open'
-        | 'upcoming'
-        | 'closed'
-        | 'historical'
-        | 'invitation_only'
-        | 'undated'
-        | 'uncertain';
-      /** @description Explicit IANA timezone, if supplied by the source. */
-      timeZone?: string | null;
-      /** @description Original announcement title. */
-      title: string;
-      /**
-       * Format: int32
-       * @description Explicit annual topic year, when applicable.
-       */
-      topicYear?: number | null;
-    };
-    ChangePasswordRequest: {
-      /** @description Replacement password. */
-      new_password: string;
-      /** @description Current password. */
-      old_password: string;
-    };
-    CnkiLoginPollRequest: {
-      /**
-       * Format: double
-       * @description Poll interval in seconds.
-       */
-      interval_seconds?: number;
-      /**
-       * Format: int64
-       * @description Poll timeout in seconds.
-       */
-      timeout_seconds?: number;
-    };
-    CnkiLoginPollResponse: {
-      /** @description Safe session status. */
-      session: components['schemas']['CnkiSessionStatusResponse'];
-      /** @description Poll status. */
-      status: string;
-    };
-    CnkiLoginStartResponse: {
-      /** @description QR code URL or payload. */
-      qr_code: string;
-      /** @description Safe session status. */
-      session: components['schemas']['CnkiSessionStatusResponse'];
-      /** @description Upstream login status. */
-      status: string;
-      /** @description QR UUID. */
-      uuid: string;
-    };
-    CnkiSessionStatusResponse: {
-      /** @description Whether a session-like row is configured. */
-      configured: boolean;
-      /** @description Stored cookie names without cookie values. */
-      cookie_names: string[];
-      /**
-       * Format: double
-       * @description Token expiration timestamp.
-       */
-      expires_at?: number | null;
-      /** @description Whether a BFF user token is present. */
-      has_bff_user_token: boolean;
-      /**
-       * Format: double
-       * @description Last-use timestamp.
-       */
-      last_used_at?: number | null;
-      /**
-       * Format: int64
-       * @description Seconds remaining until expiration.
-       */
-      seconds_remaining?: number | null;
-      /** @description Safe status label. */
-      status: string;
-      /**
-       * Format: double
-       * @description Row update timestamp.
-       */
-      updated_at?: number | null;
+    Distribution: {
+      /** Format: int64 */
+      calls: number;
+      /** @enum {string} */
+      feature:
+        | 'endpoint'
+        | 'mode'
+        | 'database'
+        | 'term_count'
+        | 'uses_prefix'
+        | 'uses_boolean'
+        | 'hits'
+        | 'hit_count_basis';
+      value: string;
     };
     EmailUpdateRequest: {
       /** @description Normalized unique account email; null when unset. */
@@ -2470,7 +2257,7 @@ export interface components {
        */
       detail?: string;
       /** @description Optional list of individual error details */
-      errors?: components['schemas']['ErrorDetail'][] | null;
+      errors?: components['schemas']['ErrorDetail'][];
       /**
        * Format: uri
        * @description A URI reference that identifies the specific occurrence of the problem.
@@ -2504,11 +2291,35 @@ export interface components {
       /** @description User note text. */
       note?: string;
     };
-    FavoriteArticlePage: {
-      /** @description Favorite rows in descending creation time and row-id order. */
-      items: components['schemas']['FavoriteArticleResponse'][];
-      /** @description Cursor continuation metadata without an expensive total count. */
-      page: components['schemas']['PageMeta'];
+    FavoriteArticle: {
+      abstract?: string | null;
+      article_id: string;
+      authors?: string[] | null;
+      /** Format: double */
+      created_at: number;
+      date?: string | null;
+      db_name: string;
+      doi?: string | null;
+      eissn?: string | null;
+      /** Format: int64 */
+      folder_id: number;
+      /** Format: int64 */
+      id: number;
+      in_press?: boolean | null;
+      issn?: string | null;
+      /** Format: int64 */
+      issue_id?: number | null;
+      journal_id?: string | null;
+      journal_title?: string | null;
+      /** @enum {string} */
+      metadata_status: 'available' | 'missing' | 'unavailable';
+      note: string;
+      number?: string | null;
+      open_access?: boolean | null;
+      /** Format: int64 */
+      publication_year?: number | null;
+      title?: string | null;
+      volume?: string | null;
     };
     FavoriteArticleRef: {
       /** @description Article identifier. */
@@ -2516,92 +2327,19 @@ export interface components {
       /** @description Source index database name. */
       db_name?: string;
     };
-    FavoriteArticleResponse: {
-      /** @description Article abstract text. */
-      abstract?: string | null;
-      /** @description Article identifier. */
-      article_id: string;
-      /** @description Ordered article author names. */
-      authors?: string[] | null;
-      /**
-       * Format: double
-       * @description Favorite creation timestamp.
-       */
-      created_at: number;
-      /** @description Article publication date. */
-      date?: string | null;
-      /** @description Source index database name. */
-      db_name: string;
-      /** @description Article DOI. */
-      doi?: string | null;
-      /** @description Journal electronic ISSN. */
-      eissn?: string | null;
-      /**
-       * Format: int64
-       * @description Folder row identifier.
-       */
-      folder_id: number;
-      /**
-       * Format: int64
-       * @description Favorite row identifier.
-       */
-      id: number;
-      /** @description In-press flag from the index database. */
-      in_press?: boolean | null;
-      /** @description Journal ISSN. */
-      issn?: string | null;
-      /**
-       * Format: int64
-       * @description Issue identifier from the index database.
-       */
-      issue_id?: number | null;
-      /** @description Journal identifier from the index database. */
-      journal_id?: string | null;
-      /** @description Journal title. */
-      journal_title?: string | null;
-      /**
-       * @description Availability of the referenced index article metadata.
-       * @enum {string}
-       */
-      metadata_status: 'available' | 'missing' | 'unavailable';
-      /** @description User note text. */
-      note: string;
-      /** @description Issue number. */
-      number?: string | null;
-      /** @description Open-access flag from the index database. */
-      open_access?: boolean | null;
-      /**
-       * Format: int64
-       * @description Article publication year.
-       */
-      publication_year?: number | null;
-      /** @description Article title from the index database. */
-      title?: string | null;
-      /** @description Issue volume. */
-      volume?: string | null;
-    };
     FavoriteBatchCheckRequest: {
       /** @description Article identifiers to check. */
       article_ids: string[];
       /** @description Source index database name. */
       db_name?: string;
     };
-    FavoriteBatchCheckResponse: {
-      /** @description Article identifier that was checked. */
+    FavoriteBatchMembership: {
       article_id: string;
-      /** @description Folder memberships for the article. */
-      folders: components['schemas']['FavoriteCheckResponse'][];
+      folders: components['schemas']['FavoriteMembership'][];
     };
     FavoriteBulkAdd: {
       /** @description Favorite articles to add. */
       articles: components['schemas']['FavoriteAdd'][];
-    };
-    FavoriteBulkAddResult: {
-      /**
-       * Format: int64
-       * @description Number of inserted favorite rows.
-       */
-      added: number;
     };
     FavoriteBulkMove: {
       /** @description Favorite articles to move. */
@@ -2616,53 +2354,70 @@ export interface components {
       /** @description Favorite articles to remove. */
       articles: components['schemas']['FavoriteArticleRef'][];
     };
-    FavoriteBulkResult: {
-      /**
-       * Format: int64
-       * @description Number of affected favorite rows.
-       */
-      count: number;
-    };
-    FavoriteCheckResponse: {
-      /**
-       * Format: int64
-       * @description Folder row identifier.
-       */
-      folder_id: number;
-      /** @description Folder display name. */
-      folder_name: string;
-    };
-    FavoriteResponse: {
-      /** @description Article identifier. */
+    FavoriteFavorite: {
       article_id: string;
-      /**
-       * Format: double
-       * @description Creation timestamp.
-       */
+      /** Format: double */
       created_at: number;
-      /** @description Source index database name. */
       db_name: string;
-      /**
-       * Format: int64
-       * @description Folder row identifier.
-       */
+      /** Format: int64 */
       folder_id: number;
-      /**
-       * Format: int64
-       * @description Favorite row identifier.
-       */
+      /** Format: int64 */
       id: number;
-      /** @description User note text. */
       note: string;
     };
-    FavoriteTrackingResponse: {
-      /**
-       * Format: int64
-       * @description Tracking folder identifier, or null when none is configured.
-       */
-      folder_id?: number | null;
-      /** @description Tracking folder display name, or null when none is configured. */
-      folder_name?: string | null;
+    FavoriteFolder: {
+      /** Format: int64 */
+      article_count: number;
+      /** Format: double */
+      created_at: number;
+      /** Format: int64 */
+      id: number;
+      is_tracking: boolean;
+      name: string;
+    };
+    FavoriteGraph: {
+      /** Format: double */
+      created_at: number;
+      db_name: string;
+      graph: {
+        [key: string]: unknown;
+      };
+      /** Format: int64 */
+      id: number;
+      /** Format: int64 */
+      node_count: number;
+      /** Format: int64 */
+      root_article_id: number;
+      title: string;
+      /** Format: double */
+      updated_at: number;
+    };
+    FavoriteGraphPage: {
+      items: components['schemas']['FavoriteGraphSummary'][];
+      next_cursor: string | null;
+    };
+    FavoriteGraphSummary: {
+      /** Format: double */
+      created_at: number;
+      db_name: string;
+      /** Format: int64 */
+      id: number;
+      /** Format: int64 */
+      node_count: number;
+      /** Format: int64 */
+      root_article_id: number;
+      title: string;
+      /** Format: double */
+      updated_at: number;
+    };
+    FavoriteMembership: {
+      /** Format: int64 */
+      folder_id: number;
+      folder_name: string;
+    };
+    FavoritePageArticle: {
+      items: components['schemas']['FavoriteArticle'][];
+      page: components['schemas']['PageMeta'];
     };
     FolderCreate: {
       /** @description Whether the folder should become the user's tracking folder. */
@@ -2674,206 +2429,148 @@ export interface components {
       /** @description Replacement folder display name. */
       name: string;
     };
-    FolderResponse: {
-      /**
-       * Format: int64
-       * @description Number of favorite rows in the folder.
-       */
-      article_count: number;
-      /**
-       * Format: double
-       * @description Creation timestamp.
-       */
-      created_at: number;
-      /**
-       * Format: int64
-       * @description Folder row identifier.
-       */
+    FolderSummary: {
+      /** Format: int64 */
       id: number;
-      /** @description Whether the folder receives tracking pushes. */
-      is_tracking: boolean;
-      /** @description Folder display name. */
       name: string;
     };
     HealthResponse: {
-      /**
-       * @description Service status value.
-       * @enum {string}
-       */
+      /** @enum {string} */
       status: 'ok' | 'unhealthy';
     };
+    Hour: {
+      /** Format: int64 */
+      calls: number;
+      /** Format: int64 */
+      errors: number;
+      /** Format: date-time */
+      hour: string;
+      /** @enum {string} */
+      kind: 'http' | 'mcp' | 'search';
+    };
     IndexDatabaseStats: {
-      /**
-       * Format: int64
-       * @description Article count.
-       */
+      /** Format: int64 */
       articles: number;
-      /** @description Database file name. */
       db_name: string;
-      /** @description Whether the database failed to read. */
       error?: boolean | null;
-      /**
-       * Format: int64
-       * @description Issue count.
-       */
+      /** Format: int64 */
       issues: number;
-      /**
-       * Format: int64
-       * @description Journal count.
-       */
+      /** Format: int64 */
       journals: number;
     };
+    IndexJob: {
+      /** @enum {string} */
+      kind: 'index';
+      metadata_file?: string | null;
+      notify?: boolean;
+      push?: boolean;
+    };
     IndexStats: {
-      /** @description Per-database statistics. */
       databases: components['schemas']['IndexDatabaseStats'][];
-      /**
-       * Format: int64
-       * @description Total article count.
-       */
+      /** Format: int64 */
       total_articles: number;
-      /**
-       * Format: int64
-       * @description Total journal count.
-       */
+      /** Format: int64 */
       total_journals: number;
     };
-    InviteCodeResponse: {
-      /** @description Raw invite code. */
-      code: string;
-      /**
-       * Format: double
-       * @description Invite code creation timestamp.
-       */
-      created_at: number;
-      /**
-       * Format: double
-       * @description Absolute expiration timestamp.
-       */
-      expires_at: number;
-      /**
-       * Format: int64
-       * @description Invite code row identifier.
-       */
-      id: number;
-      /**
-       * Format: int64
-       * @description Maximum permitted registrations.
-       */
-      max_uses: number;
-      /**
-       * Format: double
-       * @description Optional irreversible revocation timestamp.
-       */
-      revoked_at?: number | null;
-      /**
-       * @description Current lifecycle state.
-       * @enum {string}
-       */
-      status: 'active' | 'expired' | 'revoked' | 'exhausted';
-      /**
-       * Format: int64
-       * @description Number of committed registrations.
-       */
-      use_count: number;
-      /** @description Whether the invite code has been consumed. */
-      used: boolean;
+    Info: {
+      allowed_values: string[];
+      /** @enum {string} */
+      apply_mode: 'next_request' | 'next_command' | 'restart_required';
+      /** @enum {string} */
+      control:
+        | 'text'
+        | 'secret_pool'
+        | 'string_list'
+        | 'boolean'
+        | 'select'
+        | 'index_provider_routes'
+        | 'provider_order'
+        | 'provider_proxy_policy';
+      description: string;
+      field: string;
+      /** @enum {string} */
+      group:
+        | 'source_access'
+        | 'provider_routing'
+        | 'server_security'
+        | 'single_sign_on'
+        | 'observability';
+      has_value: boolean;
+      input_type: string;
+      is_secret: boolean;
+      label: string;
+      masked_value: string;
+      secret_items?: components['schemas']['SecretItem'][];
+      source: string;
+      /** Format: double */
+      updated_at?: number | null;
+      value: string;
     };
     InviteRequiredResponse: {
-      /** @description Whether a local administrator bootstrap must run before invites can be issued. */
       bootstrap_required: boolean;
-      /** @description Whether registration requires an invite code. */
       required: boolean;
     };
-    IssuePage: {
-      /** @description Issue records. */
-      items: components['schemas']['IssueRecord'][];
-      /** @description Pagination metadata. */
-      page: components['schemas']['PageMeta'];
+    InviteResponse: {
+      code: string;
+      /** Format: double */
+      created_at: number;
+      /** Format: double */
+      expires_at: number;
+      /** Format: int64 */
+      id: number;
+      /** Format: int64 */
+      max_uses: number;
+      /** Format: double */
+      revoked_at?: number | null;
+      /** @enum {string} */
+      status: 'active' | 'expired' | 'revoked' | 'exhausted';
+      /** Format: int64 */
+      use_count: number;
+      used: boolean;
     };
-    IssueRecord: {
-      /** @description Issue date. */
+    Issue: {
       date?: string | null;
-      /**
-       * @description Precision represented by the issue date.
-       * @enum {string|null}
-       */
+      /** @enum {string|null} */
       date_precision?: 'year' | 'month' | 'day' | null;
-      /**
-       * Format: int64
-       * @description Issue identifier.
-       */
+      /** Format: int64 */
       issue_id: number;
-      /** @description Journal identifier. */
       journal_id: string;
-      /** @description Number. */
       number?: string | null;
-      /**
-       * Format: int64
-       * @description Publication year.
-       */
+      /** Format: int64 */
       publication_year?: number | null;
-      /** @description Issue title. */
       title?: string | null;
-      /** @description Volume. */
       volume?: string | null;
     };
-    JournalOption: {
-      /** @description Journal identifier. */
-      journal_id: string;
-      /** @description Journal title. */
-      title: string;
+    IssuedToken: {
+      /** Format: double */
+      expires_at: number;
+      /** Format: int64 */
+      id: number;
+      name: string;
+      token: string;
     };
-    JournalPage: {
-      /** @description Journal records. */
-      items: components['schemas']['JournalRecord'][];
-      /** @description Pagination metadata. */
-      page: components['schemas']['PageMeta'];
-    };
-    JournalRatingOptions: {
-      /** @description ABS grade choices; '4*' is an exact label rather than a wildcard. */
-      abs_rating: components['schemas']['ValueCount'][];
-      /** @description FMS grade choices. */
-      fms_rating: components['schemas']['ValueCount'][];
-      /** @description FMS China grade choices. */
-      fmscn_rating: components['schemas']['ValueCount'][];
-      /** @description UTD grade choices, excluding unrated journals. */
-      utd_rating: components['schemas']['ValueCount'][];
-    };
-    JournalRecord: {
-      /** @description ABS rank. */
+    Journal: {
       abs_rank?: string | null;
-      /** @description ABS rating. */
       abs_rating?: string | null;
-      /** @description Journal area. */
       area?: string | null;
-      /** @description Immutable maintained catalog identifier. */
       catalog_id: string;
-      /** @description Electronic ISSN. */
       eissn?: string | null;
-      /** @description FMS rank. */
       fms_rank?: string | null;
-      /** @description FMS rating. */
       fms_rating?: string | null;
-      /** @description FMS China rank. */
       fmscn_rank?: string | null;
-      /** @description FMS China rating. */
       fmscn_rating?: string | null;
-      /** @description Whether the content database currently contains articles for the journal. */
       has_articles: boolean;
-      /** @description Print ISSN. */
       issn?: string | null;
-      /** @description All maintained ISSNs. */
       issns: string[];
-      /** @description Journal identifier. */
       journal_id: string;
-      /** @description Journal title. */
       title: string;
-      /** @description Maintained title aliases. */
       title_aliases: string[];
-      /** @description UTD rank. */
       utd_rank?: string | null;
-      /** @description UTD rating. */
       utd_rating?: string | null;
+    };
+    JournalOption: {
+      journal_id: string;
+      title: string;
     };
     LoginRequest: {
       /** @description Password. */
@@ -2882,70 +2579,35 @@ export interface components {
       username: string;
     };
     LoginResponse: {
-      /**
-       * Format: double
-       * @description Session expiration timestamp.
-       */
+      /** Format: double */
       expires_at: number;
-      /** @description Authenticated user. */
       user: components['schemas']['UserResponse'];
     };
     LogoutResponse: {
-      /** @description Whether the operation succeeded. */
       ok: boolean;
-      /**
-       * Format: int64
-       * @description Authenticated user identifier.
-       */
+      /** Format: int64 */
       user_id: number;
     };
-    ManualWeeklyPushStatus: {
-      /** @description Whether the current job still accepts cancellation. */
+    ManualPushStatus: {
       can_cancel: boolean;
-      /** @description Whether starting a new run cannot replay an ambiguous external outcome. */
       can_retry: boolean;
-      /** @description Whether durable cancellation has been requested. */
       cancellation_requested: boolean;
-      /**
-       * Format: double
-       * @description Absolute Unix timestamp after which the job must stop.
-       */
+      /** Format: double */
       deadline_at?: number | null;
-      /**
-       * Format: double
-       * @description Unix timestamp when the job finished.
-       */
+      /** Format: double */
       finished_at?: number | null;
-      /**
-       * Format: int64
-       * @description Tracking folder identifier when applicable.
-       */
+      /** Format: int64 */
       folder_id?: number | null;
-      /** @description Tracking folder name when applicable. */
       folder_name?: string | null;
-      /** @description Background job identifier. */
       job_id?: string | null;
-      /** @description Human-readable status message. */
       message: string;
-      /**
-       * Format: int64
-       * @description Number of pushed or tracking-folder-synced articles.
-       */
+      /** Format: int64 */
       pushed: number;
-      /**
-       * Format: int64
-       * @description Number of selected articles.
-       */
+      /** Format: int64 */
       selected: number;
-      /**
-       * Format: double
-       * @description Unix timestamp when the job started.
-       */
+      /** Format: double */
       started_at?: number | null;
-      /**
-       * @description Durable job status.
-       * @enum {string}
-       */
+      /** @enum {string} */
       status:
         | 'idle'
         | 'pending'
@@ -2955,12 +2617,8 @@ export interface components {
         | 'cancelled'
         | 'timed_out'
         | 'unknown';
-      /** @description AI-generated summary text when available. */
       summary: string;
-      /**
-       * Format: int64
-       * @description Number of candidate articles considered by AI selection.
-       */
+      /** Format: int64 */
       total_candidates?: number | null;
     };
     NativeLoginRequest: {
@@ -2972,14 +2630,9 @@ export interface components {
       username: string;
     };
     NativeLoginResponse: {
-      /**
-       * Format: double
-       * @description Unix expiration timestamp in seconds, 90 days after issuance.
-       */
+      /** Format: double */
       expires_at: number;
-      /** @description Personal access token for Authorization: Bearer. */
       token: string;
-      /** @description Authenticated user. */
       user: components['schemas']['UserResponse'];
     };
     NativeOIDCExchangeRequest: {
@@ -2992,72 +2645,36 @@ export interface components {
       redirect_uri: string;
     };
     NotificationSettingsResponse: {
-      /** @description Fixed non-secret mask when a primary AI API key is configured. */
       ai_api_key_mask: string;
-      /** @description Fixed non-secret mask when a backup AI API key is configured. */
       ai_backup_api_key_mask: string;
-      /** @description Backup AI endpoint base URL. */
       ai_backup_base_url: string;
-      /** @description Backup AI model. */
       ai_backup_model: string;
-      /** @description Backup AI system prompt. */
       ai_backup_system_prompt: string;
-      /** @description Primary AI endpoint base URL. */
       ai_base_url: string;
-      /** @description Primary AI model. */
       ai_model: string;
-      /**
-       * Format: int64
-       * @description Retry attempts per AI endpoint.
-       */
+      /** Format: int64 */
       ai_retry_attempts: number;
-      /** @description Primary AI system prompt. */
       ai_system_prompt: string;
-      /**
-       * Format: double
-       * @description Creation timestamp.
-       */
+      /** Format: double */
       created_at: number;
-      /** @description Delivery method. */
       delivery_method: string;
-      /** @description Research direction preferences. */
       directions: string[];
-      /** @description Whether recommendations are enabled. */
       enabled: boolean;
-      /** @description Whether a primary AI API key is configured. */
       has_ai_api_key: boolean;
-      /** @description Whether a backup AI API key is configured. */
       has_ai_backup_api_key: boolean;
-      /** @description Whether a PushPlus token is configured. */
       has_pushplus_token: boolean;
-      /**
-       * Format: int64
-       * @description Settings row identifier.
-       */
+      /** Format: int64 */
       id: number;
-      /** @description Keyword preferences. */
       keywords: string[];
-      /** @description PushPlus channel. */
       pushplus_channel: string;
-      /** @description PushPlus template. */
       pushplus_template: string;
-      /** @description Fixed non-secret mask when a PushPlus token is configured. */
       pushplus_token_mask: string;
-      /** @description PushPlus topic. */
       pushplus_topic: string;
-      /** @description Selected index database names. */
       selected_databases: string[];
-      /** @description Whether PushPlus delivery also syncs to the tracking folder. */
       sync_to_tracking_folder: boolean;
-      /**
-       * Format: double
-       * @description Last update timestamp.
-       */
+      /** Format: double */
       updated_at: number;
-      /**
-       * Format: int64
-       * @description User row identifier.
-       */
+      /** Format: int64 */
       user_id: number;
     };
     NotificationSettingsUpdate: {
@@ -3078,22 +2695,35 @@ export interface components {
       /**
        * Format: int64
        * @description Retry attempts per AI endpoint.
+       * @default 3
        */
-      ai_retry_attempts?: number;
+      ai_retry_attempts: number;
       /** @description Primary AI system prompt. */
       ai_system_prompt?: string;
-      /** @description Delivery method. */
-      delivery_method?: string;
+      /**
+       * @description Delivery method.
+       * @default folder
+       */
+      delivery_method: string;
       /** @description Research direction preferences. */
       directions?: string[];
-      /** @description Whether recommendations are enabled. */
-      enabled?: boolean;
+      /**
+       * @description Whether recommendations are enabled.
+       * @default true
+       */
+      enabled: boolean;
       /** @description Keyword preferences. */
       keywords?: string[];
-      /** @description PushPlus channel. */
-      pushplus_channel?: string;
-      /** @description PushPlus template. */
-      pushplus_template?: string;
+      /**
+       * @description PushPlus channel.
+       * @default wechat
+       */
+      pushplus_channel: string;
+      /**
+       * @description PushPlus template.
+       * @default markdown
+       */
+      pushplus_template: string;
       /** @description PushPlus token update: omitted preserves, null clears, and non-empty replaces. */
       pushplus_token?: string | null;
       /** @description PushPlus topic. */
@@ -3103,78 +2733,62 @@ export interface components {
       /** @description Whether PushPlus delivery also syncs to the tracking folder. */
       sync_to_tracking_folder?: boolean;
     };
-    OIDCLinkResponse: {
+    OidcLinkResponse: {
       authorization_url: string;
     };
     OkResponse: {
-      /** @description Whether the operation succeeded. */
       ok: boolean;
     };
+    PageArticle: {
+      items: components['schemas']['Article'][];
+      page: components['schemas']['PageMeta'];
+    };
+    PageIssue: {
+      items: components['schemas']['Issue'][];
+      page: components['schemas']['PageMeta'];
+    };
+    PageJournal: {
+      items: components['schemas']['Journal'][];
+      page: components['schemas']['PageMeta'];
+    };
     PageMeta: {
-      /** @description Whether another page may exist. */
       has_more?: boolean | null;
-      /**
-       * Format: int64
-       * @description Page size.
-       */
+      /** Format: int64 */
       limit: number;
-      /** @description Keyset cursor for the next page. */
       next_cursor?: string | null;
-      /**
-       * Format: int64
-       * @description Offset row count.
-       */
+      /** Format: int64 */
       offset: number;
-      /**
-       * Format: int64
-       * @description Total rows when requested.
-       */
+      /** Format: int64 */
       total?: number | null;
     };
-    ProviderCapabilityInfo: {
-      /** @description Whether the Provider can resolve an online abstract page. */
-      article_abstract: boolean;
-      /** @description Whether the Provider can resolve online full text. */
-      article_full_text: boolean;
-      /** @description Whether the Provider can build canonical index content. */
-      index_content: boolean;
-      /** @description Stable lowercase runtime Provider name. */
-      name: string;
+    PageWeeklyArticle: {
+      items: components['schemas']['WeeklyArticle'][];
+      page: components['schemas']['PageMeta'];
     };
-    ProviderCatalogInfo: {
-      /** @description Metadata CSV filename when present. */
+    ProviderCatalog: {
       csv_filename?: string | null;
-      /** @description Content SQLite filename when present. */
       database_filename?: string | null;
-      /** @description Canonical catalog stem shared by CSV and SQLite files. */
       stem: string;
     };
     ProviderCatalogResponse: {
-      /** @description Discovered metadata and content catalogs. */
-      catalogs: components['schemas']['ProviderCatalogInfo'][];
-      /** @description Logical Providers and their aggregate capabilities. */
-      providers: components['schemas']['ProviderCapabilityInfo'][];
+      catalogs: components['schemas']['ProviderCatalog'][];
+      providers: components['schemas']['CapabilityInfo'][];
     };
     PushStats: {
-      /** @description State file stem. */
       db_name: string;
-      /**
-       * Format: int64
-       * @description Delivered article count.
-       */
+      /** Format: int64 */
       delivered_count?: number | null;
-      /** @description Last completed run timestamp. */
       last_completed?: string | null;
-      /**
-       * @description Push state status.
-       * @enum {string}
-       */
+      /** @enum {string} */
       status: 'idle' | 'running' | 'completed' | 'failed' | 'skipped' | 'unknown' | 'error';
-      /**
-       * Format: int64
-       * @description User result count.
-       */
+      /** Format: int64 */
       user_results?: number | null;
+    };
+    RatingOptions: {
+      abs_rating: components['schemas']['ValueCount'][];
+      fms_rating: components['schemas']['ValueCount'][];
+      fmscn_rating: components['schemas']['ValueCount'][];
+      utd_rating: components['schemas']['ValueCount'][];
     };
     RegisterRequest: {
       /** @description Normalized unique account email; null when unset. */
@@ -3185,24 +2799,6 @@ export interface components {
       password: string;
       /** @description Requested username. */
       username: string;
-    };
-    RelationGraphFavorite: {
-      /** Format: double */
-      created_at: number;
-      db_name: string;
-      /** @description Verbatim JSON object snapshot, at most 2 MiB encoded. */
-      graph: {
-        [key: string]: unknown;
-      };
-      /** Format: int64 */
-      id: number;
-      /** Format: int64 */
-      node_count: number;
-      /** Format: int64 */
-      root_article_id: number;
-      title: string;
-      /** Format: double */
-      updated_at: number;
     };
     RelationGraphFavoriteCreate: {
       db_name: string;
@@ -3217,24 +2813,6 @@ export interface components {
       /** @description Trimmed graph title. */
       title: string;
     };
-    RelationGraphFavoritePage: {
-      items: components['schemas']['RelationGraphFavoriteSummary'][];
-      next_cursor: string | null;
-    };
-    RelationGraphFavoriteSummary: {
-      /** Format: double */
-      created_at: number;
-      db_name: string;
-      /** Format: int64 */
-      id: number;
-      /** Format: int64 */
-      node_count: number;
-      /** Format: int64 */
-      root_article_id: number;
-      title: string;
-      /** Format: double */
-      updated_at: number;
-    };
     RelationGraphFavoriteUpdate: {
       /** @description Verbatim JSON object snapshot, at most 2 MiB encoded. */
       graph?: {
@@ -3245,230 +2823,28 @@ export interface components {
       /** @description Trimmed graph title. */
       title?: string;
     };
-    RuntimeSecretItemInfo: {
-      /** @description Human-readable prefix mask that never contains the complete secret. */
-      masked_value: string;
-      /** @description Opaque authenticated reference accepted by a pool removal update. */
-      reference: string;
-    };
-    RuntimeSecretPoolUpdate: {
-      /** @description New plaintext entries to normalize and append. */
-      add?: string[];
-      /** @description Opaque item references to remove. */
-      remove?: string[];
-    };
-    RuntimeSettingInfo: {
-      /** @description Finite allowed values for selection controls. */
-      allowed_values: string[];
-      /**
-       * @description Lifecycle point at which changes become effective.
-       * @enum {string}
-       */
-      apply_mode: 'next_request' | 'next_command' | 'restart_required';
-      /**
-       * @description Requested frontend control.
-       * @enum {string}
-       */
-      control:
-        | 'text'
-        | 'secret_pool'
-        | 'string_list'
-        | 'boolean'
-        | 'select'
-        | 'index_provider_routes'
-        | 'provider_order'
-        | 'provider_proxy_policy';
-      /** @description Human-readable description. */
-      description: string;
-      /** @description API field name. */
-      field: string;
-      /**
-       * @description Functional administrator configuration group.
-       * @enum {string}
-       */
-      group:
-        | 'source_access'
-        | 'provider_routing'
-        | 'server_security'
-        | 'single_sign_on'
-        | 'observability';
-      /** @description Whether a credential value is configured. */
-      has_value: boolean;
-      /** @description Frontend input type. */
-      input_type: string;
-      /** @description Whether the value contains credentials. */
-      is_secret: boolean;
-      /** @description Human-readable label. */
-      label: string;
-      /** @description Fixed non-secret mask when a credential value is configured. */
-      masked_value: string;
-      /** @description Individually manageable masked entries for a secret pool. */
-      secret_items?: components['schemas']['RuntimeSecretItemInfo'][];
-      /** @description Effective setting source. */
-      source: string;
-      /**
-       * Format: double
-       * @description Database update timestamp.
-       */
-      updated_at?: number | null;
-      /** @description Effective setting value. */
-      value: string;
-    };
-    RuntimeSettingsUpdate: {
-      /** @description Incremental secret-pool mutations keyed by API field name. */
-      secret_pool_updates?: {
-        [key: string]: components['schemas']['RuntimeSecretPoolUpdate'];
-      };
-      /** @description Values keyed by API field name; null clears and a blank secret preserves. */
-      values?: {
-        [key: string]: string | null;
-      };
-    };
-    ScheduledIndexSpec: {
-      /** @enum {string} */
-      kind: 'index';
-      /** @description Optional metadata CSV basename. */
-      metadata_file?: string | null;
-      /** @description Whether notification delivery runs after indexing succeeds. */
-      notify?: boolean;
-      /** @description Whether push delivery runs after indexing succeeds. */
-      push?: boolean;
-    };
-    ScheduledNotifySpec: {
-      /** @description Optional index database basename. */
-      database?: string | null;
-      /** @enum {string} */
-      kind: 'notify';
-      /**
-       * Format: int64
-       * @description Optional upper bound for recommendation candidates.
-       */
-      max_candidates?: number | null;
-    };
-    ScheduledPushSpec: {
-      /** @description Optional index database basename. */
-      database?: string | null;
-      /** @enum {string} */
-      kind: 'push';
-      /**
-       * Format: int64
-       * @description Optional upper bound for recommendation candidates.
-       */
-      max_candidates?: number | null;
-    };
-    ScheduledTaskCreate: {
-      /** @description Whether missed slots are collapsed to the latest slot. */
-      coalesce?: boolean;
-      /** @description Five-field cron expression. */
-      cron: string;
-      /** @description Whether the task is enabled. */
-      enabled?: boolean;
-      /** @description Validated job specification. */
-      job:
-        | components['schemas']['ScheduledIndexSpec']
-        | components['schemas']['ScheduledNotifySpec']
-        | components['schemas']['ScheduledPushSpec'];
-      /** @description Display name. */
-      name: string;
-      /**
-       * Format: int64
-       * @description Maximum execution time in seconds.
-       */
-      timeout_seconds?: number;
-      /** @description Explicit IANA time zone used for cron evaluation. */
-      timezone?: string;
-    };
-    ScheduledTaskInfo: {
-      /** @description Whether missed slots are collapsed to the latest slot. */
-      coalesce: boolean;
-      /**
-       * Format: double
-       * @description Creation timestamp.
-       */
-      created_at: number;
-      /** @description Five-field cron expression. */
-      cron: string;
-      /** @description Whether the task is enabled. */
+    Report: {
       enabled: boolean;
-      /**
-       * Format: int64
-       * @description Scheduled task row identifier.
-       */
-      id: number;
-      job?:
-        | (
-            | components['schemas']['ScheduledIndexSpec']
-            | components['schemas']['ScheduledNotifySpec']
-            | components['schemas']['ScheduledPushSpec']
-          )
-        | null;
-      /**
-       * Format: double
-       * @description Last run timestamp.
-       */
-      last_run_at?: number | null;
-      /**
-       * @description Last run status.
-       * @enum {string}
-       */
-      last_status:
-        | 'idle'
-        | 'pending'
-        | 'claimed'
-        | 'running'
-        | 'success'
-        | 'failed'
-        | 'timed_out'
-        | 'error'
-        | 'unknown'
-        | 'cancelled';
-      /** @description Read-only command text retained from a legacy row for administrator review. */
-      legacy_command?: string | null;
-      /** @description Display name. */
-      name: string;
-      /**
-       * Format: int64
-       * @description Maximum execution time in seconds.
-       */
-      timeout_seconds: number;
-      /** @description Explicit IANA time zone used for cron evaluation. */
-      timezone: string;
-      /**
-       * Format: double
-       * @description Last update timestamp.
-       */
-      updated_at: number;
+      /** Format: date-time */
+      from: string;
+      hourly: components['schemas']['Hour'][];
+      search_shapes: components['schemas']['Distribution'][];
+      series: components['schemas']['Summary'][];
+      /** Format: date-time */
+      to: string;
     };
-    ScheduledTaskRunInfo: {
-      /**
-       * Format: double
-       * @description Claim timestamp.
-       */
+    Run: {
+      /** Format: double */
       claimed_at?: number | null;
-      /**
-       * Format: double
-       * @description Terminal or unknown-state timestamp.
-       */
+      /** Format: double */
       finished_at?: number | null;
-      /**
-       * Format: int64
-       * @description Run row identifier.
-       */
+      /** Format: int64 */
       id: number;
-      /**
-       * Format: int64
-       * @description UTC Unix timestamp of the scheduled minute or explicit manual request.
-       */
+      /** Format: int64 */
       scheduled_for: number;
-      /**
-       * Format: double
-       * @description Execution start timestamp.
-       */
+      /** Format: double */
       started_at?: number | null;
-      /**
-       * @description Durable run status.
-       * @enum {string}
-       */
+      /** @enum {string} */
       status:
         | 'idle'
         | 'pending'
@@ -3480,15 +2856,70 @@ export interface components {
         | 'error'
         | 'unknown'
         | 'cancelled';
+      /** Format: int64 */
+      task_id: number;
+      task_name: string;
+      worker_id?: string | null;
+    };
+    RuntimeSecretPoolUpdate: {
+      /** @description New plaintext entries to normalize and append. */
+      add?: string[];
+      /** @description Opaque item references to remove. */
+      remove?: string[];
+    };
+    RuntimeSettingsUpdate: {
+      /** @description Incremental secret-pool mutations keyed by API field name. */
+      secret_pool_updates?: {
+        [key: string]: components['schemas']['RuntimeSecretPoolUpdate'];
+      };
+      /** @description Values keyed by API field name; null clears and a blank secret preserves. */
+      values?: {
+        [key: string]: string | null;
+      };
+    };
+    ScheduledTaskCreate: {
+      /**
+       * @description Whether missed slots are collapsed to the latest slot.
+       * @default true
+       */
+      coalesce: boolean;
+      /** @description Five-field cron expression. */
+      cron: string;
+      /**
+       * @description Whether the task is enabled.
+       * @default true
+       */
+      enabled: boolean;
+      /** @description Validated job specification. */
+      job:
+        | components['schemas']['IndexJob']
+        | {
+            database?: string | null;
+            /** @enum {string} */
+            kind: 'notify';
+            /** Format: int64 */
+            max_candidates?: number | null;
+          }
+        | {
+            database?: string | null;
+            /** @enum {string} */
+            kind: 'push';
+            /** Format: int64 */
+            max_candidates?: number | null;
+          };
+      /** @description Display name. */
+      name: string;
       /**
        * Format: int64
-       * @description Scheduled task row identifier.
+       * @description Maximum execution time in seconds.
+       * @default 3600
        */
-      task_id: number;
-      /** @description Task name captured when the slot was queued. */
-      task_name: string;
-      /** @description Worker identifier currently owning the run. */
-      worker_id?: string | null;
+      timeout_seconds: number;
+      /**
+       * @description Explicit IANA time zone used for cron evaluation.
+       * @default UTC
+       */
+      timezone: string;
     };
     ScheduledTaskUpdate: {
       /** @description Optional coalescing flag. */
@@ -3497,13 +2928,23 @@ export interface components {
       cron?: string | null;
       /** @description Optional enabled flag. */
       enabled?: boolean | null;
+      /** @description Optional replacement job specification. */
       job?:
-        | (
-            | components['schemas']['ScheduledIndexSpec']
-            | components['schemas']['ScheduledNotifySpec']
-            | components['schemas']['ScheduledPushSpec']
-          )
-        | null;
+        | components['schemas']['IndexJob']
+        | {
+            database?: string | null;
+            /** @enum {string} */
+            kind: 'notify';
+            /** Format: int64 */
+            max_candidates?: number | null;
+          }
+        | {
+            database?: string | null;
+            /** @enum {string} */
+            kind: 'push';
+            /** Format: int64 */
+            max_candidates?: number | null;
+          };
       /** @description Optional replacement display name. */
       name?: string | null;
       /**
@@ -3514,69 +2955,17 @@ export interface components {
       /** @description Optional replacement IANA time zone. */
       timezone?: string | null;
     };
-    SchedulerStatusResponse: {
-      /**
-       * Format: double
-       * @description Last completed scheduler wall-clock check.
-       */
+    SecretItem: {
+      masked_value: string;
+      reference: string;
+    };
+    Status: {
+      /** Format: double */
       last_checked_at?: number | null;
-      /** @description Recent durable task runs ordered from newest to oldest. */
-      recent_runs: components['schemas']['ScheduledTaskRunInfo'][];
-      /** @description Known worker heartbeats ordered from newest to oldest. */
-      workers: components['schemas']['SchedulerWorkerInfo'][];
+      recent_runs: components['schemas']['Run'][];
+      workers: components['schemas']['Worker'][];
     };
-    SchedulerWorkerInfo: {
-      /**
-       * Format: double
-       * @description Most recent heartbeat timestamp.
-       */
-      heartbeat_at: number;
-      /** @description Whether the heartbeat is within the health threshold. */
-      is_healthy: boolean;
-      /**
-       * Format: double
-       * @description Worker start timestamp.
-       */
-      started_at: number;
-      /** @description Stable worker process identifier. */
-      worker_id: string;
-    };
-    TelemetryHour: {
-      /** Format: int64 */
-      calls: number;
-      /** Format: int64 */
-      errors: number;
-      /** Format: date-time */
-      hour: string;
-      /** @enum {string} */
-      kind: 'http' | 'mcp' | 'search';
-    };
-    TelemetryResponse: {
-      enabled: boolean;
-      /** Format: date-time */
-      from: string;
-      hourly: components['schemas']['TelemetryHour'][];
-      search_shapes: components['schemas']['TelemetrySearchShape'][];
-      series: components['schemas']['TelemetrySeries'][];
-      /** Format: date-time */
-      to: string;
-    };
-    TelemetrySearchShape: {
-      /** Format: int64 */
-      calls: number;
-      /** @enum {string} */
-      feature:
-        | 'endpoint'
-        | 'mode'
-        | 'database'
-        | 'term_count'
-        | 'uses_prefix'
-        | 'uses_boolean'
-        | 'hits'
-        | 'hit_count_basis';
-      value: string;
-    };
-    TelemetrySeries: {
+    Summary: {
       /** Format: int64 */
       calls: number;
       database?: string;
@@ -3608,58 +2997,78 @@ export interface components {
       uses_boolean: boolean;
       uses_prefix: boolean;
     };
+    Task: {
+      coalesce: boolean;
+      /** Format: double */
+      created_at: number;
+      cron: string;
+      enabled: boolean;
+      /** Format: int64 */
+      id: number;
+      job?:
+        | (
+            | components['schemas']['IndexJob']
+            | {
+                database?: string | null;
+                /** @enum {string} */
+                kind: 'notify';
+                /** Format: int64 */
+                max_candidates?: number | null;
+              }
+            | {
+                database?: string | null;
+                /** @enum {string} */
+                kind: 'push';
+                /** Format: int64 */
+                max_candidates?: number | null;
+              }
+          )
+        | null;
+      /** Format: double */
+      last_run_at?: number | null;
+      /** @enum {string} */
+      last_status:
+        | 'idle'
+        | 'pending'
+        | 'claimed'
+        | 'running'
+        | 'success'
+        | 'failed'
+        | 'timed_out'
+        | 'error'
+        | 'unknown'
+        | 'cancelled';
+      legacy_command?: string | null;
+      name: string;
+      /** Format: int64 */
+      timeout_seconds: number;
+      timezone: string;
+      /** Format: double */
+      updated_at: number;
+    };
     TokenCreateRequest: {
       /** @description Token display name. */
       name?: string;
       /**
        * Format: int64
        * @description Requested token TTL in seconds.
+       * @default 604800
        */
-      ttl?: number;
-    };
-    TokenCreateResponse: {
-      /**
-       * Format: double
-       * @description Token expiration timestamp.
-       */
-      expires_at: number;
-      /**
-       * Format: int64
-       * @description Token row identifier.
-       */
-      id: number;
-      /** @description Token display name. */
-      name: string;
-      /** @description Raw token value returned only at creation time. */
-      token: string;
+      ttl: number;
     };
     TokenInfo: {
-      /**
-       * Format: double
-       * @description Token creation timestamp.
-       */
+      /** Format: double */
       created_at: number;
-      /**
-       * Format: double
-       * @description Token expiration timestamp.
-       */
+      /** Format: double */
       expires_at: number;
-      /**
-       * Format: int64
-       * @description Token row identifier.
-       */
+      /** Format: int64 */
       id: number;
-      /** @description Token display name. */
       name: string;
     };
-    TrackingFolderSummary: {
-      /**
-       * Format: int64
-       * @description Folder row identifier.
-       */
-      id: number;
-      /** @description Folder display name. */
-      name: string;
+    TrackingFolderResponse: {
+      /** Format: int64 */
+      folder_id?: number | null;
+      folder_name?: string | null;
     };
     TrackingSetRequest: {
       /**
@@ -3669,185 +3078,103 @@ export interface components {
       folder_id: number;
     };
     TrackingStatusResponse: {
-      /** @description Whether notification settings exist for the user. */
       notification_configured: boolean;
-      /**
-       * Format: int64
-       * @description Total folder count.
-       */
+      /** Format: int64 */
       total_folders: number;
-      tracking_folder?: components['schemas']['TrackingFolderSummary'] | null;
-      /**
-       * Format: int64
-       * @description Number of weekly article ids currently available.
-       */
+      tracking_folder?: components['schemas']['FolderSummary'] | null;
+      /** Format: int64 */
       weekly_articles_available: number;
     };
     UserResponse: {
-      /**
-       * @description Account credential kind.
-       * @enum {string}
-       */
+      /** @enum {string} */
       auth_kind: 'local' | 'oidc';
-      /** @description Normalized unique account email; null when unset. */
       email: string | null;
-      /**
-       * Format: int64
-       * @description User identifier.
-       */
+      /** Format: int64 */
       id: number;
-      /** @description Whether the user has admin privileges. */
       is_admin: boolean;
-      /** @description Whether an external OIDC identity is linked. */
       is_oidc_linked: boolean;
-      /** @description Login username. */
       username: string;
     };
     ValueCount: {
-      /**
-       * Format: int64
-       * @description Row count.
-       */
+      /** Format: int64 */
       count: number;
-      /** @description Label value. */
       value: string;
     };
-    WeeklyArticlePage: {
-      /** @description Weekly article records. */
-      items: components['schemas']['WeeklyArticleRecord'][];
-      /** @description Descending date and article-id pagination metadata. */
-      page: components['schemas']['PageMeta'];
-    };
-    WeeklyArticleRecord: {
-      /** @description Abstract text. */
+    WeeklyArticle: {
       abstract?: string | null;
-      /** @description Article identifier. */
       article_id: string;
-      /** @description Authors text. */
       authors: string[];
-      /** @description Article date. */
       date?: string | null;
-      /**
-       * @description Precision represented by the article date.
-       * @enum {string|null}
-       */
+      /** @enum {string|null} */
       date_precision?: 'year' | 'month' | 'day' | null;
-      /** @description DOI. */
       doi?: string | null;
-      /** @description In-press flag. */
       in_press?: boolean | null;
-      /**
-       * Format: int64
-       * @description Issue identifier.
-       */
+      /** Format: int64 */
       issue_id?: number | null;
-      /** @description Journal identifier. */
       journal_id: string;
-      /** @description Journal title. */
       journal_title: string;
-      /** @description Issue number. */
       number?: string | null;
-      /** @description Open-access flag. */
       open_access?: boolean | null;
-      /**
-       * Format: int64
-       * @description Publication year.
-       */
+      /** Format: int64 */
       publication_year?: number | null;
-      /** @description Article title. */
       title: string;
-      /** @description Issue volume. */
       volume?: string | null;
     };
-    WeeklyDatabaseSummary: {
-      /** @description Database filename. */
+    WeeklyDatabaseWeeklyJournalSummary: {
       db_name: string;
-      /** @description Generated timestamp from the newest included manifest. */
       generated_at: string;
-      /** @description Journal summaries ordered by count and label. */
       journals: components['schemas']['WeeklyJournalSummary'][];
-      /**
-       * Format: int64
-       * @description New article count within the fixed window.
-       */
+      /** Format: int64 */
       new_article_count: number;
-      /** @description Source run identifier from the newest included manifest. */
       run_id?: string | null;
     };
-    WeeklyDatabaseUpdate: {
-      /** @description Database filename. */
+    WeeklyDatabaseWeeklyJournalUpdate: {
       db_name: string;
-      /** @description Generated timestamp. */
       generated_at: string;
-      /** @description Journal groups. */
       journals: components['schemas']['WeeklyJournalUpdate'][];
-      /**
-       * Format: int64
-       * @description New article count.
-       */
+      /** Format: int64 */
       new_article_count: number;
-      /** @description Source run identifier. */
       run_id?: string | null;
     };
     WeeklyJournalSummary: {
-      /** @description Journal identifier. */
       journal_id: string;
-      /** @description Journal title. */
       journal_title?: string | null;
-      /**
-       * Format: int64
-       * @description New article count within the fixed window.
-       */
+      /** Format: int64 */
       new_article_count: number;
     };
     WeeklyJournalUpdate: {
-      /** @description Weekly articles. */
-      articles: components['schemas']['WeeklyArticleRecord'][];
-      /** @description Journal identifier. */
+      articles: components['schemas']['WeeklyArticle'][];
       journal_id: string;
-      /** @description Journal title. */
       journal_title?: string | null;
-      /**
-       * Format: int64
-       * @description New article count.
-       */
+      /** Format: int64 */
       new_article_count: number;
     };
-    WeeklyUpdatesResponse: {
-      /** @description Database update groups. */
-      databases: components['schemas']['WeeklyDatabaseUpdate'][];
-      /** @description Response generated timestamp. */
+    WeeklyResponseWeeklyJournalSummary: {
+      databases: components['schemas']['WeeklyDatabaseWeeklyJournalSummary'][];
       generated_at: string;
-      /** @description Window end timestamp. */
       window_end: string;
-      /** @description Window start timestamp. */
       window_start: string;
     };
-    WeeklyUpdatesSummaryResponse: {
-      /** @description Database update summaries. */
-      databases: components['schemas']['WeeklyDatabaseSummary'][];
-      /** @description Response generated timestamp. */
+    WeeklyResponseWeeklyJournalUpdate: {
+      databases: components['schemas']['WeeklyDatabaseWeeklyJournalUpdate'][];
       generated_at: string;
-      /** @description Fixed window end timestamp for article-page requests. */
       window_end: string;
-      /** @description Window start timestamp. */
       window_start: string;
+    };
+    Worker: {
+      /** Format: double */
+      heartbeat_at: number;
+      is_healthy: boolean;
+      /** Format: double */
+      started_at: number;
+      worker_id: string;
     };
     YearSummary: {
-      /**
-       * Format: int64
-       * @description Issue count.
-       */
+      /** Format: int64 */
       issue_count: number;
-      /**
-       * Format: int64
-       * @description Journal count.
-       */
+      /** Format: int64 */
       journal_count: number;
-      /**
-       * Format: int64
-       * @description Publication year.
-       */
+      /** Format: int64 */
       year: number;
     };
   };
@@ -3874,7 +3201,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['AnnouncementInfo'][];
+          'application/json': components['schemas']['Announcement'][];
         };
       };
       /** @description Bad Request */
@@ -4019,7 +3346,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['AnnouncementInfo'];
+          'application/json': components['schemas']['Announcement'];
         };
       };
       /** @description Bad Request */
@@ -4167,7 +3494,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['AnnouncementInfo'];
+          'application/json': components['schemas']['Announcement'];
         };
       };
       /** @description Bad Request */
@@ -4452,7 +3779,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['AdminInviteCodeInfo'][];
+          'application/json': components['schemas']['AdminInviteResponse'][];
         };
       };
       /** @description Bad Request */
@@ -4587,7 +3914,7 @@ export interface operations {
     };
     requestBody?: {
       content: {
-        'application/json': components['schemas']['AdminInviteCodeCreate'] | null;
+        'application/json': components['schemas']['AdminInviteCodeCreate'];
       };
     };
     responses: {
@@ -4597,7 +3924,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['AdminInviteCodeInfo'];
+          'application/json': components['schemas']['AdminInviteResponse'];
         };
       };
       /** @description Bad Request */
@@ -5023,7 +4350,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['RuntimeSettingInfo'][];
+          'application/json': components['schemas']['Info'][];
         };
       };
       /** @description Bad Request */
@@ -5168,7 +4495,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['RuntimeSettingInfo'][];
+          'application/json': components['schemas']['Info'][];
         };
       };
       /** @description Bad Request */
@@ -5309,7 +4636,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ScheduledTaskInfo'][];
+          'application/json': components['schemas']['Task'][];
         };
       };
       /** @description Bad Request */
@@ -5454,7 +4781,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ScheduledTaskInfo'];
+          'application/json': components['schemas']['Task'];
         };
       };
       /** @description Bad Request */
@@ -5602,7 +4929,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ScheduledTaskInfo'];
+          'application/json': components['schemas']['Task'];
         };
       };
       /** @description Bad Request */
@@ -5887,7 +5214,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['SchedulerStatusResponse'];
+          'application/json': components['schemas']['Status'];
         };
       };
       /** @description Bad Request */
@@ -6028,7 +5355,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['AdminStatsResponse'];
+          'application/json': components['schemas']['AdminStats'];
         };
       };
       /** @description Bad Request */
@@ -6173,7 +5500,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['TelemetryResponse'];
+          'application/json': components['schemas']['Report'];
         };
       };
       /** @description Bad Request */
@@ -6314,7 +5641,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['AdminUserInfo'][];
+          'application/json': components['schemas']['AdminUserResponse'][];
         };
       };
       /** @description Bad Request */
@@ -6895,7 +6222,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['AnnouncementInfo'][];
+          'application/json': components['schemas']['Announcement'][];
         };
       };
       /** @description Bad Request */
@@ -7081,7 +6408,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ArticlePage'];
+          'application/json': components['schemas']['PageArticle'];
         };
       };
       /** @description Bad Request */
@@ -7228,7 +6555,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ArticleRecord'];
+          'application/json': components['schemas']['Article'];
         };
       };
       /** @description Bad Request */
@@ -7372,6 +6699,10 @@ export interface operations {
       /** @description Temporary Redirect */
       307: {
         headers: {
+          'Cache-Control'?: string;
+          'Content-Disposition'?: string;
+          'Content-Type'?: string;
+          Location?: string;
           [name: string]: unknown;
         };
         content?: never;
@@ -7520,7 +6851,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ArticleAccessResponse'];
+          'application/json': components['schemas']['ArticleAccess'];
         };
       };
       /** @description Bad Request */
@@ -7664,9 +6995,15 @@ export interface operations {
       /** @description OK */
       200: {
         headers: {
+          'Cache-Control'?: string;
+          'Content-Disposition'?: string;
+          'Content-Type'?: string;
+          Location?: string;
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/pdf': string;
+        };
       };
       /** @description Temporary redirect to a full-text target. */
       307: {
@@ -7821,7 +7158,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ArticleRecord'][];
+          'application/json': components['schemas']['Article'][];
         };
       };
       /** @description Bad Request */
@@ -8252,7 +7589,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['InviteCodeResponse'] | null;
+          'application/json': components['schemas']['InviteResponse'] | null;
         };
       };
       /** @description Bad Request */
@@ -8393,7 +7730,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['InviteCodeResponse'];
+          'application/json': components['schemas']['InviteResponse'];
         };
       };
       /** @description Bad Request */
@@ -8675,7 +8012,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['InviteCodeResponse'];
+          'application/json': components['schemas']['InviteResponse'];
         };
       };
       /** @description Bad Request */
@@ -8958,6 +8295,7 @@ export interface operations {
       /** @description OK */
       200: {
         headers: {
+          'Set-Cookie'?: string;
           [name: string]: unknown;
         };
         content: {
@@ -9099,6 +8437,7 @@ export interface operations {
       /** @description OK */
       200: {
         headers: {
+          'Set-Cookie'?: string;
           [name: string]: unknown;
         };
         content: {
@@ -9240,6 +8579,7 @@ export interface operations {
       /** @description OK */
       200: {
         headers: {
+          'Set-Cookie'?: string;
           [name: string]: unknown;
         };
         content: {
@@ -9658,9 +8998,9 @@ export interface operations {
   oidc_callback: {
     parameters: {
       query?: {
-        code?: string;
+        code?: string[];
         error?: string;
-        state?: string;
+        state?: string[];
       };
       header?: never;
       path?: never;
@@ -9671,6 +9011,11 @@ export interface operations {
       /** @description Found */
       302: {
         headers: {
+          'Cache-Control'?: string;
+          'Content-Type'?: string;
+          Location?: string;
+          'Referrer-Policy'?: string;
+          'Set-Cookie'?: string;
           [name: string]: unknown;
         };
         content?: never;
@@ -9810,10 +9155,13 @@ export interface operations {
       /** @description OK */
       200: {
         headers: {
+          'Cache-Control'?: string;
+          'Referrer-Policy'?: string;
+          'Set-Cookie'?: string;
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['OIDCLinkResponse'];
+          'application/json': components['schemas']['OidcLinkResponse'];
         };
       };
       /** @description Bad Request */
@@ -9951,6 +9299,9 @@ export interface operations {
       /** @description OK */
       200: {
         headers: {
+          'Cache-Control'?: string;
+          'Referrer-Policy'?: string;
+          'Set-Cookie'?: string;
           [name: string]: unknown;
         };
         content: {
@@ -10095,6 +9446,11 @@ export interface operations {
       /** @description Found */
       302: {
         headers: {
+          'Cache-Control'?: string;
+          'Content-Type'?: string;
+          Location?: string;
+          'Referrer-Policy'?: string;
+          'Set-Cookie'?: string;
           [name: string]: unknown;
         };
         content?: never;
@@ -10238,6 +9594,9 @@ export interface operations {
       /** @description OK */
       200: {
         headers: {
+          'Cache-Control'?: string;
+          'Referrer-Policy'?: string;
+          'Set-Cookie'?: string;
           [name: string]: unknown;
         };
         content: {
@@ -10370,9 +9729,9 @@ export interface operations {
   oidc_native_login: {
     parameters: {
       query: {
-        code_challenge: string;
-        redirect_uri: string;
-        state: string;
+        code_challenge: string[];
+        redirect_uri: string[];
+        state: string[];
       };
       header?: never;
       path?: never;
@@ -10383,6 +9742,11 @@ export interface operations {
       /** @description Found */
       302: {
         headers: {
+          'Cache-Control'?: string;
+          'Content-Type'?: string;
+          Location?: string;
+          'Referrer-Policy'?: string;
+          'Set-Cookie'?: string;
           [name: string]: unknown;
         };
         content?: never;
@@ -10522,6 +9886,9 @@ export interface operations {
       /** @description OK */
       200: {
         headers: {
+          'Cache-Control'?: string;
+          'Referrer-Policy'?: string;
+          'Set-Cookie'?: string;
           [name: string]: unknown;
         };
         content: {
@@ -10956,7 +10323,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['TokenCreateResponse'];
+          'application/json': components['schemas']['IssuedToken'];
         };
       };
       /** @description Bad Request */
@@ -11534,7 +10901,7 @@ export interface operations {
     };
     requestBody: {
       content: {
-        'application/json': components['schemas']['CnkiLoginPollRequest'];
+        'application/json': components['schemas']['CNKILoginPollRequest'];
       };
     };
     responses: {
@@ -11544,7 +10911,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['CnkiLoginPollResponse'];
+          'application/json': components['schemas']['CnkiPollResponse'];
         };
       };
       /** @description Bad Request */
@@ -11685,7 +11052,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['CnkiLoginStartResponse'];
+          'application/json': components['schemas']['CnkiStartResponse'];
         };
       };
       /** @description Bad Request */
@@ -11826,7 +11193,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['CnkiSessionStatusResponse'];
+          'application/json': components['schemas']['CnkiStatus'];
         };
       };
       /** @description Bad Request */
@@ -11967,7 +11334,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['CnkiSessionStatusResponse'];
+          'application/json': components['schemas']['CnkiStatus'];
         };
       };
       /** @description Bad Request */
@@ -12113,7 +11480,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['FavoriteCheckResponse'][];
+          'application/json': components['schemas']['FavoriteMembership'][];
         };
       };
       /** @description Bad Request */
@@ -12258,7 +11625,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['FavoriteBatchCheckResponse'][];
+          'application/json': components['schemas']['FavoriteBatchMembership'][];
         };
       };
       /** @description Bad Request */
@@ -12399,7 +11766,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['FolderResponse'][];
+          'application/json': components['schemas']['FavoriteFolder'][];
         };
       };
       /** @description Bad Request */
@@ -12544,7 +11911,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['FolderResponse'];
+          'application/json': components['schemas']['FavoriteFolder'];
         };
       };
       /** @description Bad Request */
@@ -12985,7 +12352,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['FavoriteArticleResponse'][];
+          'application/json': components['schemas']['FavoriteArticle'][];
         };
       };
       /** @description Bad Request */
@@ -13133,7 +12500,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['FavoriteResponse'];
+          'application/json': components['schemas']['FavoriteFavorite'];
         };
       };
       /** @description Bad Request */
@@ -13430,7 +12797,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['FavoriteBulkAddResult'];
+          'application/json': components['schemas']['AddedResponse'];
         };
       };
       /** @description Bad Request */
@@ -13578,7 +12945,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['FavoriteBulkResult'];
+          'application/json': components['schemas']['CountResponse'];
         };
       };
       /** @description Bad Request */
@@ -13726,7 +13093,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['FavoriteBulkResult'];
+          'application/json': components['schemas']['CountResponse'];
         };
       };
       /** @description Bad Request */
@@ -13875,7 +13242,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['FavoriteArticlePage'];
+          'application/json': components['schemas']['FavoritePageArticle'];
         };
       };
       /** @description Bad Request */
@@ -14018,7 +13385,9 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['CountResponse'];
+        };
       };
       /** @description Bad Request */
       400: {
@@ -14161,9 +13530,15 @@ export interface operations {
       /** @description OK */
       200: {
         headers: {
+          'Content-Disposition'?: string;
+          'Content-Type'?: string;
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/x-bibtex': string;
+          'application/x-research-info-systems': string;
+          'application/xml': string;
+        };
       };
       /** @description Bad Request */
       400: {
@@ -14307,7 +13682,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['RelationGraphFavoritePage'];
+          'application/json': components['schemas']['FavoriteGraphPage'];
         };
       };
       /** @description Bad Request */
@@ -14452,7 +13827,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['RelationGraphFavorite'];
+          'application/json': components['schemas']['FavoriteGraph'];
         };
       };
       /** @description Bad Request */
@@ -14595,7 +13970,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['RelationGraphFavorite'];
+          'application/json': components['schemas']['FavoriteGraph'];
         };
       };
       /** @description Bad Request */
@@ -14742,7 +14117,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['RelationGraphFavorite'];
+          'application/json': components['schemas']['FavoriteGraph'];
         };
       };
       /** @description Bad Request */
@@ -15026,7 +14401,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['FavoriteTrackingResponse'];
+          'application/json': components['schemas']['TrackingFolderResponse'];
         };
       };
       /** @description Bad Request */
@@ -15325,7 +14700,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['IssuePage'];
+          'application/json': components['schemas']['PageIssue'];
         };
       };
       /** @description Bad Request */
@@ -15472,7 +14847,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['IssueRecord'];
+          'application/json': components['schemas']['Issue'];
         };
       };
       /** @description Bad Request */
@@ -15636,7 +15011,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['JournalPage'];
+          'application/json': components['schemas']['PageJournal'];
         };
       };
       /** @description Bad Request */
@@ -15783,7 +15158,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['JournalRecord'];
+          'application/json': components['schemas']['Journal'];
         };
       };
       /** @description Bad Request */
@@ -16356,7 +15731,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['JournalRatingOptions'];
+          'application/json': components['schemas']['RatingOptions'];
         };
       };
       /** @description Bad Request */
@@ -16924,7 +16299,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ManualWeeklyPushStatus'];
+          'application/json': components['schemas']['ManualPushStatus'];
         };
       };
       /** @description Bad Request */
@@ -17068,7 +16443,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ManualWeeklyPushStatus'];
+          'application/json': components['schemas']['ManualPushStatus'];
         };
       };
       /** @description Bad Request */
@@ -17212,7 +16587,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ManualWeeklyPushStatus'];
+          'application/json': components['schemas']['ManualPushStatus'];
         };
       };
       /** @description Bad Request */
@@ -17356,7 +16731,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ManualWeeklyPushStatus'];
+          'application/json': components['schemas']['ManualPushStatus'];
         };
       };
       /** @description Bad Request */
@@ -17497,7 +16872,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ManualWeeklyPushStatus'];
+          'application/json': components['schemas']['ManualPushStatus'];
         };
       };
       /** @description Bad Request */
@@ -17779,7 +17154,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['WeeklyUpdatesResponse'];
+          'application/json': components['schemas']['WeeklyResponseWeeklyJournalUpdate'];
         };
       };
       /** @description Bad Request */
@@ -17933,7 +17308,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['WeeklyArticlePage'];
+          'application/json': components['schemas']['PageWeeklyArticle'];
         };
       };
       /** @description Bad Request */
@@ -18074,7 +17449,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['WeeklyUpdatesSummaryResponse'];
+          'application/json': components['schemas']['WeeklyResponseWeeklyJournalSummary'];
         };
       };
       /** @description Bad Request */
