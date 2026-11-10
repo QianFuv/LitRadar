@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"io"
 	"math"
@@ -20,7 +21,7 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/backup"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/maintenance"
-	sqlite3 "github.com/mattn/go-sqlite3"
+	sqlite3 "modernc.org/sqlite"
 )
 
 func TestPrepareRejectsDevelopmentBeforeStorageMutation(t *testing.T) {
@@ -139,18 +140,19 @@ func TestHeartbeatCancellationInterruptsExecutingSqlAndJoins(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
+	started := make(chan struct{})
+	var once sync.Once
+	if err := database.Driver().(*sqlite3.Driver).RegisterScalarFunction("heartbeat_started", 0, func(_ *sqlite3.FunctionContext, _ []driver.Value) (driver.Value, error) {
+		once.Do(func() { close(started) })
+		return int64(0), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	connection, err := database.Conn(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer connection.Close()
-	started := make(chan struct{})
-	var once sync.Once
-	if err := connection.Raw(func(raw any) error {
-		return raw.(*sqlite3.SQLiteConn).RegisterFunc("heartbeat_started", func() int { once.Do(func() { close(started) }); return 0 }, false)
-	}); err != nil {
-		t.Fatal(err)
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)

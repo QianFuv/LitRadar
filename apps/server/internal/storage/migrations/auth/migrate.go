@@ -12,13 +12,13 @@ import (
 	"time"
 
 	platformsqlite "github.com/QianFuv/LitRadar/apps/server/internal/platform/sqlite"
-	sqlite3 "github.com/mattn/go-sqlite3"
+	sqlite3 "modernc.org/sqlite"
 )
 
 // SchemaVersion is the latest supported auth database version.
 const SchemaVersion = 23
 
-func init() { sql.Register("litradar-auth-migration", &sqlite3.SQLiteDriver{DeferSynchronous: true}) }
+func init() { sql.Register("litradar-auth-migration", &sqlite3.Driver{}) }
 
 var ErrProviderState = errors.New("legacy runtime Provider order state is invalid for migration")
 var ErrNotificationState = errors.New("notification settings list state is invalid for migration")

@@ -20,7 +20,7 @@ import (
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/auth"
 	migration "github.com/QianFuv/LitRadar/apps/server/internal/storage/migrations/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/settings"
-	sqlite3 "github.com/mattn/go-sqlite3"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 func authFixture(t *testing.T) (*authHandlers, *http.ServeMux, string) {
@@ -215,7 +215,7 @@ func TestLogoutUnconfirmedClearsCookieAndKeepsDedicatedError(t *testing.T) {
 }
 
 func TestRevocationRetryOnlyForTransientSqliteContention(t *testing.T) {
-	for _, failure := range []error{sqlite3.Error{Code: sqlite3.ErrBusy}, sqlite3.Error{Code: sqlite3.ErrLocked}, domain.ErrAudit} {
+	for _, failure := range []error{sqliteCodeError(sqlite3.SQLITE_BUSY), sqliteCodeError(sqlite3.SQLITE_LOCKED), domain.ErrAudit} {
 		calls := 0
 		_, _ = retryRevocation(func() (bool, error) { calls++; return false, failure })
 		expected := 1
@@ -299,3 +299,12 @@ func assertAuthInviteLifecycle(t *testing.T, router *http.ServeMux, accessToken 
 		t.Fatal(response.Body.String())
 	}
 }
+
+// sqliteCodeError models a driver result code without relying on its private error fields.
+type sqliteCodeError int
+
+// Error returns a synthetic SQLite diagnostic.
+func (failure sqliteCodeError) Error() string { return "SQLite test failure" }
+
+// Code returns the simulated SQLite result code.
+func (failure sqliteCodeError) Code() int { return int(failure) }

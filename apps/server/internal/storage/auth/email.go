@@ -7,13 +7,13 @@ import (
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
-	sqlite3 "github.com/mattn/go-sqlite3"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 func updateEmail(ctx context.Context, connection *sql.Conn, user identity.Id, email *string, now float64) error {
 	_, err := connection.ExecContext(ctx, "UPDATE users SET email=?,updated_at=? WHERE id=?", email, now, user)
-	var failure sqlite3.Error
-	if errors.As(err, &failure) && failure.ExtendedCode == sqlite3.ErrConstraintUnique {
+	var failure interface{ Code() int }
+	if errors.As(err, &failure) && failure.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE {
 		return domain.ErrEmailExists
 	}
 	return err

@@ -4,14 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
+	platform "github.com/QianFuv/LitRadar/apps/server/internal/platform/sqlite"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
-	native "github.com/mattn/go-sqlite3"
+	native "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 func backupDatabase(ctx context.Context, source, destination string) error {
@@ -37,55 +41,78 @@ func backupDatabase(ctx context.Context, source, destination string) error {
 	return err
 }
 
-// copyDatabase creates a standalone native snapshot and registers its stored tokenizer before finalization.
+// copyDatabase creates a standalone online snapshot and finalizes its rollback journal.
 func copyDatabase(ctx context.Context, source, destination string) error {
 	input, err := storage.Open(source, true, 1)
 	if err != nil {
 		return err
 	}
 	defer input.Close()
-	output, err := storage.OpenPlain(destination)
-	if err != nil {
-		return err
-	}
-	defer output.Close()
 	sourceConnection, err := input.Conn(ctx)
 	if err != nil {
 		return err
 	}
 	defer sourceConnection.Close()
-	destinationConnection, err := output.Conn(ctx)
+	destinationUri, err := backupDestinationUri(destination)
 	if err != nil {
 		return err
 	}
-	defer destinationConnection.Close()
 	err = sourceConnection.Raw(func(source any) error {
-		return destinationConnection.Raw(func(destination any) error {
-			backup, err := destination.(*native.SQLiteConn).Backup("main", source.(*native.SQLiteConn), "main")
-			if err != nil {
-				return err
-			}
-			return completeDatabaseBackup(ctx, backup)
-		})
+		backup, err := source.(interface {
+			NewBackup(string) (*native.Backup, error)
+		}).NewBackup(destinationUri)
+		if err != nil {
+			return err
+		}
+		return completeDatabaseBackup(ctx, backup)
 	})
 	if err != nil {
 		return err
 	}
-	_, err = destinationConnection.ExecContext(ctx, "PRAGMA journal_mode=DELETE")
+	output, err := storage.OpenPlain(destination)
+	if err != nil {
+		return err
+	}
+	defer output.Close()
+	_, err = output.ExecContext(ctx, "PRAGMA journal_mode=DELETE")
 	return err
 }
 
+// backupDestinationUri retains the plain destination policy on modernc's internally owned connection.
+func backupDestinationUri(filename string) (string, error) {
+	dsn, err := platform.FileUri(filename, "rwc")
+	if err != nil {
+		return "", err
+	}
+	location, err := url.Parse(dsn)
+	if err != nil {
+		return "", err
+	}
+	query := location.Query()
+	query.Del("_journal_mode")
+	query.Del("_foreign_keys")
+	query.Set("_busy_timeout", "5000")
+	query.Set("_synchronous", "FULL")
+	location.RawQuery = query.Encode()
+	return location.String(), nil
+}
+
 // completeDatabaseBackup waits on stalled steps, finishes every snapshot, and preserves the primary failure.
-func completeDatabaseBackup(ctx context.Context, backup *native.SQLiteBackup) error {
+func completeDatabaseBackup(ctx context.Context, backup *native.Backup) error {
 	copiedPages := 0
 	var stepError error
 	for {
 		if stepError = ctx.Err(); stepError != nil {
 			break
 		}
-		var done bool
-		done, stepError = backup.Step(128)
-		if stepError != nil || done {
+		var more bool
+		more, stepError = backup.Step(2048)
+		var failure *native.Error
+		if errors.As(stepError, &failure) && (failure.Code()&255 == sqlite3.SQLITE_BUSY || failure.Code()&255 == sqlite3.SQLITE_LOCKED) {
+			stepError = nil
+			more = true
+		}
+		if stepError != nil || !more {
 			break
 		}
 		previousCopiedPages := copiedPages

@@ -14,7 +14,7 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/search"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
-	native "github.com/mattn/go-sqlite3"
+	native "modernc.org/sqlite"
 )
 
 // ErrInvalidCursor rejects malformed article pagination anchors.
@@ -147,10 +147,10 @@ func classifySearchError(err error, params ArticleListParams) error {
 	if err == nil || params.SearchMode != domain.SearchAdvanced || params.Query == nil || strings.TrimSpace(*params.Query) == "" {
 		return err
 	}
-	var failure native.Error
+	var failure *native.Error
 	if errors.As(err, &failure) {
 		message := asciiLower(failure.Error())
-		if strings.Contains(message, "fts5: syntax error") || strings.Contains(message, "malformed match expression") || strings.Contains(message, "unterminated string") || strings.HasPrefix(message, "no such column:") {
+		if strings.Contains(message, "fts5: syntax error") || strings.Contains(message, "malformed match expression") || strings.Contains(message, "unterminated string") || strings.Contains(message, "no such column:") {
 			return ErrInvalidSearchExpression
 		}
 	}

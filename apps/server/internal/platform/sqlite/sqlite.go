@@ -13,7 +13,7 @@ import (
 	"runtime"
 	"strings"
 
-	sqlite3 "github.com/mattn/go-sqlite3"
+	sqlite3 "modernc.org/sqlite"
 )
 
 // Config describes a database role and its physical connection policy.
@@ -25,7 +25,7 @@ type Config struct {
 }
 
 type connector struct {
-	driver      *sqlite3.SQLiteDriver
+	driver      *sqlite3.Driver
 	dsn         string
 	filename    string
 	rejectLinks bool
@@ -92,7 +92,13 @@ func Open(config Config) (*sql.DB, error) {
 	if config.MaxConnections < 1 {
 		return nil, fmt.Errorf("SQLite pool capacity must be positive")
 	}
-	instance := &sqlite3.SQLiteDriver{NoFollow: config.NoFollow}
+	instance := &sqlite3.Driver{}
+	if config.NoFollow {
+		if err := registerNoFollowVfs(); err != nil {
+			return nil, err
+		}
+		dsn += "&vfs=litradar-nofollow"
+	}
 	database := sql.OpenDB(&connector{driver: instance, dsn: dsn, filename: config.Filename, rejectLinks: config.NoFollow, opening: make(chan struct{}, 1)})
 	database.SetMaxOpenConns(config.MaxConnections)
 	database.SetMaxIdleConns(config.MaxConnections)

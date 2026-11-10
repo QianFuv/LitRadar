@@ -8,7 +8,7 @@ import (
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/indexschema"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
-	native "github.com/mattn/go-sqlite3"
+	native "modernc.org/sqlite"
 )
 
 // TestVersionNineIdentifierUpgradePreservesStoredSearch verifies an index-only upgrade and idempotency.
@@ -62,21 +62,19 @@ func TestIdentifierIndexFailureRollsBackVersionAndFirstIndex(t *testing.T) {
 	defer connection.Close()
 	hasDeniedSecondIndex := false
 	if err := connection.Raw(func(value any) error {
-		value.(*native.SQLiteConn).RegisterAuthorizer(func(operation int, name, table, database string) int {
-			if operation == native.SQLITE_CREATE_INDEX && name == "idx_article_listing_pmid" {
+		return value.(native.AuthorizerRegisterer).RegisterAuthorizer(func(operation native.AuthorizerActionCode, name, table, database, trigger string) native.AuthorizerReturnCode {
+			if operation == native.AuthCreateIndex && name == "idx_article_listing_pmid" {
 				hasDeniedSecondIndex = true
-				return native.SQLITE_DENY
+				return native.AuthorizerDeny
 			}
-			return native.SQLITE_OK
+			return native.AuthorizerOK
 		})
-		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
 	summary, failure := migrateContentConnection(ctx, connection, 9, true)
 	if err := connection.Raw(func(value any) error {
-		value.(*native.SQLiteConn).RegisterAuthorizer(nil)
-		return nil
+		return value.(native.AuthorizerRegisterer).RegisterAuthorizer(nil)
 	}); err != nil {
 		t.Fatal(err)
 	}

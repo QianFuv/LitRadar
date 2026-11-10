@@ -14,7 +14,8 @@ import (
 	platform "github.com/QianFuv/LitRadar/apps/server/internal/platform/sqlite"
 	"github.com/QianFuv/LitRadar/apps/server/internal/provider"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
-	native "github.com/mattn/go-sqlite3"
+	native "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 const worksetApplication = 0x4c524357
@@ -40,7 +41,7 @@ CREATE INDEX groups_order ON groups(date DESC,year DESC,volume DESC,issue DESC,f
 CREATE UNIQUE INDEX groups_rank ON groups(rank);`
 
 type worksetConnector struct {
-	instance *native.SQLiteDriver
+	instance *native.Driver
 	dsn      string
 }
 
@@ -56,8 +57,8 @@ func worksetStorageError(err error) error {
 	if err == nil {
 		return nil
 	}
-	var failure native.Error
-	if errors.As(err, &failure) && (failure.Code == native.ErrCorrupt || failure.Code == native.ErrNotADB) {
+	var failure *native.Error
+	if errors.As(err, &failure) && (failure.Code()&255 == sqlite3.SQLITE_CORRUPT || failure.Code()&255 == sqlite3.SQLITE_NOTADB) {
 		return invalidWorkset("Crossref workset database is damaged")
 	}
 	return &provider.Error{Kind: provider.Internal, Message: "Crossref workset: " + err.Error()}
@@ -86,8 +87,11 @@ func connectWorkset(filename, mode string) (*CrossrefWorkset, error) {
 		query.Del(key)
 	}
 	query.Set("_busy_timeout", "5000")
+	if err := platform.UseNoFollow(query); err != nil {
+		return nil, worksetStorageError(err)
+	}
 	location.RawQuery = query.Encode()
-	database := sql.OpenDB(&worksetConnector{&native.SQLiteDriver{NoFollow: true, DeferSynchronous: true}, location.String()})
+	database := sql.OpenDB(&worksetConnector{&native.Driver{}, location.String()})
 	database.SetMaxOpenConns(1)
 	connection, err := database.Conn(context.Background())
 	if err != nil {

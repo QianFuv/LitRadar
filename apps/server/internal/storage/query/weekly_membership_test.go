@@ -13,7 +13,7 @@ import (
 
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/weekly"
-	native "github.com/mattn/go-sqlite3"
+	native "modernc.org/sqlite"
 )
 
 // TestWeeklyMembershipPreservesExactIntegerSet covers parameter boundaries and duplicate ownership.
@@ -125,27 +125,26 @@ func assertWeeklyMembershipFailure(t *testing.T, shouldRejectStatistics bool) {
 	insertAuthorizations := 0
 	hasRejected, hasCanonicalAnalyze := false, false
 	if err := connection.Raw(func(raw any) error {
-		raw.(*native.SQLiteConn).RegisterAuthorizer(func(operation int, table, column, database string) int {
-			if operation == native.SQLITE_ANALYZE {
+		return raw.(native.AuthorizerRegisterer).RegisterAuthorizer(func(operation native.AuthorizerActionCode, table, column, database, trigger string) native.AuthorizerReturnCode {
+			if operation == native.AuthAnalyze {
 				if database != "temp" {
 					hasCanonicalAnalyze = true
-					return native.SQLITE_DENY
+					return native.AuthorizerDeny
 				}
 				if shouldRejectStatistics && table == "weekly_membership" {
 					hasRejected = true
-					return native.SQLITE_DENY
+					return native.AuthorizerDeny
 				}
 			}
-			if operation == native.SQLITE_INSERT && table == "weekly_membership" {
+			if operation == native.AuthInsert && table == "weekly_membership" {
 				insertAuthorizations++
 				if !shouldRejectStatistics && insertAuthorizations == 2 {
 					hasRejected = true
-					return native.SQLITE_DENY
+					return native.AuthorizerDeny
 				}
 			}
-			return native.SQLITE_OK
+			return native.AuthorizerOK
 		})
-		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +162,7 @@ func assertWeeklyMembershipFailure(t *testing.T, shouldRejectStatistics bool) {
 	if _, err := connection.ExecContext(context.Background(), "BEGIN; ROLLBACK;"); err != nil {
 		t.Fatal("failed install left an active transaction", err)
 	}
-	if err := connection.Raw(func(raw any) error { raw.(*native.SQLiteConn).RegisterAuthorizer(nil); return nil }); err != nil {
+	if err := connection.Raw(func(raw any) error { return raw.(native.AuthorizerRegisterer).RegisterAuthorizer(nil) }); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := connection.ExecContext(context.Background(), "DROP TABLE temp.weekly_membership"); err != nil {

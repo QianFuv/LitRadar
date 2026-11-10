@@ -139,7 +139,7 @@ async function verifiesWithoutRegeneration(context) {
     ),
     /Verification must not regenerate/,
   );
-  for (const name of ["go-sdk", "go-sqlite3"]) {
+  for (const name of ["go-sdk"]) {
     const local = new URL(`../../../third_party/${name}/`, import.meta.url);
     const records = new URL(
       `../../../third_party/${name}-patches/`,
@@ -168,6 +168,6 @@ test(
 );
 test("rejects malformed and overlapping patch syntax", rejectsMalformedHunks);
 test(
-  "verification leaves both dependency trees and patch records unchanged",
+  "verification leaves the dependency tree and patch records unchanged",
   verifiesWithoutRegeneration,
 );

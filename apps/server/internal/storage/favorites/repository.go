@@ -13,7 +13,7 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/auth"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
-	sqlite3 "github.com/mattn/go-sqlite3"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // ErrDuplicateFolder preserves the uniqueness failure presented to folder owners.
@@ -109,8 +109,8 @@ func validateAdd(value Add) error {
 }
 func nowSeconds() float64 { return float64(time.Now().UnixNano()) / 1e9 }
 func constraint(err error) error {
-	var failure sqlite3.Error
-	if errors.As(err, &failure) && failure.Code == sqlite3.ErrConstraint {
+	var failure interface{ Code() int }
+	if errors.As(err, &failure) && failure.Code()&255 == sqlite3.SQLITE_CONSTRAINT {
 		return ErrDuplicateFolder
 	}
 	return err

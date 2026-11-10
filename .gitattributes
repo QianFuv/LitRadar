@@ -1,7 +1,5 @@
 *.go text eol=lf
 /third_party/go-sdk/** -text
-/third_party/go-sqlite3/** -text
 /third_party/go-sdk-patches/** -text
-/third_party/go-sqlite3-patches/** -text
 /scripts/go-build-inventory.sh text eol=lf
 /scripts/smoke-release.sh text eol=lf

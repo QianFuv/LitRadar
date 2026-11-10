@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	sqlite3 "github.com/mattn/go-sqlite3"
+	sqlite3 "modernc.org/sqlite"
 )
 
 func TestExistingOnlyModesNeverCreateMissingFile(t *testing.T) {
@@ -139,10 +139,12 @@ func TestTransactionsAndBackupPreserveCommittedState(t *testing.T) {
 	defer backup.Close()
 	source := checkedConnection(t, database)
 	destination := checkedConnection(t, backup)
-	err = backupPhysicalConnections(t, source, destination)
+	destination.Close()
+	err = backupPhysicalConnections(t, source, filepath.Join(root, "backup.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	destination = checkedConnection(t, backup)
 	assertBackupState(t, ctx, destination)
 }
 
@@ -263,25 +265,29 @@ func seedBackupSource(t *testing.T, database *sql.DB) {
 	}
 }
 
-// backupPhysicalConnections keeps native drivers borrowed throughout Step and Finish.
-func backupPhysicalConnections(t *testing.T, source, destination *sql.Conn) error {
+// backupPhysicalConnections keeps the source borrowed while modernc owns the destination.
+func backupPhysicalConnections(t *testing.T, source *sql.Conn, destination string) error {
 	t.Helper()
+	uri, err := FileUri(destination, "rwc")
+	if err != nil {
+		return err
+	}
 	return source.Raw(func(sourceDriver any) error {
-		return destination.Raw(func(destinationDriver any) error {
-			operation, err := destinationDriver.(*sqlite3.SQLiteConn).Backup("main", sourceDriver.(*sqlite3.SQLiteConn), "main")
-			if err != nil {
-				return err
-			}
-			isDone, err := operation.Step(-1)
-			finishError := operation.Finish()
-			if err != nil {
-				return err
-			}
-			if !isDone {
-				t.Error("Backup did not complete")
-			}
-			return finishError
-		})
+		operation, err := sourceDriver.(interface {
+			NewBackup(string) (*sqlite3.Backup, error)
+		}).NewBackup(uri)
+		if err != nil {
+			return err
+		}
+		hasMore, err := operation.Step(-1)
+		finishError := operation.Finish()
+		if err != nil {
+			return err
+		}
+		if hasMore {
+			t.Error("Backup did not complete")
+		}
+		return finishError
 	})
 }
 

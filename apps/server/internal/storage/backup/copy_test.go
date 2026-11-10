@@ -10,7 +10,8 @@ import (
 	"time"
 
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
-	native "github.com/mattn/go-sqlite3"
+	native "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // createCopyFixture builds a closed database large enough to require several native backup steps.
@@ -63,54 +64,53 @@ func TestBackupLockedSourceRetryAndCancellation(t *testing.T) {
 			if _, err := sourceConnection.ExecContext(ctx, "PRAGMA busy_timeout=0"); err != nil {
 				t.Fatal(err)
 			}
-			destinationConnection, err := output.Conn(ctx)
+			destinationUri, err := backupDestinationUri(destination)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer destinationConnection.Close()
 			err = sourceConnection.Raw(func(source any) error {
-				return destinationConnection.Raw(func(destination any) error {
-					backup, err := destination.(*native.SQLiteConn).Backup("main", source.(*native.SQLiteConn), "main")
-					if err != nil {
-						return err
-					}
-					if _, err := writer.Exec("BEGIN EXCLUSIVE"); err != nil {
-						backup.Finish()
-						return err
-					}
-					defer writer.Exec("ROLLBACK")
-					if done, err := backup.Step(128); done || err != nil || backup.PageCount() != 0 {
-						backup.Finish()
-						t.Fatal("fixture did not produce a native BUSY step", done, err)
-					}
-					triggered := make(chan error, 1)
-					timer := time.AfterFunc(60*time.Millisecond, func() {
-						if shouldCancel {
-							cancel()
-							triggered <- nil
-						} else {
-							_, err := writer.Exec("ROLLBACK")
-							triggered <- err
-						}
-					})
-					failure := completeDatabaseBackup(ctx, backup)
-					if timer.Stop() {
-						t.Fatal("backup returned before the source was released or context canceled", failure)
-					}
-					if err := <-triggered; err != nil {
-						return err
-					}
-					if shouldCancel && !errors.Is(failure, context.Canceled) || !shouldCancel && failure != nil {
-						t.Fatal("backup lost retry/cancellation behavior", failure)
-					}
-					_, err = destination.(*native.SQLiteConn).Exec("CREATE TABLE released(value INTEGER)", nil)
+				backup, err := source.(interface {
+					NewBackup(string) (*native.Backup, error)
+				}).NewBackup(destinationUri)
+				if err != nil {
 					return err
+				}
+				if _, err := writer.Exec("BEGIN EXCLUSIVE"); err != nil {
+					backup.Finish()
+					return err
+				}
+				defer writer.Exec("ROLLBACK")
+				var busy *native.Error
+				if more, err := backup.Step(128); more || !errors.As(err, &busy) || busy.Code()&255 != sqlite3.SQLITE_BUSY || backup.PageCount() != 0 {
+					backup.Finish()
+					t.Fatal("fixture did not produce a native BUSY step", more, err)
+				}
+				triggered := make(chan error, 1)
+				timer := time.AfterFunc(60*time.Millisecond, func() {
+					if shouldCancel {
+						cancel()
+						triggered <- nil
+					} else {
+						_, err := writer.Exec("ROLLBACK")
+						triggered <- err
+					}
 				})
+				failure := completeDatabaseBackup(ctx, backup)
+				if timer.Stop() {
+					t.Fatal("backup returned before the source was released or context canceled", failure)
+				}
+				if err := <-triggered; err != nil {
+					return err
+				}
+				if shouldCancel && !errors.Is(failure, context.Canceled) || !shouldCancel && failure != nil {
+					t.Fatal("backup lost retry/cancellation behavior", failure)
+				}
+				_, err = output.Exec("CREATE TABLE released(value INTEGER)")
+				return err
 			})
 			if err != nil {
 				t.Fatal("backup did not finish or release its destination transaction", err)
 			}
-			destinationConnection.Close()
 			output.Close()
 			if !shouldCancel {
 				assertCopiedPayload(t, destination, rows)

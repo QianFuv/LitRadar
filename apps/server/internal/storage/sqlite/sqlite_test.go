@@ -50,10 +50,20 @@ func assertStorageCapabilities(t *testing.T, database *sql.DB) {
 	t.Helper()
 	var enabled int
 	if err := database.QueryRow("SELECT sqlite_compileoption_used('ENABLE_DBSTAT_VTAB')").Scan(&enabled); err != nil || enabled != 1 {
-		t.Fatalf("storage build requires sqlite_dbstat: %d %v", enabled, err)
+		t.Fatalf("SQLite driver lacks ENABLE_DBSTAT_VTAB: %d %v", enabled, err)
 	}
 	if _, err := database.Exec("CREATE VIRTUAL TABLE search USING fts5(text); INSERT INTO search VALUES('test')"); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := database.Exec("CREATE VIRTUAL TABLE contentless USING fts5(text, content='', contentless_delete=1); CREATE VIRTUAL TABLE vocabulary USING fts5vocab(contentless, 'instance'); INSERT INTO contentless(rowid,text) VALUES(1,'driver capability')"); err != nil {
+		t.Fatal(err)
+	}
+	var terms int
+	if err := database.QueryRow("SELECT count(*) FROM vocabulary").Scan(&terms); err != nil || terms != 2 {
+		t.Fatalf("fts5vocab unavailable: %d %v", terms, err)
+	}
+	if _, err := database.Exec("DELETE FROM contentless WHERE rowid=1"); err != nil {
+		t.Fatalf("contentless_delete unavailable: %v", err)
 	}
 	var size int64
 	if err := database.QueryRow("SELECT sum(pgsize) FROM dbstat").Scan(&size); err != nil || size == 0 {

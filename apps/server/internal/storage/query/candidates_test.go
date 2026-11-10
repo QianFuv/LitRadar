@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -13,7 +14,7 @@ import (
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/storage"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
-	"github.com/mattn/go-sqlite3"
+	sqlite3 "modernc.org/sqlite"
 )
 
 func candidateFixture(t *testing.T) string {
@@ -41,12 +42,12 @@ func TestLargeCandidateCancellationCleansPinnedConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
+	started := installCandidateCancellationSignal(t, database)
 	connection, err := database.Conn(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer connection.Close()
-	started := installCandidateCancellationSignal(t, connection)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
@@ -132,16 +133,17 @@ func TestLargeCandidateMembershipPreservesAllThreeSelectors(t *testing.T) {
 }
 
 // installCandidateCancellationSignal preserves the callback lifetime and deliberately long-running SELECT.
-func installCandidateCancellationSignal(t *testing.T, connection *sql.Conn) chan struct{} {
+func installCandidateCancellationSignal(t *testing.T, database *sql.DB) chan struct{} {
 	t.Helper()
 	started := make(chan struct{})
 	var once sync.Once
-	if err := connection.Raw(func(raw any) error {
-		return raw.(*sqlite3.SQLiteConn).RegisterFunc("candidate_started", func() int { once.Do(func() { close(started) }); return 0 }, false)
+	if err := database.Driver().(*sqlite3.Driver).RegisterScalarFunction("candidate_started", 0, func(_ *sqlite3.FunctionContext, _ []driver.Value) (driver.Value, error) {
+		once.Do(func() { close(started) })
+		return int64(0), nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := connection.ExecContext(context.Background(), `ALTER TABLE journals RENAME TO saved_journals;
+	if _, err := database.ExecContext(context.Background(), `ALTER TABLE journals RENAME TO saved_journals;
 CREATE VIEW journals AS WITH RECURSIVE numbers(value) AS (SELECT candidate_started() UNION ALL SELECT value+1 FROM numbers WHERE value<1000000000) SELECT 1 AS journal_id,CAST(sum(value) AS TEXT) AS title FROM numbers`); err != nil {
 		t.Fatal(err)
 	}

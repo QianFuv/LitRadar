@@ -3,8 +3,14 @@ LitRadar third-party source and license notices
 The first-party application is built in Go. The image's go-inventory directory
 contains go.mod, go.sum, the actual module graph and binary build information,
 toolchain settings, source hashes and retained module/Go license notices.
-The local go-sdk and go-sqlite3 patches and their source identity records are
-retained under third_party in the repository and hashed in that inventory.
+The local go-sdk patch and its source identity records are retained under
+third_party in the repository and hashed in that inventory.
+
+SQLite is linked through modernc.org/sqlite, a pure-Go translation of the
+public-domain SQLite C source, with its modernc.org/libc runtime and related
+modernc.org modules. All of their LICENSE* files, including LICENSE-SQLITE and
+LICENSE-3RD-PARTY.md, are retained with the other module notices in that
+inventory.
 
 Obscura 0.2.4
 Copyright the Obscura contributors. Licensed under Apache-2.0; see

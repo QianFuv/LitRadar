@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/auth"
-	sqlite3 "github.com/mattn/go-sqlite3"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 var ErrAuditEvent = errors.New("Security audit event is invalid")
@@ -55,8 +55,8 @@ func ReportAuditFailureContext(ctx context.Context, kind string) uint64 {
 
 // IsTransientContention recognizes busy/locked SQLite failures even inside an audit error wrapper.
 func IsTransientContention(err error) bool {
-	var failure sqlite3.Error
-	return errors.As(err, &failure) && (failure.Code == sqlite3.ErrBusy || failure.Code == sqlite3.ErrLocked)
+	var failure interface{ Code() int }
+	return errors.As(err, &failure) && (failure.Code()&255 == sqlite3.SQLITE_BUSY || failure.Code()&255 == sqlite3.SQLITE_LOCKED)
 }
 
 // AppendAudit commits a standalone terminal event in its own immediate transaction.

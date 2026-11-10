@@ -7,7 +7,7 @@ import (
 	"os"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
-	native "github.com/mattn/go-sqlite3"
+	native "modernc.org/sqlite"
 )
 
 const markerName = ".litradar-index-maintenance.json"
@@ -89,7 +89,7 @@ func withRecovery(err error, paths RecoveryPaths) error {
 	if errors.As(err, &known) {
 		code = known.Code
 	} else {
-		var sqlite native.Error
+		var sqlite *native.Error
 		if errors.As(err, &sqlite) {
 			code = "sqlite"
 		}

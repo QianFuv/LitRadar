@@ -14,7 +14,7 @@ import (
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	platformsqlite "github.com/QianFuv/LitRadar/apps/server/internal/platform/sqlite"
-	sqlite3 "github.com/mattn/go-sqlite3"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 var ErrUserNotFound = errors.New("User not found")
@@ -254,8 +254,8 @@ func (repository *Repository) Register(ctx context.Context, username, passwordHa
 func insertUser(ctx context.Context, connection *sql.Conn, username, passwordHash, salt string, isAdmin bool, now float64) (domain.User, error) {
 	result, err := connection.ExecContext(ctx, "INSERT INTO users(username,password_hash,salt,is_admin,created_at,updated_at) VALUES(?,?,?,?,?,?)", username, passwordHash, salt, isAdmin, now, now)
 	if err != nil {
-		var sqliteError sqlite3.Error
-		if errors.As(err, &sqliteError) && sqliteError.Code == sqlite3.ErrConstraint {
+		var sqliteError interface{ Code() int }
+		if errors.As(err, &sqliteError) && sqliteError.Code()&255 == sqlite3.SQLITE_CONSTRAINT {
 			return domain.User{}, domain.ErrUsernameExists
 		}
 		return domain.User{}, err

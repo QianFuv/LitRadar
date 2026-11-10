@@ -73,7 +73,7 @@ func openLoggingDatabase(filename string) (*sql.DB, error) {
 	query.Del("_foreign_keys")
 	query.Del("_synchronous")
 	location.RawQuery = query.Encode()
-	return sql.Open("sqlite3", location.String())
+	return sql.Open("sqlite", location.String())
 }
 
 // LoadField validates only the requested setting; unrelated secrets cannot block non-secret consumers.

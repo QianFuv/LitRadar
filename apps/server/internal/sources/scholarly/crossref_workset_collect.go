@@ -6,10 +6,12 @@ import (
 	"errors"
 	"log/slog"
 	"math"
+	"strings"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
-	native "github.com/mattn/go-sqlite3"
+	native "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 func (workset *CrossrefWorkset) saveState(next, previous CrossrefCheckpoint) error {
@@ -47,13 +49,10 @@ func (workset *CrossrefWorkset) Accept(page CrossrefPage) (CrossrefCheckpoint, e
 	}
 	if err != nil {
 		workset.state = previous
-		isAutocommit := false
-		if rawErr := workset.connection.Raw(func(connection any) error { isAutocommit = connection.(*native.SQLiteConn).AutoCommit(); return nil }); rawErr != nil {
-			return CrossrefCheckpoint{}, worksetStorageError(rawErr)
-		}
-		if !isAutocommit {
-			if rollbackErr := workset.exec("ROLLBACK"); rollbackErr != nil {
-				return CrossrefCheckpoint{}, rollbackErr
+		if _, rollbackErr := workset.connection.ExecContext(context.Background(), "ROLLBACK"); rollbackErr != nil {
+			var failure *native.Error
+			if !errors.As(rollbackErr, &failure) || failure.Code() != sqlite3.SQLITE_ERROR || !strings.Contains(failure.Error(), "no transaction is active") {
+				return CrossrefCheckpoint{}, worksetStorageError(rollbackErr)
 			}
 		}
 		return CrossrefCheckpoint{}, err

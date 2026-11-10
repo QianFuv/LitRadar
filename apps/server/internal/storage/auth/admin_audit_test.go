@@ -8,7 +8,7 @@ import (
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
-	sqlite3 "github.com/mattn/go-sqlite3"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 func TestAdministratorCountsExactlyFlagOneInLegacyRows(t *testing.T) {
@@ -82,7 +82,7 @@ func TestAuditRetentionFailureRollsBackDeletionAndCountsOnce(t *testing.T) {
 }
 
 func TestAuditFailuresRemainRedactedAndClassifiable(t *testing.T) {
-	failure := AuditFailure{cause: sqlite3.Error{Code: sqlite3.ErrBusy}}
+	failure := AuditFailure{cause: sqliteCodeError(sqlite3.SQLITE_BUSY)}
 	if !errors.Is(failure, domain.ErrAudit) || !IsTransientContention(failure) || failure.Error() != domain.ErrAudit.Error() {
 		t.Fatal("audit wrapper lost safe retry classification")
 	}
@@ -115,7 +115,7 @@ CREATE TRIGGER retention_commit_fault AFTER UPDATE ON security_audit_maintenance
 			}
 			check := func(err error, before uint64) {
 				t.Helper()
-				var failure sqlite3.Error
+				var failure interface{ Code() int }
 				if !errors.Is(err, domain.ErrAudit) || err.Error() != domain.ErrAudit.Error() || !errors.As(err, &failure) {
 					t.Fatalf("unsafe or unclassifiable error: %v", err)
 				}
@@ -217,3 +217,12 @@ func assertAuditRetentionDrainAndWindow(t *testing.T, repository *Repository, ct
 		t.Fatalf("%+v %v", third, err)
 	}
 }
+
+// sqliteCodeError models a driver result code without relying on its private error fields.
+type sqliteCodeError int
+
+// Error returns a synthetic SQLite diagnostic.
+func (failure sqliteCodeError) Error() string { return "SQLite test failure" }
+
+// Code returns the simulated SQLite result code.
+func (failure sqliteCodeError) Code() int { return int(failure) }

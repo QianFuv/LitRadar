@@ -270,7 +270,7 @@ func runClaimCrashFixture(directory string) {
 	}
 	repository.Close()
 	os.WriteFile(filepath.Join(directory, "barrier"), []byte(boundary), 0600)
-	select {}
+	time.Sleep(24 * time.Hour)
 }
 
 // writeStartedCrashEffect starts the owned claim before writing, syncing and closing its external effect.
@@ -327,7 +327,7 @@ func runProcessTreeFixture(directory, role string) {
 			if role == "leader-exit" {
 				os.Exit(0)
 			}
-			select {}
+			time.Sleep(24 * time.Hour)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

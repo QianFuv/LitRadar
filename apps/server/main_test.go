@@ -213,7 +213,7 @@ func verifyServiceSignal(t *testing.T, ctx context.Context, binary, working, roo
 // processInvocation executes a public command with its expected exit status.
 type processInvocation func(*testing.T, string, int, ...string) (string, string)
 
-// buildProcessExecutable preserves the corresponding executable proof phase.
+// buildProcessExecutable builds the public executable without SQLite build tags.
 func buildProcessExecutable(t *testing.T, ctx context.Context) string {
 	t.Helper()
 	binary := filepath.Join(t.TempDir(), "litradar")
@@ -224,7 +224,7 @@ func buildProcessExecutable(t *testing.T, ctx context.Context) string {
 	if runtime.GOOS == "windows" {
 		compiler += ".exe"
 	}
-	build := exec.CommandContext(ctx, compiler, "build", "-mod=readonly", "-tags", "sqlite_fts5,sqlite_dbstat", "-o", binary, ".")
+	build := exec.CommandContext(ctx, compiler, "build", "-mod=readonly", "-o", binary, ".")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatal(err, string(output))
 	}

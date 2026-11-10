@@ -26,12 +26,6 @@ const policies = {
     ],
     added: ["mcp/litradar_compat.go", "mcp/litradar_compat_test.go"],
   },
-  "go-sqlite3": {
-    commit: "b0be46fa28d17ee0b65c79774ac0dad84b6db068",
-    archive: "1cbfe55076c554a634bb4901a858a08091703c1e2219354414c041f9db39eed8",
-    changed: ["sqlite3.go"],
-    added: ["sqlite3_litradar_nofollow_test.go"],
-  },
 };
 
 /**
@@ -91,9 +85,7 @@ async function verifiedDependencyArchive(name, policy, upstream) {
     await fs.access(archive);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
-    const repository =
-      name === "go-sdk" ? "modelcontextprotocol/go-sdk" : "mattn/go-sqlite3";
-    const url = `https://codeload.github.com/${repository}/tar.gz/${policy.commit}`;
+    const url = `https://codeload.github.com/modelcontextprotocol/${name}/tar.gz/${policy.commit}`;
     assert.equal(upstream.archiveUrl, url);
     const response = await fetch(url, { signal: AbortSignal.timeout(60000) });
     assert(response.ok, `Upstream archive fetch failed: ${response.status}`);
@@ -309,10 +301,7 @@ export async function verifyDependency(name, generate = false) {
   const policy = policies[name];
   assert(policy, "Unknown dependency");
   const local = path.join(WORKSPACE_ROOT, "third_party", name);
-  const moduleName =
-    name === "go-sdk"
-      ? "github.com/modelcontextprotocol/go-sdk"
-      : "github.com/mattn/go-sqlite3";
+  const moduleName = `github.com/modelcontextprotocol/${name}`;
   const selected = spawnSync(
     "go",
     ["list", "-mod=readonly", "-m", "-json", moduleName],
@@ -398,6 +387,6 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
 ) {
-  assert.equal(process.argv.length, 3, "Specify go-sdk or go-sqlite3");
+  assert.equal(process.argv.length, 3, "Specify go-sdk");
   console.log(await verifyDependency(process.argv[2]));
 }

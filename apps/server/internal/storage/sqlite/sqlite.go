@@ -11,11 +11,11 @@ import (
 	"unicode"
 
 	platform "github.com/QianFuv/LitRadar/apps/server/internal/platform/sqlite"
-	native "github.com/mattn/go-sqlite3"
+	native "modernc.org/sqlite"
 )
 
 type connector struct {
-	instance *native.SQLiteDriver
+	instance *native.Driver
 	dsn      string
 	opening  chan struct{}
 }
@@ -56,20 +56,20 @@ func Open(filename string, isReadOnly bool, capacity int) (*sql.DB, error) {
 	if isReadOnly {
 		mode = "ro"
 	}
-	instance := &native.SQLiteDriver{}
-	instance.ConnectHook = func(connection *native.SQLiteConn) error {
+	instance := &native.Driver{}
+	instance.RegisterConnectionHook(func(connection native.ExecQuerierContext, _ string) error {
 		var err error
 		if !isReadOnly {
-			_, err = connection.Exec("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;", nil)
+			_, err = connection.ExecContext(context.Background(), "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;", nil)
 		}
 		return err
-	}
+	})
 	return open(filename, mode, capacity, instance)
 }
 
 // OpenMigration defers schema-touching policy exclusively for version-first migration connections.
 func OpenMigration(filename string) (*sql.DB, error) {
-	return open(filename, "rwc", 1, &native.SQLiteDriver{DeferSynchronous: true})
+	return open(filename, "rwc", 1, &native.Driver{})
 }
 
 // OpenPlain retains the original direct rusqlite reader's five-second timeout without loading FTS or enabling WAL.
@@ -88,10 +88,10 @@ func OpenPlain(filename string) (*sql.DB, error) {
 	query.Set("_busy_timeout", "5000")
 	query.Set("_synchronous", "FULL")
 	location.RawQuery = query.Encode()
-	return pool(location.String(), 1, &native.SQLiteDriver{}), nil
+	return pool(location.String(), 1, &native.Driver{}), nil
 }
 
-func open(filename, mode string, capacity int, instance *native.SQLiteDriver) (*sql.DB, error) {
+func open(filename, mode string, capacity int, instance *native.Driver) (*sql.DB, error) {
 	if capacity < 1 {
 		return nil, errors.New("SQLite pool capacity must be positive")
 	}
@@ -111,7 +111,7 @@ func open(filename, mode string, capacity int, instance *native.SQLiteDriver) (*
 	return pool(location.String(), capacity, instance), nil
 }
 
-func pool(dsn string, capacity int, instance *native.SQLiteDriver) *sql.DB {
+func pool(dsn string, capacity int, instance *native.Driver) *sql.DB {
 	database := sql.OpenDB(&connector{instance, dsn, make(chan struct{}, 1)})
 	database.SetMaxOpenConns(capacity)
 	database.SetMaxIdleConns(capacity)

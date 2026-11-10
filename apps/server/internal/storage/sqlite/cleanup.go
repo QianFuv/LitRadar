@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 
-	native "github.com/mattn/go-sqlite3"
+	native "modernc.org/sqlite"
 )
 
 // SidecarCleanup describes a non-blocking checkpoint; SQLite retains ownership of WAL and shared memory.
@@ -31,7 +31,7 @@ func CleanupSidecars(ctx context.Context, filename string) (SidecarCleanup, erro
 	if !hasSidecars(filename) {
 		return SidecarNotPresent, nil
 	}
-	database, err := open(filename, "rw", 1, &native.SQLiteDriver{})
+	database, err := open(filename, "rw", 1, &native.Driver{})
 	if err != nil {
 		return "", err
 	}
