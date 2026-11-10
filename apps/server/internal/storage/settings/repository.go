@@ -4,17 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	authstore "github.com/QianFuv/LitRadar/apps/server/internal/storage/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/secrets"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/settingsdb"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/types"
 )
 
 // Repository uses the same auth transaction boundary for settings and required audit events.
@@ -89,47 +89,20 @@ type storedRow struct {
 	updated float64
 }
 
-type strictText string
+type strictText = types.SettingText
 
-func (value *strictText) Scan(source any) error {
-	decoded, ok := source.(string)
-	if !ok || !utf8.ValidString(decoded) {
-		return errors.New("invalid runtime setting text column")
-	}
-	*value = strictText(decoded)
-	return nil
-}
-
-type strictReal float64
-
-func (value *strictReal) Scan(source any) error {
-	switch decoded := source.(type) {
-	case float64:
-		*value = strictReal(decoded)
-	case int64:
-		*value = strictReal(decoded)
-	default:
-		return errors.New("invalid runtime setting real column")
-	}
-	return nil
-}
+var queries settingsdb.Queries
 
 func readRows(ctx context.Context, connection *sql.Conn) (map[string]storedRow, error) {
-	rows, err := connection.QueryContext(ctx, "SELECT key,value,updated_at FROM runtime_settings")
+	rows, err := queries.All(ctx, connection)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	result := map[string]storedRow{}
-	for rows.Next() {
-		var key, value strictText
-		var updated strictReal
-		if err := rows.Scan(&key, &value, &updated); err != nil {
-			return nil, err
-		}
-		result[string(key)] = storedRow{string(value), float64(updated)}
+	for _, row := range rows {
+		result[string(row.Key)] = storedRow{string(row.Value), float64(row.UpdatedAt)}
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (repository *Repository) internal(definition *definition, rows map[string]storedRow) (Value, error) {
@@ -293,7 +266,7 @@ func (repository *Repository) Update(ctx context.Context, actor *identity.Id, va
 					return err
 				}
 			}
-			if _, err := connection.ExecContext(ctx, "INSERT INTO runtime_settings(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at", field, stored, now); err != nil {
+			if _, err := queries.Store(ctx, connection, settingsdb.StoreParams{Key: types.SettingText(field), Value: types.SettingText(stored), UpdatedAt: types.SettingReal(now)}); err != nil {
 				return err
 			}
 		}
