@@ -9,7 +9,7 @@ on:
         type: string
 
 env:
-  CGO_ENABLED: "1"
+  CGO_ENABLED: "0"
   GOWORK: "off"
   GOTOOLCHAIN: go1.27.3
   GOENV: "off"
@@ -50,17 +50,23 @@ jobs:
         with:
           node-version: "26.11.1"
 
-      - name: Verify native compiler
-        id: verify_native_compiler
+      - name: Verify race detector C compiler
+        id: verify_race_detector_c_compiler
+        if: matrix.lane == 'race'
         run: gcc --version
 
       - name: Locate Go caches and compiler identity
         id: cache
         shell: bash
+        env:
+          LANE: ${{ matrix.lane }}
         run: |
           echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
           echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
-          compiler=$(gcc --version | sha256sum | cut -d ' ' -f 1)
+          compiler=none
+          if [ "$LANE" = race ]; then
+            compiler=$(gcc --version | sha256sum | cut -d ' ' -f 1)
+          fi
           echo "compiler=$compiler" >> "$GITHUB_OUTPUT"
 
       - name: Cache Go modules
@@ -68,7 +74,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.cache.outputs.modules }}
-          key: go-mod-${{ runner.os }}-${{ runner.arch }}-${{ env.GOTOOLCHAIN }}-${{ hashFiles('go.mod', 'go.sum', 'third_party/go-sdk/go.mod', 'third_party/go-sdk/go.sum', 'third_party/go-sqlite3/go.mod', 'third_party/go-sqlite3/go.sum') }}
+          key: go-mod-${{ runner.os }}-${{ runner.arch }}-${{ env.GOTOOLCHAIN }}-${{ hashFiles('go.mod', 'go.sum', 'third_party/go-sdk/go.mod', 'third_party/go-sdk/go.sum') }}
 
       - name: Cache Go compilation by lane and source
         id: cache_go_compilation_by_lane_and_source

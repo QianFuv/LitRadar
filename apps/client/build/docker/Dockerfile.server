@@ -14,7 +14,6 @@ WORKDIR /src
 
 COPY go.mod go.sum ./
 COPY third_party/go-sdk ./third_party/go-sdk
-COPY third_party/go-sqlite3 ./third_party/go-sqlite3
 RUN go mod download && go mod verify
 
 COPY apps/client/*.go ./apps/client/

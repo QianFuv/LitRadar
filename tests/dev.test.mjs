@@ -387,7 +387,7 @@ async function startsDetachedPosixGroup() {
       {
         cwd: "fixture-root",
         stdio: "inherit",
-        env: { CGO_ENABLED: "1" },
+        env: { CGO_ENABLED: "0" },
         windowsHide: true,
         shell: false,
         detached: true,
@@ -501,8 +501,6 @@ async function supervisesOwnedServices() {
   assert.deepEqual(starts[0][2], [
     "build",
     "-mod=readonly",
-    "-tags",
-    "sqlite_fts5,sqlite_dbstat",
     "-o",
     executable,
     "./apps/server",
@@ -540,7 +538,7 @@ async function supervisesOwnedServices() {
     assert.equal(start[3].windowsHide, true);
     assert.equal(start[3].shell, false);
     assert.equal(start[3].detached, false);
-    assert.equal(start[3].env.CGO_ENABLED, "1");
+    assert.equal(start[3].env.CGO_ENABLED, "0");
   }
   assert.deepEqual(
     starts.map((event) => event[3].cwd),

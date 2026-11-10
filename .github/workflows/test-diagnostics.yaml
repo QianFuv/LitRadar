@@ -34,8 +34,6 @@ jobs:
             go.sum
             third_party/go-sdk/go.mod
             third_party/go-sdk/go.sum
-            third_party/go-sqlite3/go.mod
-            third_party/go-sqlite3/go.sum
 
       - name: Set up pnpm
         id: set_up_pnpm

@@ -37,7 +37,7 @@ assert.match(commit, /^[a-f0-9]{40}$/);
 const source = path.resolve(sourceArgument);
 const version = parseVersion(inputVersion);
 Object.assign(process.env, {
-  CGO_ENABLED: "1",
+  CGO_ENABLED: "0",
   GOWORK: "off",
   GOENV: "off",
   GOFLAGS: "",
@@ -134,7 +134,7 @@ async function dependencyArchive(key, definition) {
 
 const environment = {
   ...process.env,
-  CGO_ENABLED: "1",
+  CGO_ENABLED: "0",
   GOWORK: "off",
   GOENV: "off",
   GOFLAGS: "",
@@ -148,10 +148,6 @@ run(
     "build",
     "-mod=readonly",
     "-trimpath",
-    "-tags",
-    "sqlite_fts5,sqlite_dbstat",
-    "-ldflags",
-    "-linkmode external -extldflags -static",
     "-o",
     path.join(directory, "litradar.exe"),
     "./apps/server",

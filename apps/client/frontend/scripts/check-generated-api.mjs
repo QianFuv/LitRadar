@@ -22,25 +22,13 @@ try {
     TEMP_ROOT,
     process.platform === 'win32' ? 'litradar.exe' : 'litradar',
   );
-  execFileSync(
-    'go',
-    [
-      'build',
-      '-mod=readonly',
-      '-tags',
-      'sqlite_fts5,sqlite_dbstat',
-      '-o',
-      executable,
-      './apps/server',
-    ],
-    {
-      cwd: WORKSPACE_ROOT,
-      env: { ...process.env, CGO_ENABLED: '1' },
-      stdio: 'inherit',
-      windowsHide: true,
-      timeout: 300000,
-    },
-  );
+  execFileSync('go', ['build', '-mod=readonly', '-o', executable, './apps/server'], {
+    cwd: WORKSPACE_ROOT,
+    env: { ...process.env, CGO_ENABLED: '0' },
+    stdio: 'inherit',
+    windowsHide: true,
+    timeout: 300000,
+  });
   execFileSync(executable, ['openapi', '--output', path.join(TEMP_ROOT, 'openapi.json')], {
     cwd: TEMP_ROOT,
     stdio: 'inherit',

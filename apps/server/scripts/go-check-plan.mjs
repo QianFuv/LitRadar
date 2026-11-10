@@ -3,7 +3,14 @@ import assert from "node:assert/strict";
 
 export const SERVER_PACKAGES = [".", "./apps/server/..."];
 
-const TAGS = "sqlite_fts5,sqlite_dbstat";
+/**
+ * Enable cgo only for race-detector commands, which require it; every other check builds pure Go.
+ * @param {string[]} argumentsList - Check command arguments.
+ * @returns {"0" | "1"} CGO_ENABLED value for the check.
+ */
+export function cgoSetting(argumentsList) {
+  return argumentsList.includes("-race") ? "1" : "0";
+}
 
 /**
  * Select independent regular/race lanes while retaining the complete local default.
@@ -22,16 +29,7 @@ export function goCheckPlan(lane = "all") {
         "node",
         ["apps/server/scripts/verify-go-dependency.mjs", "go-sdk"],
       ],
-      [
-        "sqlite",
-        "node",
-        ["apps/server/scripts/verify-go-dependency.mjs", "go-sqlite3"],
-      ],
-      [
-        "vet",
-        "go",
-        ["vet", "-mod=readonly", "-tags", TAGS, ...SERVER_PACKAGES],
-      ],
+      ["vet", "go", ["vet", "-mod=readonly", ...SERVER_PACKAGES]],
     );
   }
   for (const mode of ["regular", "race"]) {
@@ -41,8 +39,6 @@ export function goCheckPlan(lane = "all") {
       "-count=1",
       "-json",
       "-mod=readonly",
-      "-tags",
-      TAGS,
       ...(mode === "race" ? ["-race"] : []),
     ];
     checks.push([
@@ -55,22 +51,16 @@ export function goCheckPlan(lane = "all") {
         ...SERVER_PACKAGES,
       ],
     ]);
-    for (const [name, module, packageName] of [
-      ["sdk", "go-sdk", "github.com/modelcontextprotocol/go-sdk/mcp"],
-      ["sqlite", "go-sqlite3", "github.com/mattn/go-sqlite3"],
-    ]) {
-      checks.push([
-        `${name}-own-${mode}`,
-        "go",
-        [
-          "-C",
-          `third_party/${module}`,
-          ...flags,
-          name === "sdk" ? "./mcp" : "./...",
-        ],
-      ]);
-      checks.push([`${name}-root-${mode}`, "go", [...flags, packageName]]);
-    }
+    checks.push([
+      `sdk-own-${mode}`,
+      "go",
+      ["-C", "third_party/go-sdk", ...flags, "./mcp"],
+    ]);
+    checks.push([
+      `sdk-root-${mode}`,
+      "go",
+      [...flags, "github.com/modelcontextprotocol/go-sdk/mcp"],
+    ]);
   }
   return checks;
 }

@@ -4,12 +4,11 @@ set -eu
 mkdir -p /out/inventory/licenses
 go version > /out/inventory/toolchain.txt
 go env -json > /out/inventory/environment.json
-"$CC" --version > /out/inventory/compiler.txt
 go list -mod=readonly -m -json all > /out/inventory/modules.json
 go version -m /out/litradar > /out/inventory/binary-modules.txt
 cp go.mod go.sum /out/inventory/
 sha256sum /out/litradar > /out/inventory/binary.sha256
-go list -mod=readonly -deps -tags sqlite_fts5,sqlite_dbstat \
+go list -mod=readonly -deps \
     -f '{{with .Module}}{{if .Replace}}{{.Replace.Dir}}{{else}}{{.Dir}}{{end}}{{end}}' ./apps/server | sort -u |
 while IFS= read -r module_directory; do
     test -n "$module_directory" || continue

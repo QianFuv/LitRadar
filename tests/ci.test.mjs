@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { goCheckPlan } from "../apps/server/scripts/go-check-plan.mjs";
+import {
+  cgoSetting,
+  goCheckPlan,
+} from "../apps/server/scripts/go-check-plan.mjs";
 
 test("regular and race lanes retain every root and replacement-module check", () => {
   const expected = [
@@ -11,18 +14,13 @@ test("regular and race lanes retain every root and replacement-module check", ()
     "format",
     "modules",
     "sdk",
-    "sqlite",
     "vet",
     "regular",
     "race",
     "sdk-own-regular",
     "sdk-root-regular",
-    "sqlite-own-regular",
-    "sqlite-root-regular",
     "sdk-own-race",
     "sdk-root-race",
-    "sqlite-own-race",
-    "sqlite-root-race",
   ].sort();
   assert.deepEqual(
     goCheckPlan()
@@ -42,7 +40,7 @@ test("regular and race lanes retain every root and replacement-module check", ()
     )) {
       assert(args.includes("-count=1"), id);
       assert(args.includes("-mod=readonly"), id);
-      assert(args.includes("sqlite_fts5,sqlite_dbstat"), id);
+      assert(!args.includes("-tags"), id);
       assert(!args.includes("-short"), id);
       assert.equal(args.includes("-race"), mode === "race", id);
       if (id === mode) assert(args.includes("-timeout=20m"), id);
@@ -56,8 +54,18 @@ test("regular and race lanes retain every root and replacement-module check", ()
   );
   assert.equal(
     goCheckPlan("race").filter(([, , args]) => args.includes("test")).length,
-    5,
+    3,
   );
+});
+
+test("only race checks enable cgo, so the regular lane needs no C compiler", () => {
+  for (const [id, , args] of goCheckPlan("regular"))
+    assert.equal(cgoSetting(args), "0", id);
+  for (const [id, , args] of goCheckPlan("race"))
+    assert.equal(cgoSetting(args), id === "environment" ? "0" : "1", id);
+  const backend = fs.readFileSync(".github/workflows/backend.yaml", "utf8");
+  assert.match(backend, /^ {2}CGO_ENABLED: "0"$/m);
+  assert.match(backend, /if: matrix\.lane == 'race'\s+run: gcc --version/);
 });
 
 test("unknown lanes fail before native preparation", () => {

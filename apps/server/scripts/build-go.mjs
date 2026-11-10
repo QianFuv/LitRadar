@@ -18,8 +18,6 @@ for (const command of ["litradar", "litradar-fixture"]) {
       "build",
       "-mod=readonly",
       "-trimpath",
-      "-tags",
-      "sqlite_fts5,sqlite_dbstat",
       "-o",
       filename,
       command === "litradar"
@@ -30,7 +28,7 @@ for (const command of ["litradar", "litradar-fixture"]) {
       cwd: ROOT,
       env: {
         ...process.env,
-        CGO_ENABLED: "1",
+        CGO_ENABLED: "0",
         GOWORK: "off",
         GOENV: "off",
         GOFLAGS: "",

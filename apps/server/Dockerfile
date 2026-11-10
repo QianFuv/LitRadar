@@ -6,12 +6,12 @@ WORKDIR /app
 
 ARG TARGETARCH
 ARG BUILDARCH
-ENV CGO_ENABLED=1 GOTOOLCHAIN=local GOWORK=off GOENV=off GOFLAGS="" GOOS=linux GOARCH=$TARGETARCH
+ENV CGO_ENABLED=0 GOTOOLCHAIN=local GOWORK=off GOENV=off GOFLAGS="" GOOS=linux GOARCH=$TARGETARCH
 
 ENV PATH=/usr/local/go/bin:$PATH GOPATH=/go
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates=20260816ubuntu0.26.04.2 curl gcc git \
+    && apt-get install --yes --no-install-recommends ca-certificates=20260816ubuntu0.26.04.2 curl git \
     && test "$(dpkg-query -W -f='${Version}' ca-certificates)" = 20260816ubuntu0.26.04.2 \
     && rm -rf /var/lib/apt/lists/* \
     && case "$BUILDARCH" in \
@@ -26,16 +26,6 @@ RUN apt-get update \
     && rm /tmp/go.tar.gz \
     && test "$(go version | cut -d ' ' -f 3)" = go1.27.3
 
-RUN if [ "$TARGETARCH" != "$BUILDARCH" ]; then \
-        case "$TARGETARCH" in \
-            arm64) compiler=gcc-aarch64-linux-gnu; headers=libc6-dev-arm64-cross ;; \
-            amd64) compiler=gcc-x86-64-linux-gnu; headers=libc6-dev-amd64-cross ;; \
-            *) exit 1 ;; \
-        esac; \
-        apt-get update && apt-get install --yes --no-install-recommends $compiler "$headers" \
-        && rm -rf /var/lib/apt/lists/*; \
-    fi
-
 COPY go.mod go.sum VERSION version.go ./
 COPY third_party third_party
 RUN --mount=type=cache,id=litradar-go-mod,target=/go/pkg/mod go mod download && go mod verify
@@ -44,12 +34,8 @@ COPY apps/server/scripts/go-build-inventory.sh /usr/local/bin/go-build-inventory
 
 RUN --mount=type=cache,id=litradar-go-mod,target=/go/pkg/mod \
     --mount=type=cache,id=litradar-go-build-${TARGETARCH},target=/root/.cache/go-build \
-    if [ "$TARGETARCH" = "$BUILDARCH" ]; then export CC=gcc; \
-    elif [ "$TARGETARCH" = arm64 ]; then export CC=aarch64-linux-gnu-gcc; \
-    elif [ "$TARGETARCH" = amd64 ]; then export CC=x86_64-linux-gnu-gcc; \
-    else exit 1; fi \
-    && mkdir -p /out \
-    && go build -mod=readonly -trimpath -tags sqlite_fts5,sqlite_dbstat -o /out/litradar ./apps/server \
+    mkdir -p /out \
+    && go build -mod=readonly -trimpath -o /out/litradar ./apps/server \
     && sh /usr/local/bin/go-build-inventory
 
 

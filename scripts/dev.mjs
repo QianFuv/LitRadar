@@ -66,7 +66,7 @@ function startChild(label, command, args, cwd) {
   const child = spawn(command, args, {
     cwd,
     stdio: "inherit",
-    env: { ...process.env, CGO_ENABLED: "1" },
+    env: { ...process.env, CGO_ENABLED: "0" },
     windowsHide: true,
     shell: false,
     detached: process.platform !== "win32",
@@ -95,15 +95,7 @@ async function buildBackend() {
   const build = startChild(
     "Go build",
     "go",
-    [
-      "build",
-      "-mod=readonly",
-      "-tags",
-      "sqlite_fts5,sqlite_dbstat",
-      "-o",
-      executable,
-      "./apps/server",
-    ],
+    ["build", "-mod=readonly", "-o", executable, "./apps/server"],
     WORKSPACE_ROOT,
   );
   const result = await Promise.race([build.exited, INTERRUPTED]);

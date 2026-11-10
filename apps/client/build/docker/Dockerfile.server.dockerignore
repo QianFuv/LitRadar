@@ -4,8 +4,6 @@
 !third_party/
 !third_party/go-sdk/
 !third_party/go-sdk/**
-!third_party/go-sqlite3/
-!third_party/go-sqlite3/**
 !apps/
 !apps/client/
 !apps/client/*.go

@@ -238,12 +238,14 @@ test("workflow standardization preserves required check identities and artifact 
       "go.sum",
       "third_party/go-sdk/go.mod",
       "third_party/go-sdk/go.sum",
-      "third_party/go-sqlite3/go.mod",
-      "third_party/go-sqlite3/go.sum",
     ])
       assert(
         workflows[name].includes(file),
         `${name} cache must declare ${file}`,
       );
+    assert(
+      !workflows[name].includes("go-sqlite3"),
+      `${name} cache must not declare the removed go-sqlite3 fork`,
+    );
   }
 });

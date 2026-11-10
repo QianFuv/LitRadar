@@ -87,8 +87,6 @@ jobs:
             go.sum
             third_party/go-sdk/go.mod
             third_party/go-sdk/go.sum
-            third_party/go-sqlite3/go.mod
-            third_party/go-sqlite3/go.sum
       - name: Set up Node.js
         id: set_up_node_js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -182,8 +180,6 @@ jobs:
             go.sum
             third_party/go-sdk/go.mod
             third_party/go-sdk/go.sum
-            third_party/go-sqlite3/go.mod
-            third_party/go-sqlite3/go.sum
       - name: Set up Node.js
         id: set_up_node_js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

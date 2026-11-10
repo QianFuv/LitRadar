@@ -64,8 +64,6 @@ function fastSteps(isCi) {
       "-short",
       "-count=1",
       "-mod=readonly",
-      "-tags",
-      "sqlite_fts5,sqlite_dbstat",
       ...SERVER_PACKAGES,
     ]),
     pnpmStep(
@@ -87,8 +85,6 @@ function integrationSteps() {
       "test",
       "-count=1",
       "-mod=readonly",
-      "-tags",
-      "sqlite_fts5,sqlite_dbstat",
       ...SERVER_PACKAGES,
     ]),
     pnpmStep("Generated OpenAPI idempotence", ["generate:api:check"]),
@@ -126,13 +122,7 @@ function allSteps(isCi) {
       "apps/server/scripts/check-go-format.mjs",
     ]),
     step("Go module integrity", "go", ["mod", "verify"]),
-    step("Go vet", "go", [
-      "vet",
-      "-mod=readonly",
-      "-tags",
-      "sqlite_fts5,sqlite_dbstat",
-      ...SERVER_PACKAGES,
-    ]),
+    step("Go vet", "go", ["vet", "-mod=readonly", ...SERVER_PACKAGES]),
     pnpmStep("Frontend lint", ["lint"]),
     pnpmStep("Frontend formatting", ["format:check"]),
     pnpmStep("Frontend type checking", ["exec", "tsc", "--noEmit"]),
@@ -165,8 +155,6 @@ function diagnosticsSteps() {
       "test",
       "-count=1",
       "-mod=readonly",
-      "-tags",
-      "sqlite_fts5,sqlite_dbstat",
       "-coverprofile=target/go-coverage/coverage.out",
       ...SERVER_PACKAGES,
     ]),
@@ -425,7 +413,7 @@ try {
   selectedMode = mode;
   await prepareReportDirectories(mode, isCi);
   const sharedEnv = {
-    CGO_ENABLED: "1",
+    CGO_ENABLED: "0",
     GOWORK: "off",
     GOENV: "off",
     GOFLAGS: "",
