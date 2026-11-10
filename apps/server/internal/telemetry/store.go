@@ -9,8 +9,11 @@ import (
 	"time"
 
 	migration "github.com/QianFuv/LitRadar/apps/server/internal/storage/migrations/telemetry"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/telemetrydb"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
+
+var storeQueries telemetrydb.Queries
 
 type store struct{ database *sql.DB }
 
@@ -69,8 +72,7 @@ func (collector *Collector) flushBatch(ctx context.Context, batch map[bucketKey]
 		if err != nil {
 			return err
 		}
-		var previous string
-		err = transaction.QueryRowContext(ctx, "SELECT aggregate FROM hourly_load WHERE hour=? AND dimensions=?", key.Hour, string(dimensions)).Scan(&previous)
+		previous, err := storeQueries.Aggregate(ctx, transaction, telemetrydb.AggregateParams{Hour: key.Hour, Dimensions: string(dimensions)})
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
@@ -85,11 +87,11 @@ func (collector *Collector) flushBatch(ctx context.Context, batch map[bucketKey]
 		if err != nil {
 			return err
 		}
-		if _, err := transaction.ExecContext(ctx, "INSERT INTO hourly_load(hour,dimensions,aggregate) VALUES(?,?,?) ON CONFLICT(hour,dimensions) DO UPDATE SET aggregate=excluded.aggregate", key.Hour, string(dimensions), string(encoded)); err != nil {
+		if _, err := storeQueries.Store(ctx, transaction, telemetrydb.StoreParams{Hour: key.Hour, Dimensions: string(dimensions), Aggregate: string(encoded)}); err != nil {
 			return err
 		}
 	}
-	if _, err := transaction.ExecContext(ctx, "DELETE FROM hourly_load WHERE hour<?", cutoff); err != nil {
+	if _, err := storeQueries.Prune(ctx, transaction, cutoff); err != nil {
 		return err
 	}
 	return transaction.Commit()

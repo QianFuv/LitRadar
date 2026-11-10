@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"sort"
 	"time"
+
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/telemetrydb"
 )
 
 // Summary merges a dimension's hourly histograms before estimating percentiles.
@@ -53,18 +55,14 @@ func (collector *Collector) Read(ctx context.Context, from, to time.Time, kind s
 	defer collector.storeMutex.Unlock()
 	buckets := map[bucketKey]aggregate{}
 	if collector.store != nil {
-		rows, err := collector.store.database.QueryContext(ctx, "SELECT hour,dimensions,aggregate FROM hourly_load WHERE hour>=? AND hour<?", from.Unix(), to.Unix())
+		rows, err := storeQueries.InRange(ctx, collector.store.database, telemetrydb.InRangeParams{Hour: from.Unix(), Hour_2: to.Unix()})
 		if err != nil {
 			return report, err
 		}
-		defer rows.Close()
-		for rows.Next() {
-			var key bucketKey
-			var labels, encoded string
+		for _, row := range rows {
+			key := bucketKey{Hour: row.Hour}
+			labels, encoded := row.Dimensions, row.Aggregate
 			var value aggregate
-			if err := rows.Scan(&key.Hour, &labels, &encoded); err != nil {
-				return report, err
-			}
 			if err := json.Unmarshal([]byte(labels), &key.Dimensions); err != nil {
 				return report, err
 			}
@@ -72,9 +70,6 @@ func (collector *Collector) Read(ctx context.Context, from, to time.Time, kind s
 				return report, err
 			}
 			buckets[key] = value
-		}
-		if err := rows.Err(); err != nil {
-			return report, err
 		}
 	}
 	collector.mutex.Lock()
