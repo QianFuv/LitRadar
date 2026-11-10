@@ -3,7 +3,7 @@
 本文档说明当前实现中的设计变量（token）、基础组件、应用框架、布局和无障碍约定。修改界面时先复用这里的语义变量和组件，再核对实现来源：
 
 - [设计 token](../../apps/client/frontend/lib/theme.stylex.tsx)：`stylex.defineVars` 定义的颜色与阴影
-- [全局样式](../../apps/client/frontend/src/globals.css)：字体、元素重置、共享控件内图标与设置分组子项间距、滚动条和全局行为
+- [全局样式](../../apps/client/frontend/src/globals.css)：字体、元素重置、Animate UI 依赖的 `relative` / `sr-only` 工具类、skip link、滚动条和全局行为
 - [根布局](../../apps/client/frontend/src/app.tsx)、[根级上下文](../../apps/client/frontend/src/providers.tsx)：根文档、主题和根级无障碍
 - [基础组件目录](../../apps/client/frontend/components/ui)：组件变体
 - [应用框架](../../apps/client/frontend/components/shell)：导航轨、手机底栏与账号头像
@@ -139,12 +139,13 @@ Card 只用于管理面板：每张卡片是一个透明的扁平分区，header
 | 组件              | 实现约定                                                                         |
 | ----------------- | -------------------------------------------------------------------------------- |
 | Input             | 36 px 高、8 px 圆角、shadow ring、移动端 16 px 字号、3 px focus ring             |
-| Checkbox / Switch | Radix 状态属性驱动颜色、焦点和禁用态；Switch 为 20 × 36 px                       |
-| Select / Popover  | Radix portal、12 px 圆角与 `shadows.overlay`；内容限制在 viewport 内             |
+| Checkbox / Switch | Base UI 状态属性（`data-checked` / `data-unchecked`）驱动颜色、焦点和禁用态；Switch 为 20 × 36 px |
+| Select / Popover  | Base UI portal、12 px 圆角与 `shadows.overlay`；内容限制在可用高度内             |
 | DropdownMenu      | `components/ui/dropdown-menu.tsx` 统一菜单表面、菜单项与危险项样式               |
-| ScrollArea        | Radix viewport 与自定义 scrollbar                                                |
 | Skeleton          | muted pulse；文章列表使用与条目同构的 `ArticleListSkeleton`                      |
 | StateMessage      | 无边框的空态/错误/成功/警告：圆角图标块 + 粗体标题 + 说明，配合 live-region role |
+
+Button、CopyButton、菜单项和 Select 通过 `IconStyleProvider` 给内部图标默认样式（16 px、不收缩、不响应指针；菜单项与 Select 再加 muted 颜色），图标自己的 `xstyle` 排在其后、可以覆盖。
 
 Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制，避免 `content-visibility: auto` 的绘制裁剪截断边缘。
 
@@ -209,7 +210,7 @@ Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制�
 
 检索的数据库、发表时间、期刊评级、期刊和领域以一排胶囊放在搜索框下方（`SearchFilters`）。共享实现位于 `filter-pill.tsx`：
 
-- `DatabasePill`：深色胶囊，内部是 Radix Select，用于检索、周报和征稿的数据库选择。
+- `DatabasePill`：深色胶囊，内部是 Base UI Select，用于检索、周报和征稿的数据库选择。
 - `FilterFacet`：普通胶囊，`md` 起以浮层打开面板，`md` 以下以底部抽屉打开并提供「完成」按钮。面板标题区带说明与单项「清除」。
 - `FilterOptionRow`：复选行，整行可点，右侧显示数量。
 
@@ -242,7 +243,7 @@ Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制�
 | 原语                | 作用                                                                                          |
 | ------------------- | --------------------------------------------------------------------------------------------- |
 | `SettingsSection`   | 一个分区：小标题与说明在上（`SettingsSectionHeader`），相邻分区间距 40 px                     |
-| `SettingsGroup`     | 平铺分组：上下 1 px 细线，子项之间细分隔，左右外扩以让行内文字与分区标题对齐                  |
+| `SettingsGroup`     | 平铺分组：上下 1 px 细线，子项之间细分隔（`settingsGroupItemStyle`，`SettingsRow` 与 `SettingsGroupBody` 自带，其他直接子项显式传入），左右外扩以让行内文字与分区标题对齐 |
 | `SettingsRow`       | 行：左侧标签（传 `htmlFor` 时为 `<label>`）与说明，右侧控件；`isStacked` 时控件在下方占满宽度 |
 | `SettingsGroupBody` | 面板中的自由内容区                                                                            |
 | `StatusPill`        | 带圆点的状态标签，tone 为 neutral / success / warning / danger / info                         |
@@ -300,8 +301,8 @@ Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制�
 
 - 交互控件使用可见的 ring；图标按钮使用 `aria-label` 或 `sr-only` 文本。
 - 加载、成功与错误反馈使用 `role="status"` / `role="alert"`。
-- 展开、选中和当前状态使用 Radix data attributes 或对应 ARIA 属性（`aria-current`、`aria-pressed`、`aria-checked`、`aria-expanded`）。
-- Dialog、DropdownMenu、Select、Popover、Checkbox 和 Switch 复用 Radix 的键盘与焦点行为；侧滑面板关闭后焦点回到打开它的条目或期刊。
+- 展开、选中和当前状态使用 Base UI data attributes 或对应 ARIA 属性（`aria-current`、`aria-pressed`、`aria-checked`、`aria-expanded`）。
+- Dialog、DropdownMenu、Select、Popover、Checkbox、Switch、RadioGroup 和分段控件（ToggleGroup，按钮 + `aria-pressed`）复用 Base UI 的键盘与焦点行为，`tests/browser-components/keyboard.browser.test.tsx` 在真实 Chromium 中覆盖焦点约束、Esc 关闭与方向键导航；侧滑面板关闭后焦点回到打开它的条目或期刊。
 - 颜色不能作为唯一状态信号。
 
 ### 动效约定
