@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/controldb"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
@@ -13,27 +14,35 @@ func AcquireLease(ctx context.Context, connection *sql.Conn, catalog, provider, 
 	return immediate(ctx, connection, func() error {
 		var owner sqlite.Text
 		var expires sqlite.Integer
-		err := connection.QueryRowContext(ctx, "SELECT run_id,expires_at FROM provider_leases WHERE catalog_name=?1 AND provider_name=?2", catalog, provider).Scan(&owner, &expires)
+		err := func() error {
+			queryResult, err := controlQueries.ProviderLease(ctx, connection, controldb.ProviderLeaseParams{CatalogName: sqlite.Text(catalog), ProviderName: sqlite.Text(provider)})
+			if err != nil {
+				return err
+			}
+			owner = queryResult.RunID
+			expires = queryResult.ExpiresAt
+			return nil
+		}()
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		if err == nil && string(owner) != run && int64(expires) > now {
 			return &ControlError{Kind: "active_lease", RunId: string(owner), ExpiresAt: int64(expires)}
 		}
-		_, err = connection.ExecContext(ctx, `INSERT INTO provider_leases(catalog_name,provider_name,run_id,heartbeat_at,expires_at) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(catalog_name,provider_name) DO UPDATE SET run_id=excluded.run_id,heartbeat_at=excluded.heartbeat_at,expires_at=excluded.expires_at`, catalog, provider, run, now, now+300)
+		_, err = controlQueries.AcquireLease(ctx, connection, controldb.AcquireLeaseParams{CatalogName: sqlite.Text(catalog), ProviderName: sqlite.Text(provider), RunID: sqlite.Text(run), HeartbeatAt: sqlite.Integer(now), ExpiresAt: sqlite.Integer(now + 300)})
 		return err
 	})
 }
 
 // HeartbeatLease renews only the exact owner while its lease has not expired.
 func HeartbeatLease(ctx context.Context, connection *sql.Conn, catalog, provider, run string, now int64) error {
-	result, err := connection.ExecContext(ctx, `UPDATE provider_leases SET heartbeat_at=?4,expires_at=?5 WHERE catalog_name=?1 AND provider_name=?2 AND run_id=?3 AND expires_at>?4`, catalog, provider, run, now, now+300)
+	result, err := controlQueries.HeartbeatLease(ctx, connection, controldb.HeartbeatLeaseParams{CatalogName: sqlite.Text(catalog), ProviderName: sqlite.Text(provider), RunID: sqlite.Text(run), HeartbeatAt: sqlite.Integer(now), ExpiresAt: sqlite.Integer(now + 300)})
 	return requireLeaseChange(result, err, run)
 }
 
 // ReleaseLease removes the exact owner's lease even after its expiry.
 func ReleaseLease(ctx context.Context, connection *sql.Conn, catalog, provider, run string) error {
-	result, err := connection.ExecContext(ctx, "DELETE FROM provider_leases WHERE catalog_name=?1 AND provider_name=?2 AND run_id=?3", catalog, provider, run)
+	result, err := controlQueries.ReleaseLease(ctx, connection, controldb.ReleaseLeaseParams{CatalogName: sqlite.Text(catalog), ProviderName: sqlite.Text(provider), RunID: sqlite.Text(run)})
 	return requireLeaseChange(result, err, run)
 }
 

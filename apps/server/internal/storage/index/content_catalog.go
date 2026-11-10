@@ -13,8 +13,12 @@ import (
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
 	"github.com/QianFuv/LitRadar/apps/server/internal/provider"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/search"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/contentdb"
+	dbtypes "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/types"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
+
+var contentQueries contentdb.Queries
 
 func journalConflict() error {
 	return &provider.ContractViolation{Message: "journal identity ownership conflicts with canonical catalog"}
@@ -32,7 +36,14 @@ func catalogKeys(catalog domain.JournalCatalogEntry) []ArticleIdentityKey {
 
 func claimJournalKey(ctx context.Context, connection *sql.Conn, key ArticleIdentityKey, owner string) error {
 	var previous sqlite.Text
-	err := connection.QueryRowContext(ctx, "SELECT canonical_catalog_id FROM journal_identity_keys WHERE identity_kind=?1 AND identity_value=?2", key.Kind, key.Value).Scan(&previous)
+	err := func() error {
+		queryResult, err := contentQueries.JournalKeyOwner(ctx, connection, contentdb.JournalKeyOwnerParams{IdentityKind: sqlite.Text(key.Kind), IdentityValue: sqlite.Text(key.Value)})
+		if err != nil {
+			return err
+		}
+		previous = queryResult
+		return nil
+	}()
 	if err == nil {
 		if string(previous) != owner {
 			return journalConflict()
@@ -42,13 +53,20 @@ func claimJournalKey(ctx context.Context, connection *sql.Conn, key ArticleIdent
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	_, err = connection.ExecContext(ctx, "INSERT INTO journal_identity_keys(identity_kind,identity_value,canonical_catalog_id) VALUES(?1,?2,?3)", key.Kind, key.Value, owner)
+	_, err = contentQueries.InsertJournalKey(ctx, connection, contentdb.InsertJournalKeyParams{IdentityKind: sqlite.Text(key.Kind), IdentityValue: sqlite.Text(key.Value), CanonicalCatalogID: sqlite.Text(owner)})
 	return err
 }
 
 func ensureJournalSlot(ctx context.Context, connection *sql.Conn, catalog domain.JournalCatalogEntry) error {
 	var stored sqlite.Integer
-	err := connection.QueryRowContext(ctx, "SELECT journal_id FROM journals WHERE catalog_id=?1", catalog.CatalogId).Scan(&stored)
+	err := func() error {
+		queryResult, err := contentQueries.JournalID(ctx, connection, contentdb.JournalIDParams{CatalogID: sqlite.Text(catalog.CatalogId)})
+		if err != nil {
+			return err
+		}
+		stored = queryResult
+		return nil
+	}()
 	if err == nil && int64(stored) != JournalId(catalog.CatalogId) {
 		return journalConflict()
 	}
@@ -56,7 +74,14 @@ func ensureJournalSlot(ctx context.Context, connection *sql.Conn, catalog domain
 		return err
 	}
 	var owner sqlite.Text
-	err = connection.QueryRowContext(ctx, "SELECT catalog_id FROM journals WHERE journal_id=?1", JournalId(catalog.CatalogId)).Scan(&owner)
+	err = func() error {
+		queryResult, err := contentQueries.JournalCatalogID(ctx, connection, contentdb.JournalCatalogIDParams{JournalID: sqlite.Integer(JournalId(catalog.CatalogId))})
+		if err != nil {
+			return err
+		}
+		owner = queryResult
+		return nil
+	}()
 	if err == nil && string(owner) != catalog.CatalogId {
 		return journalConflict()
 	}
@@ -72,7 +97,14 @@ func claimCatalog(ctx context.Context, connection *sql.Conn, catalog domain.Jour
 	}
 	for _, alias := range catalog.CatalogAliases {
 		var exists sqlite.Integer
-		if err := connection.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM journals WHERE catalog_id=?1)", alias).Scan(&exists); err != nil {
+		if err := func() error {
+			queryResult, err := contentQueries.HasJournalCatalog(ctx, connection, contentdb.HasJournalCatalogParams{CatalogID: sqlite.Text(alias)})
+			if err != nil {
+				return err
+			}
+			exists = sqlite.Integer(dbtypes.Boolean(queryResult))
+			return nil
+		}(); err != nil {
 			return err
 		}
 		if exists != 0 {
@@ -134,7 +166,14 @@ func ReconcileCatalogIdentities(ctx context.Context, connection *sql.Conn, entri
 				return err
 			}
 			var exists sqlite.Integer
-			if err := connection.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM journals WHERE catalog_id=?1)", entry.CatalogId).Scan(&exists); err != nil {
+			if err := func() error {
+				queryResult, err := contentQueries.HasJournalCatalog(ctx, connection, contentdb.HasJournalCatalogParams{CatalogID: sqlite.Text(entry.CatalogId)})
+				if err != nil {
+					return err
+				}
+				exists = sqlite.Integer(dbtypes.Boolean(queryResult))
+				return nil
+			}(); err != nil {
 				return err
 			}
 			if exists != 0 {
@@ -153,9 +192,16 @@ func ReconcileCatalogIdentities(ctx context.Context, connection *sql.Conn, entri
 
 func removeEmptyLegacyJournal(ctx context.Context, connection *sql.Conn, alias string) error {
 	var journal sqlite.Integer
-	err := connection.QueryRowContext(ctx, "SELECT journal_id FROM journals WHERE catalog_id=?1", alias).Scan(&journal)
+	err := func() error {
+		queryResult, err := contentQueries.JournalID(ctx, connection, contentdb.JournalIDParams{CatalogID: sqlite.Text(alias)})
+		if err != nil {
+			return err
+		}
+		journal = queryResult
+		return nil
+	}()
 	if errors.Is(err, sql.ErrNoRows) {
-		_, err = connection.ExecContext(ctx, "DELETE FROM journal_identity_keys WHERE canonical_catalog_id=?1", alias)
+		_, err = contentQueries.DeleteJournalKeys(ctx, connection, contentdb.DeleteJournalKeysParams{CanonicalCatalogID: sqlite.Text(alias)})
 		return err
 	}
 	if err != nil {
@@ -169,10 +215,10 @@ func removeEmptyLegacyJournal(ctx context.Context, connection *sql.Conn, alias s
 	if exists != 0 {
 		return &provider.ContractViolation{Message: "legacy journal entity owns content or durable history"}
 	}
-	if _, err = connection.ExecContext(ctx, "DELETE FROM journal_identity_keys WHERE canonical_catalog_id=?1", alias); err != nil {
+	if _, err = contentQueries.DeleteJournalKeys(ctx, connection, contentdb.DeleteJournalKeysParams{CanonicalCatalogID: sqlite.Text(alias)}); err != nil {
 		return err
 	}
-	result, err := connection.ExecContext(ctx, "DELETE FROM journals WHERE journal_id=?1 AND catalog_id=?2", journal, alias)
+	result, err := contentQueries.DeleteEmptyJournal(ctx, connection, contentdb.DeleteEmptyJournalParams{JournalID: journal, CatalogID: sqlite.Text(alias)})
 	if err != nil {
 		return err
 	}
@@ -192,7 +238,19 @@ func upsertJournal(ctx context.Context, connection *sql.Conn, catalog domain.Jou
 	refresh := projectionRefresh{}
 	var title sqlite.Text
 	var area sqlite.OptionalText
-	err := connection.QueryRowContext(ctx, journalProjectionSql, JournalId(catalog.CatalogId)).Scan(&title, &area)
+	err := func() error {
+		queryResult, err := contentQueries.JournalProjection(ctx, connection, contentdb.JournalProjectionParams{JournalID: sqlite.Integer(JournalId(catalog.CatalogId))})
+		if err != nil {
+			return err
+		}
+		title = queryResult.Title
+		if queryResult.Area == nil {
+			area.Value = nil
+		} else {
+			area.Value = new(string(*queryResult.Area))
+		}
+		return nil
+	}()
 	if err == nil {
 		refresh = projectionRefresh{!reflect.DeepEqual(area.Value, catalog.Area), string(title) != catalog.Title}
 	} else if !errors.Is(err, sql.ErrNoRows) {
@@ -207,7 +265,7 @@ func upsertJournal(ctx context.Context, connection *sql.Conn, catalog domain.Jou
 		return refresh, err
 	}
 	rankings := catalog.Rankings
-	_, err = connection.ExecContext(ctx, journalUpsertSql, JournalId(catalog.CatalogId), catalog.CatalogId, catalog.Title, titles, issns, catalog.Issn, catalog.Eissn, catalog.Area, rankings.UtdRank, rankings.UtdRating, rankings.AbsRank, rankings.AbsRating, rankings.FmsRank, rankings.FmsRating, rankings.FmscnRank, rankings.FmscnRating)
+	_, err = contentQueries.UpsertJournal(ctx, connection, contentdb.UpsertJournalParams{JournalID: sqlite.Integer(JournalId(catalog.CatalogId)), CatalogID: sqlite.Text(catalog.CatalogId), Title: sqlite.Text(catalog.Title), TitleAliasesJSON: sqlite.Text(titles), IssnsJSON: sqlite.Text(issns), ISSN: (*sqlite.Text)(catalog.Issn), EISSN: (*sqlite.Text)(catalog.Eissn), Area: (*sqlite.Text)(catalog.Area), UTDRank: (*sqlite.Text)(rankings.UtdRank), UTDRating: (*sqlite.Text)(rankings.UtdRating), ABSRank: (*sqlite.Text)(rankings.AbsRank), ABSRating: (*sqlite.Text)(rankings.AbsRating), FMSRank: (*sqlite.Text)(rankings.FmsRank), FMSRating: (*sqlite.Text)(rankings.FmsRating), FMSCNRank: (*sqlite.Text)(rankings.FmscnRank), FMSCNRating: (*sqlite.Text)(rankings.FmscnRating)})
 	return refresh, err
 }
 
@@ -215,7 +273,7 @@ func upsertJournal(ctx context.Context, connection *sql.Conn, catalog domain.Jou
 func refreshJournal(ctx context.Context, connection *sql.Conn, catalog domain.JournalCatalogEntry, refresh projectionRefresh) error {
 	journal := JournalId(catalog.CatalogId)
 	if refresh.shouldRefreshArea {
-		if _, err := connection.ExecContext(ctx, "UPDATE article_listing SET area=?1 WHERE journal_id=?2", catalog.Area, journal); err != nil {
+		if _, err := contentQueries.UpdateListingArea(ctx, connection, contentdb.UpdateListingAreaParams{Area: (*sqlite.Text)(catalog.Area), JournalID: sqlite.Integer(journal)}); err != nil {
 			return err
 		}
 	}
@@ -280,23 +338,17 @@ type journalProjection struct {
 }
 
 func readJournalProjections(ctx context.Context, connection *sql.Conn, journal int64) ([]journalProjection, error) {
-	rows, err := connection.QueryContext(ctx, `SELECT articles.article_id,articles.title,articles.abstract_text,articles.doi,articles.pmid,COALESCE((SELECT group_concat(CASE authors.type WHEN 'object' THEN json_extract(authors.value,'$.display_name') ELSE CAST(authors.value AS TEXT) END,'; ') FROM json_each(articles.authors_json) AS authors),'') FROM articles WHERE articles.journal_id=?1 ORDER BY articles.article_id`, journal)
+	rows, err := contentQueries.JournalProjections(ctx, connection, contentdb.JournalProjectionsParams{JournalID: sqlite.Integer(journal)})
 	if err != nil {
 		return nil, err
 	}
-	projections := []journalProjection{}
-	for rows.Next() {
-		var value journalProjection
-		if err := rows.Scan(&value.id, &value.title, &value.abstract, &value.doi, &value.pmid, &value.authors); err != nil {
-			rows.Close()
+	projections := make([]journalProjection, 0, len(rows))
+	for _, row := range rows {
+		var authors sqlite.Text
+		if err := authors.Scan(row.Coalesce); err != nil {
 			return nil, err
 		}
-		projections = append(projections, value)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return nil, err
+		projections = append(projections, journalProjection{id: row.ArticleID, title: row.Title, authors: authors, abstract: sqlite.OptionalText{Value: (*string)(row.AbstractText)}, doi: sqlite.OptionalText{Value: (*string)(row.DOI)}, pmid: sqlite.OptionalText{Value: (*string)(row.PMID)}})
 	}
 	return projections, nil
 }

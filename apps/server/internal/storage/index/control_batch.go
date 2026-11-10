@@ -5,6 +5,8 @@ import (
 	"database/sql"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/controldb"
+	dbtypes "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/types"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
@@ -25,7 +27,14 @@ type LegacyBatchAdoption struct {
 func HasCatalogAliasSyncState(ctx context.Context, connection *sql.Conn, catalog string, aliases []string) (bool, error) {
 	for _, alias := range aliases {
 		var exists sqlite.Integer
-		if err := connection.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM provider_sync_anchors WHERE catalog_name=?1 AND catalog_id=?2 UNION ALL SELECT 1 FROM provider_run_checkpoints WHERE catalog_name=?1 AND catalog_id=?2)`, catalog, alias).Scan(&exists); err != nil {
+		if err := func() error {
+			queryResult, err := controlQueries.HasAliasSyncState(ctx, connection, controldb.HasAliasSyncStateParams{CatalogName: sqlite.Text(catalog), CatalogID: sqlite.Text(alias)})
+			if err != nil {
+				return err
+			}
+			exists = sqlite.Integer(dbtypes.Boolean(queryResult))
+			return nil
+		}(); err != nil {
 			return false, err
 		}
 		if exists != 0 {
@@ -42,10 +51,24 @@ func ReadBatchJournalState(ctx context.Context, connection *sql.Conn, catalog, p
 		return result, err
 	}
 	var completed, inFlight sqlite.Integer
-	if err := connection.QueryRowContext(ctx, "SELECT COUNT(*) FROM provider_sync_anchors WHERE catalog_name=?1 AND provider_name=?2 AND completed_batch_id=?3", catalog, provider, batch).Scan(&completed); err != nil {
+	if err := func() error {
+		queryResult, err := controlQueries.BatchAnchorCount(ctx, connection, controldb.BatchAnchorCountParams{CatalogName: sqlite.Text(catalog), ProviderName: sqlite.Text(provider), CompletedBatchID: new(sqlite.Text(batch))})
+		if err != nil {
+			return err
+		}
+		completed = sqlite.Integer(queryResult)
+		return nil
+	}(); err != nil {
 		return result, err
 	}
-	if err := connection.QueryRowContext(ctx, "SELECT COUNT(*) FROM provider_run_checkpoints WHERE catalog_name=?1 AND provider_name=?2 AND batch_id=?3", catalog, provider, batch).Scan(&inFlight); err != nil {
+	if err := func() error {
+		queryResult, err := controlQueries.BatchRunCount(ctx, connection, controldb.BatchRunCountParams{CatalogName: sqlite.Text(catalog), ProviderName: sqlite.Text(provider), BatchID: new(sqlite.Text(batch))})
+		if err != nil {
+			return err
+		}
+		inFlight = sqlite.Integer(queryResult)
+		return nil
+	}(); err != nil {
 		return result, err
 	}
 	return BatchJournalState{uint64(completed), uint64(inFlight)}, nil
@@ -58,29 +81,26 @@ func AdoptLegacyBatchState(ctx context.Context, connection *sql.Conn, catalog, p
 		return outcome, err
 	}
 	err := immediate(ctx, connection, func() error {
-		rows, err := connection.QueryContext(ctx, "SELECT sync_mode,started_at FROM provider_run_checkpoints WHERE catalog_name=?1 AND provider_name=?2 AND batch_id IS NULL ORDER BY catalog_id", catalog, provider)
+		rows, err := controlQueries.LegacyBatchRuns(ctx, connection, controldb.LegacyBatchRunsParams{CatalogName: sqlite.Text(catalog), ProviderName: sqlite.Text(provider)})
 		if err != nil {
 			return err
 		}
-		legacy := [][2]sqlite.Text{}
-		for rows.Next() {
-			var value [2]sqlite.Text
-			if err := rows.Scan(&value[0], &value[1]); err != nil {
-				rows.Close()
-				return err
-			}
-			legacy = append(legacy, value)
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return err
+		legacy := make([][2]sqlite.Text, 0, len(rows))
+		for _, row := range rows {
+			legacy = append(legacy, [2]sqlite.Text{row.SyncMode, row.StartedAt})
 		}
 		if len(legacy) == 0 {
 			return nil
 		}
 		var hasLease sqlite.Integer
-		if err := connection.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM provider_leases WHERE catalog_name=?1 AND provider_name=?2)", catalog, provider).Scan(&hasLease); err != nil {
+		if err := func() error {
+			queryResult, err := controlQueries.HasProviderLease(ctx, connection, controldb.HasProviderLeaseParams{CatalogName: sqlite.Text(catalog), ProviderName: sqlite.Text(provider)})
+			if err != nil {
+				return err
+			}
+			hasLease = sqlite.Integer(dbtypes.Boolean(queryResult))
+			return nil
+		}(); err != nil {
 			return err
 		}
 		if hasLease != 0 {
@@ -95,11 +115,11 @@ func AdoptLegacyBatchState(ctx context.Context, connection *sql.Conn, catalog, p
 				return invalidSync("legacy checkpoints do not share one mode and start epoch")
 			}
 		}
-		checkpoints, err := connection.ExecContext(ctx, "UPDATE provider_run_checkpoints SET batch_id=?3 WHERE catalog_name=?1 AND provider_name=?2 AND batch_id IS NULL", catalog, provider, batch)
+		checkpoints, err := controlQueries.AdoptRunBatch(ctx, connection, controldb.AdoptRunBatchParams{CatalogName: sqlite.Text(catalog), ProviderName: sqlite.Text(provider), BatchID: new(sqlite.Text(batch))})
 		if err != nil {
 			return err
 		}
-		anchors, err := connection.ExecContext(ctx, "UPDATE provider_sync_anchors SET completed_batch_id=?3 WHERE catalog_name=?1 AND provider_name=?2 AND completed_batch_id IS NULL AND completed_at=?4", catalog, provider, batch, started)
+		anchors, err := controlQueries.AdoptAnchorBatch(ctx, connection, controldb.AdoptAnchorBatchParams{CatalogName: sqlite.Text(catalog), ProviderName: sqlite.Text(provider), CompletedBatchID: new(sqlite.Text(batch)), CompletedAt: sqlite.Text(started)})
 		if err != nil {
 			return err
 		}
@@ -125,7 +145,7 @@ func AbandonBatchCheckpoints(ctx context.Context, connection *sql.Conn, batch st
 	if err := validateBatchId(batch); err != nil {
 		return 0, err
 	}
-	result, err := connection.ExecContext(ctx, "DELETE FROM provider_run_checkpoints WHERE batch_id=?1", batch)
+	result, err := controlQueries.AbandonBatchCheckpoints(ctx, connection, controldb.AbandonBatchCheckpointsParams{BatchID: new(sqlite.Text(batch))})
 	if err != nil {
 		return 0, err
 	}

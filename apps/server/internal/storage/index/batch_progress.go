@@ -5,6 +5,8 @@ import (
 	"context"
 	"database/sql"
 
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/batchdb"
+	dbtypes "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/types"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
@@ -37,7 +39,7 @@ func TransitionCatalogPhase(ctx context.Context, connection *sql.Conn, id, owner
 		if current != next && !validCatalogTransition(current, next) {
 			return batchState("catalog phase transition is not allowed")
 		}
-		if _, err := connection.ExecContext(ctx, `UPDATE index_batch_catalogs SET phase=?3,updated_at=?4 WHERE batch_id=?1 AND ordinal=?2`, id, int64(ordinal), next, now); err != nil {
+		if _, err := batchQueries.TransitionCatalogPhase(ctx, connection, batchdb.TransitionCatalogPhaseParams{BatchID: sqlite.Text(id), Ordinal: sqlite.Integer(int64(ordinal)), Phase: sqlite.Text(next), UpdatedAt: sqlite.Integer(now)}); err != nil {
 			return err
 		}
 		return touchBatch(ctx, connection, id, now)
@@ -72,7 +74,7 @@ func StoreManifestIntent(ctx context.Context, connection *sql.Conn, id, owner st
 			if phase != CatalogIndexing {
 				return batchState("manifest intent requires an indexing catalog")
 			}
-			if _, err := connection.ExecContext(ctx, `UPDATE index_batch_catalogs SET phase='manifest_prepared',manifest_payload=?3,manifest_sha256=?4,manifest_through_event_id=?5,manifest_path=?6,manifest_run_id=?7,manifest_generated_at=?8,updated_at=?9 WHERE batch_id=?1 AND ordinal=?2`, id, int64(ordinal), intent.Payload, intent.Sha256, intent.ThroughEventId, intent.Path, intent.RunId, intent.GeneratedAt, now); err != nil {
+			if _, err := batchQueries.StoreManifestIntent(ctx, connection, batchdb.StoreManifestIntentParams{BatchID: sqlite.Text(id), Ordinal: sqlite.Integer(int64(ordinal)), ManifestPayload: dbtypes.Blob(intent.Payload), ManifestSHA256: new(sqlite.Text(intent.Sha256)), ManifestThroughEventID: (*sqlite.Integer)(intent.ThroughEventId), ManifestPath: new(sqlite.Text(intent.Path)), ManifestRunID: new(sqlite.Text(intent.RunId)), ManifestGeneratedAt: new(sqlite.Text(intent.GeneratedAt)), UpdatedAt: sqlite.Integer(now)}); err != nil {
 				return err
 			}
 		}
@@ -122,7 +124,7 @@ func saveCatalogOutcome(ctx context.Context, connection *sql.Conn, id string, or
 	if err != nil {
 		return err
 	}
-	changed, err := connection.ExecContext(ctx, `UPDATE index_batch_catalogs SET run_id=?3,written_article_count=?4,source_attempt_count=?5,outcome_manifest_path=?6,updated_at=?7 WHERE batch_id=?1 AND ordinal=?2 AND journal_count=?8`, id, int64(ordinal), outcome.RunId, outcome.WrittenArticleCount, attempts, outcome.ManifestPath, now, journals)
+	changed, err := batchQueries.StoreCatalogOutcome(ctx, connection, batchdb.StoreCatalogOutcomeParams{BatchID: sqlite.Text(id), Ordinal: sqlite.Integer(int64(ordinal)), RunID: new(sqlite.Text(outcome.RunId)), WrittenArticleCount: new(sqlite.Integer(outcome.WrittenArticleCount)), SourceAttemptCount: new(sqlite.Integer(attempts)), OutcomeManifestPath: (*sqlite.Text)(outcome.ManifestPath), UpdatedAt: sqlite.Integer(now), JournalCount: sqlite.Integer(journals)})
 	return expectBatchChange(changed, err, "catalog outcome journal count does not match the frozen CSV")
 }
 
@@ -154,7 +156,7 @@ func CompleteCatalog(ctx context.Context, connection *sql.Conn, id, owner string
 		if err := saveCatalogOutcome(ctx, connection, id, ordinal, outcome, now); err != nil {
 			return err
 		}
-		if _, err := connection.ExecContext(ctx, `UPDATE index_batch_catalogs SET phase='completed',completed_at=COALESCE(completed_at,?3),updated_at=?3 WHERE batch_id=?1 AND ordinal=?2`, id, int64(ordinal), now); err != nil {
+		if _, err := batchQueries.CompleteCatalog(ctx, connection, batchdb.CompleteCatalogParams{BatchID: sqlite.Text(id), Ordinal: sqlite.Integer(int64(ordinal)), UpdatedAt: sqlite.Integer(now)}); err != nil {
 			return err
 		}
 		return touchBatch(ctx, connection, id, now)
@@ -168,17 +170,24 @@ func CompleteBatch(ctx context.Context, connection *sql.Conn, id, owner string, 
 			return err
 		}
 		var incomplete sqlite.Integer
-		if err := connection.QueryRowContext(ctx, `SELECT COUNT(*) FROM index_batch_catalogs WHERE batch_id=?1 AND phase!='completed'`, id).Scan(&incomplete); err != nil {
+		if err := func() error {
+			queryResult, err := batchQueries.IncompleteCatalogCount(ctx, connection, batchdb.IncompleteCatalogCountParams{BatchID: sqlite.Text(id)})
+			if err != nil {
+				return err
+			}
+			incomplete = sqlite.Integer(queryResult)
+			return nil
+		}(); err != nil {
 			return err
 		}
 		if incomplete != 0 {
 			return batchState("batch cannot complete while a catalog is incomplete")
 		}
-		changed, err := connection.ExecContext(ctx, `UPDATE index_batches SET status='completed',updated_at=?2,completed_at=?2 WHERE batch_id=?1 AND status='active'`, id, now)
+		changed, err := batchQueries.CompleteBatch(ctx, connection, batchdb.CompleteBatchParams{BatchID: sqlite.Text(id), UpdatedAt: sqlite.Integer(now)})
 		if err = expectBatchChange(changed, err, "only an active batch can complete"); err != nil {
 			return err
 		}
-		changed, err = connection.ExecContext(ctx, `DELETE FROM index_batch_lease WHERE lease_key=1 AND batch_id=?1 AND owner_id=?2`, id, owner)
+		changed, err = batchQueries.ReleaseBatchLease(ctx, connection, batchdb.ReleaseBatchLeaseParams{BatchID: sqlite.Text(id), OwnerID: sqlite.Text(owner)})
 		return expectLeaseChange(changed, err, owner)
 	})
 }

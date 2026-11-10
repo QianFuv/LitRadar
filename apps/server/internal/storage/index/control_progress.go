@@ -6,10 +6,11 @@ import (
 	"reflect"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/controldb"
+	dbtypes "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/types"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
-const runCondition = "catalog_name=?1 AND provider_name=?2 AND catalog_id=?3 AND batch_id=?4 AND run_id=?5 AND sync_mode=?6 AND base_anchor IS ?7"
 const insertRunSql = `INSERT INTO provider_run_checkpoints(catalog_name,provider_name,catalog_id,batch_id,run_id,sync_mode,base_anchor,traversal_checkpoint,started_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,NULL,?8,?8)`
 
 // PrepareJournalSync freezes the anchor and either resumes its exact batch or replaces traversal state.
@@ -48,7 +49,7 @@ func PrepareJournalSync(ctx context.Context, connection *sql.Conn, run SyncRun, 
 			if !reflect.DeepEqual(existing.BaseAnchor, desired) {
 				return invalidSync("run base anchor does not match the committed anchor")
 			}
-			changed, err := connection.ExecContext(ctx, `UPDATE provider_run_checkpoints SET run_id=?5,updated_at=?9 WHERE catalog_name=?1 AND provider_name=?2 AND catalog_id=?3 AND batch_id=?4 AND run_id=?6 AND sync_mode=?7 AND base_anchor IS ?8`, run.Scope.CatalogName, run.Scope.ProviderName, run.Scope.CatalogId, run.BatchId, run.RunId, existing.RunId, run.Mode, desired, updatedAt)
+			changed, err := controlQueries.ResumeRun(ctx, connection, controldb.ResumeRunParams{CatalogName: sqlite.Text(run.Scope.CatalogName), ProviderName: sqlite.Text(run.Scope.ProviderName), CatalogID: sqlite.Text(run.Scope.CatalogId), BatchID: new(sqlite.Text(run.BatchId)), RunID: sqlite.Text(run.RunId), RunID_2: sqlite.Text(existing.RunId), SyncMode: sqlite.Text(run.Mode), BaseAnchor: (*sqlite.Text)(desired), UpdatedAt: sqlite.Text(updatedAt)})
 			if err := requireRunChange(changed, err, run.RunId); err != nil {
 				return err
 			}
@@ -73,9 +74,6 @@ func PrepareJournalSync(ctx context.Context, connection *sql.Conn, run SyncRun, 
 	return result, nil
 }
 
-func runArguments(run SyncRun) []any {
-	return []any{run.Scope.CatalogName, run.Scope.ProviderName, run.Scope.CatalogId, run.BatchId, run.RunId, run.Mode, run.BaseAnchor}
-}
 func requireRunChange(result sql.Result, err error, run string) error {
 	if err != nil {
 		return err
@@ -104,7 +102,7 @@ func validateProgress(run SyncRun, value *string, field, updatedAt string) error
 }
 
 func advanceRun(ctx context.Context, connection *sql.Conn, run SyncRun, checkpoint, updatedAt string) error {
-	result, err := connection.ExecContext(ctx, "UPDATE provider_run_checkpoints SET traversal_checkpoint=?8,updated_at=?9 WHERE "+runCondition, append(runArguments(run), checkpoint, updatedAt)...)
+	result, err := controlQueries.AdvanceRun(ctx, connection, controldb.AdvanceRunParams{CatalogName: sqlite.Text(run.Scope.CatalogName), ProviderName: sqlite.Text(run.Scope.ProviderName), CatalogID: sqlite.Text(run.Scope.CatalogId), BatchID: new(sqlite.Text(run.BatchId)), RunID: sqlite.Text(run.RunId), SyncMode: sqlite.Text(run.Mode), BaseAnchor: (*sqlite.Text)(run.BaseAnchor), TraversalCheckpoint: new(sqlite.Text(checkpoint)), UpdatedAt: sqlite.Text(updatedAt)})
 	return requireRunChange(result, err, run.RunId)
 }
 
@@ -117,11 +115,11 @@ func AdvanceRunCheckpoint(ctx context.Context, connection *sql.Conn, run SyncRun
 }
 
 func verifyJournalRun(ctx context.Context, connection *sql.Conn, run SyncRun) error {
-	var exists sqlite.Integer
-	if err := connection.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM provider_run_checkpoints WHERE "+runCondition+")", runArguments(run)...).Scan(&exists); err != nil {
+	exists, err := controlQueries.OwnsJournalRun(ctx, connection, controldb.OwnsJournalRunParams{CatalogName: sqlite.Text(run.Scope.CatalogName), ProviderName: sqlite.Text(run.Scope.ProviderName), CatalogID: sqlite.Text(run.Scope.CatalogId), BatchID: new(sqlite.Text(run.BatchId)), RunID: sqlite.Text(run.RunId), SyncMode: sqlite.Text(run.Mode), BaseAnchor: (*sqlite.Text)(run.BaseAnchor)})
+	if err != nil {
 		return err
 	}
-	if exists == 0 {
+	if !exists {
 		return &ControlError{Kind: "run_ownership_lost", RunId: run.RunId}
 	}
 	return nil
@@ -131,10 +129,10 @@ func completeRun(ctx context.Context, connection *sql.Conn, run SyncRun, nextAnc
 	if err := verifyJournalRun(ctx, connection, run); err != nil {
 		return err
 	}
-	if _, err := connection.ExecContext(ctx, `INSERT INTO provider_sync_anchors(catalog_name,provider_name,catalog_id,committed_anchor,completed_at,completed_batch_id) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(catalog_name,provider_name,catalog_id) DO UPDATE SET committed_anchor=excluded.committed_anchor,completed_at=excluded.completed_at,completed_batch_id=excluded.completed_batch_id`, run.Scope.CatalogName, run.Scope.ProviderName, run.Scope.CatalogId, nextAnchor, completedAt, run.BatchId); err != nil {
+	if _, err := controlQueries.CompleteRun(ctx, connection, controldb.CompleteRunParams{CatalogName: sqlite.Text(run.Scope.CatalogName), ProviderName: sqlite.Text(run.Scope.ProviderName), CatalogID: sqlite.Text(run.Scope.CatalogId), CommittedAnchor: (*sqlite.Text)(nextAnchor), CompletedAt: sqlite.Text(completedAt), CompletedBatchID: new(sqlite.Text(run.BatchId))}); err != nil {
 		return err
 	}
-	result, err := connection.ExecContext(ctx, "DELETE FROM provider_run_checkpoints WHERE "+runCondition, runArguments(run)...)
+	result, err := controlQueries.DeleteRun(ctx, connection, controldb.DeleteRunParams{CatalogName: sqlite.Text(run.Scope.CatalogName), ProviderName: sqlite.Text(run.Scope.ProviderName), CatalogID: sqlite.Text(run.Scope.CatalogId), BatchID: new(sqlite.Text(run.BatchId)), RunID: sqlite.Text(run.RunId), SyncMode: sqlite.Text(run.Mode), BaseAnchor: (*sqlite.Text)(run.BaseAnchor)})
 	return requireRunChange(result, err, run.RunId)
 }
 
@@ -181,7 +179,14 @@ func CommitContentThenProgress[T any](ctx context.Context, connection *sql.Conn,
 	phase := "control"
 	err := immediate(ctx, connection, func() error {
 		var exists sqlite.Integer
-		if err := connection.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM provider_leases WHERE catalog_name=?1 AND provider_name=?2 AND run_id=?3 AND expires_at>unixepoch())", run.Scope.CatalogName, run.Scope.ProviderName, run.RunId).Scan(&exists); err != nil {
+		if err := func() error {
+			queryResult, err := controlQueries.OwnsLiveLease(ctx, connection, controldb.OwnsLiveLeaseParams{CatalogName: sqlite.Text(run.Scope.CatalogName), ProviderName: sqlite.Text(run.Scope.ProviderName), RunID: sqlite.Text(run.RunId)})
+			if err != nil {
+				return err
+			}
+			exists = sqlite.Integer(dbtypes.Boolean(queryResult))
+			return nil
+		}(); err != nil {
 			return err
 		}
 		if exists == 0 {

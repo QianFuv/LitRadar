@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/contentdb"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
@@ -39,27 +40,20 @@ func ListContentChangeEvents(ctx context.Context, connection *sql.Conn, after in
 	if limit == 0 || limit > 10000 {
 		return nil, fmt.Errorf("Invalid parameter name: content change limit must be between 1 and 10000")
 	}
-	rows, err := connection.QueryContext(ctx, `SELECT event_id,content_revision,article_id,change_kind,journal_id,issue_id,in_press,created_at FROM article_change_events WHERE event_id>?1 ORDER BY event_id LIMIT ?2`, after, int64(limit))
+	rows, err := contentQueries.ContentChanges(ctx, connection, contentdb.ContentChangesParams{EventID: sqlite.Integer(after), Limit: int64(limit)})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	events := []ContentChangeEvent{}
-	for rows.Next() {
-		var id, article, journal, inPress sqlite.Integer
-		var revision, kind, created sqlite.Text
-		var issue sqlite.OptionalInteger
-		if err := rows.Scan(&id, &revision, &article, &kind, &journal, &issue, &inPress, &created); err != nil {
-			return nil, err
-		}
-		events = append(events, ContentChangeEvent{int64(id), string(revision), int64(article), string(kind), int64(journal), issue.Value, inPress != 0, string(created)})
+	events := make([]ContentChangeEvent, 0, len(rows))
+	for _, row := range rows {
+		events = append(events, ContentChangeEvent{int64(row.EventID), string(row.ContentRevision), int64(row.ArticleID), string(row.ChangeKind), int64(row.JournalID), (*int64)(row.IssueID), row.InPress != 0, string(row.CreatedAt)})
 	}
-	return events, rows.Err()
+	return events, nil
 }
 
 // AcknowledgeContentChangeEvents removes only events covered by an already published inclusive cursor.
 func AcknowledgeContentChangeEvents(ctx context.Context, connection *sql.Conn, through int64) (uint64, error) {
-	result, err := connection.ExecContext(ctx, "DELETE FROM article_change_events WHERE event_id<=?1", through)
+	result, err := contentQueries.AcknowledgeChanges(ctx, connection, contentdb.AcknowledgeChangesParams{EventID: sqlite.Integer(through)})
 	if err != nil {
 		return 0, err
 	}
@@ -69,7 +63,7 @@ func AcknowledgeContentChangeEvents(ctx context.Context, connection *sql.Conn, t
 
 // DiscardContentChangeEvents clears committed events after a non-update rebuild.
 func DiscardContentChangeEvents(ctx context.Context, connection *sql.Conn) (uint64, error) {
-	result, err := connection.ExecContext(ctx, "DELETE FROM article_change_events")
+	result, err := contentQueries.DiscardChanges(ctx, connection)
 	if err != nil {
 		return 0, err
 	}
