@@ -65,9 +65,7 @@ jobs:
           started_at="$(date +%s)"
           set +e
           pnpm generate:api:check \
-            && pnpm lint \
-            && pnpm format:check \
-            && pnpm typecheck
+            && pnpm check
           status="$?"
           set -e
           echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
