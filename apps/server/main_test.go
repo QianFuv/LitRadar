@@ -220,9 +220,9 @@ func buildProcessExecutable(t *testing.T, ctx context.Context) string {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	compiler := filepath.Join(runtime.GOROOT(), "bin", "go")
-	if runtime.GOOS == "windows" {
-		compiler += ".exe"
+	compiler, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal(err)
 	}
 	build := exec.CommandContext(ctx, compiler, "build", "-mod=readonly", "-o", binary, ".")
 	if output, err := build.CombinedOutput(); err != nil {

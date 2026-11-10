@@ -104,11 +104,6 @@ func extractBodyWithLimit(request *http.Request, kind bodyType, isOptional bool,
 	return nil, bodyRejection(err.(*bodyFailure))
 }
 
-// bufferRequestBody preserves length-limit precedence over reader errors.
-func bufferRequestBody(request *http.Request) ([]byte, *apiError) {
-	return bufferRequestBodyLimit(request, 2*1024*1024)
-}
-
 // bufferRequestBodyLimit bounds buffering before reporting reader failures.
 func bufferRequestBodyLimit(request *http.Request, limit int64) ([]byte, *apiError) {
 	body, err := io.ReadAll(io.LimitReader(request.Body, limit+1))

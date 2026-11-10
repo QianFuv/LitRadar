@@ -202,6 +202,7 @@ func TestCatalogSelectionExcludesDotfileAndSortsBoundaries(t *testing.T) {
 	}
 }
 
+// TestHeartbeatStopsAndRetainsFailure verifies repeated stops retain the lease failure.
 func TestHeartbeatStopsAndRetainsFailure(t *testing.T) {
 	expected := errors.New("lease lost")
 	heartbeat := startLeaseHeartbeat(func() error { return expected }, "panic", time.Millisecond)
@@ -210,8 +211,10 @@ func TestHeartbeatStopsAndRetainsFailure(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("heartbeat did not stop on lease loss")
 	}
-	if heartbeat.stopAndCheck() != expected || heartbeat.stopAndCheck() != expected {
-		t.Fatal("heartbeat lost its failure")
+	for range 2 {
+		if heartbeat.stopAndCheck() != expected {
+			t.Fatal("heartbeat lost its failure")
+		}
 	}
 }
 
