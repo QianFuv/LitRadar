@@ -1880,7 +1880,6 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
-    /** @description Optional administrator overrides for a newly issued invite code. */
     AdminInviteCodeCreate: {
       /**
        * Format: double
@@ -1893,7 +1892,6 @@ export interface components {
        */
       max_uses?: number | null;
     };
-    /** @description Admin invite code response payload. */
     AdminInviteCodeInfo: {
       /** @description Raw invite code. */
       code: string;
@@ -1902,7 +1900,11 @@ export interface components {
        * @description Creation timestamp.
        */
       created_at: number;
-      created_by?: null | components['schemas']['UserId'];
+      /**
+       * Format: int64
+       * @description Creator user identifier.
+       */
+      created_by?: number | null;
       /** @description Creator username. */
       created_by_name?: string | null;
       /**
@@ -1925,8 +1927,11 @@ export interface components {
        * @description Optional irreversible revocation timestamp.
        */
       revoked_at?: number | null;
-      /** @description Current lifecycle state. */
-      status: components['schemas']['InviteCodeStatus'];
+      /**
+       * @description Current lifecycle state.
+       * @enum {string}
+       */
+      status: 'active' | 'expired' | 'revoked' | 'exhausted';
       /**
        * Format: int64
        * @description Number of committed registrations.
@@ -1937,21 +1942,22 @@ export interface components {
        * @description Consumption timestamp.
        */
       used_at?: number | null;
-      used_by?: null | components['schemas']['UserId'];
+      /**
+       * Format: int64
+       * @description Consumer user identifier.
+       */
+      used_by?: number | null;
       /** @description Consumer username. */
       used_by_name?: string | null;
     };
-    /** @description Admin password reset request payload. */
     AdminResetPassword: {
       /** @description Replacement password. */
       new_password: string;
     };
-    /** @description Admin grant/revoke request payload. */
     AdminSetAdmin: {
       /** @description Replacement admin flag. */
       is_admin: boolean;
     };
-    /** @description Admin stats response payload. */
     AdminStatsResponse: {
       /** @description Auth database statistics. */
       auth: components['schemas']['AuthStats'];
@@ -1960,7 +1966,6 @@ export interface components {
       /** @description Push-state statistics. */
       push: components['schemas']['PushStats'][];
     };
-    /** @description Admin user response payload. */
     AdminUserInfo: {
       /**
        * @description Account credential kind.
@@ -1984,8 +1989,11 @@ export interface components {
        * @description Number of folders owned by the user.
        */
       folder_count: number;
-      /** @description User row identifier. */
-      id: components['schemas']['UserId'];
+      /**
+       * Format: int64
+       * @description User row identifier.
+       */
+      id: number;
       /** @description Whether the user has admin privileges. */
       is_admin: boolean;
       /** @description Whether an external OIDC identity is linked. */
@@ -2000,7 +2008,6 @@ export interface components {
       /** @description Username. */
       username: string;
     };
-    /** @description Announcement creation payload. */
     AnnouncementCreate: {
       /** @description Whether the announcement is visible. */
       enabled?: boolean;
@@ -2011,7 +2018,6 @@ export interface components {
       /** @description Announcement title. */
       title: string;
     };
-    /** @description Public announcement payload returned by the API. */
     AnnouncementInfo: {
       /**
        * Format: double
@@ -2037,7 +2043,6 @@ export interface components {
        */
       updated_at: number;
     };
-    /** @description Announcement update payload. */
     AnnouncementUpdate: {
       /** @description Optional enabled flag. */
       enabled?: boolean | null;
@@ -2048,7 +2053,6 @@ export interface components {
       /** @description Optional replacement title. */
       title?: string | null;
     };
-    /** @description Article access action. */
     ArticleAccessAction: {
       /** @description Whether the action is available. */
       available: boolean;
@@ -2059,33 +2063,32 @@ export interface components {
       /** @description Whether login is required. */
       requires_login: boolean;
     };
-    /** @description Article access response. */
     ArticleAccessResponse: {
       /** @description Abstract-page action. */
       abstract_page: components['schemas']['ArticleAccessAction'];
       /** @description Full-text action. */
       fulltext: components['schemas']['ArticleAccessAction'];
     };
-    /** @description Article identifier stored internally as a SQLite integer. */
-    ArticleId: string;
-    /** @description Paginated articles response. */
     ArticlePage: {
       /** @description Article records. */
       items: components['schemas']['ArticleRecord'][];
       /** @description Pagination metadata. */
       page: components['schemas']['PageMeta'];
     };
-    /** @description Article record. */
     ArticleRecord: {
       /** @description Abstract text. */
       abstract?: string | null;
       /** @description Article identifier. */
-      article_id: components['schemas']['ArticleId'];
+      article_id: string;
       /** @description Authors text. */
       authors: string[];
       /** @description Article date. */
       date?: string | null;
-      date_precision?: null | components['schemas']['DatePrecision'];
+      /**
+       * @description Precision represented by the article date.
+       * @enum {string|null}
+       */
+      date_precision?: 'year' | 'month' | 'day' | null;
       /** @description DOI. */
       doi?: string | null;
       /** @description End page. */
@@ -2098,7 +2101,7 @@ export interface components {
        */
       issue_id?: number | null;
       /** @description Journal identifier. */
-      journal_id: components['schemas']['JournalId'];
+      journal_id: string;
       /** @description Journal title. */
       journal_title: string;
       /** @description Issue number. */
@@ -2121,16 +2124,10 @@ export interface components {
       /** @description Issue volume. */
       volume?: string | null;
     };
-    /**
-     * @description Full-text search interpretation mode.
-     * @enum {string}
-     */
-    ArticleSearchMode: 'simple' | 'advanced';
     AuthProvidersResponse: {
       oidc_display_name: string;
       oidc_enabled: boolean;
     };
-    /** @description Auth database statistics payload. */
     AuthStats: {
       /**
        * Format: int64
@@ -2188,7 +2185,6 @@ export interface components {
        */
       used_invite_codes: number;
     };
-    /** @description Complete lightweight CFP journal catalog for one database. */
     CfpCatalogResponse: {
       /** @description Canonical selected database filename. */
       database: string;
@@ -2202,23 +2198,28 @@ export interface components {
       /** @description Whole-database summary. */
       summary: components['schemas']['CfpCatalogSummary'];
     };
-    /** @description Aggregate counts for the selected database before the journal-name search filter. */
     CfpCatalogSummary: {
-      /** @description Journals with a reviewed snapshot or scoped empty statement. */
+      /**
+       * Format: int64
+       * @description Journals with a reviewed snapshot or scoped empty statement.
+       */
       adaptedJournals: number;
-      /** @description Notices excluding closed and historical calls. */
+      /**
+       * Format: int64
+       * @description Notices excluding closed and historical calls.
+       */
       currentNotices: number;
-      /** @description Complete maintained journal count, including journals without indexed articles. */
+      /**
+       * Format: int64
+       * @description Complete maintained journal count, including journals without indexed articles.
+       */
       journals: number;
-      /** @description All stored notices associated with this database. */
+      /**
+       * Format: int64
+       * @description All stored notices associated with this database.
+       */
       notices: number;
     };
-    /**
-     * @description Coverage of a journal's reviewed original-source data.
-     * @enum {string}
-     */
-    CfpCoverage: 'adapted' | 'unadapted';
-    /** @description A valid calendar date and its original clause. */
     CfpDate: {
       /** @description ISO calendar date, with no invented time of day. */
       date: string;
@@ -2228,24 +2229,21 @@ export interface components {
       isOptional: boolean;
       /** @description Untranslated source clause. */
       originalText: string;
-      /** @description Purpose of this date. */
-      stage: components['schemas']['CfpDateStage'];
+      /**
+       * @description Purpose of this date.
+       * @enum {string}
+       */
+      stage:
+        | 'paper'
+        | 'abstract'
+        | 'proposal'
+        | 'opens'
+        | 'revision'
+        | 'decision'
+        | 'publication'
+        | 'event'
+        | 'registration';
     };
-    /**
-     * @description Purpose of a dated milestone, independent of whether it is required.
-     * @enum {string}
-     */
-    CfpDateStage:
-      | 'paper'
-      | 'abstract'
-      | 'proposal'
-      | 'opens'
-      | 'revision'
-      | 'decision'
-      | 'publication'
-      | 'event'
-      | 'registration';
-    /** @description Lightweight journal metadata and backend-calculated CFP summary. */
     CfpJournalSummary: {
       /** @description All maintained print and electronic ISSNs for display and journal search. */
       allIssns: string[];
@@ -2259,9 +2257,15 @@ export interface components {
       catalogId: string;
       /** @description Last verified original-source date, if adapted. */
       checkedOn?: string | null;
-      /** @description Reviewed-source coverage. */
-      coverage: components['schemas']['CfpCoverage'];
-      /** @description Notices remaining after the default closed/historical filter. */
+      /**
+       * @description Reviewed-source coverage.
+       * @enum {string}
+       */
+      coverage: 'adapted' | 'unadapted';
+      /**
+       * Format: int64
+       * @description Notices remaining after the default closed/historical filter.
+       */
       currentCount: number;
       /**
        * Format: int64
@@ -2275,10 +2279,16 @@ export interface components {
        * @description Last successful live acquisition Unix timestamp.
        */
       lastSuccess?: number | null;
-      /** @description Total stored notices, including closed and historical calls. */
+      /**
+       * Format: int64
+       * @description Total stored notices, including closed and historical calls.
+       */
       noticeCount: number;
-      /** @description Latest acquisition status, including interrupted lease detection. */
-      refreshStatus: components['schemas']['CfpRefreshStatus'];
+      /**
+       * @description Latest acquisition status, including interrupted lease detection.
+       * @enum {string}
+       */
+      refreshStatus: 'snapshot' | 'success' | 'failed' | 'refreshing' | 'unsupported' | 'unadapted';
       /** @description Untranslated scoped statement that no matching calls are listed. */
       sourceStatement?: string | null;
       /** @description Original source URL associated with a scoped publisher statement. */
@@ -2292,45 +2302,6 @@ export interface components {
       /** @description Maintained journal title aliases for search. */
       titleAliases: string[];
     };
-    /**
-     * @description Submission purpose supported by the original announcement.
-     * @enum {string}
-     */
-    CfpKind: 'special_issue' | 'general' | 'proposal' | 'conference_linked';
-    /** @description Normalized notice persisted by the backend; availability is evaluated on read. */
-    CfpNotice: {
-      /** @description Last verified original-source date. */
-      checkedOn: string;
-      /** @description Validated dates, including non-submission milestones. */
-      dates: components['schemas']['CfpDate'][];
-      /** @description Default initial submission stage. */
-      entryStage: components['schemas']['CfpDateStage'];
-      /** @description Stable legacy-compatible URL/title identity within a journal. */
-      id: string;
-      /** @description Whether this announcement is an archival record. */
-      isHistorical: boolean;
-      /** @description Classified kind of call. */
-      kind: components['schemas']['CfpKind'];
-      /** @description Unresolved original timeline; never interpreted as perpetual availability. */
-      rawDateText: string;
-      /** @description Original instructions, empty if unavailable. */
-      requirements: string;
-      /** @description Original topic excerpt, empty if unavailable. */
-      scope: string;
-      sourceStatus?: null | components['schemas']['CfpState'];
-      /** @description Original public announcement URL. */
-      sourceUrl: string;
-      /** @description Explicit IANA timezone, if supplied by the source. */
-      timeZone?: string | null;
-      /** @description Original announcement title. */
-      title: string;
-      /**
-       * Format: int32
-       * @description Explicit annual topic year, when applicable.
-       */
-      topicYear?: number | null;
-    };
-    /** @description A revision-consistent page of original notices for one maintained catalog member. */
     CfpNoticePage: {
       /**
        * Format: int64
@@ -2344,52 +2315,84 @@ export interface components {
       /** @description Standard API pagination metadata, with a scope-bound next cursor. */
       page: components['schemas']['PageMeta'];
     };
-    /** @description One original notice with its authoritative backend-evaluated state and initial gate. */
-    CfpNoticeView: components['schemas']['CfpNotice'] & {
-      entryDeadline?: null | components['schemas']['CfpDate'];
-      /** @description Availability evaluated at the page's fixed instant. */
-      state: components['schemas']['CfpState'];
+    CfpNoticeView: {
+      /** @description Last verified original-source date. */
+      checkedOn: string;
+      /** @description Validated dates, including non-submission milestones. */
+      dates: components['schemas']['CfpDate'][];
+      entryDeadline?: components['schemas']['CfpDate'] | null;
+      /**
+       * @description Default initial submission stage.
+       * @enum {string}
+       */
+      entryStage:
+        | 'paper'
+        | 'abstract'
+        | 'proposal'
+        | 'opens'
+        | 'revision'
+        | 'decision'
+        | 'publication'
+        | 'event'
+        | 'registration';
+      /** @description Stable legacy-compatible URL/title identity within a journal. */
+      id: string;
+      /** @description Whether this announcement is an archival record. */
+      isHistorical: boolean;
+      /**
+       * @description Classified kind of call.
+       * @enum {string}
+       */
+      kind: 'special_issue' | 'general' | 'proposal' | 'conference_linked';
+      /** @description Unresolved original timeline; never interpreted as perpetual availability. */
+      rawDateText: string;
+      /** @description Original instructions, empty if unavailable. */
+      requirements: string;
+      /** @description Original topic excerpt, empty if unavailable. */
+      scope: string;
+      /**
+       * @description Explicit closed or invitation-only source constraint.
+       * @enum {string|null}
+       */
+      sourceStatus?:
+        | 'open'
+        | 'upcoming'
+        | 'closed'
+        | 'historical'
+        | 'invitation_only'
+        | 'undated'
+        | 'uncertain'
+        | null;
+      /** @description Original public announcement URL. */
+      sourceUrl: string;
+      /**
+       * @description Availability evaluated at the page's fixed instant.
+       * @enum {string}
+       */
+      state:
+        | 'open'
+        | 'upcoming'
+        | 'closed'
+        | 'historical'
+        | 'invitation_only'
+        | 'undated'
+        | 'uncertain';
+      /** @description Explicit IANA timezone, if supplied by the source. */
+      timeZone?: string | null;
+      /** @description Original announcement title. */
+      title: string;
+      /**
+       * Format: int32
+       * @description Explicit annual topic year, when applicable.
+       */
+      topicYear?: number | null;
     };
-    /**
-     * @description Source refresh freshness, independent of a notice's submission availability.
-     * @enum {string}
-     */
-    CfpRefreshStatus:
-      | 'snapshot'
-      | 'success'
-      | 'failed'
-      | 'refreshing'
-      | 'unsupported'
-      | 'unadapted';
-    /**
-     * @description Availability evaluated at a specified instant, without translating source text.
-     * @enum {string}
-     */
-    CfpState:
-      | 'open'
-      | 'upcoming'
-      | 'closed'
-      | 'historical'
-      | 'invitation_only'
-      | 'undated'
-      | 'uncertain';
-    /** @description Password change request. */
     ChangePasswordRequest: {
       /** @description Replacement password. */
       new_password: string;
       /** @description Current password. */
       old_password: string;
     };
-    /** @description Structured CNKI route error detail. */
-    CnkiErrorDetail: {
-      /** @description Stable error code. */
-      code: string;
-      /** @description Human-readable message. */
-      message: string;
-      /** @description CNKI phase that failed. */
-      phase: string;
-    };
-    /** @description Zhejiang Library QR login polling parameters. */
     CnkiLoginPollRequest: {
       /**
        * Format: double
@@ -2402,14 +2405,12 @@ export interface components {
        */
       timeout_seconds?: number;
     };
-    /** @description Zhejiang Library QR login polling response. */
     CnkiLoginPollResponse: {
       /** @description Safe session status. */
       session: components['schemas']['CnkiSessionStatusResponse'];
       /** @description Poll status. */
       status: string;
     };
-    /** @description Zhejiang Library QR login challenge response. */
     CnkiLoginStartResponse: {
       /** @description QR code URL or payload. */
       qr_code: string;
@@ -2420,7 +2421,6 @@ export interface components {
       /** @description QR UUID. */
       uuid: string;
     };
-    /** @description Safe per-user Zhejiang Library CNKI session status. */
     CnkiSessionStatusResponse: {
       /** @description Whether a session-like row is configured. */
       configured: boolean;
@@ -2451,53 +2451,76 @@ export interface components {
        */
       updated_at?: number | null;
     };
-    /**
-     * @description Precision retained by one canonical partial publication date.
-     * @enum {string}
-     */
-    DatePrecision: 'year' | 'month' | 'day';
     EmailUpdateRequest: {
       /** @description Normalized unique account email; null when unset. */
       email: string | null;
     };
-    /** @description FastAPI-compatible error envelope. */
-    ErrorEnvelope: {
-      /** @description Stable machine-readable error category. */
-      code: string;
-      /** @description Error detail payload. */
-      detail: string;
-      /** @description Whether retrying the request may succeed without user correction. */
-      retryable: boolean;
+    ErrorDetail: {
+      /** @description Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id' */
+      location?: string;
+      /** @description Error message text */
+      message?: string;
+      /** @description The value at the given location */
+      value?: unknown;
     };
-    /** @description Favorite creation request payload. */
+    ErrorModel: {
+      /**
+       * @description A human-readable explanation specific to this occurrence of the problem.
+       * @example Property foo is required but is missing.
+       */
+      detail?: string;
+      /** @description Optional list of individual error details */
+      errors?: components['schemas']['ErrorDetail'][] | null;
+      /**
+       * Format: uri
+       * @description A URI reference that identifies the specific occurrence of the problem.
+       * @example https://example.com/error-log/abc123
+       */
+      instance?: string;
+      /**
+       * Format: int64
+       * @description HTTP status code
+       * @example 400
+       */
+      status?: number;
+      /**
+       * @description A short, human-readable summary of the problem type. This value should not change between occurrences of the error.
+       * @example Bad Request
+       */
+      title?: string;
+      /**
+       * Format: uri
+       * @description A URI reference to human-readable documentation for the error.
+       * @default about:blank
+       * @example https://example.com/errors/example
+       */
+      type: string;
+    };
     FavoriteAdd: {
       /** @description Article identifier. */
-      article_id: components['schemas']['ArticleId'];
+      article_id: string;
       /** @description Source index database name. */
       db_name?: string;
       /** @description User note text. */
       note?: string;
     };
-    /** @description Stable cursor page of favorite references and available article metadata. */
     FavoriteArticlePage: {
       /** @description Favorite rows in descending creation time and row-id order. */
       items: components['schemas']['FavoriteArticleResponse'][];
       /** @description Cursor continuation metadata without an expensive total count. */
       page: components['schemas']['PageMeta'];
     };
-    /** @description Favorite article reference used by bulk operations. */
     FavoriteArticleRef: {
       /** @description Article identifier. */
-      article_id: components['schemas']['ArticleId'];
+      article_id: string;
       /** @description Source index database name. */
       db_name?: string;
     };
-    /** @description Favorite row enriched with optional article metadata. */
     FavoriteArticleResponse: {
       /** @description Article abstract text. */
       abstract?: string | null;
       /** @description Article identifier. */
-      article_id: components['schemas']['ArticleId'];
+      article_id: string;
       /** @description Ordered article author names. */
       authors?: string[] | null;
       /**
@@ -2532,11 +2555,15 @@ export interface components {
        * @description Issue identifier from the index database.
        */
       issue_id?: number | null;
-      journal_id?: null | components['schemas']['JournalId'];
+      /** @description Journal identifier from the index database. */
+      journal_id?: string | null;
       /** @description Journal title. */
       journal_title?: string | null;
-      /** @description Availability of the referenced index article metadata. */
-      metadata_status: components['schemas']['FavoriteMetadataStatus'];
+      /**
+       * @description Availability of the referenced index article metadata.
+       * @enum {string}
+       */
+      metadata_status: 'available' | 'missing' | 'unavailable';
       /** @description User note text. */
       note: string;
       /** @description Issue number. */
@@ -2553,26 +2580,22 @@ export interface components {
       /** @description Issue volume. */
       volume?: string | null;
     };
-    /** @description Batch favorite check request. */
     FavoriteBatchCheckRequest: {
       /** @description Article identifiers to check. */
-      article_ids: components['schemas']['ArticleId'][];
+      article_ids: string[];
       /** @description Source index database name. */
       db_name?: string;
     };
-    /** @description Batch favorite check response item. */
     FavoriteBatchCheckResponse: {
       /** @description Article identifier that was checked. */
-      article_id: components['schemas']['ArticleId'];
+      article_id: string;
       /** @description Folder memberships for the article. */
       folders: components['schemas']['FavoriteCheckResponse'][];
     };
-    /** @description Bulk favorite add request. */
     FavoriteBulkAdd: {
       /** @description Favorite articles to add. */
       articles: components['schemas']['FavoriteAdd'][];
     };
-    /** @description Bulk add response preserving the existing `added` key. */
     FavoriteBulkAddResult: {
       /**
        * Format: int64
@@ -2580,7 +2603,6 @@ export interface components {
        */
       added: number;
     };
-    /** @description Bulk favorite move request. */
     FavoriteBulkMove: {
       /** @description Favorite articles to move. */
       articles: components['schemas']['FavoriteArticleRef'][];
@@ -2590,12 +2612,10 @@ export interface components {
        */
       target_folder_id: number;
     };
-    /** @description Bulk favorite remove request. */
     FavoriteBulkRemove: {
       /** @description Favorite articles to remove. */
       articles: components['schemas']['FavoriteArticleRef'][];
     };
-    /** @description Bulk operation count response. */
     FavoriteBulkResult: {
       /**
        * Format: int64
@@ -2603,7 +2623,6 @@ export interface components {
        */
       count: number;
     };
-    /** @description Favorite membership row returned by check endpoints. */
     FavoriteCheckResponse: {
       /**
        * Format: int64
@@ -2613,15 +2632,9 @@ export interface components {
       /** @description Folder display name. */
       folder_name: string;
     };
-    /**
-     * @description Availability of index metadata for a stored favorite reference.
-     * @enum {string}
-     */
-    FavoriteMetadataStatus: 'available' | 'missing' | 'unavailable';
-    /** @description Favorite row response payload. */
     FavoriteResponse: {
       /** @description Article identifier. */
-      article_id: components['schemas']['ArticleId'];
+      article_id: string;
       /**
        * Format: double
        * @description Creation timestamp.
@@ -2642,7 +2655,6 @@ export interface components {
       /** @description User note text. */
       note: string;
     };
-    /** @description Current favorite tracking folder payload. */
     FavoriteTrackingResponse: {
       /**
        * Format: int64
@@ -2652,19 +2664,16 @@ export interface components {
       /** @description Tracking folder display name, or null when none is configured. */
       folder_name?: string | null;
     };
-    /** @description Create-folder request payload. */
     FolderCreate: {
       /** @description Whether the folder should become the user's tracking folder. */
       is_tracking?: boolean;
       /** @description Folder display name. */
       name: string;
     };
-    /** @description Rename-folder request payload. */
     FolderRename: {
       /** @description Replacement folder display name. */
       name: string;
     };
-    /** @description Folder response payload. */
     FolderResponse: {
       /**
        * Format: int64
@@ -2686,17 +2695,13 @@ export interface components {
       /** @description Folder display name. */
       name: string;
     };
-    /** @description Health check payload returned by the API. */
     HealthResponse: {
-      /** @description Service status value. */
-      status: components['schemas']['HealthStatus'];
+      /**
+       * @description Service status value.
+       * @enum {string}
+       */
+      status: 'ok' | 'unhealthy';
     };
-    /**
-     * @description Application-owned service health state.
-     * @enum {string}
-     */
-    HealthStatus: 'ok' | 'unhealthy';
-    /** @description Per-index database statistics payload. */
     IndexDatabaseStats: {
       /**
        * Format: int64
@@ -2718,7 +2723,6 @@ export interface components {
        */
       journals: number;
     };
-    /** @description Aggregate index statistics payload. */
     IndexStats: {
       /** @description Per-database statistics. */
       databases: components['schemas']['IndexDatabaseStats'][];
@@ -2733,7 +2737,6 @@ export interface components {
        */
       total_journals: number;
     };
-    /** @description Invite code response. */
     InviteCodeResponse: {
       /** @description Raw invite code. */
       code: string;
@@ -2762,8 +2765,11 @@ export interface components {
        * @description Optional irreversible revocation timestamp.
        */
       revoked_at?: number | null;
-      /** @description Current lifecycle state. */
-      status: components['schemas']['InviteCodeStatus'];
+      /**
+       * @description Current lifecycle state.
+       * @enum {string}
+       */
+      status: 'active' | 'expired' | 'revoked' | 'exhausted';
       /**
        * Format: int64
        * @description Number of committed registrations.
@@ -2772,37 +2778,33 @@ export interface components {
       /** @description Whether the invite code has been consumed. */
       used: boolean;
     };
-    /**
-     * @description Public lifecycle state for an invite code.
-     * @enum {string}
-     */
-    InviteCodeStatus: 'active' | 'expired' | 'revoked' | 'exhausted';
-    /** @description Invite requirement response. */
     InviteRequiredResponse: {
       /** @description Whether a local administrator bootstrap must run before invites can be issued. */
       bootstrap_required: boolean;
       /** @description Whether registration requires an invite code. */
       required: boolean;
     };
-    /** @description Paginated issues response. */
     IssuePage: {
       /** @description Issue records. */
       items: components['schemas']['IssueRecord'][];
       /** @description Pagination metadata. */
       page: components['schemas']['PageMeta'];
     };
-    /** @description Issue record. */
     IssueRecord: {
       /** @description Issue date. */
       date?: string | null;
-      date_precision?: null | components['schemas']['DatePrecision'];
+      /**
+       * @description Precision represented by the issue date.
+       * @enum {string|null}
+       */
+      date_precision?: 'year' | 'month' | 'day' | null;
       /**
        * Format: int64
        * @description Issue identifier.
        */
       issue_id: number;
       /** @description Journal identifier. */
-      journal_id: components['schemas']['JournalId'];
+      journal_id: string;
       /** @description Number. */
       number?: string | null;
       /**
@@ -2815,25 +2817,20 @@ export interface components {
       /** @description Volume. */
       volume?: string | null;
     };
-    /** @description Journal identifier stored internally as a SQLite integer. */
-    JournalId: string;
-    /** @description Journal option for selection lists. */
     JournalOption: {
       /** @description Journal identifier. */
-      journal_id: components['schemas']['JournalId'];
+      journal_id: string;
       /** @description Journal title. */
       title: string;
     };
-    /** @description Paginated journals response. */
     JournalPage: {
       /** @description Journal records. */
       items: components['schemas']['JournalRecord'][];
       /** @description Pagination metadata. */
       page: components['schemas']['PageMeta'];
     };
-    /** @description Available exact grades and database-wide journal counts for each rating system. */
     JournalRatingOptions: {
-      /** @description ABS grade choices; `4*` is an exact label rather than a wildcard. */
+      /** @description ABS grade choices; '4*' is an exact label rather than a wildcard. */
       abs_rating: components['schemas']['ValueCount'][];
       /** @description FMS grade choices. */
       fms_rating: components['schemas']['ValueCount'][];
@@ -2842,7 +2839,6 @@ export interface components {
       /** @description UTD grade choices, excluding unrated journals. */
       utd_rating: components['schemas']['ValueCount'][];
     };
-    /** @description Provider-neutral journal record. */
     JournalRecord: {
       /** @description ABS rank. */
       abs_rank?: string | null;
@@ -2869,7 +2865,7 @@ export interface components {
       /** @description All maintained ISSNs. */
       issns: string[];
       /** @description Journal identifier. */
-      journal_id: components['schemas']['JournalId'];
+      journal_id: string;
       /** @description Journal title. */
       title: string;
       /** @description Maintained title aliases. */
@@ -2879,14 +2875,12 @@ export interface components {
       /** @description UTD rating. */
       utd_rating?: string | null;
     };
-    /** @description Login request. */
     LoginRequest: {
       /** @description Password. */
       password: string;
       /** @description Username or case-insensitive email address. */
       username: string;
     };
-    /** @description Login response that intentionally omits the raw session token. */
     LoginResponse: {
       /**
        * Format: double
@@ -2896,27 +2890,15 @@ export interface components {
       /** @description Authenticated user. */
       user: components['schemas']['UserResponse'];
     };
-    /** @description Logout response. */
     LogoutResponse: {
       /** @description Whether the operation succeeded. */
       ok: boolean;
-      /** @description Authenticated user identifier. */
-      user_id: components['schemas']['UserId'];
+      /**
+       * Format: int64
+       * @description Authenticated user identifier.
+       */
+      user_id: number;
     };
-    /**
-     * @description Application-owned state of a manual weekly push.
-     * @enum {string}
-     */
-    ManualPushState:
-      | 'idle'
-      | 'pending'
-      | 'running'
-      | 'completed'
-      | 'failed'
-      | 'cancelled'
-      | 'timed_out'
-      | 'unknown';
-    /** @description Manual weekly push job status payload. */
     ManualWeeklyPushStatus: {
       /** @description Whether the current job still accepts cancellation. */
       can_cancel: boolean;
@@ -2960,8 +2942,19 @@ export interface components {
        * @description Unix timestamp when the job started.
        */
       started_at?: number | null;
-      /** @description Durable job status. */
-      status: components['schemas']['ManualPushState'];
+      /**
+       * @description Durable job status.
+       * @enum {string}
+       */
+      status:
+        | 'idle'
+        | 'pending'
+        | 'running'
+        | 'completed'
+        | 'failed'
+        | 'cancelled'
+        | 'timed_out'
+        | 'unknown';
       /** @description AI-generated summary text when available. */
       summary: string;
       /**
@@ -2970,7 +2963,6 @@ export interface components {
        */
       total_candidates?: number | null;
     };
-    /** @description Native password login that issues an independent 90-day personal access token. */
     NativeLoginRequest: {
       /** @description Device label; surrounding whitespace is trimmed, blank text and control characters are rejected. The raw input is limited to 93 Unicode code points. */
       device_name: string;
@@ -2979,7 +2971,6 @@ export interface components {
       /** @description Username or case-insensitive email address. */
       username: string;
     };
-    /** @description Native login credential. Store the raw token in OS secure storage; it is returned only on issuance. */
     NativeLoginResponse: {
       /**
        * Format: double
@@ -2991,8 +2982,7 @@ export interface components {
       /** @description Authenticated user. */
       user: components['schemas']['UserResponse'];
     };
-    /** @description Native OIDC authorization code exchange with client PKCE. No session cookie is issued. */
-    NativeOidcExchangeRequest: {
+    NativeOIDCExchangeRequest: {
       /** @description One-time unpadded base64url code (32 random bytes); TTL 120 seconds. */
       code: string;
       code_verifier: string;
@@ -3001,7 +2991,6 @@ export interface components {
       /** @description Exact native redirect_uri supplied at login. */
       redirect_uri: string;
     };
-    /** @description Notification settings response payload. */
     NotificationSettingsResponse: {
       /** @description Fixed non-secret mask when a primary AI API key is configured. */
       ai_api_key_mask: string;
@@ -3065,10 +3054,12 @@ export interface components {
        * @description Last update timestamp.
        */
       updated_at: number;
-      /** @description User row identifier. */
-      user_id: components['schemas']['UserId'];
+      /**
+       * Format: int64
+       * @description User row identifier.
+       */
+      user_id: number;
     };
-    /** @description Notification settings update payload. */
     NotificationSettingsUpdate: {
       /** @description Primary AI API key update: omitted preserves, null clears, and non-empty replaces. */
       ai_api_key?: string | null;
@@ -3112,15 +3103,13 @@ export interface components {
       /** @description Whether PushPlus delivery also syncs to the tracking folder. */
       sync_to_tracking_folder?: boolean;
     };
-    OidcLinkResponse: {
+    OIDCLinkResponse: {
       authorization_url: string;
     };
-    /** @description Boolean ok response. */
     OkResponse: {
       /** @description Whether the operation succeeded. */
       ok: boolean;
     };
-    /** @description Pagination metadata. */
     PageMeta: {
       /** @description Whether another page may exist. */
       has_more?: boolean | null;
@@ -3142,7 +3131,6 @@ export interface components {
        */
       total?: number | null;
     };
-    /** @description Aggregated capabilities for one logical Provider. */
     ProviderCapabilityInfo: {
       /** @description Whether the Provider can resolve an online abstract page. */
       article_abstract: boolean;
@@ -3153,7 +3141,6 @@ export interface components {
       /** @description Stable lowercase runtime Provider name. */
       name: string;
     };
-    /** @description Safe catalog file metadata visible to administrators. */
     ProviderCatalogInfo: {
       /** @description Metadata CSV filename when present. */
       csv_filename?: string | null;
@@ -3162,41 +3149,33 @@ export interface components {
       /** @description Canonical catalog stem shared by CSV and SQLite files. */
       stem: string;
     };
-    /** @description Administrator Provider and catalog capability response. */
     ProviderCatalogResponse: {
       /** @description Discovered metadata and content catalogs. */
       catalogs: components['schemas']['ProviderCatalogInfo'][];
       /** @description Logical Providers and their aggregate capabilities. */
       providers: components['schemas']['ProviderCapabilityInfo'][];
     };
-    /** @description Ordered online Provider configuration with optional catalog overrides. */
-    ProviderOrderConfiguration: {
-      /** @description Complete per-catalog replacement orders keyed by canonical catalog stem. */
-      catalogs: {
-        [key: string]: string[];
-      };
-      /** @description Default Provider order used when a catalog has no explicit override. */
-      default: string[];
-    };
-    /** @description Push-state statistics payload. */
     PushStats: {
       /** @description State file stem. */
       db_name: string;
-      /** @description Delivered article count. */
+      /**
+       * Format: int64
+       * @description Delivered article count.
+       */
       delivered_count?: number | null;
       /** @description Last completed run timestamp. */
       last_completed?: string | null;
-      /** @description Push state status. */
-      status: components['schemas']['PushStatsState'];
-      /** @description User result count. */
+      /**
+       * @description Push state status.
+       * @enum {string}
+       */
+      status: 'idle' | 'running' | 'completed' | 'failed' | 'skipped' | 'unknown' | 'error';
+      /**
+       * Format: int64
+       * @description User result count.
+       */
       user_results?: number | null;
     };
-    /**
-     * @description Application-owned state exposed for legacy push statistics.
-     * @enum {string}
-     */
-    PushStatsState: 'idle' | 'running' | 'completed' | 'failed' | 'skipped' | 'unknown' | 'error';
-    /** @description Account registration request. */
     RegisterRequest: {
       /** @description Normalized unique account email; null when unset. */
       email?: string | null;
@@ -3217,6 +3196,7 @@ export interface components {
       };
       /** Format: int64 */
       id: number;
+      /** Format: int64 */
       node_count: number;
       /** Format: int64 */
       root_article_id: number;
@@ -3230,6 +3210,7 @@ export interface components {
       graph: {
         [key: string]: unknown;
       };
+      /** Format: int64 */
       node_count: number;
       /** Format: int64 */
       root_article_id: number;
@@ -3246,6 +3227,7 @@ export interface components {
       db_name: string;
       /** Format: int64 */
       id: number;
+      /** Format: int64 */
       node_count: number;
       /** Format: int64 */
       root_article_id: number;
@@ -3253,74 +3235,63 @@ export interface components {
       /** Format: double */
       updated_at: number;
     };
-    RelationGraphFavoriteUpdate:
-      | {
-          /** @description Verbatim JSON object snapshot, at most 2 MiB encoded. */
-          graph?: {
-            [key: string]: unknown;
-          };
-          node_count?: number;
-          /** @description Trimmed graph title. */
-          title?: string;
-        }
-      | unknown
-      | unknown;
-    /** @description Individually manageable secret-pool item metadata. */
+    RelationGraphFavoriteUpdate: {
+      /** @description Verbatim JSON object snapshot, at most 2 MiB encoded. */
+      graph?: {
+        [key: string]: unknown;
+      };
+      /** Format: int64 */
+      node_count?: number;
+      /** @description Trimmed graph title. */
+      title?: string;
+    };
     RuntimeSecretItemInfo: {
       /** @description Human-readable prefix mask that never contains the complete secret. */
       masked_value: string;
       /** @description Opaque authenticated reference accepted by a pool removal update. */
       reference: string;
     };
-    /** @description Additions and removals applied to one secret runtime pool. */
     RuntimeSecretPoolUpdate: {
       /** @description New plaintext entries to normalize and append. */
       add?: string[];
       /** @description Opaque item references to remove. */
       remove?: string[];
     };
-    /**
-     * @description Lifecycle point at which a saved runtime setting becomes effective.
-     * @enum {string}
-     */
-    RuntimeSettingApplyMode: 'next_request' | 'next_command' | 'restart_required';
-    /**
-     * @description Frontend control requested for a runtime setting.
-     * @enum {string}
-     */
-    RuntimeSettingControl:
-      | 'text'
-      | 'secret_pool'
-      | 'string_list'
-      | 'boolean'
-      | 'select'
-      | 'index_provider_routes'
-      | 'provider_order'
-      | 'provider_proxy_policy';
-    /**
-     * @description Functional section used to group runtime settings in administrator clients.
-     * @enum {string}
-     */
-    RuntimeSettingGroup:
-      | 'source_access'
-      | 'provider_routing'
-      | 'server_security'
-      | 'single_sign_on'
-      | 'observability';
-    /** @description Runtime setting response payload. */
     RuntimeSettingInfo: {
       /** @description Finite allowed values for selection controls. */
       allowed_values: string[];
-      /** @description Lifecycle point at which changes become effective. */
-      apply_mode: components['schemas']['RuntimeSettingApplyMode'];
-      /** @description Requested frontend control. */
-      control: components['schemas']['RuntimeSettingControl'];
+      /**
+       * @description Lifecycle point at which changes become effective.
+       * @enum {string}
+       */
+      apply_mode: 'next_request' | 'next_command' | 'restart_required';
+      /**
+       * @description Requested frontend control.
+       * @enum {string}
+       */
+      control:
+        | 'text'
+        | 'secret_pool'
+        | 'string_list'
+        | 'boolean'
+        | 'select'
+        | 'index_provider_routes'
+        | 'provider_order'
+        | 'provider_proxy_policy';
       /** @description Human-readable description. */
       description: string;
       /** @description API field name. */
       field: string;
-      /** @description Functional administrator configuration group. */
-      group: components['schemas']['RuntimeSettingGroup'];
+      /**
+       * @description Functional administrator configuration group.
+       * @enum {string}
+       */
+      group:
+        | 'source_access'
+        | 'provider_routing'
+        | 'server_security'
+        | 'single_sign_on'
+        | 'observability';
       /** @description Whether a credential value is configured. */
       has_value: boolean;
       /** @description Frontend input type. */
@@ -3343,7 +3314,6 @@ export interface components {
       /** @description Effective setting value. */
       value: string;
     };
-    /** @description Runtime settings update payload. */
     RuntimeSettingsUpdate: {
       /** @description Incremental secret-pool mutations keyed by API field name. */
       secret_pool_updates?: {
@@ -3354,15 +3324,9 @@ export interface components {
         [key: string]: string | null;
       };
     };
-    /** @description Arguments accepted by a notification or push scheduled job. */
-    ScheduledDeliveryJob: {
-      /** @description Optional index database basename. */
-      database?: string | null;
-      /** @description Optional upper bound for recommendation candidates. */
-      max_candidates?: number | null;
-    };
-    /** @description Arguments accepted by an index scheduled job. */
-    ScheduledIndexJob: {
+    ScheduledIndexSpec: {
+      /** @enum {string} */
+      kind: 'index';
       /** @description Optional metadata CSV basename. */
       metadata_file?: string | null;
       /** @description Whether notification delivery runs after indexing succeeds. */
@@ -3370,21 +3334,28 @@ export interface components {
       /** @description Whether push delivery runs after indexing succeeds. */
       push?: boolean;
     };
-    /** @description Strictly typed scheduled job specification. */
-    ScheduledJobSpec:
-      | (components['schemas']['ScheduledIndexJob'] & {
-          /** @enum {string} */
-          kind: 'index';
-        })
-      | (components['schemas']['ScheduledDeliveryJob'] & {
-          /** @enum {string} */
-          kind: 'notify';
-        })
-      | (components['schemas']['ScheduledDeliveryJob'] & {
-          /** @enum {string} */
-          kind: 'push';
-        });
-    /** @description Scheduled task creation payload. */
+    ScheduledNotifySpec: {
+      /** @description Optional index database basename. */
+      database?: string | null;
+      /** @enum {string} */
+      kind: 'notify';
+      /**
+       * Format: int64
+       * @description Optional upper bound for recommendation candidates.
+       */
+      max_candidates?: number | null;
+    };
+    ScheduledPushSpec: {
+      /** @description Optional index database basename. */
+      database?: string | null;
+      /** @enum {string} */
+      kind: 'push';
+      /**
+       * Format: int64
+       * @description Optional upper bound for recommendation candidates.
+       */
+      max_candidates?: number | null;
+    };
     ScheduledTaskCreate: {
       /** @description Whether missed slots are collapsed to the latest slot. */
       coalesce?: boolean;
@@ -3393,7 +3364,10 @@ export interface components {
       /** @description Whether the task is enabled. */
       enabled?: boolean;
       /** @description Validated job specification. */
-      job: components['schemas']['ScheduledJobSpec'];
+      job:
+        | components['schemas']['ScheduledIndexSpec']
+        | components['schemas']['ScheduledNotifySpec']
+        | components['schemas']['ScheduledPushSpec'];
       /** @description Display name. */
       name: string;
       /**
@@ -3404,7 +3378,6 @@ export interface components {
       /** @description Explicit IANA time zone used for cron evaluation. */
       timezone?: string;
     };
-    /** @description Scheduled task response payload. */
     ScheduledTaskInfo: {
       /** @description Whether missed slots are collapsed to the latest slot. */
       coalesce: boolean;
@@ -3422,14 +3395,33 @@ export interface components {
        * @description Scheduled task row identifier.
        */
       id: number;
-      job?: null | components['schemas']['ScheduledJobSpec'];
+      job?:
+        | (
+            | components['schemas']['ScheduledIndexSpec']
+            | components['schemas']['ScheduledNotifySpec']
+            | components['schemas']['ScheduledPushSpec']
+          )
+        | null;
       /**
        * Format: double
        * @description Last run timestamp.
        */
       last_run_at?: number | null;
-      /** @description Last run status. */
-      last_status: components['schemas']['SchedulerRunState'];
+      /**
+       * @description Last run status.
+       * @enum {string}
+       */
+      last_status:
+        | 'idle'
+        | 'pending'
+        | 'claimed'
+        | 'running'
+        | 'success'
+        | 'failed'
+        | 'timed_out'
+        | 'error'
+        | 'unknown'
+        | 'cancelled';
       /** @description Read-only command text retained from a legacy row for administrator review. */
       legacy_command?: string | null;
       /** @description Display name. */
@@ -3447,7 +3439,6 @@ export interface components {
        */
       updated_at: number;
     };
-    /** @description Persisted scheduled task run visible to administrators. */
     ScheduledTaskRunInfo: {
       /**
        * Format: double
@@ -3474,8 +3465,21 @@ export interface components {
        * @description Execution start timestamp.
        */
       started_at?: number | null;
-      /** @description Durable run status. */
-      status: components['schemas']['SchedulerRunState'];
+      /**
+       * @description Durable run status.
+       * @enum {string}
+       */
+      status:
+        | 'idle'
+        | 'pending'
+        | 'claimed'
+        | 'running'
+        | 'success'
+        | 'failed'
+        | 'timed_out'
+        | 'error'
+        | 'unknown'
+        | 'cancelled';
       /**
        * Format: int64
        * @description Scheduled task row identifier.
@@ -3486,7 +3490,6 @@ export interface components {
       /** @description Worker identifier currently owning the run. */
       worker_id?: string | null;
     };
-    /** @description Scheduled task update payload. */
     ScheduledTaskUpdate: {
       /** @description Optional coalescing flag. */
       coalesce?: boolean | null;
@@ -3494,7 +3497,13 @@ export interface components {
       cron?: string | null;
       /** @description Optional enabled flag. */
       enabled?: boolean | null;
-      job?: null | components['schemas']['ScheduledJobSpec'];
+      job?:
+        | (
+            | components['schemas']['ScheduledIndexSpec']
+            | components['schemas']['ScheduledNotifySpec']
+            | components['schemas']['ScheduledPushSpec']
+          )
+        | null;
       /** @description Optional replacement display name. */
       name?: string | null;
       /**
@@ -3505,22 +3514,6 @@ export interface components {
       /** @description Optional replacement IANA time zone. */
       timezone?: string | null;
     };
-    /**
-     * @description Application-owned durable scheduler run state.
-     * @enum {string}
-     */
-    SchedulerRunState:
-      | 'idle'
-      | 'pending'
-      | 'claimed'
-      | 'running'
-      | 'success'
-      | 'failed'
-      | 'timed_out'
-      | 'error'
-      | 'unknown'
-      | 'cancelled';
-    /** @description Administrator scheduler status response. */
     SchedulerStatusResponse: {
       /**
        * Format: double
@@ -3532,7 +3525,6 @@ export interface components {
       /** @description Known worker heartbeats ordered from newest to oldest. */
       workers: components['schemas']['SchedulerWorkerInfo'][];
     };
-    /** @description Persisted scheduler worker heartbeat visible to administrators. */
     SchedulerWorkerInfo: {
       /**
        * Format: double
@@ -3548,20 +3540,6 @@ export interface components {
       started_at: number;
       /** @description Stable worker process identifier. */
       worker_id: string;
-    };
-    /** @description Stable detail returned when durable session revocation cannot be confirmed. */
-    SessionRevocationErrorDetail: {
-      /** @description Stable client classification. */
-      code: string;
-      /** @description Safe user-facing failure summary. */
-      message: string;
-      /** @description Server-generated request identifier for audit correlation. */
-      request_id: string;
-    };
-    /** @description Error envelope for an unconfirmed session revocation. */
-    SessionRevocationErrorResponse: {
-      /** @description Structured revocation failure detail. */
-      detail: components['schemas']['SessionRevocationErrorDetail'];
     };
     TelemetryHour: {
       /** Format: int64 */
@@ -3630,7 +3608,6 @@ export interface components {
       uses_boolean: boolean;
       uses_prefix: boolean;
     };
-    /** @description Access token creation request. */
     TokenCreateRequest: {
       /** @description Token display name. */
       name?: string;
@@ -3640,7 +3617,6 @@ export interface components {
        */
       ttl?: number;
     };
-    /** @description Access token creation response. */
     TokenCreateResponse: {
       /**
        * Format: double
@@ -3657,7 +3633,6 @@ export interface components {
       /** @description Raw token value returned only at creation time. */
       token: string;
     };
-    /** @description Access token metadata response. */
     TokenInfo: {
       /**
        * Format: double
@@ -3677,7 +3652,6 @@ export interface components {
       /** @description Token display name. */
       name: string;
     };
-    /** @description Tracking folder summary for `/api/tracking/status`. */
     TrackingFolderSummary: {
       /**
        * Format: int64
@@ -3687,7 +3661,6 @@ export interface components {
       /** @description Folder display name. */
       name: string;
     };
-    /** @description Set-tracking-folder request payload. */
     TrackingSetRequest: {
       /**
        * Format: int64
@@ -3695,22 +3668,21 @@ export interface components {
        */
       folder_id: number;
     };
-    /** @description Tracking status response payload. */
     TrackingStatusResponse: {
       /** @description Whether notification settings exist for the user. */
       notification_configured: boolean;
-      /** @description Total folder count. */
+      /**
+       * Format: int64
+       * @description Total folder count.
+       */
       total_folders: number;
-      tracking_folder?: null | components['schemas']['TrackingFolderSummary'];
-      /** @description Number of weekly article ids currently available. */
+      tracking_folder?: components['schemas']['TrackingFolderSummary'] | null;
+      /**
+       * Format: int64
+       * @description Number of weekly article ids currently available.
+       */
       weekly_articles_available: number;
     };
-    /**
-     * Format: int64
-     * @description Auth user identifier stored as an ordinary SQLite integer.
-     */
-    UserId: number;
-    /** @description User profile returned by auth endpoints. */
     UserResponse: {
       /**
        * @description Account credential kind.
@@ -3719,8 +3691,11 @@ export interface components {
       auth_kind: 'local' | 'oidc';
       /** @description Normalized unique account email; null when unset. */
       email: string | null;
-      /** @description User identifier. */
-      id: components['schemas']['UserId'];
+      /**
+       * Format: int64
+       * @description User identifier.
+       */
+      id: number;
       /** @description Whether the user has admin privileges. */
       is_admin: boolean;
       /** @description Whether an external OIDC identity is linked. */
@@ -3728,7 +3703,6 @@ export interface components {
       /** @description Login username. */
       username: string;
     };
-    /** @description Label/count tuple. */
     ValueCount: {
       /**
        * Format: int64
@@ -3738,24 +3712,26 @@ export interface components {
       /** @description Label value. */
       value: string;
     };
-    /** @description Cursor-paginated weekly articles for one database and journal. */
     WeeklyArticlePage: {
       /** @description Weekly article records. */
       items: components['schemas']['WeeklyArticleRecord'][];
       /** @description Descending date and article-id pagination metadata. */
       page: components['schemas']['PageMeta'];
     };
-    /** @description Weekly article record. */
     WeeklyArticleRecord: {
       /** @description Abstract text. */
       abstract?: string | null;
       /** @description Article identifier. */
-      article_id: components['schemas']['ArticleId'];
+      article_id: string;
       /** @description Authors text. */
       authors: string[];
       /** @description Article date. */
       date?: string | null;
-      date_precision?: null | components['schemas']['DatePrecision'];
+      /**
+       * @description Precision represented by the article date.
+       * @enum {string|null}
+       */
+      date_precision?: 'year' | 'month' | 'day' | null;
       /** @description DOI. */
       doi?: string | null;
       /** @description In-press flag. */
@@ -3766,7 +3742,7 @@ export interface components {
        */
       issue_id?: number | null;
       /** @description Journal identifier. */
-      journal_id: components['schemas']['JournalId'];
+      journal_id: string;
       /** @description Journal title. */
       journal_title: string;
       /** @description Issue number. */
@@ -3783,7 +3759,6 @@ export interface components {
       /** @description Issue volume. */
       volume?: string | null;
     };
-    /** @description Weekly article counts for one database without article bodies. */
     WeeklyDatabaseSummary: {
       /** @description Database filename. */
       db_name: string;
@@ -3791,12 +3766,14 @@ export interface components {
       generated_at: string;
       /** @description Journal summaries ordered by count and label. */
       journals: components['schemas']['WeeklyJournalSummary'][];
-      /** @description New article count within the fixed window. */
+      /**
+       * Format: int64
+       * @description New article count within the fixed window.
+       */
       new_article_count: number;
       /** @description Source run identifier from the newest included manifest. */
       run_id?: string | null;
     };
-    /** @description Weekly update summary for one database. */
     WeeklyDatabaseUpdate: {
       /** @description Database filename. */
       db_name: string;
@@ -3804,32 +3781,38 @@ export interface components {
       generated_at: string;
       /** @description Journal groups. */
       journals: components['schemas']['WeeklyJournalUpdate'][];
-      /** @description New article count. */
+      /**
+       * Format: int64
+       * @description New article count.
+       */
       new_article_count: number;
       /** @description Source run identifier. */
       run_id?: string | null;
     };
-    /** @description Weekly article counts for one journal without article bodies. */
     WeeklyJournalSummary: {
       /** @description Journal identifier. */
-      journal_id: components['schemas']['JournalId'];
+      journal_id: string;
       /** @description Journal title. */
       journal_title?: string | null;
-      /** @description New article count within the fixed window. */
+      /**
+       * Format: int64
+       * @description New article count within the fixed window.
+       */
       new_article_count: number;
     };
-    /** @description Weekly update summary for one journal. */
     WeeklyJournalUpdate: {
       /** @description Weekly articles. */
       articles: components['schemas']['WeeklyArticleRecord'][];
       /** @description Journal identifier. */
-      journal_id: components['schemas']['JournalId'];
+      journal_id: string;
       /** @description Journal title. */
       journal_title?: string | null;
-      /** @description New article count. */
+      /**
+       * Format: int64
+       * @description New article count.
+       */
       new_article_count: number;
     };
-    /** @description Weekly updates response. */
     WeeklyUpdatesResponse: {
       /** @description Database update groups. */
       databases: components['schemas']['WeeklyDatabaseUpdate'][];
@@ -3840,7 +3823,6 @@ export interface components {
       /** @description Window start timestamp. */
       window_start: string;
     };
-    /** @description Bounded weekly update summary without article bodies. */
     WeeklyUpdatesSummaryResponse: {
       /** @description Database update summaries. */
       databases: components['schemas']['WeeklyDatabaseSummary'][];
@@ -3851,7 +3833,6 @@ export interface components {
       /** @description Window start timestamp. */
       window_start: string;
     };
-    /** @description Publication year summary. */
     YearSummary: {
       /**
        * Format: int64
@@ -3887,13 +3868,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description All announcements. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['AnnouncementInfo'][];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -3911,13 +4013,134 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Created announcement. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['AnnouncementInfo'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -3938,13 +4161,134 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Updated announcement. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['AnnouncementInfo'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -3961,13 +4305,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Announcement deleted. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['OkResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -3981,13 +4446,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Invite codes. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['AdminInviteCodeInfo'][];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4001,17 +4587,138 @@ export interface operations {
     };
     requestBody?: {
       content: {
-        'application/json': null | components['schemas']['AdminInviteCodeCreate'];
+        'application/json': components['schemas']['AdminInviteCodeCreate'] | null;
       };
     };
     responses: {
-      /** @description Created invite code. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['AdminInviteCodeInfo'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4028,13 +4735,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Invite code revoked. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['OkResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4048,13 +4876,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Provider capabilities and catalogs. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['ProviderCatalogResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4068,13 +5017,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Runtime settings. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['RuntimeSettingInfo'][];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4092,13 +5162,134 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Updated runtime settings. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['RuntimeSettingInfo'][];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4112,13 +5303,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Scheduled tasks. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['ScheduledTaskInfo'][];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4136,13 +5448,134 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Created scheduled task. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['ScheduledTaskInfo'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4163,13 +5596,134 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Updated scheduled task. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['ScheduledTaskInfo'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4186,13 +5740,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Scheduled task deleted. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['OkResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4206,13 +5881,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Durable scheduler status. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['SchedulerStatusResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4226,13 +6022,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Admin dashboard statistics. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['AdminStatsResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4250,7 +6167,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Durable and pending load; approximate histogram upper-bound percentiles in milliseconds. HTTP errors include 4xx and 5xx. Search hits use total when available, otherwise returned page/candidate count. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -4259,40 +6176,125 @@ export interface operations {
           'application/json': components['schemas']['TelemetryResponse'];
         };
       };
-      /** @description Invalid period or kind */
+      /** @description Bad Request */
       400: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Authentication required */
+      /** @description Unauthorized */
       401: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Administrator required */
+      /** @description Forbidden */
       403: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Telemetry unavailable */
-      503: {
+      /** @description Not Found */
+      404: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4306,13 +6308,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Admin user list. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['AdminUserInfo'][];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4329,13 +6452,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description User deleted. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['OkResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4356,13 +6600,134 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Admin status updated. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['OkResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4383,7 +6748,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Password reset. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -4392,12 +6757,126 @@ export interface operations {
           'application/json': components['schemas']['OkResponse'];
         };
       };
-      /** @description Invalid password or OIDC-only account. */
+      /** @description Bad Request */
       400: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
       };
     };
   };
@@ -4410,13 +6889,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Enabled announcements. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['AnnouncementInfo'][];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4461,7 +7061,7 @@ export interface operations {
         /** @description Full-text query. */
         q?: string;
         /** @description Full-text query interpretation mode; defaults to simple. */
-        search_mode?: components['schemas']['ArticleSearchMode'];
+        search_mode?: 'simple' | 'advanced';
         /** @description Sort expression. */
         sort?: string;
         /** @description Repeated exact UTD grades; OR within a system and AND across systems/other filters. Blank values are invalid; all filter items share a 500-item bound. */
@@ -4475,7 +7075,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Paginated articles. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -4484,13 +7084,125 @@ export interface operations {
           'application/json': components['schemas']['ArticlePage'];
         };
       };
-      /** @description Invalid filters or advanced search expression. */
+      /** @description Bad Request */
       400: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4498,7 +7210,7 @@ export interface operations {
   get_article: {
     parameters: {
       query?: {
-        /** @description Database name or filename under `data/index`. */
+        /** @description Database name or filename under 'data/index'. */
         db?: string;
       };
       header?: never;
@@ -4510,7 +7222,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Article record. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -4519,12 +7231,133 @@ export interface operations {
           'application/json': components['schemas']['ArticleRecord'];
         };
       };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
     };
   };
   redirect_article_abstract: {
     parameters: {
       query?: {
-        /** @description Database name or filename under `data/index`. */
+        /** @description Database name or filename under 'data/index'. */
         db?: string;
       };
       header?: never;
@@ -4536,19 +7369,140 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Temporary online abstract-page redirect. */
+      /** @description Temporary Redirect */
       307: {
         headers: {
           [name: string]: unknown;
         };
         content?: never;
       };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
     };
   };
   get_article_access: {
     parameters: {
       query?: {
-        /** @description Database name or filename under `data/index`. */
+        /** @description Database name or filename under 'data/index'. */
         db?: string;
       };
       header?: never;
@@ -4560,7 +7514,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Article access actions. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -4569,12 +7523,133 @@ export interface operations {
           'application/json': components['schemas']['ArticleAccessResponse'];
         };
       };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
     };
   };
   redirect_article_fulltext: {
     parameters: {
       query?: {
-        /** @description Database name or filename under `data/index`. */
+        /** @description Database name or filename under 'data/index'. */
         db?: string;
       };
       header?: never;
@@ -4586,7 +7661,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Full-text file download. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -4600,12 +7675,133 @@ export interface operations {
         };
         content?: never;
       };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
     };
   };
   list_related_articles: {
     parameters: {
       query?: {
-        /** @description Database name or filename under `data/index`. */
+        /** @description Database name or filename under 'data/index'. */
         db?: string;
         /** @description Maximum related articles, from 1 to 30. Defaults to 10. */
         limit?: number;
@@ -4619,13 +7815,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Related articles, most similar first. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['ArticleRecord'][];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4643,7 +7960,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Password changed. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -4652,12 +7969,126 @@ export interface operations {
           'application/json': components['schemas']['OkResponse'];
         };
       };
-      /** @description Invalid password or OIDC-only account. */
+      /** @description Bad Request */
       400: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
       };
     };
   };
@@ -4674,7 +8105,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Successful response. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -4683,26 +8114,126 @@ export interface operations {
           'application/json': components['schemas']['UserResponse'];
         };
       };
-      /** @description Request rejected. */
+      /** @description Bad Request */
       400: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
       };
-      /** @description Request rejected. */
+      /** @description Unauthorized */
       401: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
       };
-      /** @description Username or email already exists. */
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
       409: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
       };
     };
   };
@@ -4715,13 +8246,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Current user's invite code. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': null | components['schemas']['InviteCodeResponse'];
+          'application/json': components['schemas']['InviteCodeResponse'] | null;
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4735,13 +8387,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Generated invite code. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['InviteCodeResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4755,7 +8528,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Invite code revoked. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -4764,13 +8537,125 @@ export interface operations {
           'application/json': components['schemas']['OkResponse'];
         };
       };
-      /** @description No unrevoked invite code exists. */
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
       404: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4784,13 +8669,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Invite code rotated. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['InviteCodeResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4804,13 +8810,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Invite requirement. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['InviteRequiredResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4828,7 +8955,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Login response. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -4837,13 +8964,125 @@ export interface operations {
           'application/json': components['schemas']['LoginResponse'];
         };
       };
-      /** @description Authentication rate limit exceeded. */
-      429: {
+      /** @description Bad Request */
+      400: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4857,7 +9096,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Logged out. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -4866,13 +9105,125 @@ export interface operations {
           'application/json': components['schemas']['LogoutResponse'];
         };
       };
-      /** @description The browser cookie was cleared but durable token revocation was not confirmed. */
-      503: {
+      /** @description Bad Request */
+      400: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['SessionRevocationErrorResponse'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4886,7 +9237,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description All sessions and personal access tokens were revoked. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -4895,13 +9246,125 @@ export interface operations {
           'application/json': components['schemas']['LogoutResponse'];
         };
       };
-      /** @description The browser cookie was cleared but durable token revocation was not confirmed. */
-      503: {
+      /** @description Bad Request */
+      400: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['SessionRevocationErrorResponse'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4915,13 +9378,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Current user. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['UserResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -4939,7 +9523,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description New device credential and authenticated user. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -4948,86 +9532,125 @@ export interface operations {
           'application/json': components['schemas']['NativeLoginResponse'];
         };
       };
-      /** @description Invalid device_name (JSON error envelope) or malformed JSON (plain text). */
+      /** @description Bad Request */
       400: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
-          'text/plain': string;
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Invalid username or password, including OIDC-only accounts and stale password authority. */
+      /** @description Unauthorized */
       401: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Active personal access token limit of 50 reached. */
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
       409: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description JSON request body exceeds the 2 MiB limit. */
+      /** @description Request Entity Too Large */
       413: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'text/plain': string;
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Expected Content-Type: application/json. */
+      /** @description Unsupported Media Type */
       415: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'text/plain': string;
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Missing or incorrectly typed request fields. */
+      /** @description Unprocessable Entity */
       422: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'text/plain': string;
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Authentication rate limit exceeded. */
-      429: {
+      /** @description Precondition Required */
+      428: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Unexpected authentication failure. */
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
       500: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Authentication executor or audit storage unavailable. */
-      503: {
+      /** @description Bad Gateway */
+      502: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -5045,20 +9668,133 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Redirect to provider, requested local path, or bounded error result. */
+      /** @description Found */
       302: {
         headers: {
-          Location?: string;
           [name: string]: unknown;
         };
         content?: never;
       };
-      /** @description Request rejected. */
-      429: {
+      /** @description Bad Request */
+      400: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
       };
     };
   };
@@ -5071,35 +9807,135 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Successful response. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['OidcLinkResponse'];
+          'application/json': components['schemas']['OIDCLinkResponse'];
         };
       };
-      /** @description Request rejected. */
+      /** @description Bad Request */
       400: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
       };
-      /** @description Request rejected. */
+      /** @description Unauthorized */
       401: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
       };
-      /** @description Request rejected. */
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
       409: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
       };
     };
   };
@@ -5112,7 +9948,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Successful response. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -5121,26 +9957,126 @@ export interface operations {
           'application/json': components['schemas']['UserResponse'];
         };
       };
-      /** @description Request rejected. */
+      /** @description Bad Request */
       400: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
       };
-      /** @description Request rejected. */
+      /** @description Unauthorized */
       401: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
       };
-      /** @description Request rejected. */
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
       409: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
       };
     };
   };
@@ -5156,20 +10092,133 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Redirect to provider, requested local path, or bounded error result. */
+      /** @description Found */
       302: {
         headers: {
-          Location?: string;
           [name: string]: unknown;
         };
         content?: never;
       };
-      /** @description Request rejected. */
-      429: {
+      /** @description Bad Request */
+      400: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
       };
     };
   };
@@ -5182,11 +10231,11 @@ export interface operations {
     };
     requestBody: {
       content: {
-        'application/json': components['schemas']['NativeOidcExchangeRequest'];
+        'application/json': components['schemas']['NativeOIDCExchangeRequest'];
       };
     };
     responses: {
-      /** @description New device credential and authenticated user. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -5195,77 +10244,125 @@ export interface operations {
           'application/json': components['schemas']['NativeLoginResponse'];
         };
       };
-      /** @description invalid_grant for missing, expired, consumed, mismatched PKCE or redirect, deleted user or changed auth generation; invalid device_name uses the native password login validation error. */
+      /** @description Bad Request */
       400: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
-          'text/plain': string;
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Active personal access token limit of 50 reached. */
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
       409: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description JSON request body exceeds the 2 MiB limit. */
+      /** @description Request Entity Too Large */
       413: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'text/plain': string;
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Expected Content-Type: application/json. */
+      /** @description Unsupported Media Type */
       415: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'text/plain': string;
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Missing or incorrectly typed request fields. */
+      /** @description Unprocessable Entity */
       422: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'text/plain': string;
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Authentication rate limit exceeded. */
-      429: {
+      /** @description Precondition Required */
+      428: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Unexpected authentication failure. */
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
       500: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Authentication executor or audit storage unavailable. */
-      503: {
+      /** @description Bad Gateway */
+      502: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -5283,34 +10380,132 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Redirect to identity provider; callback redirects to the native URI with code and state, or error and state. Codes expire after 120 seconds and are single-use. */
+      /** @description Found */
       302: {
         headers: {
           [name: string]: unknown;
         };
         content?: never;
       };
-      /** @description Invalid native parameters (invalid_request). */
+      /** @description Bad Request */
       400: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
-      };
-      /** @description OIDC is disabled or unavailable. */
-      404: {
-        headers: {
-          [name: string]: unknown;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
-        content?: never;
       };
-      /** @description Authentication rate limit exceeded. */
-      429: {
+      /** @description Unauthorized */
+      401: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -5324,7 +10519,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Successful response. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -5333,12 +10528,126 @@ export interface operations {
           'application/json': components['schemas']['AuthProvidersResponse'];
         };
       };
-      /** @description Request rejected. */
-      429: {
+      /** @description Bad Request */
+      400: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
       };
     };
   };
@@ -5355,7 +10664,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Registered user. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -5364,20 +10673,125 @@ export interface operations {
           'application/json': components['schemas']['UserResponse'];
         };
       };
-      /** @description Username or email already exists. */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      /** @description Authentication rate limit exceeded. */
-      429: {
+      /** @description Bad Request */
+      400: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -5391,13 +10805,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Active access tokens. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['TokenInfo'][];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -5415,7 +10950,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Created access token. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -5424,22 +10959,125 @@ export interface operations {
           'application/json': components['schemas']['TokenCreateResponse'];
         };
       };
-      /** @description Validation order: authentication, raw name length, normalized reserved name, TTL, then quota. Errors: Access token name must be at most 100 Unicode code points; Access token name "login" is reserved; Access token TTL must be between 3600 and 31536000 seconds. */
+      /** @description Bad Request */
       400: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Validation order: authentication, raw name length, normalized reserved name, TTL, then quota. Error: Active access token limit of 50 reached; revoke a token before creating another. */
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
       409: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -5456,13 +11094,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Token deleted. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['OkResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -5481,7 +11240,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Lightweight journal catalog and source coverage. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -5490,19 +11249,126 @@ export interface operations {
           'application/json': components['schemas']['CfpCatalogResponse'];
         };
       };
-      /** @description Authentication required. */
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
       401: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
       };
-      /** @description Database catalog not found. */
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
       404: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
       };
     };
   };
@@ -5527,7 +11393,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Original notices, coverage and pagination. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -5536,26 +11402,126 @@ export interface operations {
           'application/json': components['schemas']['CfpNoticePage'];
         };
       };
-      /** @description Authentication required. */
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
       401: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
       };
-      /** @description Database or journal not found. */
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
       404: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
       };
-      /** @description Stale or incompatible cursor; reload the first page. */
+      /** @description Conflict */
       409: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
       };
     };
   };
@@ -5572,7 +11538,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description CNKI QR login polling result. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -5581,12 +11547,126 @@ export interface operations {
           'application/json': components['schemas']['CnkiLoginPollResponse'];
         };
       };
-      /** @description The login operation was superseded by a newer start or clear request. */
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
       409: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
       };
     };
   };
@@ -5599,7 +11679,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description CNKI QR login challenge. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -5608,12 +11688,126 @@ export interface operations {
           'application/json': components['schemas']['CnkiLoginStartResponse'];
         };
       };
-      /** @description The login operation was superseded by a newer start or clear request. */
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
       409: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
       };
     };
   };
@@ -5626,13 +11820,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Current CNKI session status. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['CnkiSessionStatusResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -5646,13 +11961,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Cleared CNKI session status. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['CnkiSessionStatusResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -5671,13 +12107,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Favorite folder memberships. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['FavoriteCheckResponse'][];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -5695,13 +12252,134 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Batch favorite folder memberships. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['FavoriteBatchCheckResponse'][];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -5715,13 +12393,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Favorite folders. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['FolderResponse'][];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -5739,13 +12538,134 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Created favorite folder. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['FolderResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -5766,13 +12686,134 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Folder renamed. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['OkResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -5789,7 +12830,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Folder deleted. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -5798,13 +12839,125 @@ export interface operations {
           'application/json': components['schemas']['OkResponse'];
         };
       };
-      /** @description The tracking folder is required by active PushPlus synchronization. */
+      /** @description Bad Request */
       400: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -5826,13 +12979,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Favorite articles. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['FavoriteArticleResponse'][];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -5853,13 +13127,134 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Created favorite row. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['FavoriteResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -5881,13 +13276,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Favorite removed. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['OkResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -5908,13 +13424,134 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Bulk favorite add result. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['FavoriteBulkAddResult'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -5935,13 +13572,134 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Bulk favorite move result. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['FavoriteBulkResult'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -5962,13 +13720,134 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Bulk favorite remove result. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['FavoriteBulkResult'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -5990,7 +13869,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Stable favorite article page. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -5999,22 +13878,125 @@ export interface operations {
           'application/json': components['schemas']['FavoriteArticlePage'];
         };
       };
-      /** @description Invalid limit or cursor. */
+      /** @description Bad Request */
       400: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Owned folder not found. */
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
       404: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6031,13 +14013,132 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Favorite count. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
+        content?: never;
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
         content: {
-          'application/json': unknown;
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6057,47 +14158,132 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Complete citation export download. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content?: never;
       };
-      /** @description The export format is invalid. */
+      /** @description Bad Request */
       400: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description The favorite folder does not exist for the user. */
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
       404: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description The item or final UTF-8 byte limit was exceeded; no partial export is returned. */
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
       413: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Citation metadata could not be read safely. */
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
       500: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6115,7 +14301,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Successful operation. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -6124,22 +14310,125 @@ export interface operations {
           'application/json': components['schemas']['RelationGraphFavoritePage'];
         };
       };
-      /** @description Invalid input or pagination cursor. */
+      /** @description Bad Request */
       400: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Authentication required. */
+      /** @description Unauthorized */
       401: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6157,7 +14446,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Successful operation. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -6166,51 +14455,125 @@ export interface operations {
           'application/json': components['schemas']['RelationGraphFavorite'];
         };
       };
-      /** @description Invalid input or pagination cursor. */
+      /** @description Bad Request */
       400: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
-          'text/plain': string;
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Authentication required. */
+      /** @description Unauthorized */
       401: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Graph exceeds 2 MiB or request envelope exceeds 3 MiB. */
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
       413: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
-          'text/plain': string;
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description JSON content type required. */
+      /** @description Unsupported Media Type */
       415: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'text/plain': string;
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Invalid request field types or missing required fields. */
+      /** @description Unprocessable Entity */
       422: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'text/plain': string;
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6226,7 +14589,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Successful operation. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -6235,31 +14598,125 @@ export interface operations {
           'application/json': components['schemas']['RelationGraphFavorite'];
         };
       };
-      /** @description Invalid input or pagination cursor. */
+      /** @description Bad Request */
       400: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Authentication required. */
+      /** @description Unauthorized */
       401: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Graph not found or not owned. */
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
       404: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6279,7 +14736,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Successful operation. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -6288,60 +14745,125 @@ export interface operations {
           'application/json': components['schemas']['RelationGraphFavorite'];
         };
       };
-      /** @description Invalid input or pagination cursor. */
+      /** @description Bad Request */
       400: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
-          'text/plain': string;
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Authentication required. */
+      /** @description Unauthorized */
       401: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Graph not found or not owned. */
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
       404: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Graph exceeds 2 MiB or request envelope exceeds 3 MiB. */
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
       413: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
-          'text/plain': string;
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description JSON content type required. */
+      /** @description Unsupported Media Type */
       415: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'text/plain': string;
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Invalid request field types or missing required fields. */
+      /** @description Unprocessable Entity */
       422: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'text/plain': string;
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6357,7 +14879,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Successful operation. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -6366,31 +14888,125 @@ export interface operations {
           'application/json': components['schemas']['OkResponse'];
         };
       };
-      /** @description Invalid input or pagination cursor. */
+      /** @description Bad Request */
       400: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Authentication required. */
+      /** @description Unauthorized */
       401: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Graph not found or not owned. */
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
       404: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6404,13 +15020,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Current favorite tracking folder. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['FavoriteTrackingResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6428,7 +15165,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Tracking folder updated. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -6437,12 +15174,133 @@ export interface operations {
           'application/json': components['schemas']['OkResponse'];
         };
       };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
     };
   };
   list_issues: {
     parameters: {
       query?: {
-        /** @description Database name or filename under `data/index`. */
+        /** @description Database name or filename under 'data/index'. */
         db?: string;
         /** @description Journal identifier filter. */
         journal_id?: number;
@@ -6461,7 +15319,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Paginated issues. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -6470,12 +15328,133 @@ export interface operations {
           'application/json': components['schemas']['IssuePage'];
         };
       };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
     };
   };
   get_issue: {
     parameters: {
       query?: {
-        /** @description Database name or filename under `data/index`. */
+        /** @description Database name or filename under 'data/index'. */
         db?: string;
       };
       header?: never;
@@ -6487,13 +15466,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Issue record. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['IssueRecord'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6505,7 +15605,7 @@ export interface operations {
         abs_rating?: string[];
         /** @description Area filter. */
         area?: string;
-        /** @description Database name or filename under `data/index`. */
+        /** @description Database name or filename under 'data/index'. */
         db?: string;
         /** @description Repeated exact FMS grades. */
         fms_rating?: string[];
@@ -6530,7 +15630,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Paginated journals. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -6539,12 +15639,133 @@ export interface operations {
           'application/json': components['schemas']['JournalPage'];
         };
       };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
     };
   };
   get_journal: {
     parameters: {
       query?: {
-        /** @description Database name or filename under `data/index`. */
+        /** @description Database name or filename under 'data/index'. */
         db?: string;
       };
       header?: never;
@@ -6556,7 +15777,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Journal record. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -6565,12 +15786,133 @@ export interface operations {
           'application/json': components['schemas']['JournalRecord'];
         };
       };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
     };
   };
   list_areas: {
     parameters: {
       query?: {
-        /** @description Database name or filename under `data/index`. */
+        /** @description Database name or filename under 'data/index'. */
         db?: string;
       };
       header?: never;
@@ -6579,13 +15921,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Journal area counts. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['ValueCount'][];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6599,7 +16062,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Index database filenames. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -6608,12 +16071,133 @@ export interface operations {
           'application/json': string[];
         };
       };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
     };
   };
   list_journal_options: {
     parameters: {
       query?: {
-        /** @description Database name or filename under `data/index`. */
+        /** @description Database name or filename under 'data/index'. */
         db?: string;
       };
       header?: never;
@@ -6622,7 +16206,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Journal selector options. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -6631,12 +16215,133 @@ export interface operations {
           'application/json': components['schemas']['JournalOption'][];
         };
       };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
     };
   };
   list_journal_ratings: {
     parameters: {
       query?: {
-        /** @description Database name or filename under `data/index`. */
+        /** @description Database name or filename under 'data/index'. */
         db?: string;
       };
       header?: never;
@@ -6645,13 +16350,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Exact grade options and journal counts per system. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['JournalRatingOptions'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6665,13 +16491,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Approved AI base URLs. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': string[];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6685,13 +16632,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Notification settings. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': null | components['schemas']['NotificationSettingsResponse'];
+          'application/json': components['schemas']['NotificationSettingsResponse'] | null;
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6709,7 +16777,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Updated notification settings. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -6718,13 +16786,125 @@ export interface operations {
           'application/json': components['schemas']['NotificationSettingsResponse'];
         };
       };
-      /** @description The effective notification settings are invalid or lack a required PushPlus token or tracking folder. */
+      /** @description Bad Request */
       400: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6738,7 +16918,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Queued or existing active manual weekly push. */
+      /** @description Accepted */
       202: {
         headers: {
           [name: string]: unknown;
@@ -6747,13 +16927,125 @@ export interface operations {
           'application/json': components['schemas']['ManualWeeklyPushStatus'];
         };
       };
-      /** @description The latest manual push has an ambiguous outcome. */
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
       409: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6770,7 +17062,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Durable manual weekly push status. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -6779,13 +17071,125 @@ export interface operations {
           'application/json': components['schemas']['ManualWeeklyPushStatus'];
         };
       };
-      /** @description Manual push job not found. */
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
       404: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6802,7 +17206,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Ambiguous outcome acknowledged and a replacement queued. */
+      /** @description Accepted */
       202: {
         headers: {
           [name: string]: unknown;
@@ -6811,22 +17215,125 @@ export interface operations {
           'application/json': components['schemas']['ManualWeeklyPushStatus'];
         };
       };
-      /** @description Owner-visible manual push job not found. */
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
       404: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description The job is stale or no longer the latest unknown outcome. */
+      /** @description Conflict */
       409: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6843,7 +17350,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Cancellation state. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -6852,13 +17359,125 @@ export interface operations {
           'application/json': components['schemas']['ManualWeeklyPushStatus'];
         };
       };
-      /** @description Manual push job not found. */
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
       404: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6872,13 +17491,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Manual weekly push status. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['ManualWeeklyPushStatus'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6892,13 +17632,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Tracking status. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['TrackingStatusResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6912,7 +17773,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Weekly article updates. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -6921,13 +17782,125 @@ export interface operations {
           'application/json': components['schemas']['WeeklyUpdatesResponse'];
         };
       };
-      /** @description Legacy weekly article ceiling exceeded; use bounded endpoints. */
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
       413: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6954,7 +17927,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Bounded weekly article page. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -6963,22 +17936,125 @@ export interface operations {
           'application/json': components['schemas']['WeeklyArticlePage'];
         };
       };
-      /** @description Invalid weekly page query. */
+      /** @description Bad Request */
       400: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
-      /** @description Database or journal not found. */
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
       404: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ErrorEnvelope'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -6992,7 +18068,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Weekly update counts without article bodies. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -7001,12 +18077,133 @@ export interface operations {
           'application/json': components['schemas']['WeeklyUpdatesSummaryResponse'];
         };
       };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
     };
   };
   list_years: {
     parameters: {
       query?: {
-        /** @description Database name or filename under `data/index`. */
+        /** @description Database name or filename under 'data/index'. */
         db?: string;
       };
       header?: never;
@@ -7015,13 +18212,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Publication year summaries. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['YearSummary'][];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -7035,13 +18353,134 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description The application event loop is live. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           'application/json': components['schemas']['HealthResponse'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
@@ -7055,7 +18494,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description The embedded scheduler heartbeat is healthy. */
+      /** @description OK */
       200: {
         headers: {
           [name: string]: unknown;
@@ -7064,13 +18503,125 @@ export interface operations {
           'application/json': components['schemas']['HealthResponse'];
         };
       };
-      /** @description The embedded scheduler is not ready. */
-      503: {
+      /** @description Bad Request */
+      400: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['HealthResponse'];
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unsupported Media Type */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Precondition Required */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Bad Gateway */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          /** @description Seconds before retrying the request. */
+          'Retry-After'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['ErrorModel'];
         };
       };
     };
