@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/cfp"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/cfpdb"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
@@ -29,7 +30,14 @@ func (repository *Repository) BeginRefresh(ctx context.Context, sourceKey string
 	}
 	expires := now + leaseSeconds
 	var generation sqlite.Integer
-	err = connection.QueryRowContext(ctx, `UPDATE cfp_sources SET generation=generation+1,lease_expires_at=?2,last_attempt=?3,last_error=NULL,status='refreshing' WHERE source_key=?1 RETURNING generation`, sourceKey, expires, now).Scan(&generation)
+	err = func() error {
+		queryResult, err := queries.BeginRefresh(ctx, connection, cfpdb.BeginRefreshParams{SourceKey: sqlite.Text(sourceKey), LeaseExpiresAt: new(sqlite.Integer(expires)), LastAttempt: new(sqlite.Integer(now))})
+		if err != nil {
+			return err
+		}
+		generation = queryResult
+		return nil
+	}()
 	if errors.Is(err, sql.ErrNoRows) {
 		return RefreshLease{}, invalid("CFP source is not registered in storage")
 	}
@@ -50,7 +58,7 @@ func (repository *Repository) FailRefresh(ctx context.Context, lease RefreshLeas
 	if len(characters) > 1000 {
 		reason = string(characters[:1000])
 	}
-	result, err := repository.database.ExecContext(ctx, `UPDATE cfp_sources SET status=?3,last_error=?4,lease_expires_at=NULL WHERE source_key=?1 AND generation=?2 AND lease_expires_at IS NOT NULL`, lease.SourceKey, lease.Generation, status, reason)
+	result, err := queries.FailRefresh(ctx, repository.database, cfpdb.FailRefreshParams{SourceKey: sqlite.Text(lease.SourceKey), Generation: sqlite.Integer(lease.Generation), Status: sqlite.Text(status), LastError: new(sqlite.Text(reason))})
 	if err != nil {
 		return err
 	}
@@ -117,22 +125,19 @@ func (repository *Repository) publish(ctx context.Context, lease RefreshLease, p
 		return err
 	}
 	return repository.transaction(ctx, true, func(connection *sql.Conn) error {
-		bindings := []string{}
-		if err := readRows(ctx, connection, `SELECT journal_key FROM cfp_source_journals WHERE source_key=?`, []any{lease.SourceKey}, func(row *sql.Rows) error {
-			var key sqlite.Text
-			if err := row.Scan(&key); err != nil {
-				return err
-			}
-			bindings = append(bindings, string(key))
-			return nil
-		}); err != nil {
+		rows, err := queries.SourceJournals(ctx, connection, cfpdb.SourceJournalsParams{SourceKey: sqlite.Text(lease.SourceKey)})
+		if err != nil {
 			return err
+		}
+		bindings := make([]string, 0, len(rows))
+		for _, key := range rows {
+			bindings = append(bindings, string(key))
 		}
 		slices.Sort(bindings)
 		if len(bindings) == 0 || !slices.Equal(bindings, sortedKeys(prepared)) {
 			return invalid("CFP publication does not cover every registered journal binding")
 		}
-		result, err := connection.ExecContext(ctx, `UPDATE cfp_sources SET capture=?3,capture_format=?4,content_hash=?5,url=?6,parser_version=?7,config_version=?8,last_success=CASE WHEN ?10 IS NULL THEN ?9 ELSE last_success END,last_error=?10,status=CASE WHEN ?10 IS NULL THEN 'success' ELSE 'failed' END,revision=revision+1,lease_expires_at=NULL WHERE source_key=?1 AND generation=?2 AND lease_expires_at>=?9`, lease.SourceKey, lease.Generation, publication.Capture, publication.CaptureFormat, digest([]byte(publication.Capture)), publication.SourceUrl, domain.ParserVersion, publication.ConfigVersion, now, warning)
+		result, err := queries.PublishSource(ctx, connection, cfpdb.PublishSourceParams{SourceKey: sqlite.Text(lease.SourceKey), Generation: sqlite.Integer(lease.Generation), Capture: sqlite.Text(publication.Capture), CaptureFormat: sqlite.Text(publication.CaptureFormat), ContentHash: sqlite.Text(digest([]byte(publication.Capture))), URL: sqlite.Text(publication.SourceUrl), ParserVersion: sqlite.Integer(domain.ParserVersion), ConfigVersion: sqlite.Integer(publication.ConfigVersion), LastSuccess: new(sqlite.Integer(now)), LastError: (*sqlite.Text)(warning)})
 		if err != nil {
 			return err
 		}
@@ -145,30 +150,27 @@ func (repository *Repository) publish(ctx context.Context, lease RefreshLease, p
 		}
 		for _, key := range sortedKeys(prepared) {
 			journal := prepared[key]
-			aliases := map[string]bool{}
-			if err := readRows(ctx, connection, `SELECT catalog_id FROM cfp_journal_aliases WHERE journal_key=?`, []any{key}, func(row *sql.Rows) error {
-				var alias sqlite.Text
-				if err := row.Scan(&alias); err != nil {
-					return err
-				}
-				aliases[string(alias)] = true
-				return nil
-			}); err != nil {
+			rows, err := queries.JournalAliases(ctx, connection, cfpdb.JournalAliasesParams{JournalKey: sqlite.Text(key)})
+			if err != nil {
 				return err
+			}
+			aliases := map[string]bool{}
+			for _, alias := range rows {
+				aliases[string(alias)] = true
 			}
 			for _, alias := range journal.aliases {
 				if !aliases[alias] {
 					return invalid("CFP refresh cannot change journal alias ownership")
 				}
 			}
-			if _, err = connection.ExecContext(ctx, `DELETE FROM cfp_notices WHERE source_key=? AND journal_key=?`, lease.SourceKey, key); err != nil {
+			if _, err = queries.DeleteNotices(ctx, connection, cfpdb.DeleteNoticesParams{SourceKey: sqlite.Text(lease.SourceKey), JournalKey: sqlite.Text(key)}); err != nil {
 				return err
 			}
 			if err = insertNotices(ctx, connection, key, lease.SourceKey, journal.notices); err != nil {
 				return err
 			}
 			url, statement := emptyFields(journal)
-			if _, err = connection.ExecContext(ctx, `UPDATE cfp_journals SET checked_on=?2,source_url=?3,source_statement=?4 WHERE journal_key=?1`, key, journal.checkedOn, url, statement); err != nil {
+			if _, err = queries.UpdateJournal(ctx, connection, cfpdb.UpdateJournalParams{JournalKey: sqlite.Text(key), CheckedOn: sqlite.Text(journal.checkedOn), SourceURL: (*sqlite.Text)(url), SourceStatement: (*sqlite.Text)(statement)}); err != nil {
 				return err
 			}
 		}

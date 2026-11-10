@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/cfp"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/cfpdb"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
@@ -228,22 +229,14 @@ func (repository *Repository) LoadOriginals(ctx context.Context, sourceKey strin
 		return nil, err
 	}
 	defer connection.Close()
-	originals := []string{}
-	err = readRows(ctx, connection, `SELECT source_json FROM cfp_notices WHERE source_key=? ORDER BY display_order,notice_key`, []any{sourceKey}, func(row *sql.Rows) error {
-		var original sqlite.Text
-		if err := row.Scan(&original); err != nil {
-			return err
-		}
-		originals = append(originals, string(original))
-		return nil
-	})
+	originals, err := queries.Originals(ctx, connection, cfpdb.OriginalsParams{SourceKey: sqlite.Text(sourceKey)})
 	if err != nil {
 		return nil, err
 	}
 	result = make([]domain.Source, 0, len(originals))
 	for _, original := range originals {
 		var source domain.Source
-		if err = json.Unmarshal([]byte(original), &source); err != nil {
+		if err = json.Unmarshal([]byte(string(original)), &source); err != nil {
 			return nil, &PayloadError{Cause: err}
 		}
 		result = append(result, source)
