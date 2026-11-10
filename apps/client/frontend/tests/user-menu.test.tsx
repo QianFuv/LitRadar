@@ -121,7 +121,7 @@ async function exposesAccountActions(): Promise<void> {
 
   expect(trigger).toHaveTextContent('menu_user');
   await user.click(trigger);
-  expect(screen.getByRole('menuitem', { name: '打开设置中心' })).toHaveAttribute(
+  expect(await screen.findByRole('menuitem', { name: '打开设置中心' })).toHaveAttribute(
     'href',
     '/?view=favorites&folder=4&settings=general',
   );
@@ -143,7 +143,7 @@ async function exposesAccountActions(): Promise<void> {
   };
   rerender(<UserMenu />);
   await user.click(screen.getByRole('button', { name: '打开账号菜单：admin_user' }));
-  const adminLink = screen.getByRole('menuitem', { name: '管理面板' });
+  const adminLink = await screen.findByRole('menuitem', { name: '管理面板' });
   expect(adminLink).toHaveAttribute('href', '/?view=favorites&folder=4&admin=overview');
   fireEvent.click(adminLink);
   expect(trigger).toHaveAttribute(SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE);
@@ -158,7 +158,7 @@ async function restoresTriggerFocusAfterEscape(): Promise<void> {
   const trigger = screen.getByRole('button', { name: /打开账号菜单/ });
 
   await user.click(trigger);
-  expect(screen.getByRole('menu')).toBeInTheDocument();
+  expect(await screen.findByRole('menu')).toBeInTheDocument();
   await user.keyboard('{Escape}');
 
   await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
@@ -174,7 +174,7 @@ async function marksCurrentTabSettingsInitiator(): Promise<void> {
   const trigger = screen.getByRole('button', { name: /打开账号菜单/ });
 
   await user.click(trigger);
-  const modifiedSettingsLink = screen.getByRole('menuitem', { name: '打开设置中心' });
+  const modifiedSettingsLink = await screen.findByRole('menuitem', { name: '打开设置中心' });
   fireEvent.click(modifiedSettingsLink, { ctrlKey: true });
   expect(trigger).not.toHaveAttribute(SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE);
 
@@ -192,7 +192,7 @@ async function selectsThemePreferences(): Promise<void> {
   const trigger = screen.getByRole('button', { name: /打开账号菜单/ });
 
   await user.click(trigger);
-  expect(screen.getByRole('menuitemradio', { name: '跟随系统' })).toHaveAttribute(
+  expect(await screen.findByRole('menuitemradio', { name: '跟随系统' })).toHaveAttribute(
     'aria-checked',
     'true',
   );

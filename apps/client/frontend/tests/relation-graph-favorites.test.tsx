@@ -123,9 +123,9 @@ async function flagsUpdatesAndResetsChangedGraph(): Promise<void> {
     name: '已收藏的关系图操作（有未保存的改动）',
   });
   await user.hover(trigger);
-  expect((await screen.findByRole('tooltip')).textContent).toMatch(
-    /^已收藏：以「Article 1」为中心的关系图（有未保存的改动）$/,
-  );
+  expect(
+    await screen.findByText(/^已收藏：以「Article 1」为中心的关系图（有未保存的改动）$/),
+  ).toHaveAttribute('data-slot', 'tooltip-content');
   await user.unhover(trigger);
   expect(screen.getByTestId('relation-graph-unsaved-dot')).toBeInTheDocument();
 
@@ -164,10 +164,9 @@ async function ignoresLayoutDrift(): Promise<void> {
   await renderControls(drifted, 5);
 
   await userEvent.setup().hover(await screen.findByRole('button', { name: '已收藏的关系图操作' }));
-  await waitFor(() =>
-    expect(screen.getByRole('tooltip').textContent).toMatch(
-      /^已收藏：以「Article 1」为中心的关系图$/,
-    ),
+  expect(await screen.findByText(/^已收藏：以「Article 1」为中心的关系图$/)).toHaveAttribute(
+    'data-slot',
+    'tooltip-content',
   );
   expect(screen.queryByTestId('relation-graph-unsaved-dot')).not.toBeInTheDocument();
 }
@@ -307,7 +306,7 @@ async function managesSavedGraphs(): Promise<void> {
     'href',
     '/?view=relations&db=fixture.sqlite&article=41&saved=1',
   );
-  expect(screen.getByRole('radio', { name: '关系图' })).toHaveAttribute('aria-checked', 'true');
+  expect(screen.getByRole('button', { name: '关系图' })).toHaveAttribute('aria-pressed', 'true');
 
   await user.click(screen.getByRole('button', { name: '管理关系图 First graph' }));
   await user.click(await screen.findByRole('menuitem', { name: '重命名' }));

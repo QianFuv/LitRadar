@@ -435,7 +435,7 @@ async function createsTokenAndRetainsFailedRevocation(): Promise<void> {
   expect(await screen.findByText('automation')).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: '新建' }));
   await user.type(screen.getByLabelText('名称'), 'integration');
-  await user.click(screen.getByRole('radio', { name: '30天' }));
+  await user.click(screen.getByRole('button', { name: '30天' }));
   await user.click(screen.getByRole('button', { name: '创建' }));
 
   expect(await screen.findByText('new-raw-token')).toBeInTheDocument();

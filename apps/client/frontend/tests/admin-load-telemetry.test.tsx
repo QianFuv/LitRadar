@@ -192,9 +192,9 @@ async function rendersReportAndRequestsFilters(): Promise<void> {
   ).toBeInTheDocument();
   expect(screen.getByRole('region', { name: '命中计数口径' })).toHaveTextContent('总命中数');
 
-  await user.click(screen.getByRole('radio', { name: '7 天' }));
+  await user.click(screen.getByRole('button', { name: '7 天' }));
   await waitFor(() => expect(queries.at(-1)).toBe('?period=7d'));
-  await user.click(screen.getByRole('radio', { name: '检索' }));
+  await user.click(screen.getByRole('button', { name: '检索' }));
   await waitFor(() => expect(queries.at(-1)).toBe('?period=7d&kind=search'));
 }
 

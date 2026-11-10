@@ -93,9 +93,7 @@ function MotionLifecycleHarness() {
 function DrawerFocusHarness() {
   return (
     <Dialog>
-      <DialogTrigger asChild>
-        <button type="button">打开移动侧栏</button>
-      </DialogTrigger>
+      <DialogTrigger>打开移动侧栏</DialogTrigger>
       <DialogContent placement="left">
         <DialogTitle>移动侧栏</DialogTitle>
         <DialogDescription>测试关闭后的焦点归还。</DialogDescription>

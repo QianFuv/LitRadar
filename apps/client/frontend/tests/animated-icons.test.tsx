@@ -2,11 +2,18 @@
  * Animated icons stay plain lucide drawings until their control is first hovered or tapped.
  */
 
+import type { PointerEvent } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
+import * as stylex from '@stylexjs/stylex';
 import { describe, expect, test } from 'vite-plus/test';
 
 import { IconTriggerProvider, Search, useIconTrigger } from '@/components/ui/animated-icons';
 import { Button } from '@/components/ui/button';
+
+const styles = stylex.create({ icon: { width: '1.25rem' } });
+
+/** Atomic class of the icon's own width, which must survive the button's default icon styles. */
+const ICON_CLASS = stylex.props(styles.icon).className ?? '';
 
 /**
  * Read the icon drawn inside the labelled button.
@@ -23,10 +30,10 @@ function searchIcon(): SVGElement {
 function rendersStillUntilTriggered(): void {
   render(
     <Button aria-label="搜索">
-      <Search className="size-4" aria-hidden="true" />
+      <Search xstyle={styles.icon} aria-hidden="true" />
     </Button>,
   );
-  expect(searchIcon()).toHaveClass('lucide-search', 'size-4');
+  expect(searchIcon()).toHaveClass('lucide-search', ICON_CLASS);
   expect(searchIcon()).toHaveAttribute('aria-hidden', 'true');
 }
 
@@ -34,12 +41,12 @@ function rendersStillUntilTriggered(): void {
 function swapsInOnMouseHover(): void {
   render(
     <Button aria-label="搜索">
-      <Search className="size-4" aria-hidden="true" />
+      <Search xstyle={styles.icon} aria-hidden="true" />
     </Button>,
   );
   fireEvent.pointerEnter(screen.getByRole('button', { name: '搜索' }), { pointerType: 'mouse' });
   expect(searchIcon()).not.toHaveClass('lucide-search');
-  expect(searchIcon()).toHaveClass('size-4');
+  expect(searchIcon()).toHaveClass(ICON_CLASS);
   fireEvent.pointerLeave(screen.getByRole('button', { name: '搜索' }), { pointerType: 'mouse' });
   expect(searchIcon()).not.toHaveClass('lucide-search');
 }
@@ -49,7 +56,7 @@ function swapsInOnTouchPress(): void {
   let pressCount = 0;
   render(
     <Button aria-label="搜索" onPointerDown={() => (pressCount += 1)}>
-      <Search className="size-4" aria-hidden="true" />
+      <Search xstyle={styles.icon} aria-hidden="true" />
     </Button>,
   );
   const button = screen.getByRole('button', { name: '搜索' });
@@ -62,7 +69,7 @@ function swapsInOnTouchPress(): void {
 
 /** Play right away when the icon asks for its own animation, even outside a control. */
 function animatesOnItsOwnRequest(): void {
-  const { container } = render(<Search animateOnView className="size-4" />);
+  const { container } = render(<Search animateOnView xstyle={styles.icon} />);
   expect(container.querySelector('svg')).not.toHaveClass('lucide-search');
 }
 
@@ -73,11 +80,14 @@ function animatesOnItsOwnRequest(): void {
  * @returns Navigation item with an animated icon.
  */
 function NavigationItem({ isCurrent }: { isCurrent: boolean }) {
-  const { isTriggered, triggerHandlers } = useIconTrigger<HTMLAnchorElement>({}, isCurrent);
+  const { isTriggered, triggerHandlers } = useIconTrigger<PointerEvent<HTMLAnchorElement>>(
+    {},
+    isCurrent,
+  );
   return (
     <IconTriggerProvider isTriggered={isTriggered}>
       <a href="#search" aria-label="检索" {...triggerHandlers}>
-        <Search className="size-5" aria-hidden="true" />
+        <Search xstyle={styles.icon} aria-hidden="true" />
       </a>
     </IconTriggerProvider>
   );

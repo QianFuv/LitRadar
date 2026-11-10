@@ -1111,11 +1111,13 @@ async function verifiesSettingsMenuFocus(page: Page, trigger: Locator): Promise<
   await expect(trigger).toBeFocused();
 
   await trigger.click();
+  await expect(page.getByRole('menu')).toBeVisible();
   await page.mouse.click(8, 8);
   await expect(page.getByRole('menu')).toHaveCount(0);
   await expect(trigger).toBeFocused();
 
   await trigger.click();
+  await expect(page.getByRole('menu')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('menu')).toHaveCount(0);
   await expect(trigger).toBeFocused();
@@ -2121,13 +2123,7 @@ async function independentListScrollTest(
 
 for (const [workspace, href, openLabel, listSelector, lastLabel] of [
   ['search areas', '/', /^领域/, '[data-slot="area-options"]', 'field_24'],
-  [
-    'weekly journals',
-    '/?view=weekly-updates',
-    /^期刊/,
-    '[data-radix-select-viewport]',
-    'Journal 24',
-  ],
+  ['weekly journals', '/?view=weekly-updates', /^期刊/, '[data-slot="select-list"]', 'Journal 24'],
 ] as const) {
   test(`keeps navigation fixed while the ${workspace} list scrolls`, async ({ page }) => {
     await independentListScrollTest(page, href, openLabel, listSelector, lastLabel);
@@ -2863,7 +2859,7 @@ async function relationGraphTest({ page }: { page: Page }): Promise<void> {
   await page.getByRole('button', { name: /^收起相关文章：关系文章 .+\.1$/ }).click();
   await expect(page.getByRole('button', { name: /^相关文章：/ })).toHaveCount(3);
 
-  await page.getByRole('radio', { name: '列表' }).click();
+  await page.getByRole('button', { name: '列表' }).click();
   await expect(page.getByRole('list', { name: '关系节点列表' }).getByRole('listitem')).toHaveCount(
     4,
   );
@@ -2947,8 +2943,8 @@ test.describe('mobile relation graph', () => {
     await expect(page.getByRole('button', { name: /^相关文章：/ })).toHaveCount(3);
 
     for (const control of [
-      page.getByRole('radio', { name: '网络' }),
-      page.getByRole('radio', { name: '列表' }),
+      page.getByRole('button', { name: '网络' }),
+      page.getByRole('button', { name: '列表' }),
       page.getByRole('button', { name: '重新排列' }),
       page.getByRole('button', { name: '适应窗口' }),
     ]) {
@@ -2984,7 +2980,14 @@ async function mobileSettingsNavigationTest(page: Page, workspace: string): Prom
   await expect(page.getByRole('menu')).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   if (workspace === '/?q=graph') {
-    await expect(page.getByTestId('results-state-results')).toHaveCSS('pointer-events', 'none');
+    const isResultsHitTarget = await page
+      .getByTestId('results-state-results')
+      .evaluate((results) => {
+        const { left, top, width, bottom } = results.getBoundingClientRect();
+        const centerY = (Math.max(top, 0) + Math.min(bottom, window.innerHeight)) / 2;
+        return results.contains(document.elementFromPoint(left + width / 2, centerY));
+      });
+    expect(isResultsHitTarget, 'the open menu keeps pointer input away from the page').toBe(false);
   }
   await page.getByRole('menuitem', { name: '打开设置中心' }).tap();
   const settings = page.getByRole('dialog', { name: '设置中心' });
@@ -3067,22 +3070,22 @@ test.describe('mobile settings navigation', () => {
     await page.getByRole('button', { name: '打开账号菜单：browser_user' }).tap();
     await page.getByRole('menuitem', { name: '打开设置中心' }).tap();
     const settings = page.getByRole('dialog', { name: '设置中心' });
-    await expect(settings).toHaveAttribute('data-state', 'open');
+    await expect(settings).toHaveAttribute('data-open', '');
     await settings.evaluate(
       (dialog) =>
         new Promise<void>((resolve) => {
           const observer = new MutationObserver(() => {
-            if (dialog.getAttribute('data-state') !== 'closed') return;
+            if (!dialog.hasAttribute('data-closed')) return;
             observer.disconnect();
             window.addEventListener('popstate', () => resolve(), { once: true });
             window.history.forward();
           });
-          observer.observe(dialog, { attributes: true, attributeFilter: ['data-state'] });
+          observer.observe(dialog, { attributes: true, attributeFilter: ['data-closed'] });
           window.history.back();
         }),
     );
     await expect(page).toHaveURL(/settings=general/);
-    await expect(settings).toHaveAttribute('data-state', 'open');
+    await expect(settings).toHaveAttribute('data-open', '');
     await settings.getByRole('button', { name: '数据源', exact: true }).tap();
     await expect(settings.getByText('未配置', { exact: true })).toBeVisible();
   });
@@ -3192,7 +3195,7 @@ async function themeInteractionFeedbackTest({ page }: { page: Page }): Promise<v
       'background-color',
       colorScheme === 'light' ? 'rgb(237, 237, 238)' : 'rgb(30, 30, 30)',
     );
-    await endpoint.click();
+    await endpoint.click({ delay: 50 });
     const option = page.getByRole('option').first();
     await option.hover();
     await page.mouse.down();
@@ -3203,20 +3206,20 @@ async function themeInteractionFeedbackTest({ page }: { page: Page }): Promise<v
     await page.mouse.move(1, 1);
     await page.mouse.up();
     await page.keyboard.press('Escape');
-    const checkedDatabase = dialog.locator('[data-slot="checkbox"][data-state="checked"]').first();
+    const checkedDatabase = dialog.locator('[data-slot="checkbox"][data-checked]').first();
     await checkedDatabase.hover();
     await expect(checkedDatabase).toHaveCSS(
       'background-color',
       colorScheme === 'light' ? 'rgb(49, 96, 219)' : 'rgb(48, 97, 217)',
     );
     const recommendationSwitch = page.locator('#notify-enabled');
-    await expect(recommendationSwitch).toHaveAttribute('data-state', 'checked');
+    await expect(recommendationSwitch).toHaveAttribute('data-checked', '');
     await recommendationSwitch.hover();
     await expect(recommendationSwitch).toHaveCSS(
       'background-color',
       colorScheme === 'light' ? 'rgb(49, 96, 219)' : 'rgb(48, 97, 217)',
     );
-    await expect(recommendationSwitch).toHaveAttribute('data-state', 'checked');
+    await expect(recommendationSwitch).toHaveAttribute('data-checked', '');
     await page.screenshot({
       path: `../../../output/ui/visual-settings-${colorScheme}.png`,
       animations: 'disabled',

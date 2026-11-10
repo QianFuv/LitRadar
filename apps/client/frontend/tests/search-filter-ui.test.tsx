@@ -37,10 +37,6 @@ vi.mock('react-intersection-observer', () => ({
   useInView: () => ({ ref: vi.fn() }),
 }));
 
-vi.mock('@/components/ui/scroll-area', () => ({
-  ScrollArea: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-}));
-
 /**
  * Replace one query parameter from outside the search form.
  *

@@ -36,7 +36,7 @@ async function renderAssistedSearchBar(searchParams = ''): Promise<void> {
 }
 
 /**
- * Choose a Radix select option from the keyboard, which jsdom supports without pointer capture.
+ * Choose a select option from the keyboard, which jsdom supports without pointer capture.
  *
  * @param user - User-event instance.
  * @param trigger - Select trigger.
@@ -180,8 +180,8 @@ async function searchesWithBuilder(): Promise<void> {
     '精确短语',
   );
   await user.click(
-    within(within(dialog).getByRole('radiogroup', { name: '第 2 个条件的连接方式' })).getByRole(
-      'radio',
+    within(within(dialog).getByRole('group', { name: '第 2 个条件的连接方式' })).getByRole(
+      'button',
       { name: '不含' },
     ),
   );
@@ -216,8 +216,8 @@ async function blocksLeadingExclusion(): Promise<void> {
   const dialog = await screen.findByRole('dialog', { name: '高级检索' });
   expect(within(dialog).getByRole('button', { name: '检索' })).toBeDisabled();
   await user.click(
-    within(within(dialog).getByRole('radiogroup', { name: '第 2 个条件的连接方式' })).getByRole(
-      'radio',
+    within(within(dialog).getByRole('group', { name: '第 2 个条件的连接方式' })).getByRole(
+      'button',
       { name: '不含' },
     ),
   );
@@ -229,8 +229,8 @@ async function blocksLeadingExclusion(): Promise<void> {
   expect(within(dialog).getByRole('alert')).toHaveTextContent('不含');
   expect(within(dialog).getByRole('button', { name: '检索' })).toBeDisabled();
   await user.click(
-    within(within(dialog).getByRole('radiogroup', { name: '第 1 个条件的连接方式' })).getByRole(
-      'radio',
+    within(within(dialog).getByRole('group', { name: '第 1 个条件的连接方式' })).getByRole(
+      'button',
       { name: '且' },
     ),
   );
