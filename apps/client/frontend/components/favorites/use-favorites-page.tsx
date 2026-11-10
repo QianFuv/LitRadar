@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { parseAsInteger, useQueryState } from 'nuqs';
+import { useSearch } from '@tanstack/react-router';
 
 import {
   bulkMoveFavorites,
@@ -21,6 +21,7 @@ import {
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
 import { invalidateFavoriteMemberships } from '@/components/feature/use-favorite-checks';
 import { CLIENT_PLATFORM } from '@/lib/platform';
+import { useUpdateWorkspaceSearch, WORKSPACE_ROUTE_ID } from '@/lib/search-params';
 
 /**
  * Build a stable identity for one favorite row in selection state.
@@ -59,7 +60,20 @@ function toFavoriteArticleRef(favorite: FavoriteArticleItem): FavoriteArticleRef
  */
 export function useFavoritesPage(userId: number) {
   const queryClient = useQueryClient();
-  const [selectedFolderId, setSelectedFolderId] = useQueryState('folder', parseAsInteger);
+  const selectedFolderId = useSearch({
+    from: WORKSPACE_ROUTE_ID,
+    select: (search) => search.folder ?? null,
+  });
+  const updateSearch = useUpdateWorkspaceSearch();
+
+  /**
+   * Select a favorite folder in the URL, or return to every favorite.
+   *
+   * @param folderId - Folder to show, or null for all favorites.
+   */
+  const setSelectedFolderId = (folderId: number | null) => {
+    void updateSearch((search) => ({ ...search, folder: folderId ?? undefined }));
+  };
   const [newFolderName, setNewFolderName] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState('');
@@ -171,7 +185,7 @@ export function useFavoritesPage(userId: number) {
       setExportFeedback(null);
       queryClient.invalidateQueries({ queryKey: ['folders'] });
       if (selectedFolderId === deletedFolderId) {
-        void setSelectedFolderId(null);
+        setSelectedFolderId(null);
       }
     },
   });
@@ -286,7 +300,7 @@ export function useFavoritesPage(userId: number) {
   };
 
   const handleSelectFolder = (folderId: number) => {
-    void setSelectedFolderId(folderId);
+    setSelectedFolderId(folderId);
     setSelectedArticleKeys([]);
     setMoveTargetFolderId('');
     setBatchFeedback(null);

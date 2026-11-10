@@ -12,7 +12,11 @@
  * the last settled picture.
  */
 
+import { z } from 'zod';
+
 import type { Article } from '@/lib/api';
+import { parseStoredJson } from '@/lib/browser-storage';
+import type { WorkspaceSearch } from '@/lib/search-params';
 
 /** Number of related articles requested when a node is expanded. */
 export const RELATION_CHILD_LIMIT = 6;
@@ -98,39 +102,37 @@ export type RelationGraph = {
 };
 
 /**
- * Build the relation-graph workspace URL centred on one article.
+ * Build the relation-graph workspace search state centred on one article.
  *
  * @param article - Center article.
  * @param dbName - Database that contains the article.
- * @returns Root workspace URL.
+ * @returns Root workspace search state.
  */
-export function buildRelationHref(article: Pick<Article, 'article_id'>, dbName: string): string {
-  const params = new URLSearchParams({
+export function buildRelationSearch(article: Pick<Article, 'article_id'>, dbName: string) {
+  return {
     view: 'relations',
     db: dbName,
     article: relationNodeId(article),
-  });
-  return `/?${params.toString()}`;
+  } satisfies WorkspaceSearch;
 }
 
 /**
- * Build the relation-graph workspace URL that reopens a saved graph.
+ * Build the relation-graph workspace search state that reopens a saved graph.
  *
  * @param favorite - Saved graph database, root article, and id.
- * @returns Workspace URL carrying the saved graph id.
+ * @returns Workspace search state carrying the saved graph id.
  */
-export function buildSavedRelationHref(favorite: {
+export function buildSavedRelationSearch(favorite: {
   db_name: string;
   id: number;
   root_article_id: number;
-}): string {
-  const params = new URLSearchParams({
+}) {
+  return {
     view: 'relations',
     db: favorite.db_name,
     article: String(favorite.root_article_id),
-    saved: String(favorite.id),
-  });
-  return `/?${params.toString()}`;
+    saved: favorite.id,
+  } satisfies WorkspaceSearch;
 }
 
 /**
@@ -1032,6 +1034,13 @@ export function relationGraphSignature(graph: RelationGraph): string {
 const RELATION_GRAPH_STORAGE_KEY = 'litradar:v1:relation_graph';
 
 /** Last relation graph of the browser session. */
+/** Stored session snapshot; the graph itself is checked by {@link normalizeRelationGraph}. */
+const STORED_RELATION_GRAPH_SCHEMA = z.object({
+  dbName: z.string(),
+  graph: z.unknown(),
+  savedId: z.number().nullable().catch(null),
+});
+
 export type StoredRelationGraph = {
   dbName: string;
   graph: RelationGraph;
@@ -1079,21 +1088,16 @@ export function readStoredRelationGraph(): StoredRelationGraph | null {
   if (typeof window === 'undefined') {
     return null;
   }
+  let raw: string | null = null;
   try {
-    const raw = window.sessionStorage.getItem(RELATION_GRAPH_STORAGE_KEY);
-    const stored = raw ? (JSON.parse(raw) as StoredRelationGraph) : null;
-    const graph = normalizeRelationGraph(stored?.graph);
-    if (typeof stored?.dbName !== 'string' || !graph) {
-      return null;
-    }
-    return {
-      dbName: stored.dbName,
-      graph,
-      savedId: typeof stored.savedId === 'number' ? stored.savedId : null,
-    };
-  } catch {
+    raw = window.sessionStorage.getItem(RELATION_GRAPH_STORAGE_KEY);
+  } catch {}
+  const stored = raw ? parseStoredJson(raw, STORED_RELATION_GRAPH_SCHEMA) : null;
+  const graph = normalizeRelationGraph(stored?.graph);
+  if (!stored || !graph) {
     return null;
   }
+  return { dbName: stored.dbName, graph, savedId: stored.savedId };
 }
 
 /**

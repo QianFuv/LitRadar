@@ -13,6 +13,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { z } from 'zod';
 import {
   ApiError,
   getCurrentUser,
@@ -24,6 +25,7 @@ import {
   type AuthUser,
 } from '@/lib/api';
 import {
+  parseStoredJson,
   readLocalStorageValue,
   removeLocalStorageValue,
   removeSessionStorageValue,
@@ -50,13 +52,16 @@ interface AuthState {
   updateUser: (nextUser: AuthUser) => void;
 }
 
+/** Stored shape of the logout-revocation warning; arbitrary display text is never accepted. */
+const LOGOUT_REVOCATION_WARNING_SCHEMA = z.object({
+  occurredAt: z.number(),
+  requestId: z.string().nullable(),
+});
+
 /**
  * Non-secret evidence that durable server-side logout was not confirmed.
  */
-export interface LogoutRevocationWarning {
-  occurredAt: number;
-  requestId: string | null;
-}
+export type LogoutRevocationWarning = z.output<typeof LOGOUT_REVOCATION_WARNING_SCHEMA>;
 
 const AuthContext = createContext<AuthState | null>(null);
 const ACCESS_TOKEN_STORAGE_KEY = 'litradar:v1:session_access_token';
@@ -97,27 +102,11 @@ function readStoredLogoutWarning(): LogoutRevocationWarning | null {
   if (!rawWarning) {
     return null;
   }
-  try {
-    const parsedWarning: unknown = JSON.parse(rawWarning);
-    if (!parsedWarning || typeof parsedWarning !== 'object') {
-      throw new TypeError('Invalid logout warning');
-    }
-    const warning = parsedWarning as Record<string, unknown>;
-    if (
-      typeof warning.occurredAt !== 'number' ||
-      !Number.isFinite(warning.occurredAt) ||
-      (warning.requestId !== null && typeof warning.requestId !== 'string')
-    ) {
-      throw new TypeError('Invalid logout warning');
-    }
-    return {
-      occurredAt: warning.occurredAt,
-      requestId: warning.requestId,
-    };
-  } catch {
+  const warning = parseStoredJson(rawWarning, LOGOUT_REVOCATION_WARNING_SCHEMA);
+  if (!warning) {
     removeLocalStorageValue(LOGOUT_WARNING_STORAGE_KEY);
-    return null;
   }
+  return warning;
 }
 
 /**

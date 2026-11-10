@@ -2,8 +2,6 @@
  * Result-list loading, content, pagination, failure, favorite, and stale-state coverage.
  */
 
-import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
-import { useQueryState } from 'nuqs';
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
@@ -15,14 +13,8 @@ const resultsListMocks = vi.hoisted(() => ({
   } as Record<string, { folder_id: number; folder_name: string }[]>,
   isFavoriteStatePending: true,
   onFetchNextPage: null as (() => void) | null,
-  searchParams: '',
   user: { id: 21, username: 'results_user', is_admin: false },
   visiblePages: 100,
-}));
-
-vi.mock('react-router', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('react-router')>()),
-  useSearchParams: () => [new URLSearchParams(resultsListMocks.searchParams), vi.fn()],
 }));
 
 vi.mock('@/lib/auth-context', () => ({
@@ -78,7 +70,7 @@ vi.mock('@/components/feature/article-dialog-card', () => ({
 import { ResultsList } from '@/components/feature/results-list';
 import type { Article, ArticlePage } from '@/lib/api';
 import { setSelectedDatabase } from '@/lib/selected-database';
-import { useJournalRatingFilters } from '@/lib/journal-ratings';
+import { useUpdateWorkspaceSearch } from '@/lib/search-params';
 import { createArticlePageScenario } from '@/tests/mocks/scenarios';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
@@ -102,11 +94,12 @@ async function abortsObsoleteArticleRequests(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  const view = renderWithQuery(
-    <NuqsTestingAdapter searchParams="?abs_rating=4*" hasMemory>
+  const view = await renderWithQuery(
+    <>
       <ResultsList />
       <RatingChangeControl />
-    </NuqsTestingAdapter>,
+    </>,
+    { url: '/?abs_rating=4*' },
   );
   try {
     await waitFor(() => expect(signals).toHaveLength(1));
@@ -136,9 +129,12 @@ async function abortsObsoleteArticleRequests(): Promise<void> {
 
 /** Change only one rating system to exercise the real query-key transition. */
 function RatingChangeControl() {
-  const [, setRatings] = useJournalRatingFilters();
+  const updateSearch = useUpdateWorkspaceSearch();
   return (
-    <button type="button" onClick={() => void setRatings({ abs_rating: ['4'] })}>
+    <button
+      type="button"
+      onClick={() => void updateSearch((search) => ({ ...search, abs_rating: ['4'] }))}
+    >
       Change rating
     </button>
   );
@@ -146,9 +142,12 @@ function RatingChangeControl() {
 
 /** Change the query without unmounting article rows already available in cache. */
 function HighlightQueryChangeControl() {
-  const [, setQuery] = useQueryState('q');
+  const updateSearch = useUpdateWorkspaceSearch();
   return (
-    <button type="button" onClick={() => void setQuery('Updated')}>
+    <button
+      type="button"
+      onClick={() => void updateSearch((search) => ({ ...search, q: 'Updated' }))}
+    >
       Change highlight query
     </button>
   );
@@ -174,14 +173,12 @@ async function retainsRatingsAcrossPagesAndResetsTheirCache(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderWithQuery(
-    <NuqsTestingAdapter
-      searchParams="?abs_rating=4*&fms_rating=A&area=Medicine&q=Fixture"
-      hasMemory
-    >
+  await renderWithQuery(
+    <>
       <ResultsList />
       <RatingChangeControl />
-    </NuqsTestingAdapter>,
+    </>,
+    { url: '/?abs_rating=4*&fms_rating=A&area=Medicine&q=Fixture' },
   );
   await waitFor(() => expect(screen.getByTestId('result-9001')).toBeVisible());
   await act(async () => {
@@ -239,12 +236,7 @@ function createArticlePage(
 function renderResultsList(
   searchParams = '?q=Fixture&area=Medicine&journal_id=101&month_range=2024-01..2024-02',
 ) {
-  resultsListMocks.searchParams = searchParams;
-  return renderWithQuery(
-    <NuqsTestingAdapter searchParams={searchParams} hasMemory>
-      <ResultsList />
-    </NuqsTestingAdapter>,
-  );
+  return renderWithQuery(<ResultsList />, { url: `/${searchParams}` });
 }
 
 /**
@@ -263,7 +255,7 @@ async function rendersTypedResultContent(): Promise<void> {
       return HttpResponse.json(createArticlePage([SHARED_ARTICLE], { total: 12 }));
     }),
   );
-  renderResultsList();
+  await renderResultsList();
 
   expect(screen.getByRole('status', { name: '正在加载搜索结果' })).toBeInTheDocument();
   expect(screen.getByTestId('results-state-loading')).toBeInTheDocument();
@@ -303,7 +295,7 @@ async function recoversFirstPageFailureToEmptyState(): Promise<void> {
         : HttpResponse.json(createArticlePage([], { total: 0 })),
     ),
   );
-  const { queryClient } = renderResultsList('?q=missing');
+  const { queryClient } = await renderResultsList('?q=missing');
 
   expect(await screen.findByRole('alert')).toHaveTextContent('article index unavailable');
   expect(screen.getAllByRole('alert')).toHaveLength(1);
@@ -326,7 +318,7 @@ async function omitsEmptyFilterSummarySlot(): Promise<void> {
       HttpResponse.json(createArticlePage([SHARED_ARTICLE], { total: 1 })),
     ),
   );
-  renderResultsList('');
+  await renderResultsList('');
 
   expect(await screen.findByTestId('result-9001')).toBeInTheDocument();
   expect(screen.queryByTestId('filter-summary-slot')).not.toBeInTheDocument();
@@ -368,7 +360,7 @@ async function appendsPagesAndClearsStaleDatabaseResults(): Promise<void> {
       );
     }),
   );
-  renderResultsList('');
+  await renderResultsList('');
 
   expect(await screen.findByTestId('result-9001')).toBeInTheDocument();
   await act(async () => {
@@ -406,7 +398,7 @@ async function rejectsLaterPageFailure(): Promise<void> {
       );
     }),
   );
-  renderResultsList('');
+  await renderResultsList('');
 
   expect(await screen.findByTestId('result-9001')).toBeInTheDocument();
   await act(async () => {
@@ -440,7 +432,7 @@ async function rejectsRepeatedCursor(): Promise<void> {
       );
     }),
   );
-  renderResultsList('');
+  await renderResultsList('');
 
   expect(await screen.findByTestId('result-9001')).toBeInTheDocument();
   await act(async () => {
@@ -460,7 +452,6 @@ beforeEach(() => {
   };
   resultsListMocks.isFavoriteStatePending = true;
   resultsListMocks.onFetchNextPage = null;
-  resultsListMocks.searchParams = '';
   resultsListMocks.visiblePages = 100;
 });
 
@@ -471,16 +462,12 @@ async function reusesHighlightsForFavoriteChanges(): Promise<void> {
       HttpResponse.json(createArticlePage([SHARED_ARTICLE])),
     ),
   );
-  const view = renderResultsList('?q=Fixture');
+  const view = await renderResultsList('?q=Fixture');
   await screen.findByTestId('result-9001');
   const split = vi.spyOn(String.prototype, 'split');
   resultsListMocks.favoriteChecksByArticle = { '9001': [] };
   resultsListMocks.isFavoriteStatePending = false;
-  view.rerender(
-    <NuqsTestingAdapter searchParams="?q=Fixture" hasMemory>
-      <ResultsList />
-    </NuqsTestingAdapter>,
-  );
+  view.rerender(<ResultsList />);
   expect(screen.getByTestId('result-9001')).toHaveAttribute('data-folder-ids', '');
   expect(screen.getByTestId('result-9001')).toHaveAttribute('data-favorite-pending', 'false');
   expect(
@@ -527,7 +514,7 @@ async function reusesHighlightsAcrossPages(): Promise<void> {
       ),
     ),
   );
-  renderResultsList('?q=Fixture');
+  await renderResultsList('?q=Fixture');
   await screen.findByTestId('result-9001');
   const split = vi.spyOn(String.prototype, 'split');
   await act(async () => {
@@ -558,11 +545,12 @@ async function refreshesHighlightsForQueryChanges(): Promise<void> {
       HttpResponse.json(createArticlePage([article])),
     ),
   );
-  const view = renderWithQuery(
-    <NuqsTestingAdapter searchParams="?q=Fixture" hasMemory>
+  const view = await renderWithQuery(
+    <>
       <ResultsList />
       <HighlightQueryChangeControl />
-    </NuqsTestingAdapter>,
+    </>,
+    { url: '/?q=Fixture' },
   );
   const result = await screen.findByTestId('result-9001');
   expect(Array.from(result.querySelectorAll('span'), (span) => span.textContent)).toEqual([

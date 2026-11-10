@@ -14,12 +14,6 @@ import { createAuthUserScenario } from '@/tests/mocks/scenarios';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
-vi.mock('react-router', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('react-router')>()),
-  useLocation: () => ({ pathname: '/', search: '', hash: '', state: null, key: 'default' }),
-  useSearchParams: () => [new URLSearchParams(), vi.fn()],
-}));
-
 vi.mock('react-intersection-observer', () => ({
   useInView: () => ({ ref: () => undefined, inView: true }),
 }));
@@ -93,7 +87,7 @@ async function opensRelatedArticleInPlace(): Promise<void> {
     ),
   );
   const user = userEvent.setup();
-  renderWithQuery(
+  await renderWithQuery(
     <AuthProvider>
       <AuthenticatedCard />
     </AuthProvider>,

@@ -19,13 +19,10 @@ type ErrorBoundaryProps = {
   children: ReactNode;
   /** Component rendered while an error is captured. */
   fallback: ComponentType<ErrorFallbackProps>;
-  /** Value whose change clears a captured error, such as the current route. */
-  resetKey?: string;
 };
 
 type ErrorBoundaryState = {
   error: (Error & { digest?: string }) | null;
-  resetKey: string | undefined;
 };
 
 /**
@@ -42,7 +39,7 @@ function toError(value: unknown): Error {
  * Capture render failures below it and render a fallback with a reset action.
  */
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  state: ErrorBoundaryState = { error: null, resetKey: this.props.resetKey };
+  state: ErrorBoundaryState = { error: null };
 
   /**
    * Store the captured error so the next render shows the fallback.
@@ -52,23 +49,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
    */
   static getDerivedStateFromError(error: unknown): Partial<ErrorBoundaryState> {
     return { error: toError(error) };
-  }
-
-  /**
-   * Clear a captured error when the reset key changes, such as after navigation.
-   *
-   * @param props - Next boundary properties.
-   * @param state - Current boundary state.
-   * @returns State update for a changed reset key, or null.
-   */
-  static getDerivedStateFromProps(
-    props: ErrorBoundaryProps,
-    state: ErrorBoundaryState,
-  ): Partial<ErrorBoundaryState> | null {
-    if (props.resetKey === state.resetKey) {
-      return null;
-    }
-    return { error: null, resetKey: props.resetKey };
   }
 
   /** Clear the captured error and retry rendering the protected subtree. */

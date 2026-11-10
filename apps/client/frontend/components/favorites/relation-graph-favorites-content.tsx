@@ -4,7 +4,7 @@
 
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { MoreHorizontal, Share2 } from '@/components/ui/animated-icons';
-import { Link } from 'react-router';
+import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
 
 import { FavoriteKindSwitch } from '@/components/favorites/favorite-kind-switch';
@@ -40,7 +40,7 @@ import {
   updateRelationGraphFavorite,
   type RelationGraphFavoriteSummary,
 } from '@/lib/api';
-import { buildSavedRelationHref } from '@/lib/relation-graph';
+import { buildSavedRelationSearch } from '@/lib/relation-graph';
 
 /** Saved graphs fetched per page. */
 const RELATION_GRAPH_PAGE_SIZE = 50;
@@ -259,7 +259,8 @@ function renderRelationGraphFavoriteList(
             </span>
             <div className="min-w-0 flex-1">
               <Link
-                to={buildSavedRelationHref(favorite)}
+                to="/"
+                search={buildSavedRelationSearch(favorite)}
                 className="line-clamp-2 text-[15px] leading-6 font-bold text-foreground outline-none after:absolute after:inset-0 focus-visible:underline"
               >
                 {favorite.title}

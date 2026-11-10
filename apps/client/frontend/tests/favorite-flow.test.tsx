@@ -7,7 +7,6 @@ import type { InfiniteData } from '@tanstack/react-query';
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
 import { beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import { FavoriteButton } from '@/components/feature/favorite-button';
@@ -159,6 +158,7 @@ function renderFavoritesPage(): ReturnType<typeof renderWithQuery> {
     <AuthProvider>
       <AuthenticatedFavoriteFixture />
     </AuthProvider>,
+    { url: '/?folder=3' },
   );
 }
 
@@ -166,11 +166,7 @@ function renderFavoritesPage(): ReturnType<typeof renderWithQuery> {
 function AuthenticatedFavoriteFixture() {
   const { user, loading } = useAuth();
   if (loading || !user) return null;
-  return (
-    <NuqsTestingAdapter searchParams="?folder=3" hasMemory>
-      <FavoritesPageContent userId={user.id} />
-    </NuqsTestingAdapter>
-  );
+  return <FavoritesPageContent userId={user.id} />;
 }
 
 /**
@@ -204,7 +200,7 @@ async function rendersFavoritesWorkspace(): Promise<void> {
     ),
   );
 
-  renderFavoritesPage();
+  await renderFavoritesPage();
 
   expect(await screen.findByRole('heading', { name: '我的收藏' })).toBeInTheDocument();
   expect(screen.getByRole('region', { name: '收藏文章' })).toBeInTheDocument();
@@ -235,7 +231,7 @@ async function updatesFavoriteCache(): Promise<void> {
     http.post('http://localhost/api/favorites/folders/3/articles', addFavoriteResponse),
   );
   const user = userEvent.setup();
-  const { queryClient } = renderWithQuery(
+  const { queryClient } = await renderWithQuery(
     <AuthProvider>
       <FavoriteButton articleId="article-1" dbName="fixture.sqlite" />
     </AuthProvider>,
@@ -272,7 +268,7 @@ async function confirmsFavoriteRemoval(): Promise<void> {
     ),
   );
   const user = userEvent.setup();
-  renderWithQuery(
+  await renderWithQuery(
     <AuthProvider>
       <FavoriteButton articleId="article-1" dbName="fixture.sqlite" initialFolderIds={[3]} />
     </AuthProvider>,
@@ -325,7 +321,7 @@ async function confirmsFolderDeletion(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderFavoritesPage();
+  await renderFavoritesPage();
 
   await user.click(await screen.findByRole('button', { name: '管理收藏夹 Reading' }));
   await user.click(await screen.findByRole('menuitem', { name: '删除收藏夹 Reading' }));
@@ -382,7 +378,7 @@ async function togglesFavoriteInCurrentFolder(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  const { queryClient } = renderFavoritesPage();
+  const { queryClient } = await renderFavoritesPage();
 
   expect(await screen.findByText('Article 1')).toBeInTheDocument();
   const singleKey = ['fav-check', 21, 'fixture.sqlite', 'article-1'];
@@ -451,7 +447,7 @@ async function confirmsBulkFavoriteRemoval(): Promise<void> {
     ),
   );
   const user = userEvent.setup();
-  renderFavoritesPage();
+  await renderFavoritesPage();
 
   await user.click(await screen.findByRole('checkbox', { name: '选择当前已加载文章' }));
   await user.click(screen.getByRole('button', { name: '删除所选' }));
@@ -499,7 +495,7 @@ async function rendersFavoriteMetadataAvailability(): Promise<void> {
     ),
   );
   const user = userEvent.setup();
-  renderFavoritesPage();
+  await renderFavoritesPage();
 
   expect(await screen.findByText(/来源数据库或文章已不存在。收藏仍保留/)).toBeInTheDocument();
   expect(screen.getByText(/文章元数据暂时无法读取，请稍后重试/)).toBeInTheDocument();
@@ -561,7 +557,7 @@ async function managesFoldersAndExportFormats(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderFavoritesPage();
+  await renderFavoritesPage();
 
   await user.click(await screen.findByRole('button', { name: '导出收藏夹' }));
   expect(await screen.findByRole('button', { name: '导出引用' })).toBeEnabled();
@@ -641,7 +637,7 @@ async function retriesFailedBulkMove(): Promise<void> {
     ),
   );
   const user = userEvent.setup();
-  renderFavoritesPage();
+  await renderFavoritesPage();
 
   await user.click(await screen.findByRole('checkbox', { name: '选择当前已加载文章' }));
   const targetFolderSelect = screen.getByRole('combobox', { name: '选择目标收藏夹' });
@@ -713,7 +709,7 @@ async function loadsFavoriteCursorPages(): Promise<void> {
         : favoriteArticlePageResponse([favoriteArticleFixture(1)], 'fixture-next');
     }),
   );
-  renderFavoritesPage();
+  await renderFavoritesPage();
   expect(await screen.findByText('Article 1', {}, { timeout: 5000 })).toBeInTheDocument();
   favoriteFlowMocks.useVisiblePageList.mockReturnValue({
     loadMoreRef: () => undefined,
@@ -747,7 +743,7 @@ async function retriesUnknownFavoriteState(): Promise<void> {
     http.post('http://localhost/api/favorites/folders/3/articles', addFavoriteResponse),
   );
   const user = userEvent.setup();
-  renderWithQuery(
+  await renderWithQuery(
     <AuthProvider>
       <FavoriteButton articleId="article-1" dbName="fixture.sqlite" />
     </AuthProvider>,
@@ -784,7 +780,7 @@ async function rejectsUnavailableCachedMembership(
     ),
   );
   const user = userEvent.setup();
-  const { queryClient } = renderWithQuery(
+  const { queryClient } = await renderWithQuery(
     <AuthProvider>
       <FavoriteButton articleId="article-1" dbName="fixture.sqlite" isFavoriteStateUnavailable />
     </AuthProvider>,
@@ -831,7 +827,7 @@ async function abortsUnmountedFavoriteRequest(): Promise<void> {
       return favoriteArticlePageResponse([]);
     }),
   );
-  const view = renderFavoritesPage();
+  const view = await renderFavoritesPage();
   try {
     await waitFor(() => expect(signal).toBeDefined());
     expect(signal?.aborted).toBe(false);
@@ -862,7 +858,7 @@ async function reusesUnchangedFavoritePages(): Promise<void> {
     ),
   );
   const user = userEvent.setup();
-  const { queryClient } = renderFavoritesPage();
+  const { queryClient } = await renderFavoritesPage();
   await screen.findByText('Article 1', undefined, { timeout: 3000 });
   const queryKey = ['folder-articles', 3, 'cursor', 21];
   const data = queryClient.getQueryData<InfiniteData<FavoriteArticlePage>>(queryKey)!;
@@ -903,7 +899,7 @@ async function defersClosedFavoriteFolderRows(): Promise<void> {
     http.get('http://localhost/api/favorites/check', emptyFavoriteResponse),
   );
   const user = userEvent.setup();
-  const view = renderWithQuery(
+  const view = await renderWithQuery(
     <AuthProvider>
       <FavoriteButton articleId="article-1" dbName="fixture.sqlite" />
     </AuthProvider>,

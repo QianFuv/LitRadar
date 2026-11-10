@@ -35,7 +35,7 @@ async function rendersAdministratorCards(): Promise<void> {
     http.get('http://localhost/api/admin/invite-codes', () => HttpResponse.json([])),
   );
 
-  renderWithQuery(
+  await renderWithQuery(
     <>
       <AdminUsersCard currentUserId={1} isEnabled />
       <AdminInviteCodesCard isEnabled />
@@ -72,7 +72,7 @@ async function marksOnlyMobileInviteCardsForPresence(): Promise<void> {
     ),
   );
 
-  renderWithQuery(<AdminInviteCodesCard isEnabled />);
+  await renderWithQuery(<AdminInviteCodesCard isEnabled />);
 
   expect(await screen.findByText('INVITE-41')).toBeInTheDocument();
   expect(document.querySelector('[data-motion-invite-key="41"]')).not.toBeNull();
@@ -100,7 +100,7 @@ async function rendersSettingsCards(): Promise<void> {
     http.get('http://localhost/api/auth/tokens', () => HttpResponse.json([])),
   );
 
-  renderWithQuery(
+  await renderWithQuery(
     <>
       <AccountCard
         user={createAuthUserScenario({
@@ -153,7 +153,7 @@ async function confirmsAccessTokenRevocation(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderWithQuery(<AccessTokensCard copyFeedback={null} handleCopy={ignoreCopy} />);
+  await renderWithQuery(<AccessTokensCard copyFeedback={null} handleCopy={ignoreCopy} />);
 
   const revokeButton = await screen.findByRole('button', {
     name: '撤销访问令牌 automation',
@@ -207,7 +207,9 @@ async function confirmsCnkiSessionClear(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderWithQuery(<CnkiSettingsCard userId={1} copyFeedback={null} handleCopy={ignoreCopy} />);
+  await renderWithQuery(
+    <CnkiSettingsCard userId={1} copyFeedback={null} handleCopy={ignoreCopy} />,
+  );
 
   await user.click(await screen.findByRole('button', { name: '清除' }));
   expect(clearRequestCount).toBe(0);
@@ -223,12 +225,12 @@ async function confirmsCnkiSessionClear(): Promise<void> {
  *
  * @param createHandler - MSW handler for access-token creation.
  */
-function renderAccessTokens(createHandler: Parameters<typeof http.post>[1]): void {
+async function renderAccessTokens(createHandler: Parameters<typeof http.post>[1]): Promise<void> {
   server.use(
     http.get('http://localhost/api/auth/tokens', () => HttpResponse.json([])),
     http.post('http://localhost/api/auth/tokens', createHandler),
   );
-  renderWithQuery(<AccessTokensCard copyFeedback={null} handleCopy={ignoreCopy} />);
+  await renderWithQuery(<AccessTokensCard copyFeedback={null} handleCopy={ignoreCopy} />);
 }
 
 /**
@@ -236,7 +238,7 @@ function renderAccessTokens(createHandler: Parameters<typeof http.post>[1]): voi
  */
 async function createsAccessTokenAtRawCodePointBoundary(): Promise<void> {
   const createdNames: string[] = [];
-  renderAccessTokens(async ({ request }) => {
+  await renderAccessTokens(async ({ request }) => {
     const payload = (await request.json()) as { name: string; ttl: number };
     createdNames.push(payload.name);
     return HttpResponse.json({
@@ -273,7 +275,7 @@ async function createsAccessTokenAtRawCodePointBoundary(): Promise<void> {
  */
 async function blocksOverlengthRawAccessTokenNames(): Promise<void> {
   let requestCount = 0;
-  renderAccessTokens(() => {
+  await renderAccessTokens(() => {
     requestCount += 1;
     return HttpResponse.json({
       id: 8,
@@ -317,7 +319,7 @@ async function rendersAccessTokenCreationErrorsAndRetainsRawInput(): Promise<voi
     ],
   ]);
   const receivedNames: string[] = [];
-  renderAccessTokens(async ({ request }) => {
+  await renderAccessTokens(async ({ request }) => {
     const payload = (await request.json()) as { name: string; ttl: number };
     receivedNames.push(payload.name);
     const detail = details.get(payload.name);
@@ -361,7 +363,7 @@ async function rendersPasswordCard(): Promise<void> {
     ),
   );
 
-  renderWithQuery(
+  await renderWithQuery(
     <AuthProvider>
       <AuthenticatedPasswordFixture />
     </AuthProvider>,

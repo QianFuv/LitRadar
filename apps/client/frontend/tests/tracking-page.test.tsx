@@ -141,7 +141,9 @@ function installTrackingPageHandlers(): void {
  */
 async function rendersSectionsWithSharedTextareas(): Promise<void> {
   installTrackingPageHandlers();
-  const { rerender } = renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
+  const { rerender } = await renderWithQuery(
+    <TrackingSettingsContent userId={51} section="tracking" />,
+  );
 
   expect(await screen.findByRole('heading', { name: '追踪文件夹' })).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'AI 推荐配置' })).toBeInTheDocument();
@@ -163,7 +165,7 @@ async function rendersSectionsWithSharedTextareas(): Promise<void> {
 async function keepsAiCredentialsSeparateFromSavedLogins(): Promise<void> {
   installTrackingPageHandlers();
   const user = userEvent.setup();
-  renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
+  await renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
 
   const primaryKey = await screen.findByLabelText('API Key');
   const backupKey = screen.getByLabelText('Backup API Key');
@@ -189,7 +191,7 @@ async function keepsAiCredentialsSeparateFromSavedLogins(): Promise<void> {
 async function savesDatabaseAndSecretSemantics(): Promise<void> {
   installTrackingPageHandlers();
   const user = userEvent.setup();
-  renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
+  await renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
 
   const betaDatabase = await screen.findByRole('checkbox', { name: 'beta.sqlite' });
   await user.click(betaDatabase);
@@ -224,7 +226,7 @@ async function preservesDatabaseScopeWhenCatalogFails(): Promise<void> {
     ),
   );
   const user = userEvent.setup();
-  renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
+  await renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
 
   expect(await screen.findByRole('alert')).toHaveTextContent('Database catalog unavailable');
   await user.click(screen.getByRole('switch', { name: '启用推荐' }));
@@ -256,7 +258,7 @@ async function retriesFailedSettingsSave(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
+  await renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
 
   const recommendationSwitch = await screen.findByRole('switch', { name: '启用推荐' });
   await user.click(recommendationSwitch);
@@ -280,7 +282,9 @@ async function retriesFailedSettingsSave(): Promise<void> {
 async function preservesDraftAcrossCategories(): Promise<void> {
   installTrackingPageHandlers();
   const user = userEvent.setup();
-  const { rerender } = renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
+  const { rerender } = await renderWithQuery(
+    <TrackingSettingsContent userId={51} section="tracking" />,
+  );
 
   const recommendationSwitch = await screen.findByRole('switch', { name: '启用推荐' });
   await user.click(recommendationSwitch);
@@ -300,7 +304,9 @@ async function preservesDraftAcrossCategories(): Promise<void> {
 async function savesCompleteRecommendationAndDeliverySettings(): Promise<void> {
   installTrackingPageHandlers();
   const user = userEvent.setup();
-  const { rerender } = renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
+  const { rerender } = await renderWithQuery(
+    <TrackingSettingsContent userId={51} section="tracking" />,
+  );
 
   await screen.findByLabelText('关键词');
   const existingKeywordChip = document.querySelector(
@@ -473,7 +479,7 @@ async function selectsAndCreatesTrackingFolders(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
+  await renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
 
   expect(await screen.findByText('当前追踪: Tracking')).toBeInTheDocument();
   const folderSelect = screen.getAllByRole('combobox')[0];
@@ -513,7 +519,7 @@ async function reportsTrackingFolderFailure(): Promise<void> {
     ),
   );
   const user = userEvent.setup();
-  renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
+  await renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
 
   const folderSelect = (await screen.findAllByRole('combobox'))[0];
   folderSelect.focus();
@@ -548,7 +554,7 @@ async function blocksTrackingEditsWhileSaving(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
+  await renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
   const prompt = await screen.findByLabelText('System Prompt');
   await user.clear(prompt);
   await user.type(prompt, 'Submitted prompt');
@@ -579,7 +585,7 @@ async function requiresExplicitUnavailableDatabaseCorrection(): Promise<void> {
     ),
   );
   const user = userEvent.setup();
-  renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
+  await renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
   const alpha = await screen.findByRole('checkbox', { name: 'alpha.sqlite' });
   await user.click(screen.getByRole('switch', { name: '启用推荐' }));
   const save = screen.getByRole('button', { name: '保存更改' });
@@ -605,7 +611,7 @@ async function preservesLastDatabaseUntilExplicitAllSelection(): Promise<void> {
     ),
   );
   const user = userEvent.setup();
-  renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
+  await renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
   const alpha = await screen.findByRole('checkbox', { name: 'alpha.sqlite' });
   await user.click(alpha);
   expect(alpha).toBeChecked();
@@ -629,7 +635,9 @@ async function recoversUnavailableChoiceWithEmptyCatalog(): Promise<void> {
     ),
   );
   const user = userEvent.setup();
-  const view = renderWithQuery(<TrackingSettingsContent userId={51} section="notifications" />);
+  const view = await renderWithQuery(
+    <TrackingSettingsContent userId={51} section="notifications" />,
+  );
   expect(await screen.findByRole('alert')).toHaveTextContent('推送数据库已不可用');
   expect(screen.getByRole('button', { name: '保存更改' })).toBeDisabled();
   view.rerender(<TrackingSettingsContent userId={51} section="tracking" />);

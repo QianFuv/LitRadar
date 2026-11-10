@@ -4,7 +4,6 @@
 
 import { screen } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
-import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
 import { describe, expect, test, vi } from 'vite-plus/test';
 
 import { AdminOverviewCard } from '@/components/admin/overview-card';
@@ -33,11 +32,7 @@ async function ignoreCopy(): Promise<void> {}
 async function rendersFavoritesBoundary(): Promise<void> {
   server.use(http.get('http://localhost/api/favorites/folders', () => HttpResponse.json([])));
 
-  renderWithQuery(
-    <NuqsTestingAdapter searchParams="?folder=7">
-      <FavoritesPageContent userId={21} />
-    </NuqsTestingAdapter>,
-  );
+  await renderWithQuery(<FavoritesPageContent userId={21} />, { url: '/?folder=7' });
 
   expect(await screen.findByText('暂无收藏夹，点击「新建」创建第一个。')).toBeInTheDocument();
   expect(getFavoriteSelectionKey(7, 'article-1', 'fixture.sqlite')).toBe(
@@ -51,7 +46,7 @@ async function rendersFavoritesBoundary(): Promise<void> {
 async function rendersAccessTokenBoundary(): Promise<void> {
   server.use(http.get('http://localhost/api/auth/tokens', () => HttpResponse.json([])));
 
-  renderWithQuery(<AccessTokensCard copyFeedback={null} handleCopy={ignoreCopy} />);
+  await renderWithQuery(<AccessTokensCard copyFeedback={null} handleCopy={ignoreCopy} />);
 
   expect(await screen.findByText('暂无访问令牌')).toBeInTheDocument();
 }
@@ -82,7 +77,7 @@ async function rendersAdminOverviewBoundary(): Promise<void> {
     ),
   );
 
-  renderWithQuery(<AdminOverviewCard isEnabled />);
+  await renderWithQuery(<AdminOverviewCard isEnabled />);
 
   expect(await screen.findByText('42')).toBeInTheDocument();
   expect(screen.getByText('用户总数')).toBeInTheDocument();

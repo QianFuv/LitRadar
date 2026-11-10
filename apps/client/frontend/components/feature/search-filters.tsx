@@ -4,8 +4,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, X } from '@/components/ui/animated-icons';
-import { useLocation, useNavigate } from 'react-router';
-import { parseAsArrayOf, parseAsString, useQueryState } from 'nuqs';
+import { useSearch } from '@tanstack/react-router';
 import { useEffect, useMemo, useState } from 'react';
 
 import {
@@ -63,9 +62,11 @@ import {
 import { useAuth } from '@/lib/auth-context';
 import {
   JOURNAL_RATING_SYSTEMS,
-  useJournalRatingFilters,
+  readJournalRatings,
+  withJournalRatings,
   type JournalRatingKey,
 } from '@/lib/journal-ratings';
+import { useUpdateWorkspaceSearch, WORKSPACE_ROUTE_ID } from '@/lib/search-params';
 import {
   reconcileSelectedDatabase,
   resolveAvailableSelectedDatabase,
@@ -157,18 +158,23 @@ export function SearchFilters({ className }: { className?: string }) {
 /** Own filter queries, URL state, and change handlers for the search filter pills. */
 function useSearchFilterState() {
   const { user } = useAuth();
-  const navigate = useNavigate();
-  const { pathname } = useLocation();
+  const search = useSearch({ from: WORKSPACE_ROUTE_ID });
+  const updateSearch = useUpdateWorkspaceSearch();
 
   const selectedDb = useSelectedDatabase();
-  const [, setQ] = useQueryState('q', parseAsString);
-  const [areas, setAreas] = useQueryState('area', parseAsArrayOf(parseAsString).withDefault([]));
-  const [journalIds, setJournalIds] = useQueryState(
-    'journal_id',
-    parseAsArrayOf(parseAsString).withDefault([]),
-  );
-  const [monthRange, setMonthRange] = useQueryState('month_range', parseAsString);
-  const [ratings, setRatings] = useJournalRatingFilters();
+  const areas = search.area ?? [];
+  const journalIds = search.journal_id ?? [];
+  const monthRange = search.month_range ?? null;
+  const ratings = readJournalRatings(search);
+
+  /**
+   * Replace or remove the month-range filter.
+   *
+   * @param value - Month range, or null to remove it.
+   */
+  const setMonthRange = (value: string | null) => {
+    void updateSearch((current) => ({ ...current, month_range: value ?? undefined }));
+  };
 
   const { data: databases, isLoading: loadingDatabases } = useQuery({
     queryKey: ['meta', 'databases'],
@@ -212,21 +218,16 @@ function useSearchFilterState() {
 
   const handleDatabaseChange = (dbName: string) => {
     setSelectedDatabase(dbName);
-    setQ(null);
-    setAreas([]);
-    setJournalIds([]);
-    setMonthRange(null);
-    void setRatings(null);
-    navigate(pathname, { replace: true });
+    void updateSearch(() => ({}));
   };
 
   const handleClearRatings = () => {
-    void setRatings(null);
+    void updateSearch((current) => withJournalRatings(current, null));
   };
 
   /** Replace every rating group at once without touching journal or area selections. */
   const handleRatingsChange = (next: Record<JournalRatingKey, string[]>) => {
-    void setRatings(next);
+    void updateSearch((current) => withJournalRatings(current, next));
   };
 
   const handleClearTimeFilters = () => {
@@ -234,10 +235,12 @@ function useSearchFilterState() {
   };
 
   const handleClearAll = () => {
-    setAreas([]);
-    setJournalIds([]);
-    setMonthRange(null);
-    void setRatings(null);
+    void updateSearch((current) => ({
+      ...withJournalRatings(current, null),
+      area: undefined,
+      journal_id: undefined,
+      month_range: undefined,
+    }));
   };
 
   const yearBounds = useMemo(() => getYearBounds(yearData ?? []), [yearData]);
@@ -245,11 +248,11 @@ function useSearchFilterState() {
   const { defaultStartMonth, defaultEndMonth } = monthValues;
 
   const handleAreasChange = (values: string[]) => {
-    void setAreas(values);
+    void updateSearch((current) => ({ ...current, area: values }));
   };
 
   const handleJournalsChange = (ids: string[]) => {
-    void setJournalIds(ids);
+    void updateSearch((current) => ({ ...current, journal_id: ids }));
   };
 
   const handleMonthRangeCommit = (startMonth: string, endMonth: string) => {
@@ -320,9 +323,9 @@ function useSearchFilterState() {
     yearBounds,
     ...monthValues,
     handleAreasChange,
-    handleClearAreas: () => setAreas([]),
+    handleClearAreas: () => handleAreasChange([]),
     handleJournalsChange,
-    handleClearJournals: () => setJournalIds([]),
+    handleClearJournals: () => handleJournalsChange([]),
     handleMonthRangeCommit,
     handleRecentMonthRange,
     journalLabelMap,

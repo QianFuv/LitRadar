@@ -17,7 +17,7 @@ import {
   type AppIcon,
 } from '@/components/ui/animated-icons';
 import { useTheme } from 'next-themes';
-import { Link, useLocation, useSearchParams } from 'react-router';
+import { Link, useSearch } from '@tanstack/react-router';
 import {
   useRef,
   useSyncExternalStore,
@@ -31,9 +31,10 @@ import { SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE } from '@/components/feature/se
 import { preloadAdminCenter, preloadSettingsCenter } from '@/components/shell/lazy-workspaces';
 import { UserAvatar } from '@/components/shell/user-avatar';
 import { keepRadixCloseFocus } from '@/components/ui/dropdown-menu';
-import { buildAdminCenterHref, parseAdminSection } from '@/lib/admin-center';
+import { parseAdminSection, withAdminSection } from '@/lib/admin-center';
 import { useAuth, type LogoutRevocationWarning } from '@/lib/auth-context';
-import { buildSettingsCenterHref } from '@/lib/settings-center';
+import { WORKSPACE_ROUTE_ID } from '@/lib/search-params';
+import { withSettingsSection } from '@/lib/settings-center';
 import { cn } from '@/lib/utils';
 import { getFocusedOrigin, revealThemeChange } from '@/lib/theme-transition';
 
@@ -116,7 +117,8 @@ function LogoutRevocationNotice({ warning }: { warning: LogoutRevocationWarning 
             <p className="break-all text-xs text-muted-foreground">请求 ID：{warning.requestId}</p>
           )}
           <Link
-            to="/login?logout_recovery=1"
+            to="/login"
+            search={{ logout_recovery: '1' }}
             className="motion-control inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-[background-color,color] hover:bg-accent hover:text-accent-foreground"
           >
             重新认证并撤销全部会话
@@ -193,8 +195,7 @@ function ThemeRadioItem(props: ComponentProps<typeof RadixDropdownMenu.RadioItem
  */
 export function UserMenu({ placement = 'rail' }: UserMenuProps) {
   const { user, loading, logout, logoutWarning } = useAuth();
-  const { pathname } = useLocation();
-  const [searchParams] = useSearchParams();
+  const search = useSearch({ from: WORKSPACE_ROUTE_ID });
   const { setTheme, theme } = useTheme();
   const accountTriggerRef = useRef<HTMLButtonElement>(null);
   const isMounted = useSyncExternalStore(
@@ -214,9 +215,9 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
   }
 
   const selectedTheme = getUserMenuTheme(isMounted, theme);
-  const settingsHref = buildSettingsCenterHref(pathname, searchParams, 'general');
-  const adminHref = buildAdminCenterHref(pathname, searchParams, 'overview');
-  const isAdminOpen = parseAdminSection(searchParams.get('admin')) !== null;
+  const settingsSearch = withSettingsSection(search, 'general');
+  const adminSearch = withAdminSection(search, 'overview');
+  const isAdminOpen = parseAdminSection(search.admin) !== null;
 
   /**
    * Clear the authenticated session after the menu selection closes.
@@ -309,7 +310,8 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
 
             <UserMenuItem asChild>
               <Link
-                to={settingsHref}
+                to="/"
+                search={settingsSearch}
                 className={MENU_ITEM_CLASS}
                 onClick={handleSectionedDialogOpen}
                 onFocus={preloadSettingsCenter}
@@ -325,7 +327,8 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
             {user.is_admin && (
               <UserMenuItem asChild>
                 <Link
-                  to={adminHref}
+                  to="/"
+                  search={adminSearch}
                   aria-current={isAdminOpen ? 'page' : undefined}
                   className={cn(MENU_ITEM_CLASS, isAdminOpen && 'bg-accent')}
                   onClick={handleSectionedDialogOpen}

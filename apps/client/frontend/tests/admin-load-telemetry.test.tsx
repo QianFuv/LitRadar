@@ -164,7 +164,7 @@ function keepsHitBasesSeparate(): void {
 async function rendersReportAndRequestsFilters(): Promise<void> {
   const queries = installTelemetryHandler(() => HttpResponse.json(createReport()));
   const user = userEvent.setup();
-  renderWithQuery(<LoadTelemetryCard isEnabled />);
+  await renderWithQuery(<LoadTelemetryCard isEnabled />);
 
   const table = await screen.findByRole('table', { name: /调用排行/ });
   expect(queries).toEqual(['?period=24h']);
@@ -209,7 +209,7 @@ async function explainsDisabledTelemetry(): Promise<void> {
       search_shapes: [],
     }),
   );
-  renderWithQuery(<LoadTelemetryCard isEnabled />);
+  await renderWithQuery(<LoadTelemetryCard isEnabled />);
 
   expect(await screen.findByText('负载统计未启用')).toBeInTheDocument();
   expect(screen.getByText(/telemetry_enabled/)).toHaveTextContent('重启服务');
@@ -221,7 +221,7 @@ async function showsEmptyWindow(): Promise<void> {
   installTelemetryHandler(() =>
     HttpResponse.json({ ...createReport(), series: [], hourly: [], search_shapes: [] }),
   );
-  renderWithQuery(<LoadTelemetryCard isEnabled />);
+  await renderWithQuery(<LoadTelemetryCard isEnabled />);
 
   expect(await screen.findByText('暂无负载数据')).toBeInTheDocument();
   expect(screen.queryByRole('img')).not.toBeInTheDocument();
@@ -237,7 +237,7 @@ async function showsErrorState(status: number, title: string): Promise<void> {
   installTelemetryHandler(() =>
     HttpResponse.json({ detail: 'Load telemetry temporarily unavailable' }, { status }),
   );
-  renderWithQuery(<LoadTelemetryCard isEnabled />);
+  await renderWithQuery(<LoadTelemetryCard isEnabled />);
 
   const alert = await screen.findByRole('alert');
   expect(alert).toHaveTextContent(title);

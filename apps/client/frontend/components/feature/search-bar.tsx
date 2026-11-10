@@ -2,7 +2,8 @@
  * URL-backed search form with keyboard history, an advanced-syntax assistant, and restrained motion.
  */
 
-import { useQueryState, parseAsString } from 'nuqs';
+import { useSearch } from '@tanstack/react-router';
+import { z } from 'zod';
 import { Input } from '@/components/ui/input';
 import { Search, X, Clock, SlidersHorizontal, Wand2 } from '@/components/ui/animated-icons';
 import { Button } from '@/components/ui/button';
@@ -13,7 +14,9 @@ import {
   readLocalStorageValue,
   removeLocalStorageValue,
   writeLocalStorageValue,
+  parseStoredJson,
 } from '@/lib/browser-storage';
+import { useUpdateWorkspaceSearch, WORKSPACE_ROUTE_ID } from '@/lib/search-params';
 import { WORKSPACE_SEARCH_ATTRIBUTE } from '@/components/feature/article-reader-context';
 import {
   compileSearchConditions,
@@ -35,6 +38,7 @@ import { MotionDiv, MotionPresence, SWAP_VARIANTS } from '@/components/ui/motion
 const SEARCH_HISTORY_KEY = 'litradar:v1:search_history';
 const LEGACY_SEARCH_HISTORY_KEY = 'search_history';
 const MAX_HISTORY_ITEMS = 10;
+const SEARCH_HISTORY_SCHEMA = z.array(z.string());
 const SEARCH_HISTORY_LISTBOX_ID = 'search-history-listbox';
 
 /**
@@ -44,13 +48,7 @@ const SEARCH_HISTORY_LISTBOX_ID = 'search-history-listbox';
  * @returns Search history or null when invalid.
  */
 function parseSearchHistory(value: string): string[] | null {
-  try {
-    const parsedHistory: unknown = JSON.parse(value);
-    if (Array.isArray(parsedHistory) && parsedHistory.every((item) => typeof item === 'string')) {
-      return parsedHistory;
-    }
-  } catch {}
-  return null;
+  return parseStoredJson(value, SEARCH_HISTORY_SCHEMA);
 }
 
 /**
@@ -128,7 +126,8 @@ function clearSearchHistory(): void {
 type SearchBarProps = {
   className?: string;
   placeholder?: string;
-  queryParam?: string;
+  /** Workspace search parameter that holds the submitted query. */
+  queryParam?: 'q' | 'weekly_q';
   /** Offer advanced-syntax rewrites and templates next to the search history. */
   hasSyntaxAssist?: boolean;
 };
@@ -200,7 +199,8 @@ export function SearchBar({
   queryParam = 'q',
   hasSyntaxAssist = false,
 }: SearchBarProps) {
-  const [q, setQ] = useQueryState(queryParam, parseAsString.withDefault(''));
+  const q = useSearch({ from: WORKSPACE_ROUTE_ID, select: (search) => search[queryParam] ?? '' });
+  const updateSearch = useUpdateWorkspaceSearch();
   const [inputValue, setInputValue] = useState(q);
   const [previousQuery, setPreviousQuery] = useState(q);
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
@@ -273,7 +273,7 @@ export function SearchBar({
   const handleSearch = (query?: string) => {
     const searchQuery = (query ?? inputValue).trim();
     setInputValue(searchQuery);
-    void setQ(searchQuery || null);
+    void updateSearch((search) => ({ ...search, [queryParam]: searchQuery || undefined }));
     if (searchQuery) {
       saveSearchHistory(searchQuery);
       setSearchHistory(getSearchHistory());

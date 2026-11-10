@@ -6,29 +6,18 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { Link } from 'react-router';
-import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
-import { beforeEach, describe, expect, test, vi } from 'vite-plus/test';
+import { Link } from '@tanstack/react-router';
+import { describe, expect, test, vi } from 'vite-plus/test';
 
 import { RelationGraphFavoritesContent } from '@/components/favorites/relation-graph-favorites-content';
 import { RelationGraphFavoriteControls } from '@/components/relations/relation-graph-favorite-controls';
 import type { Article, RelationGraphFavorite, RelationGraphFavoriteSummary } from '@/lib/api';
 import { createRelationGraph, expandRelationNode, type RelationGraph } from '@/lib/relation-graph';
 import { server } from '@/tests/mocks/server';
-import { renderWithQuery } from '@/tests/render';
+import { readRouterUrl, renderWithQuery } from '@/tests/render';
 
 const GRAPHS_URL = 'http://localhost/api/favorites/graphs';
-
-const navigation = vi.hoisted(() => ({ navigate: vi.fn() }));
-
-vi.mock('react-router', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('react-router')>()),
-  useNavigate: () => navigation.navigate,
-}));
-
-beforeEach(() => {
-  navigation.navigate.mockReset();
-});
+const RELATION_URL = '/?view=relations&db=fixture.sqlite&article=1&saved=5';
 
 /**
  * Build a minimal article.
@@ -76,9 +65,9 @@ function savedGraph(id: number, graph: RelationGraph): RelationGraphFavorite {
  * @param savedId - Linked saved graph id.
  * @returns Callback spies.
  */
-function renderControls(graph: RelationGraph, savedId: number | null) {
+async function renderControls(graph: RelationGraph, savedId: number | null) {
   const callbacks = { onError: vi.fn(), onReset: vi.fn(), onSavedIdChange: vi.fn() };
-  renderWithQuery(
+  await renderWithQuery(
     <RelationGraphFavoriteControls
       dbName="fixture.sqlite"
       graph={graph}
@@ -100,7 +89,7 @@ async function savesNewGraph(): Promise<void> {
       return HttpResponse.json(savedGraph(11, graph));
     }),
   );
-  const callbacks = renderControls(graph, null);
+  const callbacks = await renderControls(graph, null);
 
   await userEvent.click(screen.getByRole('button', { name: '收藏关系图' }));
 
@@ -127,7 +116,7 @@ async function flagsUpdatesAndResetsChangedGraph(): Promise<void> {
       return HttpResponse.json(savedGraph(5, current));
     }),
   );
-  const callbacks = renderControls(current, 5);
+  const callbacks = await renderControls(current, 5);
   const user = userEvent.setup();
 
   const trigger = await screen.findByRole('button', {
@@ -172,7 +161,7 @@ async function ignoresLayoutDrift(): Promise<void> {
     ),
   };
   server.use(http.get(`${GRAPHS_URL}/5`, () => HttpResponse.json(savedGraph(5, saved))));
-  renderControls(drifted, 5);
+  await renderControls(drifted, 5);
 
   await userEvent.setup().hover(await screen.findByRole('button', { name: '已收藏的关系图操作' }));
   await waitFor(() =>
@@ -199,7 +188,7 @@ async function renderChangedGraphWithLink() {
       return HttpResponse.json(savedGraph(5, current));
     }),
   );
-  renderWithQuery(
+  const view = await renderWithQuery(
     <>
       <RelationGraphFavoriteControls
         dbName="fixture.sqlite"
@@ -210,37 +199,40 @@ async function renderChangedGraphWithLink() {
         onReset={vi.fn()}
         onSavedIdChange={vi.fn()}
       />
-      <Link to="/?view=favorites">我的收藏</Link>
+      <Link to="/" search={{ view: 'favorites' }}>
+        我的收藏
+      </Link>
     </>,
+    { url: RELATION_URL },
   );
   await screen.findByTestId('relation-graph-unsaved-dot');
-  return { updates };
+  return { router: view.router, updates };
 }
 
 /** Leaving a changed saved graph asks first and can save before navigating. */
 async function asksBeforeLeavingAndSaves(): Promise<void> {
-  const { updates } = await renderChangedGraphWithLink();
+  const { router, updates } = await renderChangedGraphWithLink();
   const user = userEvent.setup();
 
   await user.click(screen.getByRole('link', { name: '我的收藏' }));
   const dialog = await screen.findByRole('dialog', { name: '关系图有未保存的改动' });
-  expect(navigation.navigate).not.toHaveBeenCalled();
+  expect(readRouterUrl(router)).toBe(RELATION_URL);
 
   await user.click(within(dialog).getByRole('button', { name: '保存并离开' }));
-  await waitFor(() => expect(navigation.navigate).toHaveBeenCalledWith('/?view=favorites'));
+  await waitFor(() => expect(readRouterUrl(router)).toBe('/?view=favorites'));
   expect(updates).toHaveLength(1);
 }
 
 /** Leaving without saving navigates and keeps the favorite untouched. */
 async function leavesWithoutSaving(): Promise<void> {
-  const { updates } = await renderChangedGraphWithLink();
+  const { router, updates } = await renderChangedGraphWithLink();
   const user = userEvent.setup();
 
   await user.click(screen.getByRole('link', { name: '我的收藏' }));
   const dialog = await screen.findByRole('dialog', { name: '关系图有未保存的改动' });
   await user.click(within(dialog).getByRole('button', { name: '不保存' }));
 
-  expect(navigation.navigate).toHaveBeenCalledWith('/?view=favorites');
+  await waitFor(() => expect(readRouterUrl(router)).toBe('/?view=favorites'));
   expect(updates).toHaveLength(0);
 }
 
@@ -261,7 +253,7 @@ async function unlinksDeletedFavorite(): Promise<void> {
       HttpResponse.json({ detail: 'Not found', code: 'not_found' }, { status: 404 }),
     ),
   );
-  const callbacks = renderControls(graph, 5);
+  const callbacks = await renderControls(graph, 5);
   const user = userEvent.setup();
 
   await user.click(screen.getByRole('button', { name: '已收藏的关系图操作' }));
@@ -307,11 +299,7 @@ async function managesSavedGraphs(): Promise<void> {
       return HttpResponse.json({ ok: true });
     }),
   );
-  renderWithQuery(
-    <NuqsTestingAdapter searchParams="?view=favorites&kind=graphs" hasMemory>
-      <RelationGraphFavoritesContent />
-    </NuqsTestingAdapter>,
-  );
+  await renderWithQuery(<RelationGraphFavoritesContent />, { url: '/?view=favorites&kind=graphs' });
   const user = userEvent.setup();
 
   const list = await screen.findByRole('list', { name: '收藏的关系图' });

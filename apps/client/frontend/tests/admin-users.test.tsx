@@ -74,7 +74,7 @@ async function changesRolesAndProtectsSelf(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderWithQuery(<AdminUsersCard currentUserId={1} isEnabled />);
+  await renderWithQuery(<AdminUsersCard currentUserId={1} isEnabled />);
 
   expect(await screen.findByRole('button', { name: '取消 admin 的管理员' })).toBeDisabled();
   expect(screen.getByRole('button', { name: '删除用户 admin' })).toBeDisabled();
@@ -106,7 +106,7 @@ async function retriesPasswordReset(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderWithQuery(<AdminUsersCard currentUserId={1} isEnabled />);
+  await renderWithQuery(<AdminUsersCard currentUserId={1} isEnabled />);
 
   await user.click(await screen.findByRole('button', { name: '重置 member 的密码' }));
   const dialog = screen.getByRole('dialog', { name: '重置密码' });
@@ -143,7 +143,7 @@ async function retriesUserDeletion(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderWithQuery(<AdminUsersCard currentUserId={1} isEnabled />);
+  await renderWithQuery(<AdminUsersCard currentUserId={1} isEnabled />);
 
   await user.click(await screen.findByRole('button', { name: '删除用户 member' }));
   const dialog = screen.getByRole('dialog', { name: '确认删除用户' });
@@ -165,7 +165,7 @@ async function retriesUserDeletion(): Promise<void> {
 /** Verify password entry reuses registration labels and refreshed user data updates the list. */
 async function reusesRegistrationDatesDuringPasswordEntry(): Promise<void> {
   installUserListHandler();
-  const view = renderWithQuery(<AdminUsersCard currentUserId={1} isEnabled />);
+  const view = await renderWithQuery(<AdminUsersCard currentUserId={1} isEnabled />);
   const resetButton = await screen.findByRole('button', { name: '重置 member 的密码' });
   const updatedTimestamp = 1_600_000_000;
   const updatedLabel = new Date(updatedTimestamp * 1000).toLocaleDateString('zh-CN', {
@@ -208,7 +208,7 @@ async function showsIdentityAndGuardsOidcPasswordReset(): Promise<void> {
     },
   ];
   installUserListHandler();
-  renderWithQuery(<AdminUsersCard currentUserId={1} isEnabled />);
+  await renderWithQuery(<AdminUsersCard currentUserId={1} isEnabled />);
 
   expect(await screen.findByText('member@example.test')).toBeInTheDocument();
   expect(screen.getByText('sso@example.test')).toBeInTheDocument();

@@ -4,7 +4,7 @@
 
 import { Radar } from 'lucide-react';
 import { Eye, EyeOff, Megaphone, Search } from '@/components/ui/animated-icons';
-import { Link, useNavigate, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { useEffect, useRef, useState, type ComponentType, type FormEvent } from 'react';
 import { Shine } from '@animate-ui/react/primitives/effects/shine';
 import { SplittingText } from '@animate-ui/react/primitives/texts/splitting';
@@ -38,6 +38,7 @@ import { useAuth } from '@/lib/auth-context';
 import { CLIENT_PLATFORM } from '@/lib/platform';
 import { LoadingText } from '@/components/ui/loading-text';
 import { useServerConnection } from '@/lib/server-connection';
+import { LOGIN_ROUTE_ID } from '@/lib/search-params';
 import { preloadWorkspaceRoutes } from '@/src/routes/lazy-routes';
 
 const LOGIN_RETURN_ORIGIN = 'https://litradar.invalid';
@@ -203,14 +204,14 @@ export default function LoginClient() {
 /** Own the original auth hooks, cancellation effects and captured submit closure in their original order. */
 function useLoginViewState() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const search = useSearch({ from: LOGIN_ROUTE_ID });
   const { loading, login, logoutWarning, recoverLogout, register, signInWithNativeOidc, user } =
     useAuth();
   const serverConnection = useServerConnection();
-  const nextParam = searchParams.get('next') || '';
+  const nextParam = search.next || '';
   const nextPath = normalizeLoginReturnPath(nextParam);
-  const isLogoutRecovery = searchParams.get('logout_recovery') === '1';
-  const oidcErrorCode = searchParams.get('oidc_error');
+  const isLogoutRecovery = search.logout_recovery === '1';
+  const oidcErrorCode = search.oidc_error ?? null;
   const [nativeOidcError, setNativeOidcError] = useState<string | null>(null);
   const [pendingNativeOidc, setPendingNativeOidc] = useState<AbortController | null>(null);
   const pendingNativeOidcRef = useRef<AbortController | null>(null);
@@ -235,7 +236,7 @@ function useLoginViewState() {
 
   useEffect(() => {
     if (!loading && user && !isLogoutRecovery) {
-      navigate(nextPath, { replace: true });
+      void navigate({ href: nextPath, replace: true });
     }
   }, [isLogoutRecovery, loading, navigate, nextPath, user]);
 
@@ -305,7 +306,7 @@ function useLoginViewState() {
     preloadWorkspaceRoutes();
     try {
       await signInWithNativeOidc(controller.signal);
-      navigate(nextPath, { replace: true });
+      void navigate({ href: nextPath, replace: true });
     } catch (err) {
       if (!controller.signal.aborted) {
         setNativeOidcError(getNativeOidcErrorMessage(err));
@@ -342,7 +343,7 @@ function useLoginViewState() {
         await login(username.trim(), password);
       }
       if (!isLogoutRecovery) {
-        navigate(nextPath, { replace: true });
+        void navigate({ href: nextPath, replace: true });
       }
     } catch (err) {
       setError(getAuthErrorMessage(err, mode));
@@ -787,7 +788,8 @@ function renderLoginLogoutWarning(
         )}
         {!isLogoutRecovery && (
           <Link
-            to="/login?logout_recovery=1"
+            to="/login"
+            search={{ logout_recovery: '1' }}
             className="motion-control mt-2 inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-[background-color,color] hover:bg-accent hover:text-accent-foreground"
           >
             重新认证并撤销全部会话

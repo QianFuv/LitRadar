@@ -133,6 +133,14 @@ function installTestAnimationApis(): void {
 }
 
 /**
+ * Install a no-op window scroll for jsdom, which does not implement it; the router resets the
+ * scroll position after link navigation.
+ */
+function installTestScrollApi(): void {
+  window.scrollTo = () => undefined;
+}
+
+/**
  * Stop React's development build from capturing an owner stack for every created element.
  *
  * React 19 constructs an `Error` per JSX element (up to 10,000 per render) so warnings can show
@@ -179,6 +187,7 @@ function closeMockServer(): void {
 
 installTestMediaQueries();
 installTestAnimationApis();
+installTestScrollApi();
 disableReactOwnerStackCapture();
 beforeAll(startMockServer);
 afterEach(resetTestState);

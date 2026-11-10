@@ -6,9 +6,9 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { useState, type ReactNode } from 'react';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router';
+import { createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 const routeBoundaryMocks = vi.hoisted(() => ({
@@ -16,6 +16,7 @@ const routeBoundaryMocks = vi.hoisted(() => ({
     loading: false,
     user: null as { id: number; username: string; is_admin: boolean } | null,
   },
+  isHomeFailing: false,
 }));
 
 vi.mock('@/lib/auth-context', () => ({
@@ -39,42 +40,41 @@ vi.mock('@/src/routes/login-client', () => ({
   default: () => <div>login client marker</div>,
 }));
 
+vi.mock('@/src/routes/home-page', async () => {
+  const { useLocation } = await import('@tanstack/react-router');
+  return {
+    default: function MockHomePage() {
+      useLocation();
+      if (routeBoundaryMocks.isHomeFailing) {
+        throw new Error('sensitive home failure');
+      }
+      return <div>protected route content</div>;
+    },
+  };
+});
+
 import { ErrorBoundary, type ErrorFallbackProps } from '@/src/error-boundary';
 import GlobalError from '@/src/global-error';
 import RouteError from '@/src/route-error';
+import { createAppRouter } from '@/src/router';
 import LoginPage from '@/src/routes/login-page';
 import NotFound from '@/src/routes/not-found-page';
-import RequireAuth from '@/src/routes/require-auth';
+import { readRouterUrl, renderWithQuery } from '@/tests/render';
 
 /** Allow code-split route modules to transform and load on a busy test machine. */
 const LAZY_ROUTE_WAIT = { timeout: 30_000 };
 
 /**
- * Render the current router location so redirects can be asserted.
- *
- * @returns Location text marker.
- */
-function LocationProbe() {
-  const location = useLocation();
-  return <div data-testid="location">{`${location.pathname}${location.search}`}</div>;
-}
-
-/**
- * Render the protected route table at one initial URL.
+ * Render the application route tree at one initial URL.
  *
  * @param initialEntry - Initial router URL.
+ * @returns Application router over an in-memory history.
  */
-function renderProtectedRoute(initialEntry: string): void {
-  render(
-    <MemoryRouter initialEntries={[initialEntry]}>
-      <Routes>
-        <Route element={<RequireAuth />}>
-          <Route index element={<div>protected route content</div>} />
-        </Route>
-        <Route path="/login" element={<LocationProbe />} />
-      </Routes>
-    </MemoryRouter>,
-  );
+async function renderAppRoute(initialEntry: string) {
+  const router = createAppRouter(createMemoryHistory({ initialEntries: [initialEntry] }));
+  await router.load();
+  render(<RouterProvider router={router} />);
+  return router;
 }
 
 /**
@@ -87,14 +87,14 @@ async function exposesRouteMetadata(): Promise<void> {
   expect(indexHtml).toContain('<link rel="icon" href="/litradar-logo.png" />');
   expect(indexHtml).toContain('<script src="/theme-init.js"></script>');
 
-  const loginView = render(<LoginPage />, { wrapper: MemoryRouter });
+  const loginView = await renderWithQuery(<LoginPage />, { url: '/login' });
   await waitFor(() => expect(document.title).toBe('登录 | LitRadar'));
   expect(
     document.head.querySelector('meta[name="description"][content="登录或注册 LitRadar 账号。"]'),
   ).not.toBeNull();
   loginView.unmount();
 
-  render(<NotFound />, { wrapper: MemoryRouter });
+  await renderWithQuery(<NotFound />);
   await waitFor(() => expect(document.title).toBe('页面未找到 | LitRadar'));
   expect(
     document.head.querySelector(
@@ -111,7 +111,7 @@ async function resetsRouteErrors(): Promise<void> {
   const reset = vi.fn();
   const report = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   const error = Object.assign(new Error('sensitive route detail'), { digest: 'route-digest' });
-  render(<RouteError error={error} reset={reset} />, { wrapper: MemoryRouter });
+  await renderWithQuery(<RouteError error={error} reset={reset} />);
 
   const alert = screen.getByRole('alert');
   expect(alert).toHaveTextContent('页面加载失败');
@@ -151,11 +151,15 @@ function rendersGlobalFailureScreen(): void {
 /**
  * Verify the custom not-found page offers a direct home route.
  */
-function rendersCustomNotFoundPage(): void {
-  render(<NotFound />, { wrapper: MemoryRouter });
-
-  expect(screen.getByRole('heading', { name: '页面未找到' })).toBeInTheDocument();
-  expect(screen.getByRole('link', { name: '返回首页' })).toHaveAttribute('href', '/');
+async function rendersCustomNotFoundPage(): Promise<void> {
+  routeBoundaryMocks.auth.user = { id: 7, username: 'reader', is_admin: false };
+  for (const removedPath of ['/favorites', '/weekly-updates', '/settings', '/admin']) {
+    await renderAppRoute(removedPath);
+    expect(screen.getByRole('heading', { name: '页面未找到' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '返回首页' })).toHaveAttribute('href', '/');
+    expect(screen.queryByText('user menu marker')).not.toBeInTheDocument();
+    cleanup();
+  }
 }
 
 /**
@@ -164,24 +168,23 @@ function rendersCustomNotFoundPage(): void {
  */
 async function protectsRenderedRouteContent(): Promise<void> {
   routeBoundaryMocks.auth.loading = true;
-  renderProtectedRoute('/?view=favorites&folder=4');
+  await renderAppRoute('/?view=favorites&folder=4');
   expect(screen.getByRole('status')).toHaveTextContent('加载中');
   expect(screen.queryByText('protected route content')).not.toBeInTheDocument();
   cleanup();
 
   routeBoundaryMocks.auth.loading = false;
   routeBoundaryMocks.auth.user = null;
-  renderProtectedRoute('/?view=favorites&folder=4');
+  const anonymousRouter = await renderAppRoute('/?view=favorites&folder=4');
   await waitFor(() =>
-    expect(screen.getByTestId('location')).toHaveTextContent(
-      '/login?next=%2F%3Fview%3Dfavorites%26folder%3D4',
-    ),
+    expect(readRouterUrl(anonymousRouter)).toBe('/login?next=%2F%3Fview%3Dfavorites%26folder%3D4'),
   );
+  expect(await screen.findByText('login client marker', {}, LAZY_ROUTE_WAIT)).toBeInTheDocument();
   expect(screen.queryByText('protected route content')).not.toBeInTheDocument();
   cleanup();
 
   routeBoundaryMocks.auth.user = { id: 7, username: 'reader', is_admin: false };
-  renderProtectedRoute('/?view=favorites&folder=4');
+  await renderAppRoute('/?view=favorites&folder=4');
   expect(
     await screen.findByText('protected route content', {}, LAZY_ROUTE_WAIT),
   ).toBeInTheDocument();
@@ -190,14 +193,14 @@ async function protectsRenderedRouteContent(): Promise<void> {
   expect(screen.queryByText('admin center marker')).not.toBeInTheDocument();
   cleanup();
 
-  renderProtectedRoute('/?settings=general');
+  await renderAppRoute('/?settings=general');
   expect(
     await screen.findByText('settings center marker', {}, LAZY_ROUTE_WAIT),
   ).toBeInTheDocument();
   expect(screen.queryByText('admin center marker')).not.toBeInTheDocument();
   cleanup();
 
-  renderProtectedRoute('/?admin=overview');
+  await renderAppRoute('/?admin=overview');
   expect(await screen.findByText('admin center marker', {}, LAZY_ROUTE_WAIT)).toBeInTheDocument();
   expect(screen.queryByText('settings center marker')).not.toBeInTheDocument();
 }
@@ -233,7 +236,7 @@ function FailingChild({ failure }: { failure: { isActive: boolean } }) {
 }
 
 /**
- * Verify the boundary renders its fallback, retries on reset, and clears on reset key change.
+ * Verify the shared boundary renders its fallback and retries the subtree on reset.
  */
 async function recoversThroughErrorBoundary(): Promise<void> {
   const user = userEvent.setup();
@@ -241,31 +244,25 @@ async function recoversThroughErrorBoundary(): Promise<void> {
   const failure = { isActive: true };
 
   /**
-   * Host the boundary with a router-driven reset key like the application root.
+   * Host the boundary next to a control that re-renders it without resetting.
    *
-   * @returns Routed boundary with a navigation link.
+   * @returns Boundary host.
    */
-  function RoutedBoundary() {
-    const location = useLocation();
+  function BoundaryHost() {
     const [renderCount, setRenderCount] = useState(0);
     return (
       <>
-        <Link to="/elsewhere">navigate away</Link>
         <button type="button" onClick={() => setRenderCount(renderCount + 1)}>
           rerender host
         </button>
-        <ErrorBoundary fallback={TestFallback} resetKey={location.pathname}>
+        <ErrorBoundary fallback={TestFallback}>
           <FailingChild failure={failure} />
         </ErrorBoundary>
       </>
     );
   }
 
-  render(
-    <MemoryRouter initialEntries={['/start']}>
-      <RoutedBoundary />
-    </MemoryRouter>,
-  );
+  render(<BoundaryHost />);
   expect(screen.getByRole('alert')).toHaveTextContent('child failure');
 
   await user.click(screen.getByRole('button', { name: 'rerender host' }));
@@ -275,28 +272,51 @@ async function recoversThroughErrorBoundary(): Promise<void> {
   expect(screen.getByRole('alert')).toBeInTheDocument();
 
   failure.isActive = false;
-  await user.click(screen.getByRole('link', { name: 'navigate away' }));
-  expect(screen.getByText('healthy child')).toBeInTheDocument();
-  expect(screen.queryByRole('alert')).toBeNull();
-
-  failure.isActive = true;
-  await user.click(screen.getByRole('button', { name: 'rerender host' }));
-  expect(screen.getByRole('alert')).toBeInTheDocument();
-  failure.isActive = false;
   await user.click(screen.getByRole('button', { name: 'fallback reset' }));
   expect(screen.getByText('healthy child')).toBeInTheDocument();
+  expect(screen.queryByRole('alert')).toBeNull();
+}
+
+/**
+ * Verify a failing route renders the route error page, which retries on demand and clears after
+ * navigation.
+ */
+async function recoversThroughRouteErrorPage(): Promise<void> {
+  const user = userEvent.setup();
+  vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  routeBoundaryMocks.auth.user = { id: 7, username: 'reader', is_admin: false };
+  routeBoundaryMocks.isHomeFailing = true;
+  const router = await renderAppRoute('/?q=first');
+
+  const alert = await screen.findByRole('alert', {}, LAZY_ROUTE_WAIT);
+  expect(alert).toHaveTextContent('页面加载失败');
+  expect(alert).not.toHaveTextContent('sensitive home failure');
+
+  routeBoundaryMocks.isHomeFailing = false;
+  await user.click(screen.getByRole('button', { name: '重试' }));
+  expect(await screen.findByText('protected route content')).toBeInTheDocument();
+
+  routeBoundaryMocks.isHomeFailing = true;
+  await act(() => router.navigate({ to: '/', search: { q: 'second' } }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('页面加载失败');
+  routeBoundaryMocks.isHomeFailing = false;
+  await act(() => router.navigate({ to: '/', search: { q: 'third' } }));
+  expect(await screen.findByText('protected route content')).toBeInTheDocument();
+  expect(screen.queryByRole('alert')).toBeNull();
 }
 
 beforeEach(() => {
   routeBoundaryMocks.auth.loading = false;
   routeBoundaryMocks.auth.user = null;
+  routeBoundaryMocks.isHomeFailing = false;
 });
 
 describe('route boundaries', () => {
   test('defines specific metadata for every documented route', exposesRouteMetadata);
   test('announces route errors and resets safely', resetsRouteErrors);
   test('renders a self-contained global failure screen', rendersGlobalFailureScreen);
-  test('renders the custom not-found page', rendersCustomNotFoundPage);
+  test('renders the custom not-found page for removed routes', rendersCustomNotFoundPage);
   test('protects rendered route content and preserves deep links', protectsRenderedRouteContent);
   test('recovers through the shared error boundary', recoversThroughErrorBoundary);
+  test('recovers through the route error page', recoversThroughRouteErrorPage);
 });

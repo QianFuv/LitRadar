@@ -5,29 +5,45 @@
  * condition is parenthesized, so the generated expression is always valid FTS5 syntax.
  */
 
+import { z } from 'zod';
+
+import { parseStoredJson } from '@/lib/browser-storage';
+
+const SEARCH_BUILDER_FIELD_SCHEMA = z.enum([
+  'all',
+  'title',
+  'abstract_text',
+  'authors',
+  'journal_title',
+  'doi',
+]);
+const SEARCH_BUILDER_MATCH_SCHEMA = z.enum(['all', 'phrase', 'any', 'prefix']);
+const SEARCH_BUILDER_CONNECTOR_SCHEMA = z.enum(['AND', 'OR', 'NOT']);
+const SEARCH_BUILDER_CONDITION_SCHEMA = z.object({
+  id: z.string(),
+  connector: SEARCH_BUILDER_CONNECTOR_SCHEMA,
+  field: SEARCH_BUILDER_FIELD_SCHEMA,
+  match: SEARCH_BUILDER_MATCH_SCHEMA,
+  value: z.string(),
+});
+
+/** Builder rows remembered in session storage for the query they produced. */
+const STORED_SEARCH_BUILDER_SCHEMA = z.object({
+  query: z.string(),
+  conditions: z.array(SEARCH_BUILDER_CONDITION_SCHEMA),
+});
+
 /** Field a condition searches. `all` searches every indexed text column. */
-export type SearchBuilderField =
-  | 'all'
-  | 'title'
-  | 'abstract_text'
-  | 'authors'
-  | 'journal_title'
-  | 'doi';
+export type SearchBuilderField = z.output<typeof SEARCH_BUILDER_FIELD_SCHEMA>;
 
 /** How the words of one condition must match. */
-export type SearchBuilderMatch = 'all' | 'phrase' | 'any' | 'prefix';
+export type SearchBuilderMatch = z.output<typeof SEARCH_BUILDER_MATCH_SCHEMA>;
 
 /** How a condition joins the conditions before it. */
-export type SearchBuilderConnector = 'AND' | 'OR' | 'NOT';
+export type SearchBuilderConnector = z.output<typeof SEARCH_BUILDER_CONNECTOR_SCHEMA>;
 
 /** One builder row. */
-export type SearchBuilderCondition = {
-  id: string;
-  connector: SearchBuilderConnector;
-  field: SearchBuilderField;
-  match: SearchBuilderMatch;
-  value: string;
-};
+export type SearchBuilderCondition = z.output<typeof SEARCH_BUILDER_CONDITION_SCHEMA>;
 
 /** Selectable field labels in display order. */
 export const SEARCH_BUILDER_FIELDS: readonly { value: SearchBuilderField; label: string }[] = [
@@ -256,34 +272,7 @@ export function describeSearchConnector(connector: SearchBuilderConnector): stri
 }
 
 /** Builder rows remembered together with the query they produced. */
-export type StoredSearchBuilder = {
-  query: string;
-  conditions: SearchBuilderCondition[];
-};
-
-/**
- * Check whether a parsed value is a valid stored builder snapshot.
- *
- * @param value - Parsed JSON.
- * @returns True when the snapshot is usable.
- */
-function isStoredSearchBuilder(value: unknown): value is StoredSearchBuilder {
-  if (!value || typeof value !== 'object') return false;
-  const candidate = value as Partial<StoredSearchBuilder>;
-  return (
-    typeof candidate.query === 'string' &&
-    Array.isArray(candidate.conditions) &&
-    candidate.conditions.every(
-      (condition) =>
-        condition &&
-        typeof condition.id === 'string' &&
-        typeof condition.value === 'string' &&
-        SEARCH_BUILDER_FIELDS.some((field) => field.value === condition.field) &&
-        SEARCH_BUILDER_MATCHES.some((match) => match.value === condition.match) &&
-        SEARCH_BUILDER_CONNECTORS.some((connector) => connector.value === condition.connector),
-    )
-  );
-}
+export type StoredSearchBuilder = z.output<typeof STORED_SEARCH_BUILDER_SCHEMA>;
 
 /**
  * Read the builder rows that produced the current query in this tab.
@@ -295,8 +284,7 @@ export function readStoredSearchBuilder(): StoredSearchBuilder | null {
   try {
     const raw = window.sessionStorage.getItem(SEARCH_BUILDER_STORAGE_KEY);
     if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    return isStoredSearchBuilder(parsed) ? parsed : null;
+    return parseStoredJson(raw, STORED_SEARCH_BUILDER_SCHEMA);
   } catch {
     return null;
   }

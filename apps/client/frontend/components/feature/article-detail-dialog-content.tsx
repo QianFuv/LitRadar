@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useLocation, useSearchParams } from 'react-router';
+import { Link, useSearch } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 import {
   AlertCircle,
@@ -49,8 +49,9 @@ import { getDoiUrl } from '@/lib/citation';
 import { getArticleDisplayTitle, hasArticleTitle } from '@/lib/article-title';
 import { useFtsHighlighter } from '@/lib/fts-highlight';
 import { JOURNAL_RATING_SYSTEMS } from '@/lib/journal-ratings';
-import { buildRelationHref } from '@/lib/relation-graph';
-import { buildSettingsCenterHref } from '@/lib/settings-center';
+import { buildRelationSearch } from '@/lib/relation-graph';
+import { WORKSPACE_ROUTE_ID, type WorkspaceSearch } from '@/lib/search-params';
+import { withSettingsSection } from '@/lib/settings-center';
 import { cn } from '@/lib/utils';
 
 type ArticleDetailDialogArticle = Article;
@@ -650,7 +651,8 @@ function renderArticleRelationAction(state: ArticleDetailViewState, variant: Art
       className={cn(ARTICLE_ACTION_BUTTON_CLASS_NAME, variant === 'pane' && 'ml-auto')}
     >
       <Link
-        to={buildRelationHref(state.article, state.dbName)}
+        to="/"
+        search={buildRelationSearch(state.article, state.dbName)}
         aria-label="查看关系图"
         title="查看关系图"
       >
@@ -671,9 +673,8 @@ function useArticleDetailViewState({
   favoriteToggleFolderId,
   extraActions,
 }: ArticleDetailDialogContentProps) {
-  const { pathname } = useLocation();
-  const [searchParams] = useSearchParams();
-  const highlightText = useFtsHighlighter(searchParams.get('q'));
+  const search = useSearch({ from: WORKSPACE_ROUTE_ID });
+  const highlightText = useFtsHighlighter(search.q ?? null);
   const [copyStatus, setCopyStatus] = useState<ArticleCopyTarget | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
   const copyResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -765,7 +766,7 @@ function useArticleDetailViewState({
     isAccessFetching,
     isAccessError,
   );
-  const dataSourceSettingsHref = buildSettingsCenterHref(pathname, searchParams, 'data-sources');
+  const dataSourceSettingsSearch = withSettingsSection(search, 'data-sources');
 
   return {
     article,
@@ -793,7 +794,7 @@ function useArticleDetailViewState({
     isAccessLoading,
     canShowAccessActions,
     accessState,
-    dataSourceSettingsHref,
+    dataSourceSettingsSearch,
     highlightText,
   };
 }
@@ -868,7 +869,7 @@ function renderArticleAccessActions(state: ArticleDetailViewState, variant: Arti
     fulltextAction,
     canShowAccessActions,
     accessState,
-    dataSourceSettingsHref,
+    dataSourceSettingsSearch,
   } = state;
 
   const rowClassName = cn('flex gap-1 md:gap-2', variant === 'pane' ? 'flex-nowrap' : 'flex-wrap');
@@ -913,10 +914,10 @@ function renderArticleAccessActions(state: ArticleDetailViewState, variant: Arti
               fulltextAction?.requires_login &&
               (variant === 'dialog' ? (
                 <DialogClose asChild>
-                  {renderDataSourceSettingsLink(dataSourceSettingsHref)}
+                  {renderDataSourceSettingsLink(dataSourceSettingsSearch)}
                 </DialogClose>
               ) : (
-                renderDataSourceSettingsLink(dataSourceSettingsHref)
+                renderDataSourceSettingsLink(dataSourceSettingsSearch)
               ))}
           </MotionDiv>
         </MotionPresence>
@@ -926,10 +927,10 @@ function renderArticleAccessActions(state: ArticleDetailViewState, variant: Arti
 }
 
 /** Render the data-source settings shortcut shown when full text requires login. */
-function renderDataSourceSettingsLink(href: string) {
+function renderDataSourceSettingsLink(search: WorkspaceSearch) {
   return (
     <Button asChild variant="outline" size="sm" className={ARTICLE_ACTION_BUTTON_CLASS_NAME}>
-      <Link to={href} aria-label="去设置登录" title="去设置登录">
+      <Link to="/" search={search} aria-label="去设置登录" title="去设置登录">
         <Settings className="h-4 w-4" aria-hidden="true" />
         {renderActionLabel('去设置登录', '登录')}
       </Link>

@@ -5,11 +5,10 @@
 
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
+import { useLocation } from '@tanstack/react-router';
 import { beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import { AccountSignInCard } from '@/components/settings/account-card';
-import { MotionProvider } from '@/components/ui/motion';
 import { getAuthProviders } from '@/lib/api';
 import type { ClientPlatform } from '@/lib/platform';
 import { PlatformBridgeError } from '@/lib/platform/errors';
@@ -78,26 +77,30 @@ vi.mock('@/lib/api', async (importOriginal) => ({
  * @returns Location marker.
  */
 function LoginLocationProbe() {
-  const location = useLocation();
-  return <p data-testid="login-location">{`${location.pathname}${location.search}`}</p>;
+  const location = useLocation({
+    select: (current) => `${current.pathname}${current.searchStr}`,
+  });
+  return <p data-testid="login-location">{location}</p>;
+}
+
+/**
+ * Render the login page on the login route and the location probe everywhere else.
+ *
+ * @returns Route-dependent test content.
+ */
+function NativeLoginRoutes() {
+  const isLoginRoute = useLocation({ select: (current) => current.pathname === '/login' });
+  return isLoginRoute ? <LoginClient /> : <LoginLocationProbe />;
 }
 
 /**
  * Render the native login page with a route that reports where sign-in navigates.
  *
  * @param initialEntry - Initial router URL.
+ * @returns Render controls.
  */
-function renderNativeLogin(initialEntry: string): void {
-  render(
-    <MotionProvider>
-      <MemoryRouter initialEntries={[initialEntry]}>
-        <Routes>
-          <Route path="/login" element={<LoginClient />} />
-          <Route path="/" element={<LoginLocationProbe />} />
-        </Routes>
-      </MemoryRouter>
-    </MotionProvider>,
-  );
+function renderNativeLogin(initialEntry: string) {
+  return renderWithQuery(<NativeLoginRoutes />, { url: initialEntry });
 }
 
 /**
@@ -179,7 +182,7 @@ describe('native sign-in surface', () => {
     const user = userEvent.setup();
     shellMocks.signInWithNativeOidc.mockResolvedValue(undefined);
 
-    renderNativeLogin('/login?next=%2F%3Fview%3Dfavorites');
+    await renderNativeLogin('/login?next=%2F%3Fview%3Dfavorites');
 
     await user.click(await screen.findByRole('button', { name: '使用 校园身份 登录' }));
 
@@ -198,7 +201,7 @@ describe('native sign-in surface', () => {
         }),
     );
 
-    renderNativeLogin('/login');
+    await renderNativeLogin('/login');
     await user.click(await screen.findByRole('button', { name: '使用 校园身份 登录' }));
 
     expect(await screen.findByRole('status')).toHaveTextContent('已在浏览器中打开 校园身份');
@@ -216,7 +219,7 @@ describe('native sign-in surface', () => {
       .mockRejectedValueOnce(new PlatformBridgeError('oidc_error', 'denied', undefined, 'denied'))
       .mockRejectedValueOnce(new PlatformBridgeError('oidc_timeout', 'timeout'));
 
-    renderNativeLogin('/login');
+    await renderNativeLogin('/login');
     await user.click(await screen.findByRole('button', { name: '使用 校园身份 登录' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('授权已取消');
 
@@ -227,7 +230,7 @@ describe('native sign-in surface', () => {
   test('tells the user when the app lost a sign-in while the browser was open', async () => {
     shellMocks.consumeOidcInterruption.mockResolvedValue(true);
 
-    renderNativeLogin('/login');
+    await renderNativeLogin('/login');
 
     expect(await screen.findByRole('alert')).toHaveTextContent('单点登录被中断');
     expect(screen.getByRole('button', { name: '使用 校园身份 登录' })).toBeEnabled();
@@ -237,7 +240,7 @@ describe('native sign-in surface', () => {
     const user = userEvent.setup();
     shellMocks.login.mockResolvedValue(undefined);
 
-    renderNativeLogin('/login');
+    await renderNativeLogin('/login');
 
     expect(await screen.findByRole('button', { name: '使用 校园身份 登录' })).toBeEnabled();
     expect(screen.queryByRole('button', { name: /访问令牌/ })).toBeNull();
@@ -257,7 +260,7 @@ describe('native sign-in surface', () => {
       oidc_display_name: '',
     });
 
-    renderNativeLogin('/login');
+    await renderNativeLogin('/login');
 
     await waitFor(() => expect(getAuthProviders).toHaveBeenCalled());
     expect(await screen.findByRole('button', { name: '登录' })).toBeEnabled();
@@ -275,7 +278,7 @@ describe('native sign-in surface', () => {
       is_oidc_linked: false,
     };
 
-    renderWithQuery(<AccountSignInCard oidcLinkResult={null} />);
+    await renderWithQuery(<AccountSignInCard oidcLinkResult={null} />);
 
     expect(
       await screen.findByText('客户端不支持绑定或解除单点登录，请在网页版中操作'),

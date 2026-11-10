@@ -2,7 +2,7 @@
  * Custom not-found route and document metadata.
  */
 
-import { Link } from 'react-router';
+import { Link } from '@tanstack/react-router';
 
 import { Button } from '@/components/ui/button';
 import { RadarMark } from '@/components/feature/reader-placeholder';

@@ -6,15 +6,18 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import type { InfiniteData } from '@tanstack/react-query';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse, type HttpResponseResolver } from 'msw';
-import { parseAsString, useQueryState } from 'nuqs';
-import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
 import { beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import { WeeklyUpdatesView } from '@/components/weekly/weekly-updates-view';
 import { SELECTED_DATABASE_KEY, readSelectedDatabase } from '@/lib/api';
 import type { WeeklyArticlePage, WeeklyUpdatesSummaryResponse } from '@/lib/api';
 import { server } from '@/tests/mocks/server';
-import { renderWithQuery, type QueryRenderResult, openSelectFromKeyboard } from '@/tests/render';
+import {
+  openSelectFromKeyboard,
+  type QueryRenderResult,
+  renderWithQuery,
+  SearchParamProbe,
+} from '@/tests/render';
 
 type VisiblePageOptions = {
   loadedPages: number;
@@ -96,17 +99,6 @@ const WEEKLY_SUMMARY_FIXTURE: WeeklyUpdatesSummaryResponse = {
 const weeklyArticleRequestUrls: URL[] = [];
 let generalArticleRequestCount = 0;
 let weeklySummaryRequestCount = 0;
-
-/**
- * Display one nuqs string value for URL-state assertions.
- *
- * @param props - Query parameter and test identifier.
- * @returns Current query value.
- */
-function QueryProbe({ parameter, testId }: { parameter: string; testId: string }) {
-  const [value] = useQueryState(parameter, parseAsString);
-  return <output data-testid={testId}>{value ?? ''}</output>;
-}
 
 /**
  * Build one weekly article page for a test response.
@@ -204,12 +196,13 @@ function installDefaultWeeklyHandlers(): void {
  * @param searchParams - Initial URL query string.
  * @returns Render result and query client.
  */
-function renderWeeklyPage(searchParams: string): QueryRenderResult {
+async function renderWeeklyPage(searchParams: string): Promise<QueryRenderResult> {
   return renderWithQuery(
-    <NuqsTestingAdapter searchParams={searchParams} hasMemory>
+    <>
       <WeeklyUpdatesView />
-      <QueryProbe parameter="db" testId="weekly-db" />
-    </NuqsTestingAdapter>,
+      <SearchParamProbe parameter="db" testId="weekly-db" />
+    </>,
+    { url: `/${searchParams}` },
   );
 }
 
@@ -229,7 +222,7 @@ function renderedArticleIds(): string[] {
  */
 async function loadsOneInitialBoundedPage(): Promise<void> {
   installDefaultWeeklyHandlers();
-  renderWeeklyPage('?q=homepage-only&db=fixture.sqlite&journal=101');
+  await renderWeeklyPage('?q=homepage-only&db=fixture.sqlite&journal=101');
 
   expect(await screen.findByText('Weekly first')).toBeInTheDocument();
   expect(weeklySummaryRequestCount).toBe(1);
@@ -271,7 +264,7 @@ async function resetsForDatabaseSelection(): Promise<void> {
   window.localStorage.setItem(SELECTED_DATABASE_KEY, 'homepage.sqlite');
   installDefaultWeeklyHandlers();
   const user = userEvent.setup();
-  renderWeeklyPage('?db=fixture.sqlite&journal=101');
+  await renderWeeklyPage('?db=fixture.sqlite&journal=101');
 
   expect(await screen.findByText('Weekly first')).toBeInTheDocument();
   const databaseSelect = screen
@@ -300,7 +293,7 @@ async function resetsForDatabaseSelection(): Promise<void> {
 async function resetsForJournalSelection(): Promise<void> {
   installDefaultWeeklyHandlers();
   const user = userEvent.setup();
-  renderWeeklyPage('?db=fixture.sqlite&journal=101');
+  await renderWeeklyPage('?db=fixture.sqlite&journal=101');
 
   expect(await screen.findByText('Weekly first')).toBeInTheDocument();
   screen.getByRole('combobox', { name: /^期刊：/ }).focus();
@@ -323,7 +316,7 @@ async function resetsForJournalSelection(): Promise<void> {
 async function resetsForSearchQuery(): Promise<void> {
   installDefaultWeeklyHandlers();
   const user = userEvent.setup();
-  renderWeeklyPage('?db=fixture.sqlite&journal=101');
+  await renderWeeklyPage('?db=fixture.sqlite&journal=101');
 
   expect(await screen.findByText('Weekly first')).toBeInTheDocument();
   const input = screen.getByRole('combobox', { name: '搜索文章' });
@@ -370,7 +363,7 @@ async function loadsCursorPagesWithoutDuplicates(): Promise<void> {
       ),
     );
   });
-  renderWeeklyPage('?db=fixture.sqlite&journal=101');
+  await renderWeeklyPage('?db=fixture.sqlite&journal=101');
 
   expect(await screen.findByText('Weekly first')).toBeInTheDocument();
   await waitFor(() => expect(weeklyViewMocks.onFetchNextPage).not.toBeNull());
@@ -402,7 +395,7 @@ async function resetsForSummaryWindow(): Promise<void> {
       ]),
     );
   });
-  const { queryClient } = renderWeeklyPage('?db=fixture.sqlite&journal=101');
+  const { queryClient } = await renderWeeklyPage('?db=fixture.sqlite&journal=101');
 
   expect(await screen.findByText('Initial window article')).toBeInTheDocument();
   act(() => {
@@ -430,7 +423,7 @@ async function rendersWeeklyFailures(): Promise<void> {
     ),
     http.get('http://localhost/api/meta/databases', () => HttpResponse.json([])),
   );
-  const summaryRender = renderWeeklyPage('');
+  const summaryRender = await renderWeeklyPage('');
 
   expect(await screen.findByText('加载每周更新失败')).toBeInTheDocument();
   expect(screen.getByText('weekly storage unavailable')).toBeInTheDocument();
@@ -441,7 +434,7 @@ async function rendersWeeklyFailures(): Promise<void> {
   installWeeklyHandlers(() =>
     HttpResponse.json({ detail: 'weekly page unavailable' }, { status: 503 }),
   );
-  renderWeeklyPage('?db=fixture.sqlite&journal=101');
+  await renderWeeklyPage('?db=fixture.sqlite&journal=101');
 
   expect(await screen.findByRole('alert')).toHaveTextContent('weekly page unavailable');
   await waitFor(() =>
@@ -460,7 +453,7 @@ async function rendersEmptyWeeklySummary(): Promise<void> {
   };
   installWeeklyHandlers(() => HttpResponse.json(weeklyPage([])), emptySummary);
   server.use(http.get('http://localhost/api/meta/databases', () => HttpResponse.json([])));
-  renderWeeklyPage('');
+  await renderWeeklyPage('');
 
   expect(await screen.findByText('0 个数据库')).toBeInTheDocument();
   expect(screen.getByText('0 篇新文章')).toBeInTheDocument();
@@ -502,7 +495,7 @@ async function abortsObsoleteWeeklyRequests(): Promise<void> {
     return HttpResponse.json(weeklyPage([]));
   });
   const user = userEvent.setup();
-  const view = renderWeeklyPage('?db=fixture.sqlite&journal=101');
+  const view = await renderWeeklyPage('?db=fixture.sqlite&journal=101');
   try {
     await waitFor(() => expect(signals).toHaveLength(1));
     (await screen.findByRole('combobox', { name: /^期刊：/ })).focus();
@@ -535,15 +528,15 @@ async function abortsObsoleteWeeklyRequests(): Promise<void> {
 async function reusesWeeklyFavoriteIds(): Promise<void> {
   installDefaultWeeklyHandlers();
   const searchParams = '?db=fixture.sqlite&journal=101';
-  const view = renderWeeklyPage(searchParams);
+  const view = await renderWeeklyPage(searchParams);
   await screen.findByText('Weekly first');
   const articleIds = weeklyViewMocks.favoriteArticleIds;
   expect(articleIds).toEqual(['weekly-1', 'weekly-2', 'weekly-3']);
   view.rerender(
-    <NuqsTestingAdapter searchParams={searchParams} hasMemory>
+    <>
       <WeeklyUpdatesView />
-      <QueryProbe parameter="db" testId="weekly-db" />
-    </NuqsTestingAdapter>,
+      <SearchParamProbe parameter="db" testId="weekly-db" />
+    </>,
   );
   expect(weeklyViewMocks.favoriteArticleIds).toBe(articleIds);
   await act(async () => {

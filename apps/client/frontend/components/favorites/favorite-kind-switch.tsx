@@ -3,17 +3,27 @@
  */
 
 import { FileText, Share2 } from '@/components/ui/animated-icons';
-import { parseAsStringLiteral, useQueryState } from 'nuqs';
+import { useSearch } from '@tanstack/react-router';
 
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import {
+  FAVORITE_KINDS,
+  useUpdateWorkspaceSearch,
+  WORKSPACE_ROUTE_ID,
+  type FavoriteKind,
+} from '@/lib/search-params';
 
-/** Favorite kinds shown on the favorites page. */
-export const FAVORITE_KINDS = ['articles', 'graphs'] as const;
+const DEFAULT_FAVORITE_KIND = 'articles' satisfies FavoriteKind;
 
-/** One favorite kind shown on the favorites page. */
-export type FavoriteKind = (typeof FAVORITE_KINDS)[number];
-
-const FAVORITE_KIND_PARSER = parseAsStringLiteral(FAVORITE_KINDS).withDefault('articles');
+/**
+ * Check whether a toggle value names a favorite kind.
+ *
+ * @param value - Selected toggle value.
+ * @returns Whether the value is a favorite kind.
+ */
+function isFavoriteKind(value: string): value is FavoriteKind {
+  return FAVORITE_KINDS.some((kind) => kind === value);
+}
 
 const FAVORITE_KIND_OPTIONS = [
   { kind: 'articles', label: '文章', icon: FileText },
@@ -26,7 +36,24 @@ const FAVORITE_KIND_OPTIONS = [
  * @returns Current kind and its setter.
  */
 export function useFavoriteKind() {
-  return useQueryState('kind', FAVORITE_KIND_PARSER);
+  const kind = useSearch({
+    from: WORKSPACE_ROUTE_ID,
+    select: (search) => search.kind ?? DEFAULT_FAVORITE_KIND,
+  });
+  const updateSearch = useUpdateWorkspaceSearch();
+
+  /**
+   * Store a favorite kind, omitting the default from the URL.
+   *
+   * @param nextKind - Favorite kind to show.
+   */
+  const setKind = (nextKind: FavoriteKind) => {
+    void updateSearch((search) => ({
+      ...search,
+      kind: nextKind === DEFAULT_FAVORITE_KIND ? undefined : nextKind,
+    }));
+  };
+  return [kind, setKind] as const;
 }
 
 /**
@@ -43,7 +70,7 @@ export function FavoriteKindSwitch() {
       aria-label="收藏类型"
       value={kind}
       onValueChange={(option) => {
-        if (option) void setKind(option === 'articles' ? null : (option as typeof kind));
+        if (isFavoriteKind(option)) setKind(option);
       }}
     >
       {FAVORITE_KIND_OPTIONS.map(({ kind: option, label, icon: Icon }) => (

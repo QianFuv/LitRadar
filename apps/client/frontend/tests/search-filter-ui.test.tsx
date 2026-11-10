@@ -2,8 +2,6 @@
  * Search draft, history, filter-pill, month-range, and scroll-reset coverage.
  */
 
-import { useQueryState, parseAsString } from 'nuqs';
-import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
 import { ThemeProvider } from 'next-themes';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -24,20 +22,11 @@ import {
   resolveMonthRangeForYears,
 } from '@/lib/article-filters';
 import { readSelectedDatabase } from '@/lib/api';
+import { useUpdateWorkspaceSearch } from '@/lib/search-params';
 import { setSelectedDatabase } from '@/lib/selected-database';
 import { createAuthUserScenario } from '@/tests/mocks/scenarios';
 import { server } from '@/tests/mocks/server';
-import { renderWithQuery } from '@/tests/render';
-
-const navigationMocks = vi.hoisted(() => ({
-  navigate: vi.fn(),
-}));
-
-vi.mock('react-router', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('react-router')>()),
-  useLocation: () => ({ pathname: '/', search: '', hash: '', state: null, key: 'default' }),
-  useNavigate: () => navigationMocks.navigate,
-}));
+import { renderWithQuery, SearchParamProbe } from '@/tests/render';
 
 vi.mock('next-themes', () => ({
   ThemeProvider: ({ children }: { children: ReactNode }) => children,
@@ -53,26 +42,18 @@ vi.mock('@/components/ui/scroll-area', () => ({
 }));
 
 /**
- * Display one live nuqs string value for interaction assertions.
- *
- * @param props - Query parameter name and test identifier.
- * @returns Query-state probe.
- */
-function QueryProbe({ parameter, testId }: { parameter: string; testId: string }) {
-  const [value] = useQueryState(parameter, parseAsString);
-  return <output data-testid={testId}>{value ?? ''}</output>;
-}
-
-/**
  * Replace one query parameter from outside the search form.
  *
  * @param props - Query parameter name and replacement value.
  * @returns Query-state update control.
  */
-function QuerySetter({ parameter, value }: { parameter: string; value: string }) {
-  const [, setValue] = useQueryState(parameter, parseAsString);
+function QuerySetter({ parameter, value }: { parameter: 'q' | 'weekly_q'; value: string }) {
+  const updateSearch = useUpdateWorkspaceSearch();
   return (
-    <button type="button" onClick={() => void setValue(value)}>
+    <button
+      type="button"
+      onClick={() => void updateSearch((search) => ({ ...search, [parameter]: value }))}
+    >
       Replace query
     </button>
   );
@@ -127,11 +108,12 @@ function normalizesMonthRanges(): void {
  */
 async function keepsSearchDraftSeparate(): Promise<void> {
   const user = userEvent.setup();
-  renderWithQuery(
-    <NuqsTestingAdapter searchParams="?q=applied" hasMemory>
+  await renderWithQuery(
+    <>
       <SearchBar />
-      <QueryProbe parameter="q" testId="query-value" />
-    </NuqsTestingAdapter>,
+      <SearchParamProbe parameter="q" testId="query-value" />
+    </>,
+    { url: '/?q=applied' },
   );
   const input = screen.getByRole('combobox', { name: '搜索文章' });
 
@@ -153,11 +135,12 @@ async function keepsSearchDraftSeparate(): Promise<void> {
  */
 async function synchronizesExternalSearchQuery(): Promise<void> {
   const user = userEvent.setup();
-  renderWithQuery(
-    <NuqsTestingAdapter searchParams="?q=applied" hasMemory>
+  await renderWithQuery(
+    <>
       <SearchBar />
       <QuerySetter parameter="q" value="external" />
-    </NuqsTestingAdapter>,
+    </>,
+    { url: '/?q=applied' },
   );
   const input = screen.getByRole('combobox', { name: '搜索文章' });
 
@@ -178,11 +161,12 @@ async function operatesSearchHistoryFromKeyboard(): Promise<void> {
     JSON.stringify(['first query', 'second query']),
   );
   const user = userEvent.setup();
-  renderWithQuery(
-    <NuqsTestingAdapter hasMemory>
+  await renderWithQuery(
+    <>
       <SearchBar />
-      <QueryProbe parameter="q" testId="history-query" />
-    </NuqsTestingAdapter>,
+      <SearchParamProbe parameter="q" testId="history-query" />
+    </>,
+    { url: '/' },
   );
   const input = screen.getByRole('combobox', { name: '搜索文章' });
 
@@ -221,12 +205,13 @@ async function operatesSearchHistoryFromKeyboard(): Promise<void> {
  */
 async function targetsOptionalQueryParameter(): Promise<void> {
   const user = userEvent.setup();
-  renderWithQuery(
-    <NuqsTestingAdapter searchParams="?q=home&weekly_q=weekly" hasMemory>
+  await renderWithQuery(
+    <>
       <SearchBar queryParam="weekly_q" />
-      <QueryProbe parameter="q" testId="home-query" />
-      <QueryProbe parameter="weekly_q" testId="weekly-query" />
-    </NuqsTestingAdapter>,
+      <SearchParamProbe parameter="q" testId="home-query" />
+      <SearchParamProbe parameter="weekly_q" testId="weekly-query" />
+    </>,
+    { url: '/?q=home&weekly_q=weekly' },
   );
   const input = screen.getByRole('combobox', { name: '搜索文章' });
 
@@ -327,18 +312,16 @@ async function summarizesAndClearsAppliedFilters(): Promise<void> {
     ),
   );
   const user = userEvent.setup();
-  renderWithQuery(
+  await renderWithQuery(
     <ThemeProvider attribute="class">
       <AuthProvider>
-        <NuqsTestingAdapter
-          searchParams="?q=systems&area=Information%20Systems&journal_id=journal-1&month_range=2024-01..2024-12&abs_rating=4,4*&fms_rating=A"
-          hasMemory
-        >
-          <SearchFilters />
-          <QueryProbe parameter="q" testId="retained-query" />
-        </NuqsTestingAdapter>
+        <SearchFilters />
+        <SearchParamProbe parameter="q" testId="retained-query" />
       </AuthProvider>
     </ThemeProvider>,
+    {
+      url: '/?q=systems&area=Information%20Systems&journal_id=journal-1&month_range=2024-01..2024-12&abs_rating=4,4*&fms_rating=A',
+    },
   );
 
   await screen.findByRole('combobox', { name: '检索数据库' });
@@ -380,17 +363,15 @@ async function rendersUnavailableYearState(): Promise<void> {
     http.get('http://localhost/api/years', () => HttpResponse.json([])),
   );
   const user = userEvent.setup();
-  renderWithQuery(
+  await renderWithQuery(
     <ThemeProvider attribute="class">
       <AuthProvider>
-        <NuqsTestingAdapter
-          searchParams="?q=systems&area=Information%20Systems&journal_id=journal-1&month_range=2024-01..2024-12"
-          hasMemory
-        >
-          <SearchFilters />
-        </NuqsTestingAdapter>
+        <SearchFilters />
       </AuthProvider>
     </ThemeProvider>,
+    {
+      url: '/?q=systems&area=Information%20Systems&journal_id=journal-1&month_range=2024-01..2024-12',
+    },
   );
 
   const timePanel = await openFilterPanel(user, /^发表时间/);
@@ -419,14 +400,13 @@ async function rendersRecentRangeShortcuts(): Promise<void> {
     ),
   );
   const user = userEvent.setup();
-  renderWithQuery(
+  await renderWithQuery(
     <ThemeProvider attribute="class">
       <AuthProvider>
-        <NuqsTestingAdapter hasMemory>
-          <SearchFilters />
-        </NuqsTestingAdapter>
+        <SearchFilters />
       </AuthProvider>
     </ThemeProvider>,
+    { url: '/' },
   );
 
   const timePanel = await openFilterPanel(user, /^发表时间/);
@@ -481,15 +461,14 @@ async function selectsRatingsAndClearsThemWhenChangingDatabase(): Promise<void> 
     }),
   );
   const user = userEvent.setup();
-  renderWithQuery(
+  await renderWithQuery(
     <ThemeProvider attribute="class">
       <AuthProvider>
-        <NuqsTestingAdapter searchParams="?q=retained&area=Medicine&journal_id=101" hasMemory>
-          <SearchFilters />
-          <QueryProbe parameter="q" testId="retained-query" />
-        </NuqsTestingAdapter>
+        <SearchFilters />
+        <SearchParamProbe parameter="q" testId="retained-query" />
       </AuthProvider>
     </ThemeProvider>,
+    { url: '/?q=retained&area=Medicine&journal_id=101' },
   );
   let ratingPanel = await openFilterPanel(user, /^期刊评级/);
   await user.click(await within(ratingPanel).findByRole('option', { name: 'ABS 4' }));
@@ -547,11 +526,7 @@ beforeEach(() => {
 /** Verify ordinary typing avoids storage reads while arrows can load newly saved history. */
 async function readsHistoryOnlyForNavigation(): Promise<void> {
   const user = userEvent.setup();
-  renderWithQuery(
-    <NuqsTestingAdapter>
-      <SearchBar />
-    </NuqsTestingAdapter>,
-  );
+  await renderWithQuery(<SearchBar />, { url: '/' });
   const input = screen.getByRole('combobox', { name: '搜索文章' });
   await user.click(input);
   const storageRead = vi.spyOn(Storage.prototype, 'getItem');
@@ -586,12 +561,11 @@ async function defersClosedJournalOptions(): Promise<void> {
     ),
     http.get('http://localhost/api/years', () => HttpResponse.json([])),
   );
-  const view = renderWithQuery(
+  const view = await renderWithQuery(
     <AuthProvider>
-      <NuqsTestingAdapter hasMemory>
-        <SearchFilters />
-      </NuqsTestingAdapter>
+      <SearchFilters />
     </AuthProvider>,
+    { url: '/' },
   );
   await waitFor(() =>
     expect(view.queryClient.getQueryData(['meta', 'journals', 'fixture.sqlite'])).toHaveLength(100),
@@ -604,9 +578,7 @@ async function defersClosedJournalOptions(): Promise<void> {
   const mapOptions = vi.spyOn(options, 'map');
   view.rerender(
     <AuthProvider>
-      <NuqsTestingAdapter hasMemory>
-        <SearchFilters className="updated" />
-      </NuqsTestingAdapter>
+      <SearchFilters className="updated" />
     </AuthProvider>,
   );
   expect(mapOptions).not.toHaveBeenCalled();
@@ -663,12 +635,11 @@ async function indexesSelectedJournalMembership(): Promise<void> {
     ),
     http.get('http://localhost/api/years', () => HttpResponse.json([])),
   );
-  const view = renderWithQuery(
+  const view = await renderWithQuery(
     <AuthProvider>
-      <NuqsTestingAdapter searchParams={searchParams} hasMemory>
-        <SearchFilters />
-      </NuqsTestingAdapter>
+      <SearchFilters />
     </AuthProvider>,
+    { url: `/${searchParams}` },
   );
   await waitFor(() =>
     expect(view.queryClient.getQueryData(['meta', 'journals', 'fixture.sqlite'])).toHaveLength(200),
@@ -678,9 +649,7 @@ async function indexesSelectedJournalMembership(): Promise<void> {
   try {
     view.rerender(
       <AuthProvider>
-        <NuqsTestingAdapter searchParams={searchParams} hasMemory>
-          <SearchFilters className="updated" />
-        </NuqsTestingAdapter>
+        <SearchFilters className="updated" />
       </AuthProvider>,
     );
     await openFilterPanel(user, /^期刊：已选 100 本/);

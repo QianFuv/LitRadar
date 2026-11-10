@@ -73,7 +73,7 @@ async function managesAnnouncementLifecycle(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderWithQuery(<AnnouncementsCard />);
+  await renderWithQuery(<AnnouncementsCard />);
 
   expect(await screen.findByText('暂无公告')).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: '新建公告' }));
@@ -152,7 +152,7 @@ async function retriesFailedAnnouncementCreation(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderWithQuery(<AnnouncementsCard />);
+  await renderWithQuery(<AnnouncementsCard />);
 
   await user.click(await screen.findByRole('button', { name: '新建公告' }));
   const dialog = screen.getByRole('dialog', { name: '新建公告' });
@@ -189,7 +189,7 @@ async function retriesFailedAnnouncementDeletion(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderWithQuery(<AnnouncementsCard />);
+  await renderWithQuery(<AnnouncementsCard />);
 
   await user.click(await screen.findByRole('button', { name: '删除公告 Maintenance' }));
   const dialog = screen.getByRole('alertdialog', { name: '删除公告？' });

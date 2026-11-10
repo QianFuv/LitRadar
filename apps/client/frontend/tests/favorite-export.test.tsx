@@ -5,7 +5,6 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import { FavoritesPageContent } from '@/components/favorites/favorites-page-content';
@@ -62,11 +61,12 @@ function installFavoritePageHandlers(): void {
 /**
  * Render the favorites page with its authenticated and URL-state providers.
  */
-function renderFavoritesPage(): void {
-  renderWithQuery(
+async function renderFavoritesPage(): Promise<void> {
+  await renderWithQuery(
     <AuthProvider>
       <AuthenticatedFavoriteFixture />
     </AuthProvider>,
+    { url: '/?folder=3' },
   );
 }
 
@@ -74,11 +74,7 @@ function renderFavoritesPage(): void {
 function AuthenticatedFavoriteFixture() {
   const { user, loading } = useAuth();
   if (loading || !user) return null;
-  return (
-    <NuqsTestingAdapter searchParams="?folder=3">
-      <FavoritesPageContent userId={user.id} />
-    </NuqsTestingAdapter>
-  );
+  return <FavoritesPageContent userId={user.id} />;
 }
 
 /**
@@ -98,7 +94,7 @@ async function downloadsWithServerFilename(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderFavoritesPage();
+  await renderFavoritesPage();
 
   await user.click(await screen.findByRole('button', { name: '导出收藏夹' }, { timeout: 3000 }));
   await user.click(await screen.findByRole('button', { name: '导出引用' }));
@@ -128,7 +124,7 @@ async function downloadsWithFallbackFilename(): Promise<void> {
     ),
   );
   const user = userEvent.setup();
-  renderFavoritesPage();
+  await renderFavoritesPage();
 
   await user.click(await screen.findByRole('button', { name: '导出收藏夹' }, { timeout: 3000 }));
   await user.click(await screen.findByRole('button', { name: '导出引用' }));
@@ -162,7 +158,7 @@ async function surfacesExportFailureInPlace(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderFavoritesPage();
+  await renderFavoritesPage();
 
   await user.click(await screen.findByRole('button', { name: '导出收藏夹' }, { timeout: 3000 }));
   await user.click(await screen.findByRole('button', { name: '导出引用' }));

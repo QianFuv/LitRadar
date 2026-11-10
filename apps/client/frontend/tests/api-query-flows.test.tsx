@@ -155,7 +155,7 @@ async function loadsInfinitePages(): Promise<void> {
   server.use(http.get('http://localhost/api/articles', paginatedArticleResponse));
   const user = userEvent.setup();
 
-  renderWithQuery(<PaginationHarness />);
+  await renderWithQuery(<PaginationHarness />);
 
   expect(await screen.findByText('First page')).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Load more' }));

@@ -3,7 +3,6 @@
  */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { NuqsAdapter } from 'nuqs/adapters/react-router/v7';
 import { ThemeProvider } from 'next-themes';
 import { useEffect, useState } from 'react';
 
@@ -60,7 +59,7 @@ function createQueryClient(): QueryClient {
 }
 
 /**
- * Provide theme, URL-state, query, authentication, and global error facilities.
+ * Provide theme, query, authentication, and global error facilities.
  *
  * @param props - Provider children.
  * @returns Root client provider tree.
@@ -73,13 +72,11 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
       <MotionProvider>
-        <NuqsAdapter>
-          <QueryClientProvider client={queryClient}>
-            <AuthProvider>
-              <RevealScope>{children}</RevealScope>
-            </AuthProvider>
-          </QueryClientProvider>
-        </NuqsAdapter>
+        <QueryClientProvider client={queryClient}>
+          <AuthProvider>
+            <RevealScope>{children}</RevealScope>
+          </AuthProvider>
+        </QueryClientProvider>
       </MotionProvider>
     </ThemeProvider>
   );

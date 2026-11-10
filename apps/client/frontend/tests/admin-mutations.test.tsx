@@ -160,7 +160,7 @@ async function updatesAndDeletesTask(): Promise<void> {
   );
   const user = userEvent.setup();
 
-  renderWithQuery(<ScheduledTasksCard />);
+  await renderWithQuery(<ScheduledTasksCard />);
 
   expect(await screen.findByText('健康 worker：1/1')).toBeInTheDocument();
   expect(screen.getByText(/成功/)).toBeInTheDocument();
@@ -195,7 +195,7 @@ async function createsTypedScheduledTask(): Promise<void> {
   );
   const user = userEvent.setup();
 
-  renderWithQuery(<ScheduledTasksCard />);
+  await renderWithQuery(<ScheduledTasksCard />);
 
   await user.click(await screen.findByRole('button', { name: '新建任务' }));
   await user.type(screen.getByLabelText('任务名称'), 'Daily typed task');
@@ -243,7 +243,7 @@ async function retriesFailedScheduledTaskCreation(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderWithQuery(<ScheduledTasksCard />);
+  await renderWithQuery(<ScheduledTasksCard />);
 
   await user.click(await screen.findByRole('button', { name: '新建任务' }));
   const dialog = screen.getByRole('dialog', { name: '新建定时任务' });
@@ -284,7 +284,7 @@ async function preventsDuplicateScheduledTaskCreation(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderWithQuery(<ScheduledTasksCard />);
+  await renderWithQuery(<ScheduledTasksCard />);
 
   await user.click(await screen.findByRole('button', { name: '新建任务' }));
   const dialog = screen.getByRole('dialog', { name: '新建定时任务' });
@@ -316,7 +316,7 @@ async function replacesLegacyScheduledTask(): Promise<void> {
   );
   const user = userEvent.setup();
 
-  renderWithQuery(<ScheduledTasksCard />);
+  await renderWithQuery(<ScheduledTasksCard />);
 
   const legacySwitch = await screen.findByRole('switch', {
     name: '旧定时任务 Legacy job 需替换',
@@ -404,7 +404,7 @@ async function confirmsAdministratorDeletionTargets(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderWithQuery(
+  await renderWithQuery(
     <>
       <AdminInviteCodesCard isEnabled />
       <AnnouncementsCard />
@@ -467,7 +467,7 @@ async function createsCopiesAndRetriesInviteCodes(): Promise<void> {
     configurable: true,
     value: { writeText },
   });
-  renderWithQuery(<AdminInviteCodesCard isEnabled />);
+  await renderWithQuery(<AdminInviteCodesCard isEnabled />);
 
   await user.clear(screen.getByLabelText('有效天数'));
   await user.type(screen.getByLabelText('有效天数'), '30');
@@ -500,7 +500,7 @@ async function showsInviteListFailure(): Promise<void> {
       HttpResponse.json({ detail: 'Invite list unavailable' }, { status: 503 }),
     ),
   );
-  renderWithQuery(<AdminInviteCodesCard isEnabled />);
+  await renderWithQuery(<AdminInviteCodesCard isEnabled />);
 
   expect(await screen.findByRole('alert')).toHaveTextContent('Invite list unavailable');
 }
@@ -521,7 +521,7 @@ async function pausesInactiveSchedulerQueries(): Promise<void> {
     }),
   );
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-  const view = renderWithQuery(<ScheduledTasksCard isActive={false} />);
+  const view = await renderWithQuery(<ScheduledTasksCard isActive={false} />);
   try {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(60_000);
@@ -578,7 +578,7 @@ async function reusesInviteDatesDuringFormEdits(): Promise<void> {
   server.use(
     http.get('http://localhost/api/admin/invite-codes', () => HttpResponse.json(inviteCodes)),
   );
-  const view = renderWithQuery(<AdminInviteCodesCard isEnabled />);
+  const view = await renderWithQuery(<AdminInviteCodesCard isEnabled />);
   await screen.findByText('HISTORICAL-25');
   const updatedExpiry = 2_300_000_000;
   const updatedCreation = 1_600_000_000;

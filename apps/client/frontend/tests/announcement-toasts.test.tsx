@@ -78,7 +78,7 @@ function hasToast(id: number): boolean {
 /** Show every unread announcement with its priority and persist a permanent dismissal for one. */
 async function rendersPrioritiesAndDismissesOnePermanently(): Promise<void> {
   const user = userEvent.setup();
-  renderAnnouncements([
+  await renderAnnouncements([
     createAnnouncement(1, 'high'),
     createAnnouncement(2, 'normal'),
     createAnnouncement(3, 'low'),
@@ -105,7 +105,7 @@ async function recoversDismissalStorageAndPersistsSevenDays(): Promise<void> {
   window.localStorage.setItem(`${STORAGE_PREFIX}13`, String(now + 60_000));
   window.localStorage.setItem(`${STORAGE_PREFIX}14`, '0');
   const user = userEvent.setup();
-  renderAnnouncements([
+  await renderAnnouncements([
     createAnnouncement(11),
     createAnnouncement(12),
     createAnnouncement(13),
@@ -129,7 +129,7 @@ async function recoversDismissalStorageAndPersistsSevenDays(): Promise<void> {
 /** Store the local end-of-day boundary for the today action. */
 async function persistsEndOfTodayDismissal(): Promise<void> {
   const user = userEvent.setup();
-  renderAnnouncements([createAnnouncement(21)]);
+  await renderAnnouncements([createAnnouncement(21)]);
   await user.click(
     within(await findToast(21)).getByRole('button', { name: '今日不再提示', hidden: true }),
   );
@@ -146,7 +146,7 @@ async function showsEachAnnouncementOncePerPage(): Promise<void> {
   const first = createAnnouncement(31);
   const second = createAnnouncement(32, 'high');
   const user = userEvent.setup();
-  const { queryClient } = renderAnnouncements([first]);
+  const { queryClient } = await renderAnnouncements([first]);
 
   await user.click(within(await findToast(31)).getByLabelText('关闭'));
   await waitFor(() => expect(hasToast(31)).toBe(false));

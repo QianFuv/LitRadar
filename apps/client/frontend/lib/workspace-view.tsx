@@ -1,8 +1,6 @@
 /**
- * Canonical root-workspace view identifiers, parser, and destinations.
+ * Canonical root-workspace view identifiers and destinations.
  */
-
-import { parseAsStringLiteral } from 'nuqs';
 
 export const WORKSPACE_VIEW_IDS = [
   'search',
@@ -14,22 +12,15 @@ export const WORKSPACE_VIEW_IDS = [
 
 export type WorkspaceView = (typeof WORKSPACE_VIEW_IDS)[number];
 
-export const WORKSPACE_VIEW_PARSER = parseAsStringLiteral(WORKSPACE_VIEW_IDS).withDefault('search');
-
-const WORKSPACE_VIEW_HREFS: Readonly<Record<WorkspaceView, string>> = {
-  search: '/',
-  favorites: '/?view=favorites',
-  'weekly-updates': '/?view=weekly-updates',
-  'cfp-tracking': '/?view=cfp-tracking',
-  relations: '/?view=relations',
-};
+/** View shown when the URL names no view or an unknown one. */
+export const DEFAULT_WORKSPACE_VIEW = 'search' satisfies WorkspaceView;
 
 /**
- * Return the canonical root URL for one article-workspace view.
+ * Return the canonical root search state for one article-workspace view.
  *
  * @param view - Valid workspace view identifier.
- * @returns Canonical root destination.
+ * @returns Search state that names only the view, or nothing for the default search view.
  */
-export function getWorkspaceViewHref(view: WorkspaceView): string {
-  return WORKSPACE_VIEW_HREFS[view];
+export function getWorkspaceViewSearch(view: WorkspaceView) {
+  return view === DEFAULT_WORKSPACE_VIEW ? {} : { view };
 }

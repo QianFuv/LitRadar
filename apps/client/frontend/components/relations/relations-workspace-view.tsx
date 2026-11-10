@@ -15,7 +15,7 @@ import {
   Search,
   Share2,
 } from '@/components/ui/animated-icons';
-import { parseAsInteger, parseAsString, useQueryStates } from 'nuqs';
+import { useSearch } from '@tanstack/react-router';
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 
 import {
@@ -63,17 +63,11 @@ import {
   type RelationGraph,
   type RelationPoint,
 } from '@/lib/relation-graph';
+import { useUpdateWorkspaceSearch, WORKSPACE_ROUTE_ID } from '@/lib/search-params';
 import { useSelectedDatabase } from '@/lib/selected-database';
 import { READER_DOCK_MEDIA_QUERY, useMediaQuery } from '@/lib/use-media-query';
 import { cn } from '@/lib/utils';
 import { LoadingText } from '@/components/ui/loading-text';
-
-/** URL state of the workspace: center article, its database, and an opened saved graph. */
-const RELATION_QUERY_PARSERS = {
-  article: parseAsString,
-  db: parseAsString,
-  saved: parseAsInteger,
-};
 
 /** Related lists are shared with the article reader and change only when the index updates. */
 const RELATED_STALE_TIME_MS = 10 * 60 * 1000;
@@ -87,8 +81,11 @@ type RelationViewMode = 'graph' | 'list';
  * @returns Relation-graph workspace.
  */
 export function RelationsWorkspaceView() {
-  const [{ article: articleId, db: dbName, saved: savedId }, setParams] =
-    useQueryStates(RELATION_QUERY_PARSERS);
+  const search = useSearch({ from: WORKSPACE_ROUTE_ID });
+  const updateSearch = useUpdateWorkspaceSearch();
+  const articleId = search.article ?? null;
+  const dbName = search.db ?? null;
+  const savedId = search.saved ?? null;
   const [stored] = useState(readStoredRelationGraph);
   const isRestoring = (!articleId || !dbName) && stored !== null;
   const savedQuery = useQuery({
@@ -101,18 +98,24 @@ export function RelationsWorkspaceView() {
 
   useEffect(() => {
     if (isRestoring && stored) {
-      void setParams(
-        { article: stored.graph.rootId, db: stored.dbName, saved: stored.savedId ?? null },
-        { history: 'replace' },
-      );
+      void updateSearch((current) => ({
+        ...current,
+        article: stored.graph.rootId,
+        db: stored.dbName,
+        saved: stored.savedId ?? undefined,
+      }));
     }
-  }, [isRestoring, setParams, stored]);
+  }, [isRestoring, stored, updateSearch]);
 
   if (!articleId || !dbName) {
     return isRestoring ? null : (
       <RelationPicker
         onPick={(article, pickedDbName) =>
-          void setParams({ article: relationNodeId(article), db: pickedDbName })
+          void updateSearch((current) => ({
+            ...current,
+            article: relationNodeId(article),
+            db: pickedDbName,
+          }))
         }
       />
     );

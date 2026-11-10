@@ -14,22 +14,7 @@ import { createAuthUserScenario } from '@/tests/mocks/scenarios';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
-const navigationMocks = vi.hoisted(() => ({
-  pathname: '/',
-  searchParams: new URLSearchParams('view=favorites&folder=4'),
-}));
-
-vi.mock('react-router', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('react-router')>()),
-  useLocation: () => ({
-    pathname: navigationMocks.pathname,
-    search: '',
-    hash: '',
-    state: null,
-    key: 'default',
-  }),
-  useSearchParams: () => [navigationMocks.searchParams, vi.fn()],
-}));
+const WORKSPACE_URL = '/?view=favorites&folder=4';
 
 /**
  * Prevent jsdom from attempting document navigation after React handlers finish.
@@ -122,12 +107,14 @@ function registerArticleDialogHandlers(): void {
  * Render one production article card inside authentication and query providers.
  *
  * @param article - Article fixture to render.
+ * @param url - Workspace URL the card is rendered at.
  */
-async function renderArticleCard(article: Article): Promise<void> {
-  renderWithQuery(
+async function renderArticleCard(article: Article, url = WORKSPACE_URL): Promise<void> {
+  await renderWithQuery(
     <AuthProvider>
       <AuthenticatedArticleFixture article={article} />
     </AuthProvider>,
+    { url },
   );
   await screen.findByRole('button', { name: /^查看文章详情：/ });
 }
@@ -173,29 +160,26 @@ async function opensAndClosesAccessibleDialog(): Promise<void> {
  */
 async function highlightsSearchTermsInDetails(): Promise<void> {
   registerArticleDialogHandlers();
-  const previousSearchParams = navigationMocks.searchParams;
-  navigationMocks.searchParams = new URLSearchParams('q=xgb');
-  try {
-    const user = userEvent.setup();
-    await renderArticleCard({
+  const user = userEvent.setup();
+  await renderArticleCard(
+    {
       ...SAFE_ARTICLE,
       title: 'EMD-XGB-ELM forecasting',
       abstract: 'Compared with XGBoost, the XGB_F model is stable.',
-    });
-    await user.click(screen.getByRole('button', { name: /^查看文章详情：/ }));
-    const dialog = await screen.findByRole('dialog');
+    },
+    '/?q=xgb',
+  );
+  await user.click(screen.getByRole('button', { name: /^查看文章详情：/ }));
+  const dialog = await screen.findByRole('dialog');
 
-    const highlights = Array.from(dialog.querySelectorAll('span.bg-info'), (mark) => [
-      mark.closest('[data-slot="article-detail-title"]') ? 'title' : 'abstract',
-      mark.textContent,
-    ]);
-    expect(highlights).toEqual([
-      ['title', 'XGB'],
-      ['abstract', 'XGB'],
-    ]);
-  } finally {
-    navigationMocks.searchParams = previousSearchParams;
-  }
+  const highlights = Array.from(dialog.querySelectorAll('span.bg-info'), (mark) => [
+    mark.closest('[data-slot="article-detail-title"]') ? 'title' : 'abstract',
+    mark.textContent,
+  ]);
+  expect(highlights).toEqual([
+    ['title', 'XGB'],
+    ['abstract', 'XGB'],
+  ]);
 }
 
 /** Verify the row metadata lists ordered authors before the journal metadata. */
@@ -222,7 +206,7 @@ async function showsJournalWithoutAuthors(authors: Article['authors']): Promise<
 async function keepsSelectionSeparateFromOpening(): Promise<void> {
   registerArticleDialogHandlers();
   const user = userEvent.setup();
-  renderWithQuery(
+  await renderWithQuery(
     <AuthProvider>
       <ArticleDialogCard
         article={SAFE_ARTICLE}
@@ -230,6 +214,7 @@ async function keepsSelectionSeparateFromOpening(): Promise<void> {
         leading={<input type="checkbox" aria-label="选择文章" />}
       />
     </AuthProvider>,
+    { url: WORKSPACE_URL },
   );
 
   const selection = window.getSelection();

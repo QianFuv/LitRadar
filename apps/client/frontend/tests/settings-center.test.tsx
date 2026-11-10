@@ -11,36 +11,31 @@ import { beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 import { SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE } from '@/components/feature/sectioned-dialog';
 import { SettingsCenterDialog } from '@/components/settings/settings-center-dialog';
 import {
-  buildSettingsCenterHref,
+  withSettingsSection,
   parseSettingsSection,
   SETTINGS_SECTION_IDS,
 } from '@/lib/settings-center';
 import { idleManualPushStatusResponse } from '@/tests/mocks/handlers/tracking';
 import { server } from '@/tests/mocks/server';
-import { renderWithQuery } from '@/tests/render';
+import { stringifySearchObject } from '@/lib/search-params';
+import { readRouterUrl, renderWithQuery, type TestRouter } from '@/tests/render';
 
-const navigationMocks = vi.hoisted(() => ({
-  pathname: '/',
-  navigate: vi.fn(),
-  searchParams: new URLSearchParams('view=favorites&folder=4&settings=general'),
-}));
+const WORKSPACE_URL = '/?view=favorites&folder=4';
+const GENERAL_SETTINGS_URL = `${WORKSPACE_URL}&settings=general`;
+
+/**
+ * Move the in-memory location as an external navigation would.
+ *
+ * @param router - Router of the rendered dialog.
+ * @param href - Next location.
+ */
+async function visit(router: TestRouter, href: string): Promise<void> {
+  await act(() => router.navigate({ href, replace: true }));
+}
 
 const themeMocks = vi.hoisted(() => ({
   setTheme: vi.fn(),
   theme: 'system',
-}));
-
-vi.mock('react-router', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('react-router')>()),
-  useLocation: () => ({
-    pathname: navigationMocks.pathname,
-    search: '',
-    hash: '',
-    state: null,
-    key: 'default',
-  }),
-  useNavigate: () => navigationMocks.navigate,
-  useSearchParams: () => [navigationMocks.searchParams, vi.fn()],
 }));
 
 vi.mock('next-themes', () => ({
@@ -93,27 +88,27 @@ function preservesSettingsQueryState(): void {
     expect(parseSettingsSection(section)).toBe(section);
   }
   expect(parseSettingsSection('unknown')).toBeNull();
-  expect(parseSettingsSection(null)).toBeNull();
+  expect(parseSettingsSection(undefined)).toBeNull();
   expect(
-    buildSettingsCenterHref(
-      '/',
-      new URLSearchParams('view=favorites&folder=4&settings=general&admin=users'),
-      'tokens',
+    stringifySearchObject(
+      withSettingsSection(
+        { view: 'favorites', folder: 4, settings: 'general', admin: 'users' },
+        'tokens',
+      ),
     ),
-  ).toBe('/?view=favorites&folder=4&settings=tokens');
+  ).toBe('?view=favorites&folder=4&settings=tokens');
   expect(
-    buildSettingsCenterHref(
-      '/',
-      new URLSearchParams('view=favorites&folder=4&settings=general'),
-      null,
+    stringifySearchObject(
+      withSettingsSection({ view: 'favorites', folder: 4, settings: 'general' }, null),
     ),
-  ).toBe('/?view=favorites&folder=4');
+  ).toBe('?view=favorites&folder=4');
 }
 
 /** Verify the query opens the named dialog and category navigation updates only its key. */
 async function opensAndNavigatesSettingsDialog(): Promise<void> {
+  installTrackingHandlers();
   const user = userEvent.setup();
-  renderWithQuery(<SettingsCenterDialog />);
+  const view = await renderWithQuery(<SettingsCenterDialog />, { url: GENERAL_SETTINGS_URL });
 
   expect(await screen.findByRole('dialog', { name: '设置中心' })).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: '常规' })).toBeInTheDocument();
@@ -130,25 +125,22 @@ async function opensAndNavigatesSettingsDialog(): Promise<void> {
   ).toBe(true);
 
   await user.click(screen.getAllByRole('button', { name: '通知与推送' })[0]);
-  expect(navigationMocks.navigate).toHaveBeenCalledWith(
-    '/?view=favorites&folder=4&settings=notifications',
-    { replace: true },
+  await waitFor(() =>
+    expect(readRouterUrl(view.router)).toBe(`${WORKSPACE_URL}&settings=notifications`),
   );
 
-  navigationMocks.navigate.mockClear();
   await user.click(screen.getByRole('button', { name: '关闭' }));
-  expect(navigationMocks.navigate).toHaveBeenCalledWith('/?view=favorites&folder=4', {
-    replace: true,
-  });
+  await waitFor(() => expect(readRouterUrl(view.router)).toBe(WORKSPACE_URL));
 }
 
 /** Verify temporary React effect cleanup does not close URL-requested settings. */
 async function keepsSettingsOpenAfterActivityResumes(): Promise<void> {
   const user = userEvent.setup();
-  const view = renderWithQuery(
+  const view = await renderWithQuery(
     <Activity mode="visible">
       <SettingsCenterDialog />
     </Activity>,
+    { url: GENERAL_SETTINGS_URL },
   );
   expect(await screen.findByRole('dialog', { name: '设置中心' })).toBeInTheDocument();
   view.rerender(
@@ -169,15 +161,16 @@ async function keepsSettingsOpenAfterActivityResumes(): Promise<void> {
 
   expect(themeMocks.setTheme).toHaveBeenCalledWith('dark');
   expect(screen.getByRole('dialog', { name: '设置中心' })).toBeInTheDocument();
-  expect(navigationMocks.navigate).not.toHaveBeenCalled();
+  expect(readRouterUrl(view.router)).toBe(GENERAL_SETTINGS_URL);
 }
 
 /** Verify tracking and notification categories retain one shared draft controller. */
 async function preservesSharedTrackingCategoryState(): Promise<void> {
   installTrackingHandlers();
-  navigationMocks.searchParams = new URLSearchParams('view=favorites&folder=4&settings=tracking');
   const user = userEvent.setup();
-  const view = renderWithQuery(<SettingsCenterDialog />);
+  const view = await renderWithQuery(<SettingsCenterDialog />, {
+    url: `${WORKSPACE_URL}&settings=tracking`,
+  });
 
   const recommendationSwitch = await screen.findByRole('switch', { name: '启用推荐' });
   await user.click(recommendationSwitch);
@@ -189,10 +182,7 @@ async function preservesSharedTrackingCategoryState(): Promise<void> {
   expect(sharedContent).toBeInTheDocument();
   expect(saveButton).toBeEnabled();
 
-  navigationMocks.searchParams = new URLSearchParams(
-    'view=favorites&folder=4&settings=notifications',
-  );
-  view.rerender(<SettingsCenterDialog />);
+  await visit(view.router, `${WORKSPACE_URL}&settings=notifications`);
 
   await waitFor(() =>
     expect(screen.getByRole('heading', { level: 2, name: '通知与推送' })).toBeInTheDocument(),
@@ -203,8 +193,7 @@ async function preservesSharedTrackingCategoryState(): Promise<void> {
   expect(screen.getByRole('button', { name: '保存更改' })).toBe(saveButton);
   expect(saveButton).toBeEnabled();
 
-  navigationMocks.searchParams = new URLSearchParams('view=favorites&folder=4&settings=tracking');
-  view.rerender(<SettingsCenterDialog />);
+  await visit(view.router, `${WORKSPACE_URL}&settings=tracking`);
 
   await waitFor(() =>
     expect(screen.getByRole('switch', { name: '启用推荐' })).toHaveAttribute(
@@ -234,7 +223,7 @@ async function restoresFocusToTransientMenuTrigger(): Promise<void> {
   document.body.append(menuTrigger, menu);
   menuItem.focus();
 
-  renderWithQuery(<SettingsCenterDialog />);
+  await renderWithQuery(<SettingsCenterDialog />, { url: GENERAL_SETTINGS_URL });
   expect(await screen.findByRole('dialog', { name: '设置中心' })).toBeInTheDocument();
   expect(menuTrigger).not.toHaveAttribute(SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE);
   menu.remove();
@@ -246,29 +235,33 @@ async function restoresFocusToTransientMenuTrigger(): Promise<void> {
 
 /** Verify an unknown query value is removed without opening an empty dialog. */
 async function normalizesUnknownSettingsSection(): Promise<void> {
-  navigationMocks.searchParams = new URLSearchParams('view=favorites&folder=4&settings=unknown');
-  renderWithQuery(<SettingsCenterDialog />);
+  const view = await renderWithQuery(<SettingsCenterDialog />, {
+    url: `${WORKSPACE_URL}&settings=unknown`,
+  });
 
-  await waitFor(() =>
-    expect(navigationMocks.navigate).toHaveBeenCalledWith('/?view=favorites&folder=4', {
-      replace: true,
-    }),
-  );
+  await waitFor(() => expect(readRouterUrl(view.router)).toBe(WORKSPACE_URL));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 }
 
 /** Verify an unsaved recommendation draft blocks a cross-category transition until discarded. */
 async function guardsUnsavedCrossCategoryNavigation(): Promise<void> {
   installTrackingHandlers();
-  navigationMocks.searchParams = new URLSearchParams('view=favorites&folder=4&settings=tracking');
+  server.use(
+    http.get('http://localhost/api/auth/providers', () =>
+      HttpResponse.json({ oidc_enabled: false, oidc_display_name: 'authentik' }),
+    ),
+    http.get('http://localhost/api/auth/invite-code', () => HttpResponse.json(null)),
+  );
   const user = userEvent.setup();
-  renderWithQuery(<SettingsCenterDialog />);
+  const view = await renderWithQuery(<SettingsCenterDialog />, {
+    url: `${WORKSPACE_URL}&settings=tracking`,
+  });
 
   await user.click(await screen.findByRole('switch', { name: '启用推荐' }));
   await user.click(screen.getAllByRole('button', { name: '账号与安全' })[0]);
 
   expect(screen.getByRole('alertdialog', { name: '放弃未保存的配置？' })).toBeInTheDocument();
-  expect(navigationMocks.navigate).not.toHaveBeenCalled();
+  expect(readRouterUrl(view.router)).toBe(`${WORKSPACE_URL}&settings=tracking`);
 
   fireEvent.click(screen.getByRole('button', { name: '继续编辑' }));
   await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
@@ -276,10 +269,7 @@ async function guardsUnsavedCrossCategoryNavigation(): Promise<void> {
 
   await user.click(screen.getAllByRole('button', { name: '账号与安全' })[0]);
   fireEvent.click(screen.getByRole('button', { name: '放弃更改' }));
-  expect(navigationMocks.navigate).toHaveBeenCalledWith(
-    '/?view=favorites&folder=4&settings=account',
-    { replace: true },
-  );
+  await waitFor(() => expect(readRouterUrl(view.router)).toBe(`${WORKSPACE_URL}&settings=account`));
 }
 
 /** Verify a link callback result opens account settings once and leaves a clean URL. */
@@ -290,28 +280,20 @@ async function surfacesOidcLinkResultOnce(): Promise<void> {
     ),
     http.get('http://localhost/api/auth/invite-code', () => HttpResponse.json(null)),
   );
-  navigationMocks.searchParams = new URLSearchParams('view=favorites&oidc_link=linked');
-  const view = renderWithQuery(<SettingsCenterDialog />);
+  const view = await renderWithQuery(<SettingsCenterDialog />, {
+    url: '/?view=favorites&oidc_link=linked',
+  });
 
-  await waitFor(() =>
-    expect(navigationMocks.navigate).toHaveBeenCalledWith('/?view=favorites&settings=account', {
-      replace: true,
-    }),
-  );
-  navigationMocks.searchParams = new URLSearchParams('view=favorites&settings=account');
-  view.rerender(<SettingsCenterDialog />);
+  await waitFor(() => expect(readRouterUrl(view.router)).toBe('/?view=favorites&settings=account'));
 
   expect(await screen.findByRole('dialog', { name: '设置中心' })).toBeInTheDocument();
   expect(await screen.findByText('已绑定 authentik，之后可以使用它登录。')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: '解除绑定' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: '修改密码' })).toBeInTheDocument();
-  expect(navigationMocks.navigate).toHaveBeenCalledOnce();
+  expect(readRouterUrl(view.router)).toBe('/?view=favorites&settings=account');
 }
 
 beforeEach(() => {
-  navigationMocks.pathname = '/';
-  navigationMocks.searchParams = new URLSearchParams('view=favorites&folder=4&settings=general');
-  navigationMocks.navigate.mockReset();
   themeMocks.setTheme.mockReset();
   themeMocks.theme = 'system';
 });

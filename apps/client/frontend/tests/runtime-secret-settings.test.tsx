@@ -124,7 +124,7 @@ function providerProxyUrlFixture() {
  *
  * @param runtimeSettings - Runtime descriptors returned by the mock API.
  */
-function renderRuntimeSettings(runtimeSettings = runtimeSettingsFixture()): void {
+async function renderRuntimeSettings(runtimeSettings = runtimeSettingsFixture()): Promise<void> {
   server.use(
     http.get('http://localhost/api/admin/runtime-settings', () =>
       HttpResponse.json(runtimeSettings),
@@ -134,7 +134,7 @@ function renderRuntimeSettings(runtimeSettings = runtimeSettingsFixture()): void
       return HttpResponse.json(runtimeSettings);
     }),
   );
-  renderWithQuery(<RuntimeSettingsCard />);
+  await renderWithQuery(<RuntimeSettingsCard />);
 }
 
 /**
@@ -142,7 +142,7 @@ function renderRuntimeSettings(runtimeSettings = runtimeSettingsFixture()): void
  */
 async function rendersAndPreservesStoredSecrets(): Promise<void> {
   updatePayload = null;
-  renderRuntimeSettings();
+  await renderRuntimeSettings();
   const user = userEvent.setup();
 
   expect(await screen.findByText('2 个密钥')).toBeInTheDocument();
@@ -159,7 +159,7 @@ async function rendersAndPreservesStoredSecrets(): Promise<void> {
  */
 async function updatesStoredSecretPool(): Promise<void> {
   updatePayload = null;
-  renderRuntimeSettings();
+  await renderRuntimeSettings();
   const user = userEvent.setup();
 
   const deleteFirst = await screen.findByRole('button', {
@@ -196,7 +196,7 @@ async function updatesStoredSecretPool(): Promise<void> {
  */
 async function clearsSecretPoolWithNull(): Promise<void> {
   updatePayload = null;
-  renderRuntimeSettings();
+  await renderRuntimeSettings();
   const user = userEvent.setup();
 
   await user.click(await screen.findByRole('button', { name: '清除全部密钥' }));
@@ -217,7 +217,7 @@ async function clearsSecretPoolWithNull(): Promise<void> {
  */
 async function editsNonSecretPool(): Promise<void> {
   updatePayload = null;
-  renderRuntimeSettings();
+  await renderRuntimeSettings();
   const user = userEvent.setup();
 
   expect(await screen.findByDisplayValue('first@example.test')).toBeInTheDocument();
@@ -238,7 +238,7 @@ async function editsNonSecretPool(): Promise<void> {
  */
 async function editsRuntimeLoggingSettings(): Promise<void> {
   updatePayload = null;
-  renderRuntimeSettings();
+  await renderRuntimeSettings();
   const user = userEvent.setup();
 
   const format = await screen.findByRole('combobox', { name: 'Log format' });
@@ -268,7 +268,7 @@ async function editsRuntimeLoggingSettings(): Promise<void> {
 async function managesScalarProviderProxyUrl(): Promise<void> {
   const secretSentinel = 'socks5h://proxy-user:runtime-proxy-secret-sentinel@proxy.example:1080';
   updatePayload = null;
-  renderRuntimeSettings([providerProxyUrlFixture()]);
+  await renderRuntimeSettings([providerProxyUrlFixture()]);
   const user = userEvent.setup();
 
   const input = await screen.findByLabelText('Provider proxy URL');
@@ -309,7 +309,7 @@ beforeEach(() => {
 
 /** Verify pending runtime saves protect scalar fields and secret-pool mutations. */
 async function blocksRuntimeEditsWhileSaving(): Promise<void> {
-  renderRuntimeSettings();
+  await renderRuntimeSettings();
   let finishSave: (() => void) | undefined;
   const saveGate = new Promise<void>((resolve) => {
     finishSave = resolve;

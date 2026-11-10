@@ -9,16 +9,17 @@ import {
   useIconTrigger,
   type AppIcon,
 } from '@/components/ui/animated-icons';
-import { Link, useLocation, useSearchParams } from 'react-router';
+import { Link, useSearch } from '@tanstack/react-router';
 import type { MouseEvent, ReactNode } from 'react';
 
 import { UserMenu } from '@/components/feature/user-menu';
 import { SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE } from '@/components/feature/sectioned-dialog';
 import { preloadAdminCenter, preloadSettingsCenter } from '@/components/shell/lazy-workspaces';
 import { RailNavigation, TabNavigation } from '@/components/shell/primary-navigation';
-import { buildAdminCenterHref, parseAdminSection } from '@/lib/admin-center';
+import { parseAdminSection, withAdminSection } from '@/lib/admin-center';
 import { useAuth } from '@/lib/auth-context';
-import { buildSettingsCenterHref, parseSettingsSection } from '@/lib/settings-center';
+import { WORKSPACE_ROUTE_ID, type WorkspaceSearch } from '@/lib/search-params';
+import { parseSettingsSection, withSettingsSection } from '@/lib/settings-center';
 import { cn } from '@/lib/utils';
 
 /**
@@ -40,13 +41,13 @@ function markReturnFocus(event: MouseEvent<HTMLAnchorElement>): void {
  * @returns Rail shortcut link.
  */
 function RailShortcut({
-  href,
+  search,
   icon: Icon,
   isCurrent,
   label,
   onIntent,
 }: {
-  href: string;
+  search: WorkspaceSearch;
   icon: AppIcon;
   isCurrent: boolean;
   label: string;
@@ -57,7 +58,8 @@ function RailShortcut({
     <IconTriggerProvider isTriggered={isTriggered}>
       <Link
         {...triggerHandlers}
-        to={href}
+        to="/"
+        search={search}
         aria-label={label}
         aria-current={isCurrent ? 'page' : undefined}
         title={label}
@@ -89,10 +91,9 @@ function RailShortcut({
  */
 function AppRail() {
   const { user } = useAuth();
-  const { pathname } = useLocation();
-  const [searchParams] = useSearchParams();
-  const isSettingsOpen = parseSettingsSection(searchParams.get('settings')) !== null;
-  const isAdminOpen = parseAdminSection(searchParams.get('admin')) !== null;
+  const search = useSearch({ from: WORKSPACE_ROUTE_ID });
+  const isSettingsOpen = parseSettingsSection(search.settings) !== null;
+  const isAdminOpen = parseAdminSection(search.admin) !== null;
 
   return (
     <aside
@@ -101,6 +102,7 @@ function AppRail() {
     >
       <Link
         to="/"
+        activeOptions={{ exact: true }}
         aria-label="LitRadar 首页"
         title="LitRadar"
         className="motion-control mb-5 rounded-xl outline-none transition-opacity hover:opacity-85 focus-visible:ring-2 focus-visible:ring-ring"
@@ -120,7 +122,7 @@ function AppRail() {
 
       <div className="mt-auto flex flex-col items-center gap-1.5">
         <RailShortcut
-          href={buildSettingsCenterHref(pathname, searchParams, 'general')}
+          search={withSettingsSection(search, 'general')}
           icon={Settings}
           isCurrent={isSettingsOpen}
           label="设置中心"
@@ -128,7 +130,7 @@ function AppRail() {
         />
         {user?.is_admin && (
           <RailShortcut
-            href={buildAdminCenterHref(pathname, searchParams, 'overview')}
+            search={withAdminSection(search, 'overview')}
             icon={ShieldCheck}
             isCurrent={isAdminOpen}
             label="管理面板"

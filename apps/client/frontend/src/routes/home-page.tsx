@@ -2,7 +2,7 @@
  * Query-routed protected workspaces with restrained view transitions.
  */
 
-import { useQueryState } from 'nuqs';
+import { useSearch } from '@tanstack/react-router';
 import { Suspense, type ReactNode } from 'react';
 
 import { SearchWorkspaceView } from '@/components/feature/search-workspace-view';
@@ -15,7 +15,8 @@ import {
 } from '@/components/shell/lazy-workspaces';
 import { MotionDiv, MotionPresence, PANEL_VARIANTS } from '@/components/ui/motion';
 import { useAuth } from '@/lib/auth-context';
-import { WORKSPACE_VIEW_PARSER } from '@/lib/workspace-view';
+import { WORKSPACE_ROUTE_ID } from '@/lib/search-params';
+import { DEFAULT_WORKSPACE_VIEW } from '@/lib/workspace-view';
 
 /**
  * Render the article search workspace with responsive filters and results.
@@ -24,7 +25,10 @@ import { WORKSPACE_VIEW_PARSER } from '@/lib/workspace-view';
  */
 export default function Home() {
   const { user } = useAuth();
-  const [view] = useQueryState('view', WORKSPACE_VIEW_PARSER);
+  const view = useSearch({
+    from: WORKSPACE_ROUTE_ID,
+    select: (search) => search.view ?? DEFAULT_WORKSPACE_VIEW,
+  });
   let workspaceContent: ReactNode;
 
   if (view === 'favorites') {

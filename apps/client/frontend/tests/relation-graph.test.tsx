@@ -12,8 +12,8 @@ import {
   RELATION_NODE_HALF_WIDTH,
   RELATION_NODE_LIMIT,
   RELATION_ROOT_RADIUS,
-  buildRelationHref,
-  buildSavedRelationHref,
+  buildRelationSearch,
+  buildSavedRelationSearch,
   collapseRelationNode,
   computeRelationSectors,
   createRelationGraph,
@@ -29,6 +29,7 @@ import {
   storeRelationPositions,
   type RelationGraph,
 } from '@/lib/relation-graph';
+import { stringifySearchObject } from '@/lib/search-params';
 
 /**
  * Build a minimal article.
@@ -424,16 +425,18 @@ function keepsUpperLevelsInView(): void {
 
 /** The workspace URL carries the center article and its database. */
 function buildsWorkspaceHref(): void {
-  expect(buildRelationHref({ article_id: 'x 1' }, 'chinese_journals.sqlite')).toBe(
-    '/?view=relations&db=chinese_journals.sqlite&article=x+1',
-  );
+  expect(
+    stringifySearchObject(buildRelationSearch({ article_id: 'x 1' }, 'chinese_journals.sqlite')),
+  ).toBe('?view=relations&db=chinese_journals.sqlite&article=x+1');
 }
 
 /** A saved graph reopens through a URL that carries its favorite id. */
 function buildsSavedGraphHref(): void {
   expect(
-    buildSavedRelationHref({ db_name: 'chinese_journals.sqlite', id: 7, root_article_id: 42 }),
-  ).toBe('/?view=relations&db=chinese_journals.sqlite&article=42&saved=7');
+    stringifySearchObject(
+      buildSavedRelationSearch({ db_name: 'chinese_journals.sqlite', id: 7, root_article_id: 42 }),
+    ),
+  ).toBe('?view=relations&db=chinese_journals.sqlite&article=42&saved=7');
 }
 
 /** Saved snapshots are untrusted: unusable ones are rejected and missing fields are filled. */

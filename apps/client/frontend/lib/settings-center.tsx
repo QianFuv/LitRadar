@@ -2,6 +2,8 @@
  * URL helpers and stable section identifiers for the aggregated settings center.
  */
 
+import type { WorkspaceSearch } from '@/lib/search-params';
+
 /** Stable identifiers accepted by the settings query parameter. */
 export const SETTINGS_SECTION_IDS = [
   'general',
@@ -15,16 +17,13 @@ export const SETTINGS_SECTION_IDS = [
 /** One navigable category in the aggregated settings center. */
 export type SettingsSectionId = (typeof SETTINGS_SECTION_IDS)[number];
 
-/** Minimal read-only search-parameter snapshot accepted by URL builders. */
-export type SettingsSearchParams = Pick<URLSearchParams, 'toString'>;
-
 /**
  * Parse a settings query value into its stable section identifier.
  *
  * @param value - Raw `settings` query value.
  * @returns Matching section identifier, or null for missing and invalid values.
  */
-export function parseSettingsSection(value: string | null): SettingsSectionId | null {
+export function parseSettingsSection(value: string | undefined): SettingsSectionId | null {
   return SETTINGS_SECTION_IDS.find((section) => section === value) ?? null;
 }
 
@@ -41,25 +40,20 @@ export function isTrackingSettingsSection(
 }
 
 /**
- * Build a settings-center URL while preserving every unrelated query parameter.
+ * Return workspace search state with the settings center opened at one section or closed.
  *
- * @param pathname - Current protected pathname.
- * @param searchParams - Current read-only query snapshot.
- * @param section - Section to open, or null to remove settings state.
- * @returns Relative application URL with the requested settings state.
+ * Opening one center closes the other; every unrelated parameter is preserved.
+ *
+ * @param search - Current workspace search state.
+ * @param section - Section to open, or null to remove the settings parameter.
+ * @returns Next workspace search state.
  */
-export function buildSettingsCenterHref(
-  pathname: string,
-  searchParams: SettingsSearchParams,
+export function withSettingsSection(
+  search: WorkspaceSearch,
   section: SettingsSectionId | null,
-): string {
-  const nextSearchParams = new URLSearchParams(searchParams.toString());
+): WorkspaceSearch {
   if (section) {
-    nextSearchParams.set('settings', section);
-    nextSearchParams.delete('admin');
-  } else {
-    nextSearchParams.delete('settings');
+    return { ...search, settings: section, admin: undefined };
   }
-  const query = nextSearchParams.toString();
-  return query ? `${pathname}?${query}` : pathname;
+  return { ...search, settings: undefined };
 }

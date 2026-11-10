@@ -4,7 +4,7 @@
 
 import { Radar } from 'lucide-react';
 import { Bell, KeyRound, Layers, Settings, ShieldCheck } from '@/components/ui/animated-icons';
-import { useLocation, useNavigate, useSearchParams } from 'react-router';
+import { useSearch } from '@tanstack/react-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AccessTokensCard } from '@/components/settings/access-tokens-card';
@@ -27,10 +27,11 @@ import {
 import { MotionDiv, MotionPresence, PANEL_VARIANTS } from '@/components/ui/motion';
 import { UserAvatar } from '@/components/shell/user-avatar';
 import { useAuth, type AuthUser } from '@/lib/auth-context';
+import { useUpdateWorkspaceSearch, WORKSPACE_ROUTE_ID } from '@/lib/search-params';
 import {
-  buildSettingsCenterHref,
   isTrackingSettingsSection,
   parseSettingsSection,
+  withSettingsSection,
   type SettingsSectionId,
 } from '@/lib/settings-center';
 
@@ -433,10 +434,9 @@ function SettingsCenterSession({
  */
 export function SettingsCenterDialog() {
   const { user } = useAuth();
-  const { pathname } = useLocation();
-  const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const rawSection = searchParams.get('settings');
+  const search = useSearch({ from: WORKSPACE_ROUTE_ID });
+  const updateSearch = useUpdateWorkspaceSearch();
+  const rawSection = search.settings;
   const requestedSection = parseSettingsSection(rawSection);
   const [mountState, setMountState] = useState<SettingsCenterMountState>({
     initialSection: requestedSection ?? 'general',
@@ -444,7 +444,7 @@ export function SettingsCenterDialog() {
     observedRequestedSection: requestedSection,
   });
   const returnFocusRef = useRef<HTMLElement | null>(null);
-  const rawOidcLinkResult = searchParams.get('oidc_link');
+  const rawOidcLinkResult = search.oidc_link ?? null;
   const [oidcLinkResult, setOidcLinkResult] = useState<string | null>(null);
 
   if (requestedSection !== mountState.observedRequestedSection) {
@@ -458,27 +458,27 @@ export function SettingsCenterDialog() {
     if (rawOidcLinkResult === null) {
       return;
     }
-    const cleanedSearchParams = new URLSearchParams(searchParams.toString());
-    cleanedSearchParams.delete('oidc_link');
-    navigate(buildSettingsCenterHref(pathname, cleanedSearchParams, 'account'), { replace: true });
-  }, [pathname, rawOidcLinkResult, navigate, searchParams]);
+    void updateSearch((current) =>
+      withSettingsSection({ ...current, oidc_link: undefined }, 'account'),
+    );
+  }, [rawOidcLinkResult, updateSearch]);
 
   useEffect(() => {
-    if (rawSection !== null && requestedSection === null) {
-      navigate(buildSettingsCenterHref(pathname, searchParams, null), { replace: true });
+    if (rawSection !== undefined && requestedSection === null) {
+      void updateSearch((current) => withSettingsSection(current, null));
     }
-  }, [pathname, rawSection, requestedSection, navigate, searchParams]);
+  }, [rawSection, requestedSection, updateSearch]);
 
   const replaceSection = useCallback(
     (section: SettingsSectionId): void => {
-      navigate(buildSettingsCenterHref(pathname, searchParams, section), { replace: true });
+      void updateSearch((current) => withSettingsSection(current, section));
     },
-    [pathname, navigate, searchParams],
+    [updateSearch],
   );
 
   const removeSection = useCallback((): void => {
-    navigate(buildSettingsCenterHref(pathname, searchParams, null), { replace: true });
-  }, [pathname, navigate, searchParams]);
+    void updateSearch((current) => withSettingsSection(current, null));
+  }, [updateSearch]);
 
   if (!user || !mountState.isSessionOpen) {
     return null;

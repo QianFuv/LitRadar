@@ -11,7 +11,7 @@ import {
   SlidersVertical,
   Users,
 } from '@/components/ui/animated-icons';
-import { useLocation, useNavigate, useSearchParams } from 'react-router';
+import { useSearch } from '@tanstack/react-router';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { AnnouncementsCard } from '@/components/admin/announcements-card';
@@ -26,7 +26,8 @@ import {
   type SectionedDialogSectionDefinition,
 } from '@/components/feature/sectioned-dialog';
 import { MotionSection, PANEL_VARIANTS } from '@/components/ui/motion';
-import { buildAdminCenterHref, parseAdminSection, type AdminSectionId } from '@/lib/admin-center';
+import { parseAdminSection, withAdminSection, type AdminSectionId } from '@/lib/admin-center';
+import { useUpdateWorkspaceSearch, WORKSPACE_ROUTE_ID } from '@/lib/search-params';
 import { useAuth } from '@/lib/auth-context';
 import { parseSettingsSection } from '@/lib/settings-center';
 
@@ -151,12 +152,11 @@ function synchronizeAdminCenterState(
  */
 export function AdminCenterDialog() {
   const { user } = useAuth();
-  const { pathname } = useLocation();
-  const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const rawAdminSection = searchParams.get('admin');
+  const search = useSearch({ from: WORKSPACE_ROUTE_ID });
+  const updateSearch = useUpdateWorkspaceSearch();
+  const rawAdminSection = search.admin;
   const parsedAdminSection = parseAdminSection(rawAdminSection);
-  const hasSettingsConflict = parseSettingsSection(searchParams.get('settings')) !== null;
+  const hasSettingsConflict = parseSettingsSection(search.settings) !== null;
   const requestedSection = user?.is_admin && !hasSettingsConflict ? parsedAdminSection : null;
   const [sessionState, setSessionState] = useState<AdminCenterSessionState>({
     activeSection: requestedSection ?? 'overview',
@@ -172,31 +172,23 @@ export function AdminCenterDialog() {
 
   useEffect(() => {
     if (
-      rawAdminSection !== null &&
+      rawAdminSection !== undefined &&
       (!user?.is_admin || parsedAdminSection === null || hasSettingsConflict)
     ) {
-      navigate(buildAdminCenterHref(pathname, searchParams, null), { replace: true });
+      void updateSearch((current) => withAdminSection(current, null));
     }
-  }, [
-    hasSettingsConflict,
-    parsedAdminSection,
-    pathname,
-    rawAdminSection,
-    navigate,
-    searchParams,
-    user?.is_admin,
-  ]);
+  }, [hasSettingsConflict, parsedAdminSection, rawAdminSection, updateSearch, user?.is_admin]);
 
   const replaceSection = useCallback(
     (section: AdminSectionId): void => {
-      navigate(buildAdminCenterHref(pathname, searchParams, section), { replace: true });
+      void updateSearch((current) => withAdminSection(current, section));
     },
-    [navigate, pathname, searchParams],
+    [updateSearch],
   );
 
   /** Close the current administrator session and preserve unrelated workspace query state. */
   function closeCenter(): void {
-    navigate(buildAdminCenterHref(pathname, searchParams, null), { replace: true });
+    void updateSearch((current) => withAdminSection(current, null));
     setSessionState((state) => ({ ...state, isDialogOpen: false }));
   }
 

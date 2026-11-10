@@ -2,8 +2,6 @@
  * Advanced search: syntax detection, rewrites, the visual builder, and the search-bar assistant.
  */
 
-import { useQueryState, parseAsString } from 'nuqs';
-import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, test } from 'vite-plus/test';
@@ -20,30 +18,20 @@ import {
   getSearchSyntaxMode,
   isAdvancedSearchQuery,
 } from '@/lib/search-syntax';
-import { renderWithQuery } from '@/tests/render';
-
-/**
- * Expose one query parameter for assertions.
- *
- * @param props - Query parameter name and test id.
- * @returns Query value output.
- */
-function QueryProbe({ parameter, testId }: { parameter: string; testId: string }) {
-  const [value] = useQueryState(parameter, parseAsString);
-  return <output data-testid={testId}>{value ?? ''}</output>;
-}
+import { renderWithQuery, SearchParamProbe } from '@/tests/render';
 
 /**
  * Render the article search bar with its assistant and a query probe.
  *
  * @param searchParams - Initial URL search string.
  */
-function renderAssistedSearchBar(searchParams = ''): void {
-  renderWithQuery(
-    <NuqsTestingAdapter searchParams={searchParams} hasMemory>
+async function renderAssistedSearchBar(searchParams = ''): Promise<void> {
+  await renderWithQuery(
+    <>
       <SearchBar hasSyntaxAssist />
-      <QueryProbe parameter="q" testId="query-value" />
-    </NuqsTestingAdapter>,
+      <SearchParamProbe parameter="q" testId="query-value" />
+    </>,
+    { url: `/${searchParams}` },
   );
 }
 
@@ -173,7 +161,7 @@ function compilesConditions(): void {
 async function searchesWithBuilder(): Promise<void> {
   const expected = 'title : ("graph neural") NOT "survey"';
   const user = userEvent.setup();
-  renderAssistedSearchBar('?q=graph%20neural');
+  await renderAssistedSearchBar('?q=graph%20neural');
 
   await user.click(screen.getByRole('button', { name: '高级检索' }));
   const dialog = await screen.findByRole('dialog', { name: '高级检索' });
@@ -222,7 +210,7 @@ async function searchesWithBuilder(): Promise<void> {
 /** Verify the builder blocks an exclusion without a preceding inclusion. */
 async function blocksLeadingExclusion(): Promise<void> {
   const user = userEvent.setup();
-  renderAssistedSearchBar();
+  await renderAssistedSearchBar();
 
   await user.click(screen.getByRole('button', { name: '高级检索' }));
   const dialog = await screen.findByRole('dialog', { name: '高级检索' });
@@ -255,7 +243,7 @@ async function blocksLeadingExclusion(): Promise<void> {
 /** Verify typing offers rewrites, keyboard selection applies one, and Enter then searches. */
 async function rewritesDraftFromKeyboard(): Promise<void> {
   const user = userEvent.setup();
-  renderAssistedSearchBar();
+  await renderAssistedSearchBar();
   const input = screen.getByRole('combobox', { name: '搜索文章' });
 
   await user.type(input, 'graph neural');
@@ -282,7 +270,7 @@ async function keepsHistoryBesideBuilder(): Promise<void> {
     JSON.stringify(['graph theory', 'protein folding']),
   );
   const user = userEvent.setup();
-  renderAssistedSearchBar();
+  await renderAssistedSearchBar();
   const input = screen.getByRole('combobox', { name: '搜索文章' });
 
   await user.click(input);

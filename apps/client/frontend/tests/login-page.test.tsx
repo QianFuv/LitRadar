@@ -2,8 +2,7 @@
  * Login loading, redirect, password visibility, and error feedback coverage.
  */
 
-import { MemoryRouter } from 'react-router';
-import { render, screen, waitFor, type RenderResult } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
@@ -11,6 +10,7 @@ import LoginClient from '@/src/routes/login-client';
 import { MotionProvider } from '@/components/ui/motion';
 import { getAuthErrorMessage } from '@/lib/auth-error';
 import { ApiError } from '@/lib/api/client';
+import { renderWithQuery, type QueryRenderResult } from '@/tests/render';
 
 type MockUser = {
   id: number;
@@ -36,32 +36,29 @@ const loginPageMocks = vi.hoisted(() => ({
 }));
 
 /**
- * Render the authentication page inside the application motion provider.
+ * Render the authentication page at a login URL built from the current search fixtures.
  *
  * @returns Testing Library render controls for the wrapped page.
  */
-function renderLoginClient(): RenderResult {
-  return render(
+function renderLoginClient(): Promise<QueryRenderResult> {
+  const search = new URLSearchParams({
+    logout_recovery: loginPageMocks.logoutRecoveryParam,
+    next: loginPageMocks.nextParam,
+    ...(loginPageMocks.oidcErrorParam === null
+      ? {}
+      : { oidc_error: loginPageMocks.oidcErrorParam }),
+  });
+  return renderWithQuery(
     <MotionProvider>
       <LoginClient />
     </MotionProvider>,
-    { wrapper: MemoryRouter },
+    { url: `/login?${search.toString()}` },
   );
 }
 
-vi.mock('react-router', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('react-router')>()),
+vi.mock('@tanstack/react-router', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@tanstack/react-router')>()),
   useNavigate: () => loginPageMocks.navigate,
-  useSearchParams: () => [
-    new URLSearchParams({
-      logout_recovery: loginPageMocks.logoutRecoveryParam,
-      next: loginPageMocks.nextParam,
-      ...(loginPageMocks.oidcErrorParam === null
-        ? {}
-        : { oidc_error: loginPageMocks.oidcErrorParam }),
-    }),
-    vi.fn(),
-  ],
 }));
 
 vi.mock('@/lib/auth-context', () => ({
@@ -102,7 +99,7 @@ function resetLoginPageMocks(): void {
 async function hidesFormUntilAuthenticationSettles(): Promise<void> {
   loginPageMocks.auth.loading = true;
   loginPageMocks.nextParam = '/tracking';
-  const view = renderLoginClient();
+  const view = await renderLoginClient();
 
   expect(screen.getByRole('status')).toHaveTextContent('正在检查登录状态');
   expect(screen.queryByLabelText(/用户名/)).not.toBeInTheDocument();
@@ -116,7 +113,7 @@ async function hidesFormUntilAuthenticationSettles(): Promise<void> {
   );
 
   await waitFor(() =>
-    expect(loginPageMocks.navigate).toHaveBeenCalledWith('/tracking', { replace: true }),
+    expect(loginPageMocks.navigate).toHaveBeenCalledWith({ href: '/tracking', replace: true }),
   );
   expect(screen.queryByLabelText(/用户名/)).not.toBeInTheDocument();
 }
@@ -127,9 +124,11 @@ async function hidesFormUntilAuthenticationSettles(): Promise<void> {
 async function rejectsExternalReturnPaths(): Promise<void> {
   loginPageMocks.auth.user = { id: 8, username: 'signed_in', is_admin: false };
   loginPageMocks.nextParam = '//malicious.example';
-  renderLoginClient();
+  await renderLoginClient();
 
-  await waitFor(() => expect(loginPageMocks.navigate).toHaveBeenCalledWith('/', { replace: true }));
+  await waitFor(() =>
+    expect(loginPageMocks.navigate).toHaveBeenCalledWith({ href: '/', replace: true }),
+  );
 }
 
 /**
@@ -144,10 +143,10 @@ async function rejectsBackslashReturnPaths(): Promise<void> {
     '/safe\npath',
   ]) {
     loginPageMocks.nextParam = candidate;
-    const view = renderLoginClient();
+    const view = await renderLoginClient();
 
     await waitFor(() =>
-      expect(loginPageMocks.navigate).toHaveBeenCalledWith('/', { replace: true }),
+      expect(loginPageMocks.navigate).toHaveBeenCalledWith({ href: '/', replace: true }),
     );
     view.unmount();
     loginPageMocks.navigate.mockReset();
@@ -160,10 +159,11 @@ async function rejectsBackslashReturnPaths(): Promise<void> {
 async function normalizesSafeInternalReturnPaths(): Promise<void> {
   loginPageMocks.auth.user = { id: 10, username: 'signed_in', is_admin: false };
   loginPageMocks.nextParam = '/favorites/../?view=favorites&folder=4#saved';
-  renderLoginClient();
+  await renderLoginClient();
 
   await waitFor(() =>
-    expect(loginPageMocks.navigate).toHaveBeenCalledWith('/?view=favorites&folder=4#saved', {
+    expect(loginPageMocks.navigate).toHaveBeenCalledWith({
+      href: '/?view=favorites&folder=4#saved',
       replace: true,
     }),
   );
@@ -174,7 +174,7 @@ async function normalizesSafeInternalReturnPaths(): Promise<void> {
  */
 async function focusesAndRevealsPasswordSafely(): Promise<void> {
   const user = userEvent.setup();
-  renderLoginClient();
+  await renderLoginClient();
 
   const usernameInput = screen.getByLabelText('用户名或邮箱');
   const passwordInput = screen.getByLabelText('密码');
@@ -213,45 +213,39 @@ async function focusesAndRevealsPasswordSafely(): Promise<void> {
  * Verify typed API errors map to actionable messages while unknown details remain visible.
  */
 function mapsAuthenticationErrors(): void {
+  expect(getAuthErrorMessage(new ApiError('Invalid username or password', 401), 'login')).toBe(
+    '用户名或密码错误，请检查后重试。',
+  );
+  expect(getAuthErrorMessage(new ApiError('Username already exists', 409), 'register')).toBe(
+    '该用户名已被注册，请更换用户名。',
+  );
+  expect(getAuthErrorMessage(new ApiError('Invite code is required', 400), 'register')).toBe(
+    '请输入邀请码。',
+  );
+  expect(getAuthErrorMessage(new ApiError('Invalid or used invite code', 400), 'register')).toBe(
+    '邀请码无效或已被使用，请确认后重试。',
+  );
   expect(
-    getAuthErrorMessage(new ApiError('Invalid username or password', 401, null, null), 'login'),
-  ).toBe('用户名或密码错误，请检查后重试。');
-  expect(
-    getAuthErrorMessage(new ApiError('Username already exists', 409, null, null), 'register'),
-  ).toBe('该用户名已被注册，请更换用户名。');
-  expect(
-    getAuthErrorMessage(new ApiError('Invite code is required', 400, null, null), 'register'),
-  ).toBe('请输入邀请码。');
-  expect(
-    getAuthErrorMessage(new ApiError('Invalid or used invite code', 400, null, null), 'register'),
-  ).toBe('邀请码无效或已被使用，请确认后重试。');
-  expect(
-    getAuthErrorMessage(
-      new ApiError('Administrator bootstrap is required', 400, null, null),
-      'register',
-    ),
+    getAuthErrorMessage(new ApiError('Administrator bootstrap is required', 400), 'register'),
   ).toBe('系统尚未完成管理员初始化，请联系管理员。');
   expect(
     getAuthErrorMessage(
-      new ApiError('Username must be 3-32 alphanumeric or underscore characters', 400, null, null),
+      new ApiError('Username must be 3-32 alphanumeric or underscore characters', 400),
       'register',
     ),
   ).toBe('用户名需为 3–32 位字母、数字或下划线。');
   expect(
-    getAuthErrorMessage(
-      new ApiError('Password must be at least 12 characters', 400, null, null),
-      'register',
-    ),
+    getAuthErrorMessage(new ApiError('Password must be at least 12 characters', 400), 'register'),
   ).toBe('密码至少需要 12 个字符。');
   expect(
     getAuthErrorMessage(
-      new ApiError('Too many authentication attempts; try again later', 429, null, null),
+      new ApiError('Too many authentication attempts; try again later', 429),
       'login',
     ),
   ).toBe('尝试次数过多，请稍后再试。');
-  expect(
-    getAuthErrorMessage(new ApiError('Specific server detail', 400, null, null), 'register'),
-  ).toBe('Specific server detail');
+  expect(getAuthErrorMessage(new ApiError('Specific server detail', 400), 'register')).toBe(
+    'Specific server detail',
+  );
   expect(getAuthErrorMessage({ unexpected: true }, 'login')).toBe('操作失败，请重试');
 }
 
@@ -259,11 +253,9 @@ function mapsAuthenticationErrors(): void {
  * Verify mapped login failures are announced and do not navigate.
  */
 async function announcesLoginFailures(): Promise<void> {
-  loginPageMocks.auth.login.mockRejectedValue(
-    new ApiError('Invalid username or password', 401, null, null),
-  );
+  loginPageMocks.auth.login.mockRejectedValue(new ApiError('Invalid username or password', 401));
   const user = userEvent.setup();
-  renderLoginClient();
+  await renderLoginClient();
 
   await user.type(screen.getByLabelText('用户名或邮箱'), 'reader');
   await user.type(screen.getByLabelText('密码'), 'wrong-password');
@@ -283,12 +275,12 @@ async function announcesLoginFailures(): Promise<void> {
 /**
  * Verify the public login route exposes a persisted logout warning and recovery entry.
  */
-function exposesPersistedLogoutWarning(): void {
+async function exposesPersistedLogoutWarning(): Promise<void> {
   loginPageMocks.auth.logoutWarning = {
     occurredAt: 1234,
     requestId: 'logout-request-3',
   };
-  renderLoginClient();
+  await renderLoginClient();
 
   const warning = screen.getByRole('alert');
   expect(warning).toHaveTextContent('服务端会话撤销未确认');
@@ -312,7 +304,7 @@ async function submitsLoginOnceAndReturnsToProtectedPath(): Promise<void> {
       }),
   );
   const user = userEvent.setup();
-  renderLoginClient();
+  await renderLoginClient();
 
   await user.type(screen.getByLabelText('用户名或邮箱'), '  reader@example.test  ');
   await user.type(screen.getByLabelText('密码'), 'correct-password');
@@ -326,7 +318,10 @@ async function submitsLoginOnceAndReturnsToProtectedPath(): Promise<void> {
 
   resolveLogin?.();
   await waitFor(() =>
-    expect(loginPageMocks.navigate).toHaveBeenCalledWith('/favorites?folder=4', { replace: true }),
+    expect(loginPageMocks.navigate).toHaveBeenCalledWith({
+      href: '/favorites?folder=4',
+      replace: true,
+    }),
   );
 }
 
@@ -336,7 +331,7 @@ async function submitsLoginOnceAndReturnsToProtectedPath(): Promise<void> {
 async function registersInvitedUserAndReturnsToRequestedPath(): Promise<void> {
   loginPageMocks.nextParam = '/tracking';
   const user = userEvent.setup();
-  renderLoginClient();
+  await renderLoginClient();
 
   await user.click(screen.getByRole('button', { name: '注册' }));
   await user.type(screen.getByLabelText('用户名'), '  invited_reader  ');
@@ -352,7 +347,7 @@ async function registersInvitedUserAndReturnsToRequestedPath(): Promise<void> {
       '',
     ),
   );
-  expect(loginPageMocks.navigate).toHaveBeenCalledWith('/tracking', { replace: true });
+  expect(loginPageMocks.navigate).toHaveBeenCalledWith({ href: '/tracking', replace: true });
 }
 
 /**
@@ -360,7 +355,7 @@ async function registersInvitedUserAndReturnsToRequestedPath(): Promise<void> {
  */
 async function registersWithOptionalEmail(): Promise<void> {
   const user = userEvent.setup();
-  renderLoginClient();
+  await renderLoginClient();
 
   expect(screen.queryByLabelText('邮箱（可选）')).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: '注册' }));
@@ -392,7 +387,7 @@ async function offersSingleSignOnWhenEnabled(): Promise<void> {
     oidc_enabled: true,
     oidc_display_name: 'authentik',
   });
-  renderLoginClient();
+  await renderLoginClient();
 
   const ssoLink = await screen.findByRole('link', { name: '使用 authentik 登录' });
   const target = new URL(ssoLink.getAttribute('href') ?? '');
@@ -404,7 +399,7 @@ async function offersSingleSignOnWhenEnabled(): Promise<void> {
  * Verify the single sign-on entry stays hidden when disabled or during logout recovery.
  */
 async function hidesSingleSignOnWhenUnavailable(): Promise<void> {
-  const view = renderLoginClient();
+  const view = await renderLoginClient();
   await waitFor(() => expect(loginPageMocks.getAuthProviders).toHaveBeenCalled());
   expect(screen.queryByRole('link', { name: /登录$/ })).not.toBeInTheDocument();
   view.unmount();
@@ -414,7 +409,7 @@ async function hidesSingleSignOnWhenUnavailable(): Promise<void> {
     oidc_enabled: true,
     oidc_display_name: 'authentik',
   });
-  renderLoginClient();
+  await renderLoginClient();
   expect(screen.getByRole('heading', { name: '撤销全部会话' })).toBeInTheDocument();
   expect(loginPageMocks.getAuthProviders).not.toHaveBeenCalled();
   expect(document.querySelector('[data-auth-oidc]')).toBeNull();
@@ -438,9 +433,9 @@ const OIDC_ERROR_CASES = [
  * @param code - `oidc_error` query value.
  * @param expectedText - Fragment of the expected message.
  */
-function announcesOidcError(code: string, expectedText: string): void {
+async function announcesOidcError(code: string, expectedText: string): Promise<void> {
   loginPageMocks.oidcErrorParam = code;
-  renderLoginClient();
+  await renderLoginClient();
 
   const alert = screen.getByRole('alert');
   expect(alert).toHaveAttribute('data-auth-feedback', 'oidc-error');
@@ -453,7 +448,7 @@ function announcesOidcError(code: string, expectedText: string): void {
 async function reauthenticatesForLogoutRecovery(): Promise<void> {
   loginPageMocks.logoutRecoveryParam = '1';
   const user = userEvent.setup();
-  renderLoginClient();
+  await renderLoginClient();
 
   expect(screen.getByRole('heading', { name: '撤销全部会话' })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: '注册' })).not.toBeInTheDocument();

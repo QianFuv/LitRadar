@@ -5,7 +5,7 @@
 import { useMemo } from 'react';
 import { useInfiniteQuery, useQuery, type InfiniteData } from '@tanstack/react-query';
 import { FileText, Layers } from '@/components/ui/animated-icons';
-import { parseAsString, useQueryState } from 'nuqs';
+import { useSearch } from '@tanstack/react-router';
 
 import {
   getDatabases,
@@ -19,6 +19,7 @@ import {
   type JournalId,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { useUpdateWorkspaceSearch, WORKSPACE_ROUTE_ID } from '@/lib/search-params';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import { ArticleListSkeleton } from '@/components/feature/article-list-card';
 import { DatabasePill, getFilterPillClassName } from '@/components/feature/filter-pill';
@@ -263,7 +264,7 @@ export function WeeklyUpdatesView() {
     journals,
     favoriteStateError,
     retryFavoriteChecks,
-    setSelectedDb,
+    selectDatabase,
     setSelectedJournalId,
     totalDatabases,
     totalArticles,
@@ -276,8 +277,7 @@ export function WeeklyUpdatesView() {
       ? 'alert'
       : 'status';
   const handleDatabaseChange = (value: string) => {
-    void setSelectedDb(value);
-    void setSelectedJournalId(null);
+    selectDatabase(value);
   };
 
   return (
@@ -350,7 +350,7 @@ export function WeeklyUpdatesView() {
               <WeeklyJournalFacet
                 journals={journals}
                 effectiveSelectedJournalId={effectiveSelectedJournalId}
-                onSelectJournal={(journalId) => void setSelectedJournalId(journalId)}
+                onSelectJournal={(journalId) => setSelectedJournalId(journalId)}
               />
             </RevealItem>
           </div>
@@ -393,10 +393,29 @@ export function WeeklyUpdatesView() {
 /** Own the unchanged query, URL, selection and pagination hooks in their original order. */
 function useWeeklyViewState() {
   const { user } = useAuth();
-  const [weeklyQuery] = useQueryState('weekly_q', parseAsString.withDefault(''));
-  const searchQuery = weeklyQuery.trim();
-  const [selectedDb, setSelectedDb] = useQueryState('db', parseAsString.withDefault(''));
-  const [selectedJournalId, setSelectedJournalId] = useQueryState('journal', parseAsString);
+  const search = useSearch({ from: WORKSPACE_ROUTE_ID });
+  const updateSearch = useUpdateWorkspaceSearch();
+  const searchQuery = (search.weekly_q ?? '').trim();
+  const selectedDb = search.db ?? '';
+  const selectedJournalId = search.journal ?? null;
+
+  /**
+   * Select a weekly database and clear the journal chosen in the previous database.
+   *
+   * @param dbName - Database to show, or an empty string for the default.
+   */
+  const selectDatabase = (dbName: string) => {
+    void updateSearch((current) => ({ ...current, db: dbName || undefined, journal: undefined }));
+  };
+
+  /**
+   * Select a weekly journal in the URL, or show every journal.
+   *
+   * @param journalId - Journal to show, or null for all journals.
+   */
+  const setSelectedJournalId = (journalId: string | null) => {
+    void updateSearch((current) => ({ ...current, journal: journalId ?? undefined }));
+  };
 
   const {
     data: weeklySummary,
@@ -594,7 +613,7 @@ function useWeeklyViewState() {
     isFetchingNextPage,
     visiblePageCount,
     articlePages,
-    setSelectedDb,
+    selectDatabase,
     setSelectedJournalId,
     weeklyState,
     articleState,

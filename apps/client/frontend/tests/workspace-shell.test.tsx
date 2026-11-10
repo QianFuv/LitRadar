@@ -2,10 +2,8 @@
  * Shared reading-workspace shell and application frame coverage.
  */
 
-import { MemoryRouter } from 'react-router';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
 import { createPortal } from 'react-dom';
 import { useState } from 'react';
 import { afterEach, describe, expect, test, vi } from 'vite-plus/test';
@@ -19,20 +17,10 @@ import {
 import { WorkspaceShell } from '@/components/feature/workspace-shell';
 import { AppFrame } from '@/components/shell/app-frame';
 import { READER_DOCK_MEDIA_QUERY } from '@/lib/use-media-query';
+import { renderWithQuery } from '@/tests/render';
 
 /** Upper bound for a lazily loaded workspace module to resolve under a loaded test machine. */
 const LAZY_VIEW_TIMEOUT_MS = 10_000;
-
-const shellMocks = vi.hoisted(() => ({
-  searchParams: new URLSearchParams('view=favorites&folder=4'),
-}));
-
-vi.mock('react-router', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('react-router')>()),
-  useLocation: () => ({ pathname: '/', search: '', hash: '', state: null, key: 'default' }),
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
-  useSearchParams: () => [shellMocks.searchParams, vi.fn()],
-}));
 
 vi.mock('@/lib/auth-context', () => ({
   useAuth: () => ({ user: { id: 21, username: 'workspace_user', is_admin: false } }),
@@ -138,7 +126,7 @@ function renderArticleWorkspace(): void {
 /**
  * Verify the list column, header slot, scroll container, and bottom spacing.
  */
-function rendersWorkspaceRegions(): void {
+async function rendersWorkspaceRegions(): Promise<void> {
   renderArticleWorkspace();
 
   const list = screen.getByRole('region', { name: '测试列表' });
@@ -252,12 +240,12 @@ async function opensExplicitReaderSheet(): Promise<void> {
 /**
  * Verify the application frame exposes the main landmark, navigation, and shortcuts.
  */
-function rendersApplicationFrame(): void {
-  render(
+async function rendersApplicationFrame(): Promise<void> {
+  await renderWithQuery(
     <AppFrame>
       <p>页面内容</p>
     </AppFrame>,
-    { wrapper: MemoryRouter },
+    { url: '/?view=favorites&folder=4' },
   );
 
   expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
@@ -304,33 +292,26 @@ function rendersApplicationFrame(): void {
 }
 
 /**
- * Render the protected root dispatcher with one query-string fixture.
+ * Render the protected root dispatcher at one workspace URL.
  *
- * @param searchParams - Query string supplied to the nuqs adapter.
+ * @param search - Query string of the workspace URL.
+ * @returns Render controls.
  */
-function renderHome(searchParams = ''): void {
-  render(
-    <NuqsTestingAdapter searchParams={searchParams}>
-      <Home />
-    </NuqsTestingAdapter>,
-  );
+function renderHome(search = '') {
+  return renderWithQuery(<Home />, { url: `/${search}` });
 }
 
 /**
  * Verify legal workspace views dispatch to their reusable root content after their code loads.
  */
 async function dispatchesLegalWorkspaceViews(): Promise<void> {
-  const { unmount } = render(
-    <NuqsTestingAdapter searchParams="?view=favorites">
-      <Home />
-    </NuqsTestingAdapter>,
-  );
+  const { unmount } = await renderHome('?view=favorites');
   expect(
     await screen.findByText('收藏工作区用户 21', {}, { timeout: LAZY_VIEW_TIMEOUT_MS }),
   ).toBeInTheDocument();
 
   unmount();
-  renderHome('?view=weekly-updates');
+  await renderHome('?view=weekly-updates');
   expect(
     await screen.findByText('每周更新工作区', {}, { timeout: LAZY_VIEW_TIMEOUT_MS }),
   ).toBeInTheDocument();
@@ -339,16 +320,12 @@ async function dispatchesLegalWorkspaceViews(): Promise<void> {
 /**
  * Verify absent or unknown workspace values safely select search.
  */
-function fallsBackToSearchWorkspace(): void {
-  const { unmount } = render(
-    <NuqsTestingAdapter>
-      <Home />
-    </NuqsTestingAdapter>,
-  );
+async function fallsBackToSearchWorkspace(): Promise<void> {
+  const { unmount } = await renderHome();
   expect(screen.getByText('检索工作区')).toBeInTheDocument();
 
   unmount();
-  renderHome('?view=unknown');
+  await renderHome('?view=unknown');
   expect(screen.getByText('检索工作区')).toBeInTheDocument();
   expect(screen.queryByText(/收藏工作区|每周更新工作区/)).toBeNull();
 }
@@ -364,7 +341,7 @@ describe('WorkspaceShell', () => {
   test('renders the application frame landmarks and navigation', rendersApplicationFrame);
   test('dispatches legal root workspace views', dispatchesLegalWorkspaceViews);
   test('dispatches the CFP workspace from its canonical URL', async () => {
-    renderHome('?view=cfp-tracking');
+    await renderHome('?view=cfp-tracking');
     expect(
       await screen.findByText('征稿追踪工作区', {}, { timeout: LAZY_VIEW_TIMEOUT_MS }),
     ).toBeInTheDocument();

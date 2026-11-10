@@ -2,13 +2,12 @@
  * Route-level error fallback rendered inside the application providers.
  */
 
-import { Link } from 'react-router';
+import { Link, type ErrorComponentProps } from '@tanstack/react-router';
 import { useEffect } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { RadarMark } from '@/components/feature/reader-placeholder';
 import { reportClientError } from '@/lib/client-logger';
-import type { ErrorFallbackProps } from '@/src/error-boundary';
 
 /**
  * Report a route failure safely and offer retry and home navigation.
@@ -16,13 +15,13 @@ import type { ErrorFallbackProps } from '@/src/error-boundary';
  * @param props - Captured error and boundary reset callback.
  * @returns Accessible route failure UI.
  */
-export default function RouteError({ error, reset }: ErrorFallbackProps) {
+export default function RouteError({ error, reset }: ErrorComponentProps) {
   useEffect(
     /**
      * Emit the route-boundary terminal event once for this error object.
      */
     function reportRouteError(): void {
-      reportClientError('route_boundary', error, { digest: error.digest });
+      reportClientError('route_boundary', error);
     },
     [error],
   );

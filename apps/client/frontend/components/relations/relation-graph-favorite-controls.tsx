@@ -6,7 +6,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { Bookmark, BookmarkCheck } from '@/components/ui/animated-icons';
-import { useNavigate } from 'react-router';
+import { useNavigate } from '@tanstack/react-router';
 import { useEffect, useEffectEvent, useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -413,7 +413,7 @@ function RelationGraphLeaveGuard({ favorite }: { favorite: RelationGraphFavorite
    */
   const leave = (href: string) => {
     setPendingHref(null);
-    navigate(href);
+    void navigate({ href });
   };
 
   return (

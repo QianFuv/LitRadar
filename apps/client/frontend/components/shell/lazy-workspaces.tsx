@@ -3,10 +3,11 @@
  */
 
 import { Suspense, useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { useSearch } from '@tanstack/react-router';
 
 import { Skeleton } from '@/components/ui/skeleton';
 import { createPreloadableComponent } from '@/lib/lazy-component';
+import { WORKSPACE_ROUTE_ID } from '@/lib/search-params';
 import type { WorkspaceView } from '@/lib/workspace-view';
 
 /** Favorites workspace, loaded on its first visit. */
@@ -99,8 +100,10 @@ function useStickyRequest(isRequested: boolean): boolean {
  * @returns Lazily loaded settings center, or nothing before its first request.
  */
 export function LazySettingsCenterDialog() {
-  const [searchParams] = useSearchParams();
-  const isRequested = searchParams.has('settings') || searchParams.has('oidc_link');
+  const isRequested = useSearch({
+    from: WORKSPACE_ROUTE_ID,
+    select: (search) => search.settings !== undefined || search.oidc_link !== undefined,
+  });
   const shouldRender = useStickyRequest(isRequested);
   if (!shouldRender) {
     return null;
@@ -118,8 +121,11 @@ export function LazySettingsCenterDialog() {
  * @returns Lazily loaded administrator center, or nothing before its first request.
  */
 export function LazyAdminCenterDialog() {
-  const [searchParams] = useSearchParams();
-  const shouldRender = useStickyRequest(searchParams.has('admin'));
+  const isRequested = useSearch({
+    from: WORKSPACE_ROUTE_ID,
+    select: (search) => search.admin !== undefined,
+  });
+  const shouldRender = useStickyRequest(isRequested);
   if (!shouldRender) {
     return null;
   }

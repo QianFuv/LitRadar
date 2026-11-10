@@ -1,6 +1,6 @@
 /** Shared journal-rating URL state and article request serialization. */
 
-import { parseAsArrayOf, parseAsString, useQueryStates } from 'nuqs';
+import type { WorkspaceSearch } from '@/lib/search-params';
 
 /** Fixed rating systems exposed by journal metadata. */
 export const JOURNAL_RATING_SYSTEMS = [
@@ -13,20 +13,39 @@ export const JOURNAL_RATING_SYSTEMS = [
 /** One supported rating parameter name. */
 export type JournalRatingKey = (typeof JOURNAL_RATING_SYSTEMS)[number]['key'];
 
-const JOURNAL_RATING_PARSERS = {
-  utd_rating: parseAsArrayOf(parseAsString).withDefault([]),
-  abs_rating: parseAsArrayOf(parseAsString).withDefault([]),
-  fms_rating: parseAsArrayOf(parseAsString).withDefault([]),
-  fmscn_rating: parseAsArrayOf(parseAsString).withDefault([]),
-};
+/**
+ * Read the four rating selections from the workspace search state.
+ *
+ * @param search - Current workspace search state.
+ * @returns Selected grades for each rating system.
+ */
+export function readJournalRatings(search: WorkspaceSearch): Record<JournalRatingKey, string[]> {
+  return {
+    utd_rating: search.utd_rating ?? [],
+    abs_rating: search.abs_rating ?? [],
+    fms_rating: search.fms_rating ?? [],
+    fmscn_rating: search.fmscn_rating ?? [],
+  };
+}
 
 /**
- * Read and update the four rating selections together in the current URL.
+ * Return workspace search state with all four rating selections replaced or cleared.
  *
- * @returns Selections and an updater that also supports clearing all four groups.
+ * @param search - Current workspace search state.
+ * @param ratings - Next selections, or null to clear every rating group.
+ * @returns Next workspace search state.
  */
-export function useJournalRatingFilters() {
-  return useQueryStates(JOURNAL_RATING_PARSERS);
+export function withJournalRatings(
+  search: WorkspaceSearch,
+  ratings: Record<JournalRatingKey, string[]> | null,
+): WorkspaceSearch {
+  return {
+    ...search,
+    utd_rating: ratings?.utd_rating,
+    abs_rating: ratings?.abs_rating,
+    fms_rating: ratings?.fms_rating,
+    fmscn_rating: ratings?.fmscn_rating,
+  };
 }
 
 /**

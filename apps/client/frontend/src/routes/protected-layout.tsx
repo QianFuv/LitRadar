@@ -3,7 +3,7 @@
  */
 
 import { Suspense } from 'react';
-import { Outlet } from 'react-router';
+import { Outlet } from '@tanstack/react-router';
 
 import { AppFrame } from '@/components/shell/app-frame';
 import {

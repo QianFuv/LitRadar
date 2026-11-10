@@ -5,6 +5,7 @@
 import { Toast } from '@animate-ui/react/primitives/base-ui/toast';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
+import { z } from 'zod';
 
 import { X } from '@/components/ui/animated-icons';
 import { Button } from '@/components/ui/button';
@@ -16,6 +17,8 @@ import {
 } from '@/lib/browser-storage';
 
 const STORAGE_PREFIX = 'litradar:v1:announcement_dismissed:';
+/** Stored dismissal expiry: a finite millisecond timestamp, or `0` for a permanent dismissal. */
+const DISMISSED_UNTIL_SCHEMA = z.coerce.number();
 const PRIORITY_LABELS = {
   high: '高优先级',
   low: '低优先级',
@@ -56,11 +59,12 @@ function readDismissedUntil(id: number): number | null {
     return null;
   }
 
-  const dismissedUntil = Number(rawValue);
-  if (!Number.isFinite(dismissedUntil)) {
+  const parsedDismissal = DISMISSED_UNTIL_SCHEMA.safeParse(rawValue);
+  if (!parsedDismissal.success) {
     removeLocalStorageValue(storageKey);
     return null;
   }
+  const dismissedUntil = parsedDismissal.data;
 
   if (dismissedUntil == 0) {
     return 0;

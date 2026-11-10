@@ -13,14 +13,15 @@ import {
   type AppIcon,
 } from '@/components/ui/animated-icons';
 import { Highlight, HighlightItem } from '@animate-ui/react/primitives/effects/highlight';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useSearch } from '@tanstack/react-router';
 import type { ComponentProps } from 'react';
 
 import { preloadWorkspaceView } from '@/components/shell/lazy-workspaces';
 import { cn } from '@/lib/utils';
+import { WORKSPACE_ROUTE_ID } from '@/lib/search-params';
 import {
-  getWorkspaceViewHref,
-  WORKSPACE_VIEW_PARSER,
+  DEFAULT_WORKSPACE_VIEW,
+  getWorkspaceViewSearch,
   type WorkspaceView,
 } from '@/lib/workspace-view';
 
@@ -41,30 +42,37 @@ const PRIMARY_NAVIGATION_ITEMS: readonly PrimaryNavigationItem[] = [
 ];
 
 /**
- * Read the current root workspace from the URL without requiring a nuqs adapter.
+ * Read the current root workspace from the URL.
  *
  * @returns Current workspace view, defaulting to search.
  */
 function useCurrentWorkspaceView(): WorkspaceView {
-  const [searchParams] = useSearchParams();
-  return WORKSPACE_VIEW_PARSER.parseServerSide(searchParams.get('view') ?? undefined);
+  return useSearch({
+    from: WORKSPACE_ROUTE_ID,
+    select: (search) => search.view ?? DEFAULT_WORKSPACE_VIEW,
+  });
 }
 
 /**
  * Render one workspace link whose icon plays on hover, on touch, and when it becomes current,
  * and that reports navigation intent so the destination's code can be fetched early.
  *
- * @param props - Link properties, whether the link is current, and the intent callback.
+ * @param props - Anchor properties, target view, whether it is current, and the intent callback.
  * @returns Navigation link that drives its animated icon.
  */
 function NavigationItemLink({
+  view,
   isCurrent,
   onIntent,
   onFocus,
   onPointerDown,
   onPointerEnter,
   ...props
-}: ComponentProps<typeof Link> & { isCurrent: boolean; onIntent: () => void }) {
+}: Omit<ComponentProps<'a'>, 'href'> & {
+  view: WorkspaceView;
+  isCurrent: boolean;
+  onIntent: () => void;
+}) {
   const { isTriggered, triggerHandlers } = useIconTrigger<HTMLAnchorElement>(
     {
       ...props,
@@ -84,6 +92,9 @@ function NavigationItemLink({
       <Link
         {...props}
         {...triggerHandlers}
+        to="/"
+        search={getWorkspaceViewSearch(view)}
+        activeOptions={{ exact: true }}
         onFocus={(event) => {
           onIntent();
           onFocus?.(event);
@@ -113,7 +124,7 @@ export function RailNavigation() {
             <HighlightItem key={item.view} value={item.view}>
               <NavigationItemLink
                 key={item.view}
-                to={getWorkspaceViewHref(item.view)}
+                view={item.view}
                 aria-label={item.label}
                 isCurrent={isCurrent}
                 onIntent={() => preloadWorkspaceView(item.view)}
@@ -164,7 +175,7 @@ export function TabNavigation() {
             <HighlightItem key={item.view} value={item.view}>
               <NavigationItemLink
                 key={item.view}
-                to={getWorkspaceViewHref(item.view)}
+                view={item.view}
                 aria-label={item.label}
                 isCurrent={isCurrent}
                 onIntent={() => preloadWorkspaceView(item.view)}

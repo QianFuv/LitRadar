@@ -2,21 +2,23 @@
  * Authenticated user menu navigation, focus, and theme coverage.
  */
 
-import { MemoryRouter } from 'react-router';
 import type { ReactNode } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, test, vi } from 'vite-plus/test';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import Providers from '@/src/providers';
 import { SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE } from '@/components/feature/sectioned-dialog';
 import { UserMenu } from '@/components/feature/user-menu';
+import { renderWithQuery } from '@/tests/render';
 
 type MockUser = {
   id: number;
   username: string;
   is_admin: boolean;
 };
+
+const WORKSPACE_URL = '/?view=favorites&folder=4';
 
 const userMenuMocks = vi.hoisted(() => ({
   auth: {
@@ -29,23 +31,9 @@ const userMenuMocks = vi.hoisted(() => ({
       is_admin: false,
     } as MockUser | null,
   },
-  pathname: '/',
   providerProps: vi.fn(),
-  searchParams: new URLSearchParams('view=favorites&folder=4'),
   setTheme: vi.fn(),
   theme: 'system',
-}));
-
-vi.mock('react-router', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('react-router')>()),
-  useLocation: () => ({
-    pathname: userMenuMocks.pathname,
-    search: '',
-    hash: '',
-    state: null,
-    key: 'default',
-  }),
-  useSearchParams: () => [userMenuMocks.searchParams, vi.fn()],
 }));
 
 vi.mock('@/lib/auth-context', () => ({
@@ -64,10 +52,6 @@ vi.mock('next-themes', () => ({
   }),
 }));
 
-vi.mock('nuqs/adapters/react-router/v7', () => ({
-  NuqsAdapter: ({ children }: { children: ReactNode }) => children,
-}));
-
 /**
  * Restore the default authenticated non-admin fixture.
  */
@@ -79,21 +63,19 @@ function resetUserMenuMocks(): void {
     username: 'menu_user',
     is_admin: false,
   };
-  userMenuMocks.pathname = '/';
-  userMenuMocks.searchParams = new URLSearchParams('view=favorites&folder=4');
   userMenuMocks.theme = 'system';
 }
 
 /**
  * Verify an anonymous client retains a visible recovery action after failed revocation.
  */
-function exposesLogoutRecoveryAfterLocalCleanup(): void {
+async function exposesLogoutRecoveryAfterLocalCleanup(): Promise<void> {
   userMenuMocks.auth.user = null;
   userMenuMocks.auth.logoutWarning = {
     occurredAt: 1234,
     requestId: 'logout-request-2',
   };
-  render(<UserMenu />, { wrapper: MemoryRouter });
+  await renderWithQuery(<UserMenu />, { url: WORKSPACE_URL });
 
   const warning = screen.getByRole('alert');
   expect(warning).toHaveTextContent('服务端会话撤销未确认');
@@ -105,7 +87,9 @@ function exposesLogoutRecoveryAfterLocalCleanup(): void {
 }
 
 /**
- * Prevent jsdom from attempting document navigation during link interaction tests.
+ * Prevent jsdom from attempting document navigation for clicks the router leaves to the browser.
+ *
+ * Registered on the document so link handlers run before the default action is cancelled.
  *
  * @param event - Native anchor click event.
  */
@@ -116,14 +100,14 @@ function preventNavigation(event: Event): void {
 /**
  * Verify loading and anonymous states expose no global menu control.
  */
-function hidesMenuWithoutAuthenticatedUser(): void {
+async function hidesMenuWithoutAuthenticatedUser(): Promise<void> {
   userMenuMocks.auth.loading = true;
-  render(<UserMenu />, { wrapper: MemoryRouter });
+  await renderWithQuery(<UserMenu />, { url: WORKSPACE_URL });
   expect(screen.queryByRole('button', { name: /打开账号菜单/ })).not.toBeInTheDocument();
 
   userMenuMocks.auth.loading = false;
   userMenuMocks.auth.user = null;
-  render(<UserMenu />, { wrapper: MemoryRouter });
+  await renderWithQuery(<UserMenu />, { url: WORKSPACE_URL });
   expect(screen.queryByRole('button', { name: /打开账号菜单/ })).not.toBeInTheDocument();
 }
 
@@ -132,7 +116,7 @@ function hidesMenuWithoutAuthenticatedUser(): void {
  */
 async function exposesAccountActions(): Promise<void> {
   const user = userEvent.setup();
-  const { rerender } = render(<UserMenu />, { wrapper: MemoryRouter });
+  const { rerender } = await renderWithQuery(<UserMenu />, { url: WORKSPACE_URL });
   const trigger = screen.getByRole('button', { name: '打开账号菜单：menu_user' });
 
   expect(trigger).toHaveTextContent('menu_user');
@@ -161,7 +145,6 @@ async function exposesAccountActions(): Promise<void> {
   await user.click(screen.getByRole('button', { name: '打开账号菜单：admin_user' }));
   const adminLink = screen.getByRole('menuitem', { name: '管理面板' });
   expect(adminLink).toHaveAttribute('href', '/?view=favorites&folder=4&admin=overview');
-  adminLink.addEventListener('click', preventNavigation);
   fireEvent.click(adminLink);
   expect(trigger).toHaveAttribute(SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE);
 }
@@ -171,7 +154,7 @@ async function exposesAccountActions(): Promise<void> {
  */
 async function restoresTriggerFocusAfterEscape(): Promise<void> {
   const user = userEvent.setup();
-  render(<UserMenu />, { wrapper: MemoryRouter });
+  await renderWithQuery(<UserMenu />, { url: WORKSPACE_URL });
   const trigger = screen.getByRole('button', { name: /打开账号菜单/ });
 
   await user.click(trigger);
@@ -187,12 +170,11 @@ async function restoresTriggerFocusAfterEscape(): Promise<void> {
  */
 async function marksCurrentTabSettingsInitiator(): Promise<void> {
   const user = userEvent.setup();
-  render(<UserMenu />, { wrapper: MemoryRouter });
+  await renderWithQuery(<UserMenu />, { url: WORKSPACE_URL });
   const trigger = screen.getByRole('button', { name: /打开账号菜单/ });
 
   await user.click(trigger);
   const modifiedSettingsLink = screen.getByRole('menuitem', { name: '打开设置中心' });
-  modifiedSettingsLink.addEventListener('click', preventNavigation);
   fireEvent.click(modifiedSettingsLink, { ctrlKey: true });
   expect(trigger).not.toHaveAttribute(SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE);
 
@@ -206,7 +188,7 @@ async function marksCurrentTabSettingsInitiator(): Promise<void> {
  */
 async function selectsThemePreferences(): Promise<void> {
   const user = userEvent.setup();
-  render(<UserMenu />, { wrapper: MemoryRouter });
+  await renderWithQuery(<UserMenu />, { url: WORKSPACE_URL });
   const trigger = screen.getByRole('button', { name: /打开账号菜单/ });
 
   await user.click(trigger);
@@ -246,7 +228,11 @@ function configuresSystemThemeProvider(): void {
   );
 }
 
-beforeEach(resetUserMenuMocks);
+beforeEach(() => {
+  resetUserMenuMocks();
+  document.addEventListener('click', preventNavigation);
+});
+afterEach(() => document.removeEventListener('click', preventNavigation));
 
 describe('UserMenu', () => {
   test('stays hidden before authentication completes', hidesMenuWithoutAuthenticatedUser);

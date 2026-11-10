@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
-import { parseAsString, useQueryState } from 'nuqs';
+import { useSearch } from '@tanstack/react-router';
 import { Layers, Megaphone, Search } from '@/components/ui/animated-icons';
 
 import { CfpNoticeCard, CfpSourceFooter } from '@/components/cfp/cfp-notice-card';
@@ -32,6 +32,7 @@ import {
   type CfpNoticePage,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { useUpdateWorkspaceSearch, WORKSPACE_ROUTE_ID } from '@/lib/search-params';
 
 const DATABASE_LABELS: Readonly<Record<string, string>> = {
   'ccf_computer_journals.sqlite': 'CCF 计算机期刊',
@@ -96,14 +97,19 @@ export function CfpTrackingView() {
 /** Own unchanged CFP hooks, requests, cursor recovery and dependent reset order. */
 function useCfpViewState() {
   const { user } = useAuth();
-  const [selectedDatabase, setSelectedDatabase] = useQueryState(
-    'cfp_db',
-    parseAsString.withDefault(''),
-  );
-  const [selectedCatalogId, setSelectedCatalogId] = useQueryState(
-    'cfp_journal',
-    parseAsString.withDefault(''),
-  );
+  const search = useSearch({ from: WORKSPACE_ROUTE_ID });
+  const updateSearch = useUpdateWorkspaceSearch();
+  const selectedDatabase = search.cfp_db ?? '';
+  const selectedCatalogId = search.cfp_journal ?? '';
+
+  /**
+   * Select a CFP journal in the URL, or clear the selection.
+   *
+   * @param catalogId - Journal catalog id, or null to clear it.
+   */
+  const setSelectedCatalogId = (catalogId: string | null) => {
+    void updateSearch((current) => ({ ...current, cfp_journal: catalogId || undefined }));
+  };
   const [journalSearch, setJournalSearch] = useState('');
   const [shouldShowClosed, setShouldShowClosed] = useState(false);
   const databasesQuery = useQuery({
@@ -208,10 +214,13 @@ function useCfpViewState() {
   const isLoading = databasesQuery.isLoading || journalsQuery.isLoading;
   const error = databasesQuery.error ?? journalsQuery.error;
 
-  /** Change CFP databases atomically through nuqs batching and reset dependent journal selection. */
+  /** Change CFP databases and reset the dependent journal selection in one URL update. */
   function handleDatabaseChange(value: string): void {
-    void setSelectedDatabase(value);
-    void setSelectedCatalogId(null);
+    void updateSearch((current) => ({
+      ...current,
+      cfp_db: value || undefined,
+      cfp_journal: undefined,
+    }));
     setJournalSearch('');
     setShouldShowClosed(false);
   }
@@ -539,7 +548,7 @@ function renderCfpJournalPanel(state: CfpViewState, onOpenReader: () => void) {
             isSearching={Boolean(journalSearch.trim())}
             onIntent={handleJournalIntent}
             onSelect={(catalogId) => {
-              void setSelectedCatalogId(catalogId);
+              setSelectedCatalogId(catalogId);
               onOpenReader();
             }}
           />

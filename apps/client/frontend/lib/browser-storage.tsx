@@ -2,6 +2,8 @@
  * Browser storage helpers that tolerate unavailable Web Storage APIs.
  */
 
+import type { z } from 'zod';
+
 /**
  * Read a localStorage value without assuming browser storage is available.
  *
@@ -60,4 +62,20 @@ export function removeSessionStorageValue(key: string): void {
   try {
     window.sessionStorage.removeItem(key);
   } catch {}
+}
+
+/**
+ * Parse stored JSON text against a schema, treating malformed or mismatched data as absent.
+ *
+ * @param rawValue - Serialized value read from Web Storage.
+ * @param schema - Expected shape of the stored value.
+ * @returns Parsed value, or null when the text is not valid JSON or does not match.
+ */
+export function parseStoredJson<T>(rawValue: string, schema: z.ZodType<T>): T | null {
+  try {
+    const result = schema.safeParse(JSON.parse(rawValue));
+    return result.success ? result.data : null;
+  } catch {
+    return null;
+  }
 }

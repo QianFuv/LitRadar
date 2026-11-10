@@ -2,7 +2,6 @@
  * Browser-local structured logging, listener lifecycle, privacy, and request correlation tests.
  */
 
-import { MemoryRouter } from 'react-router';
 import { render } from '@testing-library/react';
 import { StrictMode, type ReactNode } from 'react';
 import { afterEach, expect, test, vi } from 'vite-plus/test';
@@ -12,6 +11,7 @@ import GlobalError from '@/src/global-error';
 import Providers from '@/src/providers';
 import { reportClientError, type ClientErrorEvent } from '@/lib/client-logger';
 import { ApiError, requestDownload, requestJson } from '@/lib/api/client';
+import { renderWithQuery } from '@/tests/render';
 
 vi.mock('@/lib/auth-context', () => {
   /**
@@ -346,17 +346,16 @@ function managesGlobalListenerLifecycle(): void {
 /**
  * Verify a route boundary emits once when React Strict Mode replays its effect.
  */
-function deduplicatesRouteBoundaryEffects(): void {
+async function deduplicatesRouteBoundaryEffects(): Promise<void> {
   const consoleReport = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   const error = Object.assign(new Error('route-message-secret-never-log'), {
     digest: 'route-digest-789',
   });
 
-  render(
+  await renderWithQuery(
     <StrictMode>
       <RouteError error={error} reset={vi.fn()} />
     </StrictMode>,
-    { wrapper: MemoryRouter },
   );
 
   const events = clientErrorPayloads(consoleReport.mock.calls);

@@ -383,9 +383,9 @@ function providerCatalogFixture(): ProviderCatalogResponse {
 /**
  * Install Provider catalog and atomic runtime update handlers.
  */
-function renderProviderConfiguration(
+async function renderProviderConfiguration(
   runtimeSettings: RuntimeSettingInfo[] = providerSettingsFixture(),
-): void {
+): Promise<void> {
   let currentRuntimeSettings = runtimeSettings;
   server.use(
     http.get('http://localhost/api/admin/runtime-settings', () =>
@@ -432,7 +432,7 @@ function renderProviderConfiguration(
       return HttpResponse.json(currentRuntimeSettings);
     }),
   );
-  renderWithQuery(<RuntimeSettingsCard />);
+  await renderWithQuery(<RuntimeSettingsCard />);
 }
 
 /**
@@ -440,7 +440,7 @@ function renderProviderConfiguration(
  */
 async function rendersRuntimeDescriptorParityAndCatalogMatrix(): Promise<void> {
   const runtimeSettings = allRuntimeSettingsFixture();
-  renderProviderConfiguration(runtimeSettings);
+  await renderProviderConfiguration(runtimeSettings);
 
   expect(runtimeSettings).toHaveLength(20);
   expect(
@@ -468,7 +468,7 @@ async function rendersRuntimeDescriptorParityAndCatalogMatrix(): Promise<void> {
  * Verify local pool rows retain stable identities while values and positions change.
  */
 async function preservesRuntimePoolRowIdentity(): Promise<void> {
-  renderProviderConfiguration(allRuntimeSettingsFixture());
+  await renderProviderConfiguration(allRuntimeSettingsFixture());
   const user = userEvent.setup();
 
   const firstInput = await screen.findByLabelText('MCP allowed hosts 1');
@@ -513,7 +513,7 @@ function rejectsInvalidScalarSecretMetadata(): void {
  * Verify blank, replacement, and clear updates preserve scalar secret redaction.
  */
 async function serializesScalarSecretLifecycle(): Promise<void> {
-  renderProviderConfiguration(allRuntimeSettingsFixture());
+  await renderProviderConfiguration(allRuntimeSettingsFixture());
   const user = userEvent.setup();
 
   const tokenInput = await screen.findByLabelText('CNKI captcha solver token');
@@ -564,7 +564,7 @@ async function serializesScalarSecretLifecycle(): Promise<void> {
  * Verify proxy switches default missing Providers off and save with the URL atomically.
  */
 async function serializesProviderProxyUrlAndPolicyAtomically(): Promise<void> {
-  renderProviderConfiguration(allRuntimeSettingsFixture());
+  await renderProviderConfiguration(allRuntimeSettingsFixture());
   const user = userEvent.setup();
 
   const cnkiSwitch = await screen.findByRole('switch', {
@@ -611,7 +611,7 @@ async function defaultsProviderProxySwitchesOffIndependently(): Promise<void> {
   const settings = providerSettingsFixture().map((setting) =>
     setting.field === 'provider_proxy_policy' ? { ...setting, value: '{}' } : setting,
   );
-  renderProviderConfiguration(settings);
+  await renderProviderConfiguration(settings);
   const user = userEvent.setup();
 
   const switches = await Promise.all(
@@ -639,7 +639,7 @@ async function rejectsProviderProxyPolicyCatalogMismatch(): Promise<void> {
       ? { ...setting, value: '{"retired_provider":true}' }
       : setting,
   );
-  renderProviderConfiguration(settings);
+  await renderProviderConfiguration(settings);
 
   expect(
     await screen.findByText('Provider 配置与后端能力目录不一致，已停止编辑以避免覆盖有效配置。'),
@@ -651,7 +651,7 @@ async function rejectsProviderProxyPolicyCatalogMismatch(): Promise<void> {
  * Verify index and online selectors offer only capability-compatible Providers.
  */
 async function filtersProviderCandidatesByCapability(): Promise<void> {
-  renderProviderConfiguration();
+  await renderProviderConfiguration();
   const user = userEvent.setup();
 
   const indexSelect = await screen.findByRole('combobox', {
@@ -679,7 +679,7 @@ async function filtersProviderCandidatesByCapability(): Promise<void> {
  * Verify default sequence reordering preserves exact Provider order in one PUT.
  */
 async function serializesReorderedDefaultProviderOrder(): Promise<void> {
-  renderProviderConfiguration();
+  await renderProviderConfiguration();
   const user = userEvent.setup();
 
   await user.click(
@@ -705,7 +705,7 @@ async function serializesReorderedDefaultProviderOrder(): Promise<void> {
  * Verify inheritance removal and explicit empty override remain distinguishable.
  */
 async function serializesInheritanceAndExplicitDisable(): Promise<void> {
-  renderProviderConfiguration();
+  await renderProviderConfiguration();
   const user = userEvent.setup();
 
   await user.click(
@@ -740,7 +740,7 @@ async function serializesInheritanceAndExplicitDisable(): Promise<void> {
  * Verify changing one index selection sends a sorted single-choice route map.
  */
 async function serializesOneIndexProviderPerCatalog(): Promise<void> {
-  renderProviderConfiguration();
+  await renderProviderConfiguration();
   const user = userEvent.setup();
 
   const select = await screen.findByRole('combobox', {
@@ -789,7 +789,7 @@ async function rendersFutureGenericControlOnce(): Promise<void> {
       ]),
     ),
   );
-  renderWithQuery(<RuntimeSettingsCard />);
+  await renderWithQuery(<RuntimeSettingsCard />);
 
   expect(await screen.findByLabelText('Future setting')).toHaveValue('future-value');
   expect(document.querySelectorAll('[data-runtime-setting-field="future_setting"]')).toHaveLength(

@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
-import { useQueryState, parseAsString, parseAsArrayOf } from 'nuqs';
+import { useLocation, useSearch } from '@tanstack/react-router';
 import { getArticles, type ArticlePage } from '@/lib/api';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import { ArticleListSkeleton } from '@/components/feature/article-list-card';
@@ -16,13 +16,17 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { StateMessage } from '@/components/ui/state-message';
 import { Button } from '@/components/ui/button';
 import { useMemo, type ComponentProps, type ReactNode } from 'react';
-import { useSearchParams } from 'react-router';
 import { useAuth } from '@/lib/auth-context';
 import { getMonthRangeDateBounds } from '@/lib/article-filters';
 import { useFtsHighlighter } from '@/lib/fts-highlight';
 import { useSelectedDatabase } from '@/lib/selected-database';
 import { useFavoriteChecks } from '@/components/feature/use-favorite-checks';
-import { appendJournalRatingParams, useJournalRatingFilters } from '@/lib/journal-ratings';
+import {
+  appendJournalRatingParams,
+  readJournalRatings,
+  type JournalRatingKey,
+} from '@/lib/journal-ratings';
+import { WORKSPACE_ROUTE_ID } from '@/lib/search-params';
 import { describeSearchError } from '@/lib/search-syntax';
 
 type HighlightedArticleCardProps = Omit<
@@ -150,13 +154,13 @@ function useResultsViewState() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
-  const [q] = useQueryState('q', parseAsString);
-  const [areas] = useQueryState('area', parseAsArrayOf(parseAsString));
-  const [journalIds] = useQueryState('journal_id', parseAsArrayOf(parseAsString));
-  const [monthRange] = useQueryState('month_range', parseAsString);
-  const [ratings] = useJournalRatingFilters();
-  const [searchParams] = useSearchParams();
-  const searchKey = searchParams.toString();
+  const search = useSearch({ from: WORKSPACE_ROUTE_ID });
+  const q = search.q ?? null;
+  const areas = search.area ?? null;
+  const journalIds = search.journal_id ?? null;
+  const monthRange = search.month_range ?? null;
+  const ratings = readJournalRatings(search);
+  const searchKey = useLocation({ select: (location) => location.searchStr });
 
   const params = getResultsArticleParams(q, areas, journalIds, ratings, monthRange);
   const paramsString = params.toString();
@@ -348,7 +352,7 @@ function getResultsArticleParams(
   q: string | null,
   areas: string[] | null,
   journalIds: string[] | null,
-  ratings: ReturnType<typeof useJournalRatingFilters>[0],
+  ratings: Record<JournalRatingKey, string[]>,
   monthRange: string | null,
 ): URLSearchParams {
   const params = new URLSearchParams();
