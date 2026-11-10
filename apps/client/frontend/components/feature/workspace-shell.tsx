@@ -270,31 +270,31 @@ export function WorkspaceShell({
           <DialogContent
             placement="right"
             xstyle={styles.workspaceShellDialogContent}
-            onOpenAutoFocus={() => {
+            initialFocus={() => {
               sheetReturnFocusRef.current =
                 document.activeElement instanceof HTMLElement ? document.activeElement : null;
+              return true;
             }}
-            onCloseAutoFocus={(event) => {
+            finalFocus={() => {
               const returnTarget = sheetReturnFocusRef.current;
               sheetReturnFocusRef.current = null;
-              if (returnTarget?.isConnected) {
-                event.preventDefault();
-                returnTarget.focus();
-              }
+              return returnTarget?.isConnected ? returnTarget : true;
             }}
           >
             <div {...stylex.props(styles.workspaceShellDiv6)}>
-              <DialogClose asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  static
-                  aria-label="关闭"
-                  xstyle={styles.workspaceShellButton}
-                >
-                  <X {...stylex.props(styles.workspaceShellX)} aria-hidden="true" />
-                </Button>
+              <DialogClose
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    static
+                    aria-label="关闭"
+                    xstyle={styles.workspaceShellButton}
+                  />
+                }
+              >
+                <X xstyle={styles.workspaceShellX} aria-hidden="true" />
               </DialogClose>
               <DialogTitle xstyle={styles.workspaceShellDialogTitle}>{reader.title}</DialogTitle>
               <DialogDescription xstyle={styles.workspaceShellDialogDescription}>

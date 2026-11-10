@@ -1,11 +1,16 @@
 /**
- * Project-styled Radix dropdown menu primitives.
+ * Project-styled Animate UI menu primitives on Base UI.
  */
 
-import * as DropdownMenuPrimitive from '@animate-ui/react/primitives/radix-ui/dropdown-menu';
+import { Menu as DropdownMenuPrimitive } from '@animate-ui/react/primitives/base-ui/menu';
 import * as React from 'react';
 
-import { IconTriggerProvider, useIconTrigger } from '@/components/ui/animated-icons';
+import {
+  IconStyleProvider,
+  IconTriggerProvider,
+  useIconTrigger,
+} from '@/components/ui/animated-icons';
+import { controlIconStyle } from '@/components/ui/button';
 import { RevealScope } from '@/components/ui/reveal';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
@@ -13,59 +18,65 @@ import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 /**
  * Render the dropdown menu state root.
  *
- * @param props - Radix root properties.
+ * @param props - Base UI menu root properties.
  * @returns Dropdown menu root.
  */
 function DropdownMenu(props: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
-  return <DropdownMenuPrimitive.Root data-slot="dropdown-menu" {...props} />;
+  return <DropdownMenuPrimitive.Root {...props} />;
 }
 
 /**
  * Render the control that toggles the menu.
  *
- * @param props - Radix trigger properties.
+ * @param props - Base UI menu trigger properties.
  * @returns Dropdown menu trigger.
  */
 function DropdownMenuTrigger(props: React.ComponentProps<typeof DropdownMenuPrimitive.Trigger>) {
   return <DropdownMenuPrimitive.Trigger data-slot="dropdown-menu-trigger" {...props} />;
 }
 
-/**
- * Leave close focus to Radix, which restores the trigger after the pointer's own focus change.
- * Pass it to Animate UI menu content rendered outside `DropdownMenuContent`.
- */
-export function keepRadixCloseFocus(): void {}
+type DropdownMenuContentProps = Omit<
+  React.ComponentProps<typeof DropdownMenuPrimitive.Popup>,
+  'className'
+> &
+  Pick<
+    React.ComponentProps<typeof DropdownMenuPrimitive.Positioner>,
+    'align' | 'side' | 'sideOffset'
+  > & {
+    xstyle?: stylex.StyleXStyles;
+  };
 
 /**
  * Render positioned menu content in a portal.
  *
- * Animate UI returns focus to the trigger as soon as the menu starts closing, before the outside
- * pointer press moves focus to the page, and then blocks Radix's own restore; passing a close
- * focus handler opts out of that early restore so Radix returns focus once the exit finishes.
- *
- * @param props - Radix content properties.
+ * @param props - Base UI menu popup properties, positioning, and style overrides.
  * @returns Portaled menu content.
  */
 function DropdownMenuContent({
   xstyle,
+  align = 'center',
+  side = 'bottom',
   sideOffset = 6,
-  onCloseAutoFocus = keepRadixCloseFocus,
   ...props
-}: Omit<React.ComponentProps<typeof DropdownMenuPrimitive.Content>, 'className'> & {
-  xstyle?: stylex.StyleXStyles;
-}) {
+}: DropdownMenuContentProps) {
   return (
     <DropdownMenuPrimitive.Portal>
-      <RevealScope>
-        <DropdownMenuPrimitive.Content
-          data-slot="dropdown-menu-content"
-          sideOffset={sideOffset}
-          collisionPadding={8}
-          onCloseAutoFocus={onCloseAutoFocus}
-          {...stylex.props(styles.dropdownMenuContent, xstyle)}
-          {...props}
-        />
-      </RevealScope>
+      <DropdownMenuPrimitive.Positioner
+        align={align}
+        side={side}
+        sideOffset={sideOffset}
+        collisionPadding={8}
+        collisionAvoidance={{ align: 'shift', fallbackAxisSide: 'none' }}
+        {...stylex.props(styles.dropdownMenuPositioner)}
+      >
+        <RevealScope>
+          <DropdownMenuPrimitive.Popup
+            data-slot="dropdown-menu-content"
+            {...stylex.props(styles.dropdownMenuContent, xstyle)}
+            {...props}
+          />
+        </RevealScope>
+      </DropdownMenuPrimitive.Positioner>
     </DropdownMenuPrimitive.Portal>
   );
 }
@@ -73,49 +84,53 @@ function DropdownMenuContent({
 /**
  * Render one selectable menu item.
  *
- * @param props - Radix item properties and destructive tone.
+ * @param props - Base UI menu item properties, destructive tone, and style overrides.
  * @returns Menu item that plays its animated icons while hovered or pressed.
  */
 function DropdownMenuItem({
   xstyle,
   isDestructive = false,
   ...props
-}: Omit<
-  React.ComponentProps<typeof DropdownMenuPrimitive.Item> & { isDestructive?: boolean },
-  'className'
-> & { xstyle?: stylex.StyleXStyles }) {
+}: Omit<React.ComponentProps<typeof DropdownMenuPrimitive.Item>, 'className'> & {
+  isDestructive?: boolean;
+  xstyle?: stylex.StyleXStyles;
+}) {
   const { isTriggered, triggerHandlers } = useIconTrigger(props);
   return (
     <IconTriggerProvider isTriggered={isTriggered}>
-      <DropdownMenuPrimitive.Item
-        data-slot="dropdown-menu-item"
-        data-variant={isDestructive ? 'destructive' : undefined}
-        {...stylex.props(
-          styles.dropdownMenuItem,
-          isDestructive && styles.dropdownMenuItemDestructive,
-          xstyle,
-        )}
-        {...props}
-        {...triggerHandlers}
-      />
+      <IconStyleProvider
+        xstyle={[controlIconStyle, isDestructive ? styles.itemIconDestructive : menuItemIconStyle]}
+      >
+        <DropdownMenuPrimitive.Item
+          data-slot="dropdown-menu-item"
+          data-variant={isDestructive ? 'destructive' : undefined}
+          {...stylex.props(
+            styles.dropdownMenuItem,
+            isDestructive && styles.dropdownMenuItemDestructive,
+            xstyle,
+          )}
+          {...props}
+          {...triggerHandlers}
+        />
+      </IconStyleProvider>
     </IconTriggerProvider>
   );
 }
 
 /**
- * Render a non-interactive menu label.
+ * Render a non-interactive caption at the top of a menu.
  *
- * @param props - Radix label properties.
- * @returns Menu label.
+ * @param props - Native container properties and style overrides.
+ * @returns Menu caption.
  */
 function DropdownMenuLabel({
   xstyle,
   ...props
-}: Omit<React.ComponentProps<typeof DropdownMenuPrimitive.Label>, 'className'> & {
+}: Omit<React.ComponentProps<'div'>, 'className'> & {
   xstyle?: stylex.StyleXStyles;
 }) {
   return (
-    <DropdownMenuPrimitive.Label
+    <div
       data-slot="dropdown-menu-label"
       {...stylex.props(styles.dropdownMenuLabel, xstyle)}
       {...props}
@@ -126,7 +141,7 @@ function DropdownMenuLabel({
 /**
  * Render a visual separator between menu groups.
  *
- * @param props - Radix separator properties.
+ * @param props - Base UI separator properties and style overrides.
  * @returns Menu separator.
  */
 function DropdownMenuSeparator({
@@ -145,6 +160,7 @@ function DropdownMenuSeparator({
 }
 
 export {
+  menuItemIconStyle,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -154,10 +170,18 @@ export {
 };
 
 const styles = stylex.create({
-  dropdownMenuContent: {
+  itemIcon: {
+    color: colors.mutedForeground,
+  },
+  itemIconDestructive: {
+    color: colors.destructive,
+  },
+  dropdownMenuPositioner: {
     zIndex: 50,
+  },
+  dropdownMenuContent: {
     minWidth: '12rem',
-    transformOrigin: 'var(--radix-dropdown-menu-content-transform-origin)',
+    transformOrigin: 'var(--transform-origin)',
     borderRadius: '12px',
     backgroundColor: colors.popover,
     padding: '0.375rem',
@@ -264,3 +288,6 @@ const styles = stylex.create({
     backgroundColor: colors.border,
   },
 });
+
+/** Muted color of icons inside menu items, combined with the shared control icon size. */
+const menuItemIconStyle = styles.itemIcon;

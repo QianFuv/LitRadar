@@ -2,11 +2,7 @@
 
 import { CalendarDays, ChevronDown, ExternalLink } from '@/components/ui/animated-icons';
 
-import {
-  Root as Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@animate-ui/react/primitives/radix-ui/collapsible';
+import { Collapsible as CollapsiblePrimitive } from '@animate-ui/react/primitives/base-ui/collapsible';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -55,10 +51,7 @@ export function CfpSourceFooter({
         <Button variant="outline" size="sm" xstyle={styles.cfpSourceFooterButton} asChild>
           <a href={sourceUrl} target="_blank" rel="noopener noreferrer">
             {label}
-            <ExternalLink
-              {...stylex.props(styles.cfpSourceFooterExternalLink)}
-              aria-hidden="true"
-            />
+            <ExternalLink xstyle={styles.cfpSourceFooterExternalLink} aria-hidden="true" />
           </a>
         </Button>
       )}
@@ -89,7 +82,7 @@ function CfpTimeline({ notice }: { notice: CfpNoticeView }) {
   return (
     <aside data-slot="cfp-timeline" aria-label="时间安排" {...stylex.props(styles.cfpTimeline)}>
       <h4 {...stylex.props(styles.cfpTimelineH4)}>
-        <CalendarDays {...stylex.props(styles.cfpTimelineCalendarDays)} aria-hidden="true" />
+        <CalendarDays xstyle={styles.cfpTimelineCalendarDays} aria-hidden="true" />
         时间安排
       </h4>
       <dl {...stylex.props(styles.cfpTimelineDl)}>
@@ -196,17 +189,17 @@ export function CfpNoticeCard({ notice }: { notice: CfpNoticeView }) {
         )}
       </div>
       {notice.rawDateText && (
-        <Collapsible {...stylex.props(styles.cfpNoticeCardCollapsible)}>
-          <CollapsibleTrigger
+        <CollapsiblePrimitive.Root {...stylex.props(styles.cfpNoticeCardCollapsible)}>
+          <CollapsiblePrimitive.Trigger
             {...stylex.props(styles.cfpNoticeCardCollapsibleTrigger, stylex.defaultMarker())}
           >
             查看原文时间说明
-            <ChevronDown {...stylex.props(styles.cfpNoticeCardChevronDown)} aria-hidden="true" />
-          </CollapsibleTrigger>
-          <CollapsibleContent>
+            <ChevronDown xstyle={styles.cfpNoticeCardChevronDown} aria-hidden="true" />
+          </CollapsiblePrimitive.Trigger>
+          <CollapsiblePrimitive.Panel>
             <p {...stylex.props(styles.cfpNoticeCardP)}>{notice.rawDateText}</p>
-          </CollapsibleContent>
-        </Collapsible>
+          </CollapsiblePrimitive.Panel>
+        </CollapsiblePrimitive.Root>
       )}
       <CfpSourceFooter checkedOn={notice.checkedOn} sourceUrl={notice.sourceUrl} />
     </article>
@@ -523,7 +516,7 @@ const styles = stylex.create({
     transitionDuration: '350ms',
     rotate: {
       default: null,
-      [stylex.when.ancestor('[data-state="open"]')]: '180deg',
+      [stylex.when.ancestor('[data-panel-open]')]: '180deg',
     },
   },
   cfpNoticeCardP: {

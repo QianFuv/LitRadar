@@ -64,7 +64,7 @@ export function TrackingFolderCard({ model }: TrackingFolderCardProps) {
                     : styles.trackingFolderCardSpanNotTrackingFolder,
                 )}
               >
-                <Folder {...stylex.props(styles.trackingFolderCardFolder)} />
+                <Folder xstyle={styles.trackingFolderCardFolder} />
               </span>
             }
             title="当前文件夹"
@@ -80,7 +80,11 @@ export function TrackingFolderCard({ model }: TrackingFolderCardProps) {
               <Select
                 name="tracking_folder_id"
                 value={model.trackingFolder?.id?.toString() || ''}
-                onValueChange={(value: string) => model.setTrackingMutation.mutate(Number(value))}
+                items={model.folders.map((folder) => ({
+                  value: folder.id.toString(),
+                  label: `${folder.name} (${folder.article_count})`,
+                }))}
+                onValueChange={(value) => model.setTrackingMutation.mutate(Number(value))}
               >
                 <SelectTrigger
                   xstyle={styles.trackingFolderCardSelectTrigger}
@@ -115,7 +119,7 @@ export function TrackingFolderCard({ model }: TrackingFolderCardProps) {
                 disabled={!model.name.trim() || model.createAndSetMutation.isPending}
                 onClick={() => model.createAndSetMutation.mutate(model.name.trim())}
               >
-                <Plus {...stylex.props(styles.trackingFolderCardPlus)} />
+                <Plus xstyle={styles.trackingFolderCardPlus} />
                 创建并设为追踪
               </Button>
             </div>

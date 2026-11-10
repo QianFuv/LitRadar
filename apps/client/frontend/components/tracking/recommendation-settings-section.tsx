@@ -14,6 +14,7 @@ import {
   SettingsSectionHeader,
   SettingsSectionTitle,
   StatusPill,
+  settingsGroupItemStyle,
 } from '@/components/settings/settings-section';
 import type { TrackingPageViewModel } from '@/components/tracking/use-tracking-page';
 import { Button } from '@/components/ui/button';
@@ -35,6 +36,7 @@ import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
 
 const DEFAULT_AI_ENDPOINT_VALUE = '__default__';
+const DEFAULT_AI_ENDPOINT_LABEL = '使用服务端默认 Endpoint（若已批准）';
 
 type RecommendationSettingsSectionProps = {
   model: TrackingPageViewModel['recommendation'];
@@ -156,7 +158,7 @@ function PreferenceTagField({
                 onClick={() => onRemove(item)}
                 {...stylex.props(styles.preferenceTagFieldButton)}
               >
-                <X {...stylex.props(styles.preferenceTagFieldX)} />
+                <X xstyle={styles.preferenceTagFieldX} />
               </button>
             </span>
           </MotionSpan>
@@ -187,7 +189,7 @@ function PreferenceTagField({
         onClick={onAdd}
         disabled={!value.trim()}
       >
-        <Plus {...stylex.props(styles.preferenceTagFieldPlus)} />
+        <Plus xstyle={styles.preferenceTagFieldPlus} />
       </Button>
     </div>
   );
@@ -351,6 +353,10 @@ function EndpointSelect({
   return (
     <Select
       value={endpoints.available.includes(value) ? value : DEFAULT_AI_ENDPOINT_VALUE}
+      items={[
+        { value: DEFAULT_AI_ENDPOINT_VALUE, label: DEFAULT_AI_ENDPOINT_LABEL },
+        ...endpoints.available.map((endpoint) => ({ value: endpoint, label: endpoint })),
+      ]}
       onValueChange={(nextValue) =>
         onChange(nextValue === DEFAULT_AI_ENDPOINT_VALUE ? '' : nextValue)
       }
@@ -360,9 +366,7 @@ function EndpointSelect({
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value={DEFAULT_AI_ENDPOINT_VALUE}>
-          使用服务端默认 Endpoint（若已批准）
-        </SelectItem>
+        <SelectItem value={DEFAULT_AI_ENDPOINT_VALUE}>{DEFAULT_AI_ENDPOINT_LABEL}</SelectItem>
         {endpoints.available.map((endpoint) => (
           <SelectItem key={endpoint} value={endpoint}>
             {endpoint}
@@ -391,7 +395,7 @@ function AiSectionHeader({
   return (
     <SettingsSectionHeader xstyle={styles.aiSectionHeaderSettingsSectionHeader}>
       <span aria-hidden="true" {...stylex.props(styles.aiSectionHeaderSpan)}>
-        <Icon {...stylex.props(styles.aiSectionHeaderIcon)} />
+        <Icon xstyle={styles.aiSectionHeaderIcon} />
       </span>
       <div {...stylex.props(styles.aiSectionHeaderDiv)}>
         <SettingsSectionTitle>{title}</SettingsSectionTitle>
@@ -700,22 +704,20 @@ function renderDatabaseSelectionState(state: Pick<RecommendationViewState, 'data
           databaseSelection.allSelected ||
           databaseSelection.effectiveSelected.includes(databaseName);
         return (
-          <label key={databaseName} {...stylex.props(styles.renderDatabaseSelectionStateLabel)}>
-            <Layers
-              {...stylex.props(styles.renderDatabaseSelectionStateLayers)}
-              aria-hidden="true"
-            />
+          <label
+            key={databaseName}
+            {...stylex.props(settingsGroupItemStyle, styles.renderDatabaseSelectionStateLabel)}
+          >
+            <Layers xstyle={styles.renderDatabaseSelectionStateLayers} aria-hidden="true" />
             <span {...stylex.props(styles.renderDatabaseSelectionStateSpan)}>{databaseName}</span>
             <Checkbox
               checked={isChecked}
-              onCheckedChange={(checked: boolean | 'indeterminate') =>
-                databaseSelection.setSelected(databaseName, Boolean(checked))
-              }
+              onCheckedChange={(checked) => databaseSelection.setSelected(databaseName, checked)}
             />
           </label>
         );
       })}
-      <div {...stylex.props(styles.renderDatabaseSelectionStateDiv)}>
+      <div {...stylex.props(settingsGroupItemStyle, styles.renderDatabaseSelectionStateDiv)}>
         <span>
           当前范围:{' '}
           {databaseSelection.allSelected

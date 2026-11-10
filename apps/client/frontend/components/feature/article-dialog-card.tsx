@@ -2,8 +2,9 @@
  * Keyboard-accessible article rows that open in the docked reader or a detail sheet.
  */
 
-import { useEffect, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useState, type MouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import type { BaseUIEvent } from '@base-ui/react/types';
 
 import {
   ArticleDetailDialogContent,
@@ -37,23 +38,11 @@ type ArticleDialogCardProps = {
 };
 
 /**
- * Open the row with Enter or Space without scrolling the workspace.
- *
- * @param event - Keyboard input on the article trigger.
- */
-function handleArticleTriggerKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
-  if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
-    event.preventDefault();
-    event.currentTarget.click();
-  }
-}
-
-/**
  * Preserve text selection when a pointer gesture ends inside the article row.
  *
  * @param event - Pointer-generated click on the article trigger.
  */
-function preserveArticleTextSelection(event: MouseEvent<HTMLDivElement>): void {
+function preserveArticleTextSelection(event: MouseEvent<HTMLElement>): void {
   const selection = window.getSelection();
   if (
     event.detail > 0 &&
@@ -109,17 +98,20 @@ export function ArticleDialogCard({
   useEffect(() => () => release?.(itemKey), [itemKey, release]);
 
   /**
-   * Select the row in the docked reader, or let the dialog trigger open the sheet.
+   * Select the row in the docked reader, or let the dialog trigger open the sheet unless the
+   * click only ends a text selection.
    *
    * @param event - Click on the row trigger.
    */
-  function handleClick(event: MouseEvent<HTMLDivElement>): void {
+  function handleClick(event: BaseUIEvent<MouseEvent<HTMLElement>>): void {
     preserveArticleTextSelection(event);
-    if (event.defaultPrevented || !isDocked || !reader) {
-      return;
+    if (!event.defaultPrevented && isDocked && reader) {
+      event.preventDefault();
+      reader.select(itemKey);
     }
-    event.preventDefault();
-    reader.select(itemKey);
+    if (event.defaultPrevented) {
+      event.preventBaseUIHandler();
+    }
   }
 
   return (
@@ -129,32 +121,32 @@ export function ArticleDialogCard({
         {...stylex.props(styles.articleDialogCardDiv, stylex.defaultMarker(), xstyle)}
       >
         {leading && <div {...stylex.props(styles.articleDialogCardDiv2)}>{leading}</div>}
-        <DialogTrigger asChild>
-          <div
-            ref={triggerRef}
-            role="button"
-            tabIndex={0}
-            {...{ [READER_ITEM_ATTRIBUTE]: '' }}
-            data-selected={isSelected ? 'true' : 'false'}
-            aria-current={isSelected ? 'true' : undefined}
-            aria-label={`查看文章详情：${displayTitle}`}
-            {...stylex.props(styles.articleDialogCardDiv3)}
-            onClick={handleClick}
-            onKeyDown={handleArticleTriggerKeyDown}
-          >
-            <ArticleListCard
-              title={resolvedTitle}
-              authors={article.authors}
-              journalTitle={article.journal_title}
-              volume={article.volume}
-              number={article.number}
-              date={article.date}
-              preview={resolvedPreview}
-              openAccess={article.open_access}
-              inPress={article.in_press}
-              xstyle={leading ? styles.articleDialogCardArticleListCardLeading : null}
+        <DialogTrigger
+          nativeButton={false}
+          onClick={handleClick}
+          render={
+            <div
+              ref={triggerRef}
+              {...{ [READER_ITEM_ATTRIBUTE]: '' }}
+              data-selected={isSelected ? 'true' : 'false'}
+              aria-current={isSelected ? 'true' : undefined}
+              aria-label={`查看文章详情：${displayTitle}`}
+              {...stylex.props(styles.articleDialogCardDiv3)}
             />
-          </div>
+          }
+        >
+          <ArticleListCard
+            title={resolvedTitle}
+            authors={article.authors}
+            journalTitle={article.journal_title}
+            volume={article.volume}
+            number={article.number}
+            date={article.date}
+            preview={resolvedPreview}
+            openAccess={article.open_access}
+            inPress={article.in_press}
+            xstyle={leading ? styles.articleDialogCardArticleListCardLeading : null}
+          />
         </DialogTrigger>
       </div>
       {open && !isDocked && <ArticleDetailDialogContent {...detailProps} />}

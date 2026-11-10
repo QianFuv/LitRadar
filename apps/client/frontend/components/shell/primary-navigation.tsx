@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/animated-icons';
 import { Highlight, HighlightItem } from '@animate-ui/react/primitives/effects/highlight';
 import { Link, useSearch } from '@tanstack/react-router';
-import type { ComponentProps } from 'react';
+import type { ComponentProps, PointerEvent } from 'react';
 
 import { preloadWorkspaceView } from '@/components/shell/lazy-workspaces';
 import { WORKSPACE_ROUTE_ID } from '@/lib/search-params';
@@ -74,7 +74,7 @@ function NavigationItemLink({
   isCurrent: boolean;
   onIntent: () => void;
 }) {
-  const { isTriggered, triggerHandlers } = useIconTrigger<HTMLAnchorElement>(
+  const { isTriggered, triggerHandlers } = useIconTrigger<PointerEvent<HTMLAnchorElement>>(
     {
       ...props,
       onPointerDown: (event) => {
@@ -144,7 +144,7 @@ export function RailNavigation() {
                   <span aria-hidden="true" {...stylex.props(styles.railNavigationSpan)} />
                 )}
                 <Icon
-                  {...stylex.props(styles.railNavigationIcon)}
+                  xstyle={styles.railNavigationIcon}
                   strokeWidth={isCurrent ? 2.1 : 1.7}
                   aria-hidden="true"
                 />
@@ -192,7 +192,7 @@ export function TabNavigation() {
                 )}
               >
                 <Icon
-                  {...stylex.props(styles.railNavigationIcon)}
+                  xstyle={styles.railNavigationIcon}
                   strokeWidth={isCurrent ? 2.1 : 1.7}
                   aria-hidden="true"
                 />

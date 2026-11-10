@@ -9,7 +9,11 @@ import {
 } from '@animate-ui/react/primitives/buttons/button';
 import { transition } from '@animate-ui/react/utils/motion';
 
-import { IconTriggerProvider, useIconTrigger } from '@/components/ui/animated-icons';
+import {
+  IconStyleProvider,
+  IconTriggerProvider,
+  useIconTrigger,
+} from '@/components/ui/animated-icons';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
@@ -106,14 +110,29 @@ function Button({
 
   return (
     <IconTriggerProvider isTriggered={isTriggered}>
-      <PressButton {...pressProps} />
+      <IconStyleProvider xstyle={controlIconStyle}>
+        <PressButton {...pressProps} />
+      </IconStyleProvider>
     </IconTriggerProvider>
   );
 }
 
-export { Button, buttonStyles, getButtonPressMotion, type ButtonSize, type ButtonVariant };
+export {
+  Button,
+  buttonStyles,
+  controlIconStyle,
+  getButtonPressMotion,
+  type ButtonSize,
+  type ButtonVariant,
+};
 
 const styles = stylex.create({
+  controlIcon: {
+    pointerEvents: 'none',
+    flexShrink: 0,
+    width: '1rem',
+    height: '1rem',
+  },
   base: {
     display: 'inline-flex',
     flexShrink: 0,
@@ -331,3 +350,6 @@ const SIZE_STYLES = {
   'icon-sm': styles.sizeIconSm,
   'icon-lg': styles.sizeIconLg,
 };
+
+/** Default icon styles inside buttons and other shared controls: icon size, no shrinking, and no pointer events. */
+const controlIconStyle = styles.controlIcon;

@@ -10,6 +10,7 @@ import {
   SettingsSectionHeader,
   SettingsSectionTitle,
   StatusPill,
+  settingsGroupItemStyle,
 } from '@/components/settings/settings-section';
 import { LinkIcon } from '@/components/ui/animated-icons';
 import { Button } from '@/components/ui/button';
@@ -45,8 +46,11 @@ export function AccountCard({ user }: { user: AuthUser }) {
   return (
     <SettingsSection aria-label="账号信息">
       <SettingsGroup xstyle={styles.accountCardSettingsGroup}>
-        <UserAvatar username={user.username} xstyle={styles.accountCardUserAvatar} />
-        <div {...stylex.props(styles.accountCardDiv)}>
+        <UserAvatar
+          username={user.username}
+          xstyle={[settingsGroupItemStyle, styles.accountCardUserAvatar]}
+        />
+        <div {...stylex.props(settingsGroupItemStyle, styles.accountCardDiv)}>
           <p {...stylex.props(styles.accountCardP)}>用户名</p>
           <p {...stylex.props(styles.accountCardP2)}>{user.username}</p>
           <div {...stylex.props(styles.accountCardDiv2)}>
@@ -156,6 +160,7 @@ export function AccountSignInCard({ oidcLinkResult }: { oidcLinkResult: string |
       <SettingsGroup>
         {isLocalAccount ? (
           <form
+            {...stylex.props(settingsGroupItemStyle)}
             onSubmit={(event) => {
               event.preventDefault();
               setFeedback(null);
@@ -228,7 +233,7 @@ export function AccountSignInCard({ oidcLinkResult }: { oidcLinkResult: string |
               </Button>
             ))}
         </SettingsRow>
-        <div {...stylex.props(styles.accountSignInCardDiv)}>
+        <div {...stylex.props(settingsGroupItemStyle, styles.accountSignInCardDiv)}>
           <MotionPresence>
             {visibleFeedback && (
               <MotionParagraph

@@ -221,7 +221,7 @@ function renderTrackingSaveBar(state: TrackingSettingsViewState) {
         }
         onClick={() => recommendation.save.mutation.mutate()}
       >
-        <Save {...stylex.props(styles.renderTrackingSaveBarSave)} />
+        <Save xstyle={styles.renderTrackingSaveBarSave} />
         {recommendation.save.mutation.isPending ? '保存中…' : '保存更改'}
       </Button>
     </div>

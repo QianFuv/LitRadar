@@ -64,6 +64,13 @@ const PRIORITY_LABELS = {
   normal: '普通',
 } as const;
 
+/** Priority choices in the editor, from most to least urgent. */
+const PRIORITY_ITEMS = [
+  { value: 'high', label: PRIORITY_LABELS.high },
+  { value: 'normal', label: PRIORITY_LABELS.normal },
+  { value: 'low', label: PRIORITY_LABELS.low },
+] as const;
+
 const PRIORITY_TONES = {
   high: 'danger',
   low: 'neutral',
@@ -88,7 +95,7 @@ export function AnnouncementsCard() {
     <Card>
       <CardHeader>
         <CardTitle xstyle={styles.announcementsCardCardTitle}>
-          <BellRing {...stylex.props(styles.announcementsCardBellRing)} />
+          <BellRing xstyle={styles.announcementsCardBellRing} />
           系统公告
         </CardTitle>
         <CardDescription>管理首页自动弹出的全局公告</CardDescription>
@@ -245,11 +252,9 @@ function renderAnnouncementEditor(state: AnnouncementsViewState) {
 
   return (
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-      <DialogTrigger asChild>
-        <Button size="sm" onClick={openCreateDialog}>
-          <Plus {...stylex.props(styles.renderAnnouncementEditorPlus)} />
-          新建公告
-        </Button>
+      <DialogTrigger render={<Button size="sm" onClick={openCreateDialog} />}>
+        <Plus xstyle={styles.renderAnnouncementEditorPlus} />
+        新建公告
       </DialogTrigger>
       <DialogContent xstyle={styles.renderAnnouncementEditorDialogContent}>
         <DialogHeader>
@@ -277,9 +282,8 @@ function renderAnnouncementEditor(state: AnnouncementsViewState) {
             <Label htmlFor="announcement-priority">优先级</Label>
             <Select
               value={form.priority}
-              onValueChange={(value: 'high' | 'normal' | 'low') =>
-                setForm((current) => ({ ...current, priority: value }))
-              }
+              items={PRIORITY_ITEMS}
+              onValueChange={(value) => setForm((current) => ({ ...current, priority: value }))}
             >
               <SelectTrigger
                 id="announcement-priority"
@@ -288,9 +292,11 @@ function renderAnnouncementEditor(state: AnnouncementsViewState) {
                 <SelectValue placeholder="选择优先级" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="high">高优先级</SelectItem>
-                <SelectItem value="normal">普通</SelectItem>
-                <SelectItem value="low">低优先级</SelectItem>
+                {PRIORITY_ITEMS.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -380,10 +386,7 @@ function renderAnnouncementList(state: AnnouncementsViewState) {
           variants={REVEAL_VARIANTS}
         >
           <span {...stylex.props(styles.renderAnnouncementListSpan)}>
-            <Megaphone
-              {...stylex.props(styles.renderAnnouncementListMegaphone)}
-              aria-hidden="true"
-            />
+            <Megaphone xstyle={styles.renderAnnouncementListMegaphone} aria-hidden="true" />
           </span>
           <p {...stylex.props(styles.announcementsCardP2)}>暂无公告</p>
         </MotionDiv>
@@ -461,7 +464,7 @@ function renderAnnouncementList(state: AnnouncementsViewState) {
                   aria-label={`编辑公告 ${announcement.title}`}
                   onClick={() => openEditDialog(announcement)}
                 >
-                  <Pencil {...stylex.props(styles.renderAnnouncementEditorPlus)} />
+                  <Pencil xstyle={styles.renderAnnouncementEditorPlus} />
                 </Button>
                 <Button
                   variant="ghost"
@@ -474,7 +477,7 @@ function renderAnnouncementList(state: AnnouncementsViewState) {
                     setAnnouncementToDelete(announcement);
                   }}
                 >
-                  <Trash2 {...stylex.props(styles.renderAnnouncementEditorPlus)} />
+                  <Trash2 xstyle={styles.renderAnnouncementEditorPlus} />
                 </Button>
               </div>
             </div>

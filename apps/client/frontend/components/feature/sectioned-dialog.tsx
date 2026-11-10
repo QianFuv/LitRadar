@@ -12,11 +12,13 @@ import {
   type AppIcon,
 } from '@/components/ui/animated-icons';
 import {
+  useId,
   useLayoutEffect,
   useRef,
   type ComponentProps,
   type ReactNode,
   type RefObject,
+  type PointerEvent,
 } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -118,7 +120,10 @@ function SectionNavigationButton({
   isActive,
   ...props
 }: ComponentProps<'button'> & { isActive: boolean }) {
-  const { isTriggered, triggerHandlers } = useIconTrigger<HTMLButtonElement>(props, isActive);
+  const { isTriggered, triggerHandlers } = useIconTrigger<PointerEvent<HTMLButtonElement>>(
+    props,
+    isActive,
+  );
   return (
     <IconTriggerProvider isTriggered={isTriggered}>
       <button
@@ -176,10 +181,7 @@ function SectionedDialogNavigation<SectionId extends string>({
                   )}
                   onClick={() => onSelect(section.id)}
                 >
-                  <Icon
-                    {...stylex.props(styles.sectionedDialogNavigationIcon)}
-                    aria-hidden="true"
-                  />
+                  <Icon xstyle={styles.sectionedDialogNavigationIcon} aria-hidden="true" />
                   <span>{section.label}</span>
                 </SectionNavigationButton>
               </HighlightItem>
@@ -220,19 +222,39 @@ export function SectionedDialogFrame<SectionId extends string>({
 }: SectionedDialogFrameProps<SectionId>) {
   const activeDefinition = sections.find((section) => section.id === activeSection) ?? sections[0];
   const contentRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const descriptionId = useId();
   const isOpenRef = useRef(open);
   useLayoutEffect(() => {
     isOpenRef.current = open;
   }, [open]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen, eventDetails) => {
+        const isDismissal =
+          eventDetails.reason === 'escape-key' || eventDetails.reason === 'outside-press';
+        if (!nextOpen && isDismissBlocked && isDismissal) {
+          eventDetails.cancel();
+          return;
+        }
+        onOpenChange(nextOpen);
+      }}
+      onOpenChangeComplete={(isOpenComplete) => {
+        if (!isOpenComplete && !isOpenRef.current) {
+          onSessionClosed();
+        }
+      }}
+    >
       <DialogContent
         placement="takeover"
         aria-busy={isBusy || undefined}
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
         xstyle={styles.sectionedDialogFrameDialogContent}
         ref={contentRef}
-        onOpenAutoFocus={(event) => {
+        initialFocus={() => {
           if (!returnFocusRef.current) {
             const activeElement =
               document.activeElement instanceof HTMLElement &&
@@ -241,35 +263,21 @@ export function SectionedDialogFrame<SectionId extends string>({
                 : null;
             returnFocusRef.current = resolveReturnFocusTarget(activeElement);
           }
-          event.preventDefault();
-          contentRef.current?.focus({ preventScroll: true });
+          return contentRef.current;
         }}
-        onCloseAutoFocus={(event) => {
+        finalFocus={() => {
           if (isOpenRef.current) {
-            event.preventDefault();
-            return;
+            return false;
           }
           const focusTarget = returnFocusRef.current;
           returnFocusRef.current = null;
-          if (focusTarget?.isConnected) {
-            event.preventDefault();
-            focusTarget.focus();
-          }
-          onSessionClosed();
-        }}
-        onEscapeKeyDown={(event) => {
-          if (isDismissBlocked) {
-            event.preventDefault();
-          }
-        }}
-        onInteractOutside={(event) => {
-          if (isDismissBlocked) {
-            event.preventDefault();
-          }
+          return focusTarget?.isConnected ? focusTarget : true;
         }}
       >
-        <DialogTitle xstyle={styles.sectionedDialogFrameDialogTitle}>{centerTitle}</DialogTitle>
-        <DialogDescription xstyle={styles.sectionedDialogFrameDialogTitle}>
+        <DialogTitle id={titleId} xstyle={styles.sectionedDialogFrameDialogTitle}>
+          {centerTitle}
+        </DialogTitle>
+        <DialogDescription id={descriptionId} xstyle={styles.sectionedDialogFrameDialogTitle}>
           {dialogDescription}
         </DialogDescription>
 
@@ -277,25 +285,24 @@ export function SectionedDialogFrame<SectionId extends string>({
           data-slot="sectioned-dialog-sidebar"
           {...stylex.props(styles.sectionedDialogSidebar)}
         >
-          <DialogClose asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              static
-              aria-label="关闭"
-              xstyle={styles.sectionedDialogFrameButton}
-            >
-              <X {...stylex.props(styles.sectionedDialogFrameX)} aria-hidden="true" />
-              <ArrowLeft
-                {...stylex.props(styles.sectionedDialogFrameArrowLeft)}
-                aria-hidden="true"
+          <DialogClose
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                static
+                aria-label="关闭"
+                xstyle={styles.sectionedDialogFrameButton}
               />
-              <span {...stylex.props(styles.sectionedDialogFrameSpan)}>返回</span>
-            </Button>
+            }
+          >
+            <X xstyle={styles.sectionedDialogFrameX} aria-hidden="true" />
+            <ArrowLeft xstyle={styles.sectionedDialogFrameArrowLeft} aria-hidden="true" />
+            <span {...stylex.props(styles.sectionedDialogFrameSpan)}>返回</span>
           </DialogClose>
           <div {...stylex.props(styles.sectionedDialogFrameDiv)}>
             <span aria-hidden="true" {...stylex.props(styles.sectionedDialogFrameSpan2)}>
-              <CenterIcon {...stylex.props(styles.sectionedDialogFrameCenterIcon)} />
+              <CenterIcon xstyle={styles.sectionedDialogFrameCenterIcon} />
             </span>
             <div {...stylex.props(styles.sectionedDialogFrameDiv2)}>
               <p {...stylex.props(styles.sectionedDialogFrameP)}>{centerTitle}</p>

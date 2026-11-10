@@ -108,14 +108,15 @@ const SHARED_REACT_ENTRY_POINTS = [
 ];
 
 /**
- * Collect the Animate UI entry points the application and tests import.
+ * Collect the Animate UI and Base UI entry points the application and tests import.
  *
  * Animate UI only exposes a `./*` subpath pattern, which dependency optimization cannot expand,
- * so the entry points are read from source to keep new imports pre-bundled automatically.
+ * and Base UI is imported per component, so the entry points are read from source to keep new
+ * imports pre-bundled automatically.
  *
- * @returns Sorted, unique Animate UI module specifiers.
+ * @returns Sorted, unique Animate UI and Base UI module specifiers.
  */
-function findAnimateUiEntryPoints(): string[] {
+function findUiEntryPoints(): string[] {
   const specifiers = new Set<string>();
   for (const directory of ['components', 'lib', 'src', 'tests']) {
     const directoryPath = path.join(PROJECT_ROOT, directory);
@@ -124,7 +125,9 @@ function findAnimateUiEntryPoints(): string[] {
         continue;
       }
       const source = readFileSync(path.join(directoryPath, file), 'utf8');
-      for (const [, specifier] of source.matchAll(/['"](@animate-ui\/react\/[^'"]+)['"]/g)) {
+      for (const [, specifier] of source.matchAll(
+        /['"](@animate-ui\/react\/[^'"]+|@base-ui\/react(?:\/[^'"]+)?)['"]/g,
+      )) {
         specifiers.add(specifier);
       }
     }
@@ -142,11 +145,7 @@ function findAnimateUiEntryPoints(): string[] {
  */
 const PREBUNDLED_UI_DEPENDENCIES = [
   'motion/react',
-  ...findAnimateUiEntryPoints(),
-  'radix-ui',
-  '@radix-ui/react-label',
-  '@radix-ui/react-scroll-area',
-  '@radix-ui/react-slot',
+  ...findUiEntryPoints(),
   'lucide-react',
   '@xyflow/react',
 ];

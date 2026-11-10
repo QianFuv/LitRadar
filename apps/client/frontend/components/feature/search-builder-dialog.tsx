@@ -5,11 +5,7 @@
 import { ChevronRight, Plus, Trash2 } from '@/components/ui/animated-icons';
 import { useState, type FormEvent } from 'react';
 
-import {
-  Root as Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@animate-ui/react/primitives/radix-ui/collapsible';
+import { Collapsible as CollapsiblePrimitive } from '@animate-ui/react/primitives/base-ui/collapsible';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -197,7 +193,6 @@ function SearchBuilderBody({
                       <span {...stylex.props(styles.searchBuilderBodySpan)}>检索</span>
                     ) : (
                       <ToggleGroup
-                        type="single"
                         aria-label={`第 ${position} 个条件的连接方式`}
                         xstyle={styles.searchBuilderBodyToggleGroup}
                         value={condition.connector}
@@ -232,19 +227,13 @@ function SearchBuilderBody({
                       aria-label={`删除第 ${position} 个条件`}
                       onClick={() => removeCondition(condition.id)}
                     >
-                      <Trash2
-                        {...stylex.props(styles.searchBuilderBodyTrash2)}
-                        aria-hidden="true"
-                      />
+                      <Trash2 xstyle={styles.searchBuilderBodyTrash2} aria-hidden="true" />
                     </Button>
                     <div {...stylex.props(styles.searchBuilderBodyDiv3)}>
                       <Select
                         value={condition.field}
-                        onValueChange={(value) =>
-                          updateCondition(condition.id, {
-                            field: value as SearchBuilderCondition['field'],
-                          })
-                        }
+                        items={SEARCH_BUILDER_FIELDS}
+                        onValueChange={(field) => updateCondition(condition.id, { field })}
                       >
                         <SelectTrigger
                           size="sm"
@@ -263,11 +252,8 @@ function SearchBuilderBody({
                       </Select>
                       <Select
                         value={condition.match}
-                        onValueChange={(value) =>
-                          updateCondition(condition.id, {
-                            match: value as SearchBuilderCondition['match'],
-                          })
-                        }
+                        items={SEARCH_BUILDER_MATCHES}
+                        onValueChange={(match) => updateCondition(condition.id, { match })}
                       >
                         <SelectTrigger
                           size="sm"
@@ -311,7 +297,7 @@ function SearchBuilderBody({
           disabled={conditions.length >= SEARCH_BUILDER_MAX_CONDITIONS}
           onClick={() => setConditions((current) => [...current, createSearchCondition()])}
         >
-          <Plus {...stylex.props(styles.searchBuilderBodyTrash2)} aria-hidden="true" />
+          <Plus xstyle={styles.searchBuilderBodyTrash2} aria-hidden="true" />
           添加条件
         </Button>
 
@@ -321,18 +307,15 @@ function SearchBuilderBody({
           </p>
         )}
 
-        <Collapsible {...stylex.props(styles.searchBuilderBodyCollapsible)}>
-          <CollapsibleTrigger
+        <CollapsiblePrimitive.Root {...stylex.props(styles.searchBuilderBodyCollapsible)}>
+          <CollapsiblePrimitive.Trigger
             {...stylex.props(styles.searchBuilderBodyCollapsibleTrigger, stylex.defaultMarker())}
           >
-            <ChevronRight
-              {...stylex.props(styles.searchBuilderBodyChevronRight)}
-              aria-hidden="true"
-            />
+            <ChevronRight xstyle={styles.searchBuilderBodyChevronRight} aria-hidden="true" />
             <span {...stylex.props(styles.searchBuilderBodySpan2)}>点击展开手写检索语法</span>
             <span {...stylex.props(styles.searchBuilderBodySpan3)}>收起手写检索语法</span>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
+          </CollapsiblePrimitive.Trigger>
+          <CollapsiblePrimitive.Panel>
             <p {...stylex.props(styles.searchBuilderBodyP3)}>
               在搜索框中直接输入以下语法同样有效：
             </p>
@@ -371,8 +354,8 @@ function SearchBuilderBody({
             <p {...stylex.props(styles.searchBuilderBodyP4)}>
               运算符 AND / OR / NOT / NEAR 需要大写。
             </p>
-          </CollapsibleContent>
-        </Collapsible>
+          </CollapsiblePrimitive.Panel>
+        </CollapsiblePrimitive.Root>
       </div>
       <div {...stylex.props(styles.searchBuilderBodyDiv4)}>
         <Button
@@ -509,15 +492,15 @@ const styles = stylex.create({
     whiteSpace: 'nowrap',
     backgroundColor: {
       default: null,
-      ':is([data-state="on"])': colors.background,
+      ':is([data-pressed])': colors.background,
     },
     fontWeight: {
       default: null,
-      ':is([data-state="on"])': 700,
+      ':is([data-pressed])': 700,
     },
     color: {
       default: colors.mutedForeground,
-      ':is([data-state="on"])': colors.foreground,
+      ':is([data-pressed])': colors.foreground,
       ':hover': {
         default: null,
         '@media (hover: hover)': colors.foreground,
@@ -527,9 +510,9 @@ const styles = stylex.create({
       default: null,
       ':focus-visible': {
         default: `0 0 0 2px ${colors.ring}`,
-        ':is([data-state="on"])': `0 0 0 2px ${colors.ring}, 0 0 0 1px ${colors.border}`,
+        ':is([data-pressed])': `0 0 0 2px ${colors.ring}, 0 0 0 1px ${colors.border}`,
       },
-      ':is([data-state="on"])': `0 0 0 1px ${colors.border}`,
+      ':is([data-pressed])': `0 0 0 1px ${colors.border}`,
     },
     lineHeight: 'inherit',
   },
@@ -540,10 +523,10 @@ const styles = stylex.create({
         default: null,
         '@media (hover: hover)': {
           default: colors.foreground,
-          ':is([data-state="on"])': colors.destructive,
+          ':is([data-pressed])': colors.destructive,
         },
       },
-      ':is([data-state="on"])': colors.destructive,
+      ':is([data-pressed])': colors.destructive,
     },
   },
   searchBuilderBodyButton: {
@@ -671,19 +654,19 @@ const styles = stylex.create({
     transitionDuration: '350ms',
     rotate: {
       default: null,
-      [stylex.when.ancestor('[data-state="open"]')]: '90deg',
+      [stylex.when.ancestor('[data-panel-open]')]: '90deg',
     },
   },
   searchBuilderBodySpan2: {
     display: {
       default: null,
-      [stylex.when.ancestor('[data-state="open"]')]: 'none',
+      [stylex.when.ancestor('[data-panel-open]')]: 'none',
     },
   },
   searchBuilderBodySpan3: {
     display: {
       default: 'none',
-      [stylex.when.ancestor('[data-state="open"]')]: 'inline',
+      [stylex.when.ancestor('[data-panel-open]')]: 'inline',
     },
   },
   searchBuilderBodyP3: {

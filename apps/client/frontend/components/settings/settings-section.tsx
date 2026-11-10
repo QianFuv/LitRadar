@@ -9,6 +9,7 @@ import type { ComponentProps, ReactNode } from 'react';
 
 import type { AnimatedIcon } from '@/components/ui/animated-icons';
 import * as stylex from '@stylexjs/stylex';
+import { settingsSectionMarker } from '@/lib/markers.stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
 
 /**
@@ -21,7 +22,13 @@ export function SettingsSection({
   xstyle,
   ...props
 }: Omit<ComponentProps<'section'>, 'className'> & { xstyle?: stylex.StyleXStyles }) {
-  return <section data-slot="settings-section" {...stylex.props(xstyle)} {...props} />;
+  return (
+    <section
+      data-slot="settings-section"
+      {...stylex.props(styles.settingsSection, settingsSectionMarker, xstyle)}
+      {...props}
+    />
+  );
 }
 
 /**
@@ -68,13 +75,7 @@ export function SettingsSectionTitle({
       )}
       {...props}
     >
-      {Icon && (
-        <Icon
-          animateOnView
-          {...stylex.props(styles.settingsSectionTitleIcon2)}
-          aria-hidden="true"
-        />
-      )}
+      {Icon && <Icon animateOnView xstyle={styles.settingsSectionTitleIcon2} aria-hidden="true" />}
       {children}
     </h3>
   );
@@ -160,7 +161,12 @@ export function SettingsRow({
   return (
     <div
       data-slot="settings-row"
-      {...stylex.props(styles.settingsRow, !isStacked && styles.settingsRowInline, xstyle)}
+      {...stylex.props(
+        styles.settingsGroupItem,
+        styles.settingsRow,
+        !isStacked && styles.settingsRowInline,
+        xstyle,
+      )}
       {...props}
     >
       <div {...stylex.props(styles.settingsRowDiv)}>
@@ -202,7 +208,7 @@ export function SettingsGroupBody({
   return (
     <div
       data-slot="settings-group-body"
-      {...stylex.props(styles.settingsGroupBody, xstyle)}
+      {...stylex.props(styles.settingsGroupItem, styles.settingsGroupBody, xstyle)}
       {...props}
     />
   );
@@ -234,6 +240,25 @@ export function StatusPill({ children, xstyle, tone = 'neutral', ...props }: Sta
 }
 
 const styles = stylex.create({
+  settingsSection: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '0.75rem',
+    marginTop: {
+      default: null,
+      [stylex.when.siblingBefore(':is(*)', settingsSectionMarker)]: '2.5rem',
+    },
+  },
+  settingsGroupItem: {
+    borderBottomStyle: {
+      default: null,
+      ':not(:last-child)': 'solid',
+    },
+    borderBottomWidth: {
+      default: null,
+      ':not(:last-child)': '1px',
+    },
+  },
   statusPillDanger: {
     backgroundColor: `color-mix(in oklab, ${colors.destructive} 10%, transparent)`,
     color: colors.destructive,
@@ -416,3 +441,6 @@ const STATUS_PILL_DOT_TONES: Record<NonNullable<StatusPillProps['tone']>, stylex
   success: styles.statusPillDotSuccess,
   warning: styles.statusPillDotWarning,
 };
+
+/** Divider below every row of a `SettingsGroup` except the last; place it before the row's own styles. */
+export const settingsGroupItemStyle = styles.settingsGroupItem;

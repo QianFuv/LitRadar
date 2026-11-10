@@ -363,7 +363,7 @@ function RuntimePoolEditor({
               aria-label={`删除${label}第 ${index + 1} 行`}
               onClick={() => deleteRow(index)}
             >
-              <Trash2 {...stylex.props(styles.runtimePoolEditorTrash2)} />
+              <Trash2 xstyle={styles.runtimePoolEditorTrash2} />
             </Button>
           </MotionDiv>
         ))}
@@ -376,7 +376,7 @@ function RuntimePoolEditor({
         disabled={disabled}
         onClick={addRow}
       >
-        <Plus {...stylex.props(styles.runtimePoolEditorPlus)} />
+        <Plus xstyle={styles.runtimePoolEditorPlus} />
         添加
       </Button>
     </div>
@@ -464,7 +464,7 @@ function RuntimeSecretPoolEditor({
                       {removedReferences.has(item.reference) ? (
                         '撤销删除'
                       ) : (
-                        <Trash2 {...stylex.props(styles.runtimePoolEditorTrash2)} />
+                        <Trash2 xstyle={styles.runtimePoolEditorTrash2} />
                       )}
                     </Button>
                   </div>
@@ -503,7 +503,7 @@ export function RuntimeSettingsCard() {
     <Card>
       <CardHeader>
         <CardTitle xstyle={styles.runtimeSecretPoolEditorDiv}>
-          <SlidersVertical {...stylex.props(styles.runtimeSettingsCardSlidersVertical)} />
+          <SlidersVertical xstyle={styles.runtimeSettingsCardSlidersVertical} />
           运行配置
         </CardTitle>
         <CardDescription>管理后端共享运行配置</CardDescription>
@@ -979,7 +979,7 @@ function renderRuntimeSaveAction(state: RuntimeViewState) {
         }
         onClick={() => saveMutation.mutate()}
       >
-        <Save {...stylex.props(styles.runtimePoolEditorPlus)} />
+        <Save xstyle={styles.runtimePoolEditorPlus} />
         保存配置
       </Button>
     </div>

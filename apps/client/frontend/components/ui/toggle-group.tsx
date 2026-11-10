@@ -1,27 +1,39 @@
 /**
- * Project-styled Radix toggle group whose selected surface slides between items (Animate UI).
+ * Project-styled Base UI toggle group whose selected surface slides between items (Animate UI).
  */
 
 import * as React from 'react';
-import * as ToggleGroupPrimitive from '@animate-ui/react/primitives/radix-ui/toggle-group';
+import { ToggleGroup as ToggleGroupPrimitive } from '@animate-ui/react/primitives/base-ui/toggle-group';
+import { Toggle } from '@animate-ui/react/primitives/base-ui/toggle';
 
 import { PresenceBoundary } from '@/components/ui/motion';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
 
+type ToggleGroupProps = Omit<
+  React.ComponentProps<typeof ToggleGroupPrimitive>,
+  'className' | 'value' | 'defaultValue' | 'onValueChange' | 'multiple'
+> & {
+  /** Value of the pressed segment. */
+  value: string;
+  /** Called with the newly pressed segment, or an empty string when the pressed one is released. */
+  onValueChange: (value: string) => void;
+  xstyle?: stylex.StyleXStyles;
+};
+
 /**
- * Render the segmented control root.
+ * Render a segmented control where exactly one segment is pressed at a time.
  *
- * @param props - Radix toggle group properties.
+ * @param props - Pressed value, change handler, Base UI toggle group properties, and style
+ * overrides.
  * @returns Segmented control root.
  */
-function ToggleGroup({
-  xstyle,
-  ...props
-}: React.ComponentProps<typeof ToggleGroupPrimitive.Root> & { xstyle?: stylex.StyleXStyles }) {
+function ToggleGroup({ xstyle, value, onValueChange, ...props }: ToggleGroupProps) {
   return (
-    <ToggleGroupPrimitive.Root
+    <ToggleGroupPrimitive
       data-slot="toggle-group"
+      value={[value]}
+      onValueChange={(values) => onValueChange(values[0] ?? '')}
       {...stylex.props(styles.toggleGroup, xstyle)}
       {...props}
     />
@@ -31,18 +43,18 @@ function ToggleGroup({
 /**
  * Render one segment; the selected segment's background becomes the sliding surface.
  *
- * @param props - Radix toggle group item properties.
+ * @param props - Base UI toggle properties and style overrides.
  * @returns Segment button.
  */
 function ToggleGroupItem({
   xstyle,
   ...props
-}: Omit<React.ComponentProps<typeof ToggleGroupPrimitive.Item>, 'className'> & {
+}: Omit<React.ComponentProps<typeof Toggle>, 'className'> & {
   xstyle?: stylex.StyleXStyles;
 }) {
   return (
     <PresenceBoundary>
-      <ToggleGroupPrimitive.Item
+      <Toggle
         data-slot="toggle-group-item"
         {...stylex.props(styles.toggleGroupItem, xstyle)}
         {...props}
@@ -80,13 +92,13 @@ const styles = stylex.create({
     lineHeight: lineHeights.textXs,
     color: {
       default: colors.mutedForeground,
-      ':is([data-state="on"])': colors.background,
+      ':is([data-pressed])': colors.background,
       ':hover': {
         default: null,
-        ':is([data-state="on"])': null,
+        ':is([data-pressed])': null,
         '@media (hover: hover)': {
           default: colors.foreground,
-          ':is([data-state="on"])': colors.background,
+          ':is([data-pressed])': colors.background,
         },
       },
     },
@@ -101,7 +113,7 @@ const styles = stylex.create({
     },
     backgroundColor: {
       default: null,
-      ':is([data-state="on"])': colors.foreground,
+      ':is([data-pressed])': colors.foreground,
     },
   },
 });

@@ -279,7 +279,7 @@ function renderRelationGraphFavoriteList(
             {...stylex.props(styles.renderRelationGraphFavoriteListLi, stylex.defaultMarker())}
           >
             <span aria-hidden="true" {...stylex.props(styles.renderRelationGraphFavoriteListSpan)}>
-              <Share2 {...stylex.props(styles.renderRelationGraphFavoriteListShare2)} />
+              <Share2 xstyle={styles.renderRelationGraphFavoriteListShare2} />
             </span>
             <div {...stylex.props(styles.renderRelationGraphFavoriteListDiv)}>
               <Link
@@ -295,23 +295,25 @@ function renderRelationGraphFavoriteList(
               </p>
             </div>
             <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  xstyle={styles.renderRelationGraphFavoriteListButton}
-                  aria-label={`管理关系图 ${favorite.title}`}
-                >
-                  <MoreHorizontal
-                    {...stylex.props(styles.renderRelationGraphFavoriteListShare2)}
-                    aria-hidden="true"
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    xstyle={styles.renderRelationGraphFavoriteListButton}
+                    aria-label={`管理关系图 ${favorite.title}`}
                   />
-                </Button>
+                }
+              >
+                <MoreHorizontal
+                  xstyle={styles.renderRelationGraphFavoriteListShare2}
+                  aria-hidden="true"
+                />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onSelect={() => onRename(favorite)}>重命名</DropdownMenuItem>
-                <DropdownMenuItem isDestructive onSelect={() => onDelete(favorite)}>
+                <DropdownMenuItem onClick={() => onRename(favorite)}>重命名</DropdownMenuItem>
+                <DropdownMenuItem isDestructive onClick={() => onDelete(favorite)}>
                   删除
                 </DropdownMenuItem>
               </DropdownMenuContent>

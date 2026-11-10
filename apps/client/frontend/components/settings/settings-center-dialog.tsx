@@ -2,8 +2,14 @@
  * Query-driven aggregated settings dialog for every authenticated route.
  */
 
-import { Radar } from 'lucide-react';
-import { Bell, KeyRound, Layers, Settings, ShieldCheck } from '@/components/ui/animated-icons';
+import {
+  Bell,
+  KeyRound,
+  Layers,
+  Settings,
+  ShieldCheck,
+  Radar,
+} from '@/components/ui/animated-icons';
 import { useSearch } from '@tanstack/react-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 

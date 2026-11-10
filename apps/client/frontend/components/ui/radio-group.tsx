@@ -1,9 +1,11 @@
 /**
- * Project-styled Radix radio group with Animate UI indicator motion.
+ * Project-styled Base UI radio group with Animate UI indicator motion.
  */
 
 import * as React from 'react';
-import * as RadioGroupPrimitive from '@animate-ui/react/primitives/radix-ui/radio-group';
+import { RadioGroup as RadioGroupPrimitive } from '@animate-ui/react/primitives/base-ui/radio-group';
+import type { RadioGroupProps } from '@base-ui/react/radio-group';
+import { Radio } from '@animate-ui/react/primitives/base-ui/radio';
 import { Check } from 'lucide-react';
 
 import { PresenceBoundary } from '@/components/ui/motion';
@@ -13,45 +15,47 @@ import { colors } from '@/lib/theme.stylex';
 /**
  * Render the radio group root.
  *
- * @param props - Radix radio group properties.
+ * @param props - Base UI radio group properties and style overrides.
  * @returns Radio group root.
  */
-function RadioGroup({
+function RadioGroup<Value extends string>({
   xstyle,
   ...props
-}: Omit<React.ComponentProps<typeof RadioGroupPrimitive.Root>, 'className'> & {
+}: Omit<RadioGroupProps<Value>, 'className'> & {
   xstyle?: stylex.StyleXStyles;
 }) {
-  return <RadioGroupPrimitive.Root data-slot="radio-group" {...stylex.props(xstyle)} {...props} />;
+  return (
+    <RadioGroupPrimitive<Value> data-slot="radio-group" {...stylex.props(xstyle)} {...props} />
+  );
 }
 
 /**
  * Render one card-style choice whose animated check marks the selection.
  *
- * @param props - Radix radio item properties and the visible choice content.
+ * @param props - Base UI radio properties, the visible choice content, and style overrides.
  * @returns Selectable choice.
  */
 function RadioGroupCard({
   xstyle,
   children,
   ...props
-}: Omit<React.ComponentProps<typeof RadioGroupPrimitive.Item>, 'className'> & {
+}: Omit<React.ComponentProps<typeof Radio.Root>, 'className'> & {
   xstyle?: stylex.StyleXStyles;
 }) {
   return (
     <PresenceBoundary>
-      <RadioGroupPrimitive.Item
+      <Radio.Root
+        nativeButton
+        render={(props) => <button {...props} type="button" />}
         data-slot="radio-group-card"
         {...stylex.props(styles.radioGroupCard, xstyle)}
         {...props}
       >
         {children}
-        <RadioGroupPrimitive.Indicator
-          {...stylex.props(styles.radioGroupCardRadioGroupPrimitiveIndicator)}
-        >
+        <Radio.Indicator {...stylex.props(styles.radioGroupCardRadioGroupPrimitiveIndicator)}>
           <Check {...stylex.props(styles.radioGroupCardCheck)} aria-hidden="true" />
-        </RadioGroupPrimitive.Indicator>
-      </RadioGroupPrimitive.Item>
+        </Radio.Indicator>
+      </Radio.Root>
     </PresenceBoundary>
   );
 }
@@ -59,13 +63,18 @@ function RadioGroupCard({
 /**
  * Render one choice with no styling of its own, for choices that compose their own layout.
  *
- * @param props - Radix radio item properties.
+ * @param props - Base UI radio properties.
  * @returns Selectable choice.
  */
-function RadioGroupItem(props: React.ComponentProps<typeof RadioGroupPrimitive.Item>) {
+function RadioGroupItem(props: React.ComponentProps<typeof Radio.Root>) {
   return (
     <PresenceBoundary>
-      <RadioGroupPrimitive.Item data-slot="radio-group-item" {...props} />
+      <Radio.Root
+        nativeButton
+        render={(props) => <button {...props} type="button" />}
+        data-slot="radio-group-item"
+        {...props}
+      />
     </PresenceBoundary>
   );
 }
@@ -73,11 +82,11 @@ function RadioGroupItem(props: React.ComponentProps<typeof RadioGroupPrimitive.I
 /**
  * Render the animated mark shown inside the selected choice.
  *
- * @param props - Radix radio indicator properties.
+ * @param props - Base UI radio indicator properties.
  * @returns Selection indicator.
  */
-function RadioGroupIndicator(props: React.ComponentProps<typeof RadioGroupPrimitive.Indicator>) {
-  return <RadioGroupPrimitive.Indicator data-slot="radio-group-indicator" {...props} />;
+function RadioGroupIndicator(props: React.ComponentProps<typeof Radio.Indicator>) {
+  return <Radio.Indicator data-slot="radio-group-indicator" {...props} />;
 }
 
 export { RadioGroup, RadioGroupCard, RadioGroupIndicator, RadioGroupItem };
@@ -96,9 +105,9 @@ const styles = stylex.create({
       default: `inset 0 0 0 1px ${colors.border}`,
       ':focus-visible': {
         default: `0 0 0 2px ${colors.ring}, inset 0 0 0 1px ${colors.border}`,
-        ':is([data-state="checked"])': `0 0 0 2px ${colors.ring}, inset 0 0 0 1px ${colors.primary}`,
+        ':is([data-checked])': `0 0 0 2px ${colors.ring}, inset 0 0 0 1px ${colors.primary}`,
       },
-      ':is([data-state="checked"])': `inset 0 0 0 1px ${colors.primary}`,
+      ':is([data-checked])': `inset 0 0 0 1px ${colors.primary}`,
     },
     transitionProperty: 'background-color, box-shadow',
     transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
@@ -106,13 +115,13 @@ const styles = stylex.create({
     outlineStyle: 'none',
     backgroundColor: {
       default: null,
-      ':is([data-state="checked"])': colors.info,
+      ':is([data-checked])': colors.info,
       ':hover': {
         default: null,
-        ':is([data-state="checked"])': null,
+        ':is([data-checked])': null,
         '@media (hover: hover)': {
           default: colors.accent,
-          ':is([data-state="checked"])': colors.info,
+          ':is([data-checked])': colors.info,
         },
       },
     },
@@ -126,11 +135,11 @@ const styles = stylex.create({
     },
     fontWeight: {
       default: null,
-      ':is([data-state="checked"])': 700,
+      ':is([data-checked])': 700,
     },
     color: {
       default: null,
-      ':is([data-state="checked"])': colors.infoForeground,
+      ':is([data-checked])': colors.infoForeground,
     },
   },
   radioGroupCardRadioGroupPrimitiveIndicator: {

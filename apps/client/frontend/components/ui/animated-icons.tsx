@@ -1,7 +1,8 @@
 /**
  * Animate UI's animated lucide icons under their lucide-react names. An icon plays when the control
  * holding it is hovered or tapped; controls opt in through `useIconTrigger` and
- * `IconTriggerProvider`. Until then it renders as the identical still lucide-react icon.
+ * `IconTriggerProvider`. Until then it renders as the identical still lucide-react icon. Controls
+ * also set default icon styles through `IconStyleProvider`; an icon's own `xstyle` overrides them.
  */
 
 import {
@@ -16,6 +17,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { IconProps } from '@animate-ui/react/icons';
+import * as stylex from '@stylexjs/stylex';
 import {
   AlertCircle as StillAlertCircle,
   AlertTriangle as StillAlertTriangle,
@@ -79,7 +81,13 @@ import {
   Unlink2 as StillUnlink2,
   SunMoon as StillSunMoon,
   Sun as StillSun,
+  Loader2 as StillLoader2,
+  QrCode as StillQrCode,
+  Radar as StillRadar,
+  SearchX as StillSearchX,
+  ShieldOff as StillShieldOff,
   type LucideIcon,
+  type LucideProps,
 } from 'lucide-react';
 
 import { ArrowDown as AnimatedArrowDown } from '@/components/animate-ui/icons/arrow-down';
@@ -154,8 +162,11 @@ const CURRENT_PULSE_MS = 120;
 /** Whether the control around an icon is currently hovered or pressed. */
 const IconTriggerContext = createContext(false);
 
+/** Default styles that the control around an icon gives to the icons inside it. */
+const IconStyleContext = createContext<stylex.StyleXStyles>(null);
+
 /** Props accepted by every application icon, animated or still. */
-export type AppIconProps = { className?: string; strokeWidth?: number } & AriaAttributes;
+export type AppIconProps = { xstyle?: stylex.StyleXStyles; strokeWidth?: number } & AriaAttributes;
 
 /** An icon component usable in navigation and section definitions. */
 export type AppIcon = ComponentType<AppIconProps>;
@@ -186,8 +197,13 @@ function withIconTrigger<Animation extends string>(
    * @param props - Icon properties.
    * @returns Still or animated icon.
    */
-  function TriggeredIcon(props: IconProps<Animation>) {
+  function TriggeredIcon({
+    xstyle,
+    ...props
+  }: Omit<IconProps<Animation>, 'className'> & { xstyle?: stylex.StyleXStyles }) {
     const isTriggered = use(IconTriggerContext);
+    const defaultXstyle = use(IconStyleContext);
+    const { className, style: stylexStyle } = stylex.props(defaultXstyle, xstyle);
     const [isArmed, setIsArmed] = useState(isTriggered);
     if (isTriggered && !isArmed) {
       setIsArmed(true);
@@ -198,12 +214,12 @@ function withIconTrigger<Animation extends string>(
       props.animateOnTap !== undefined ||
       props.animateOnView !== undefined;
     if (!isArmed && !isTriggered && !hasOwnAnimation) {
-      const { className, strokeWidth, style, ...stillProps } = props;
+      const { strokeWidth, style, ...stillProps } = props;
       return (
         <StillIcon
-          className={className as string | undefined}
+          className={className}
           strokeWidth={strokeWidth as number | undefined}
-          style={style as CSSProperties | undefined}
+          style={{ ...stylexStyle, ...(style as CSSProperties | undefined) }}
           {...(stillProps as AriaAttributes)}
         />
       );
@@ -214,18 +230,47 @@ function withIconTrigger<Animation extends string>(
         completeOnStop
         animate={hasOwnAnimation ? props.animate : isTriggered}
         {...props}
+        className={className}
+        style={{ ...stylexStyle, ...(props.style as CSSProperties | undefined) }}
       />
     );
   }
   return TriggeredIcon;
 }
 
-type IconTriggerHandlers<Target extends Element> = {
-  onPointerEnter?: (event: PointerEvent<Target>) => void;
-  onPointerLeave?: (event: PointerEvent<Target>) => void;
-  onPointerDown?: (event: PointerEvent<Target>) => void;
-  onPointerUp?: (event: PointerEvent<Target>) => void;
-  onPointerCancel?: (event: PointerEvent<Target>) => void;
+/** Pointer handlers of a control; Base UI parts pass their own extended event type. */
+/**
+ * Wrap a lucide-react icon that has no Animate UI drawing so it still takes the default styles of
+ * the control around it.
+ *
+ * @param StillIcon - Lucide icon to render.
+ * @returns Still icon that accepts StyleX styles.
+ */
+function withIconStyle(StillIcon: LucideIcon) {
+  /**
+   * Render the still icon with the surrounding control's default styles and its own styles.
+   *
+   * @param props - Lucide icon properties and style overrides.
+   * @returns Still icon.
+   */
+  function StyledIcon({
+    xstyle,
+    style,
+    ...props
+  }: Omit<LucideProps, 'className'> & { xstyle?: stylex.StyleXStyles }) {
+    const defaultXstyle = use(IconStyleContext);
+    const { className, style: stylexStyle } = stylex.props(defaultXstyle, xstyle);
+    return <StillIcon className={className} style={{ ...stylexStyle, ...style }} {...props} />;
+  }
+  return StyledIcon;
+}
+
+type IconTriggerHandlers<TriggerEvent extends PointerEvent<Element>> = {
+  onPointerEnter?: (event: TriggerEvent) => void;
+  onPointerLeave?: (event: TriggerEvent) => void;
+  onPointerDown?: (event: TriggerEvent) => void;
+  onPointerUp?: (event: TriggerEvent) => void;
+  onPointerCancel?: (event: TriggerEvent) => void;
 };
 
 /**
@@ -237,8 +282,8 @@ type IconTriggerHandlers<Target extends Element> = {
  * @param isCurrent - Whether the control is the current navigation item.
  * @returns Trigger state and merged pointer handlers to spread onto the control.
  */
-export function useIconTrigger<Target extends Element>(
-  handlers: IconTriggerHandlers<Target>,
+export function useIconTrigger<TriggerEvent extends PointerEvent<Element>>(
+  handlers: IconTriggerHandlers<TriggerEvent>,
   isCurrent = false,
 ) {
   const [isHovered, setIsHovered] = useState(false);
@@ -254,28 +299,45 @@ export function useIconTrigger<Target extends Element>(
     return () => window.clearTimeout(timer);
   }, [isPulsing]);
   const triggerHandlers = {
-    onPointerEnter: (event: PointerEvent<Target>) => {
+    onPointerEnter: (event: TriggerEvent) => {
       handlers.onPointerEnter?.(event);
       if (event.pointerType !== 'touch') setIsHovered(true);
     },
-    onPointerLeave: (event: PointerEvent<Target>) => {
+    onPointerLeave: (event: TriggerEvent) => {
       handlers.onPointerLeave?.(event);
       setIsHovered(false);
     },
-    onPointerDown: (event: PointerEvent<Target>) => {
+    onPointerDown: (event: TriggerEvent) => {
       handlers.onPointerDown?.(event);
       if (event.pointerType === 'touch') setIsHovered(true);
     },
-    onPointerUp: (event: PointerEvent<Target>) => {
+    onPointerUp: (event: TriggerEvent) => {
       handlers.onPointerUp?.(event);
       if (event.pointerType === 'touch') setIsHovered(false);
     },
-    onPointerCancel: (event: PointerEvent<Target>) => {
+    onPointerCancel: (event: TriggerEvent) => {
       handlers.onPointerCancel?.(event);
       setIsHovered(false);
     },
   };
   return { isTriggered: isHovered || isPulsing, triggerHandlers };
+}
+
+/**
+ * Give the icons inside a control their default styles, such as the control's icon size. An icon's
+ * own `xstyle` still wins for every property it sets.
+ *
+ * @param props - Default icon styles and the control's content.
+ * @returns Icon style boundary.
+ */
+export function IconStyleProvider({
+  xstyle,
+  children,
+}: {
+  xstyle: stylex.StyleXStyles;
+  children: ReactNode;
+}) {
+  return <IconStyleContext value={xstyle}>{children}</IconStyleContext>;
 }
 
 /**
@@ -359,3 +421,8 @@ export const Unlink2 = withIconTrigger(StillUnlink2, AnimatedUnlink2);
 export const Users = withIconTrigger(StillUsers, AnimatedUsers);
 export const Wand2 = withIconTrigger(StillWand2, AnimatedWandSparkles);
 export const X = withIconTrigger(StillX, AnimatedX);
+export const Loader2 = withIconStyle(StillLoader2);
+export const QrCode = withIconStyle(StillQrCode);
+export const Radar = withIconStyle(StillRadar);
+export const SearchX = withIconStyle(StillSearchX);
+export const ShieldOff = withIconStyle(StillShieldOff);

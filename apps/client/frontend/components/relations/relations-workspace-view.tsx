@@ -5,7 +5,6 @@
 
 import { ReactFlowProvider, useReactFlow } from '@xyflow/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2 } from 'lucide-react';
 import {
   List,
   Maximize,
@@ -14,6 +13,7 @@ import {
   RotateCcw,
   Search,
   Share2,
+  Loader2,
 } from '@/components/ui/animated-icons';
 import { useSearch } from '@tanstack/react-router';
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
@@ -229,7 +229,7 @@ function RelationPicker({ onPick }: { onPick: (article: Article, dbName: string)
             aria-label="检索中心文章"
           />
           <Button type="submit" xstyle={styles.relationPickerButton}>
-            <Search {...stylex.props(styles.relationPickerSearch)} aria-hidden="true" />
+            <Search xstyle={styles.relationPickerSearch} aria-hidden="true" />
             检索
           </Button>
         </form>
@@ -477,7 +477,6 @@ function RelationExplorer({
         }
       >
         <ToggleGroup
-          type="single"
           aria-label="显示方式"
           xstyle={styles.headerToggleGroup}
           value={viewMode}
@@ -492,7 +491,7 @@ function RelationExplorer({
             ] as const
           ).map(([mode, label, Icon]) => (
             <ToggleGroupItem key={mode} value={mode} xstyle={styles.headerToggleGroupItem}>
-              <Icon {...stylex.props(styles.headerIcon)} aria-hidden="true" />
+              <Icon xstyle={styles.headerIcon} aria-hidden="true" />
               {label}
             </ToggleGroupItem>
           ))}
@@ -507,7 +506,7 @@ function RelationExplorer({
               aria-label="重新排列"
               onClick={relayout}
             >
-              <RotateCcw {...stylex.props(styles.relationPickerSearch)} aria-hidden="true" />
+              <RotateCcw xstyle={styles.relationPickerSearch} aria-hidden="true" />
             </Button>
           </IconTooltip>
         )}
@@ -521,7 +520,7 @@ function RelationExplorer({
               aria-label="适应窗口"
               onClick={() => void fitView({ duration: 300, padding: 0.2 })}
             >
-              <Maximize {...stylex.props(styles.relationPickerSearch)} aria-hidden="true" />
+              <Maximize xstyle={styles.relationPickerSearch} aria-hidden="true" />
             </Button>
           </IconTooltip>
         )}
@@ -615,7 +614,7 @@ function RelationExplorer({
           xstyle={styles.relationExplorerRevealItem}
           placeholder={
             <p role="status" {...stylex.props(styles.relationExplorerP2)}>
-              <Loader2 {...stylex.props(styles.relationExplorerLoader2)} aria-hidden="true" />
+              <Loader2 xstyle={styles.relationExplorerLoader2} aria-hidden="true" />
               <LoadingText text="正在构建关系图…" />
             </p>
           }
@@ -676,11 +675,11 @@ function RelationList({
               onClick={() => onToggle(node.id)}
             >
               {isLoading ? (
-                <Loader2 {...stylex.props(styles.relationListLoader2)} aria-hidden="true" />
+                <Loader2 xstyle={styles.relationListLoader2} aria-hidden="true" />
               ) : isExpanded ? (
-                <Minus {...stylex.props(styles.headerIcon)} aria-hidden="true" />
+                <Minus xstyle={styles.headerIcon} aria-hidden="true" />
               ) : (
-                <Plus {...stylex.props(styles.headerIcon)} aria-hidden="true" />
+                <Plus xstyle={styles.headerIcon} aria-hidden="true" />
               )}
             </button>
             <button

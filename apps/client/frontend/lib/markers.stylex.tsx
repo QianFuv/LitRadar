@@ -17,3 +17,6 @@ export const nodeMarker = stylex.defineMarker();
 
 /** A switch root; its thumb follows the switch size. */
 export const switchMarker = stylex.defineMarker();
+
+/** A settings section; a later sibling section keeps its distance from it. */
+export const settingsSectionMarker = stylex.defineMarker();

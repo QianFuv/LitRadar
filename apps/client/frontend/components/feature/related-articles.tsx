@@ -49,11 +49,7 @@ export function RelatedArticles({ article, dbName, onOpen }: RelatedArticlesProp
     <section ref={ref} aria-label="相关文章" {...stylex.props(styles.relatedArticlesSection)}>
       <h3 {...stylex.props(styles.relatedArticlesH3)}>
         <span {...stylex.props(styles.relatedArticlesSpan)}>
-          <LinkIcon
-            animateOnView
-            {...stylex.props(styles.relatedArticlesLinkIcon)}
-            aria-hidden="true"
-          />
+          <LinkIcon animateOnView xstyle={styles.relatedArticlesLinkIcon} aria-hidden="true" />
           相关文章
         </span>
       </h3>

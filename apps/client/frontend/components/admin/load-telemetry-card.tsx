@@ -214,7 +214,6 @@ export function LoadTelemetryCard({ isEnabled }: { isEnabled: boolean }) {
           {...stylex.props(styles.loadTelemetryCardCardContentItem, styles.loadTelemetryCardDiv)}
         >
           <ToggleGroup
-            type="single"
             aria-label="统计时段"
             value={period}
             onValueChange={(value) => {
@@ -228,7 +227,6 @@ export function LoadTelemetryCard({ isEnabled }: { isEnabled: boolean }) {
             ))}
           </ToggleGroup>
           <ToggleGroup
-            type="single"
             aria-label="调用类型"
             value={kindFilter}
             onValueChange={(value) => {
@@ -624,7 +622,7 @@ function DistributionList({
   return (
     <section aria-label={title}>
       <h4 {...stylex.props(styles.kindTrendChartFigureItem, styles.distributionListH4)}>
-        <Layers {...stylex.props(styles.distributionListLayers)} aria-hidden="true" />
+        <Layers xstyle={styles.distributionListLayers} aria-hidden="true" />
         {title}
       </h4>
       <ul {...stylex.props(styles.kindTrendChartFigureItem)}>

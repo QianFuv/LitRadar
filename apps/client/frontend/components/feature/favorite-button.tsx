@@ -230,37 +230,39 @@ function renderFavoriteButton(state: FavoriteButtonViewState) {
   return (
     <>
       <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            ref={triggerRef}
-            variant="outline"
-            size="sm"
-            static
-            xstyle={[
-              styles.renderFavoriteButtonButton,
-              isFav && styles.renderFavoriteButtonButtonFav,
-            ]}
-            aria-label={favoriteLabel}
-            title={favoriteLabel}
-            onClick={(event: MouseEvent<HTMLButtonElement>) => event.stopPropagation()}
+        <PopoverTrigger
+          render={
+            <Button
+              ref={triggerRef}
+              variant="outline"
+              size="sm"
+              static
+              xstyle={[
+                styles.renderFavoriteButtonButton,
+                isFav && styles.renderFavoriteButtonButtonFav,
+              ]}
+              aria-label={favoriteLabel}
+              title={favoriteLabel}
+              onClick={(event: MouseEvent<HTMLButtonElement>) => event.stopPropagation()}
+            />
+          }
+        >
+          <span
+            data-favorite-state={isFavoriteUnknown ? 'unknown' : isFav ? 'active' : 'inactive'}
+            {...stylex.props(styles.renderFavoriteButtonSpan)}
+            aria-hidden="true"
           >
-            <span
-              data-favorite-state={isFavoriteUnknown ? 'unknown' : isFav ? 'active' : 'inactive'}
-              {...stylex.props(styles.renderFavoriteButtonSpan)}
-              aria-hidden="true"
-            >
-              <Star
-                {...stylex.props(
-                  styles.renderFavoriteButtonStar,
-                  isFav && styles.renderFavoriteButtonStarFav,
-                )}
-              />
-              <span {...stylex.props(styles.renderFavoriteButtonSpan2)}>
-                <span {...stylex.props(styles.renderFavoriteButtonSpan3)}>已收藏</span>
-                <span {...stylex.props(styles.renderFavoriteButtonSpan4)}>{favoriteLabel}</span>
-              </span>
+            <Star
+              xstyle={[
+                styles.renderFavoriteButtonStar,
+                isFav && styles.renderFavoriteButtonStarFav,
+              ]}
+            />
+            <span {...stylex.props(styles.renderFavoriteButtonSpan2)}>
+              <span {...stylex.props(styles.renderFavoriteButtonSpan3)}>已收藏</span>
+              <span {...stylex.props(styles.renderFavoriteButtonSpan4)}>{favoriteLabel}</span>
             </span>
-          </Button>
+          </span>
         </PopoverTrigger>
         <PopoverContent
           xstyle={styles.renderFavoriteButtonPopoverContent}
@@ -340,10 +342,10 @@ function renderFavoriteToggle(state: FavoriteButtonViewState, folderId: number) 
           aria-hidden="true"
         >
           <Star
-            {...stylex.props(
+            xstyle={[
               styles.renderFavoriteButtonStar,
               isInFolder && styles.renderFavoriteButtonStarFav,
-            )}
+            ]}
           />
           <span {...stylex.props(styles.renderFavoriteButtonSpan2)}>
             <span {...stylex.props(styles.renderFavoriteButtonSpan3)}>已收藏</span>
@@ -394,10 +396,10 @@ function renderFavoriteFolderButton(state: FavoriteButtonViewState, folder: Fold
       }}
     >
       <Star
-        {...stylex.props(
+        xstyle={[
           styles.renderFavoriteFolderButtonStar,
           isInFolder && styles.renderFavoriteButtonStarFav,
-        )}
+        ]}
         strokeWidth={1.5}
         aria-hidden="true"
       />

@@ -67,7 +67,6 @@ export function FavoriteKindSwitch() {
 
   return (
     <ToggleGroup
-      type="single"
       aria-label="收藏类型"
       value={kind}
       onValueChange={(option) => {
@@ -76,7 +75,7 @@ export function FavoriteKindSwitch() {
     >
       {FAVORITE_KIND_OPTIONS.map(({ kind: option, label, icon: Icon }) => (
         <ToggleGroupItem key={option} value={option}>
-          <Icon {...stylex.props(styles.favoriteKindSwitchIcon)} aria-hidden="true" />
+          <Icon xstyle={styles.favoriteKindSwitchIcon} aria-hidden="true" />
           {label}
         </ToggleGroupItem>
       ))}

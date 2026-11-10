@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { Input } from '@/components/ui/input';
 import { Search, X, Clock, SlidersHorizontal, Wand2 } from '@/components/ui/animated-icons';
 import { Button } from '@/components/ui/button';
-import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
+import { Popover, PopoverContent } from '@/components/ui/popover';
 import { SearchBuilderDialog } from '@/components/feature/search-builder-dialog';
 import { useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import {
@@ -441,7 +441,7 @@ export function SearchBar({
     <div {...stylex.props(styles.searchBarDiv, xstyle)}>
       <form role="search" {...stylex.props(styles.searchBarForm)} onSubmit={handleSubmit}>
         <div {...stylex.props(styles.searchBarDiv2, searchMarker)}>
-          <Search {...stylex.props(styles.searchBarSearch)} aria-hidden="true" />
+          <Search xstyle={styles.searchBarSearch} aria-hidden="true" />
           <Popover
             open={isPanelOpen}
             onOpenChange={(isOpen) => {
@@ -451,50 +451,49 @@ export function SearchBar({
               }
             }}
           >
-            <PopoverAnchor asChild>
-              <Input
-                ref={inputRef}
-                type="search"
-                role="combobox"
-                aria-label="搜索文章"
-                aria-autocomplete="list"
-                aria-controls={
-                  controlledListboxes.length > 0 ? controlledListboxes.join(' ') : undefined
+            <Input
+              ref={inputRef}
+              type="search"
+              role="combobox"
+              aria-label="搜索文章"
+              aria-autocomplete="list"
+              aria-controls={
+                controlledListboxes.length > 0 ? controlledListboxes.join(' ') : undefined
+              }
+              aria-expanded={isPanelOpen}
+              aria-activedescendant={activeOption?.id}
+              name="article_search"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={placeholder}
+              {...{ [WORKSPACE_SEARCH_ATTRIBUTE]: '' }}
+              xstyle={[
+                styles.searchBarInput,
+                isAdvancedDraft && styles.searchBarInputAdvancedDraft,
+              ]}
+              value={inputValue}
+              onChange={(event) => {
+                setInputValue(event.target.value);
+                setActiveOptionIndex(-1);
+                if (hasSyntaxAssist) {
+                  setShowHistory(true);
                 }
-                aria-expanded={isPanelOpen}
-                aria-activedescendant={activeOption?.id}
-                name="article_search"
-                autoComplete="off"
-                spellCheck={false}
-                placeholder={placeholder}
-                {...{ [WORKSPACE_SEARCH_ATTRIBUTE]: '' }}
-                xstyle={[
-                  styles.searchBarInput,
-                  isAdvancedDraft && styles.searchBarInputAdvancedDraft,
-                ]}
-                value={inputValue}
-                onChange={(event) => {
-                  setInputValue(event.target.value);
-                  setActiveOptionIndex(-1);
-                  if (hasSyntaxAssist) {
-                    setShowHistory(true);
-                  }
-                }}
-                onKeyDown={handleKeyDown}
-                onClick={() => {
-                  const availableHistory = getSearchHistory();
-                  setSearchHistory(availableHistory);
-                  if ((availableHistory.length > 0 || hasSyntaxAssist) && !showHistory) {
-                    setShowHistory(true);
-                  }
-                }}
-              />
-            </PopoverAnchor>
+              }}
+              onKeyDown={handleKeyDown}
+              onClick={() => {
+                const availableHistory = getSearchHistory();
+                setSearchHistory(availableHistory);
+                if ((availableHistory.length > 0 || hasSyntaxAssist) && !showHistory) {
+                  setShowHistory(true);
+                }
+              }}
+            />
             {options.length > 0 && (
               <PopoverContent
                 xstyle={styles.searchBarPopoverContent}
                 align="start"
-                onOpenAutoFocus={(event: Event) => event.preventDefault()}
+                anchor={inputRef}
+                initialFocus={false}
               >
                 <div {...stylex.props(styles.searchBarDiv3)}>
                   {rewriteOptions.length > 0 && (
@@ -505,7 +504,7 @@ export function SearchBar({
                           renderOptionButton(
                             option,
                             <>
-                              <Wand2 {...stylex.props(styles.searchBarWand2)} aria-hidden="true" />
+                              <Wand2 xstyle={styles.searchBarWand2} aria-hidden="true" />
                               <span {...stylex.props(styles.searchBarSpan)}>
                                 {option.suggestion.value}
                               </span>
@@ -527,7 +526,7 @@ export function SearchBar({
                     >
                       <div {...stylex.props(styles.searchBarDiv4)}>
                         <span {...stylex.props(styles.searchBarSpan3)}>
-                          <Clock {...stylex.props(styles.searchBarClock)} aria-hidden="true" />
+                          <Clock xstyle={styles.searchBarClock} aria-hidden="true" />
                           最近搜索
                         </span>
                         <Button
@@ -561,12 +560,12 @@ export function SearchBar({
                                   </span>
                                   <Search
                                     aria-hidden="true"
-                                    {...stylex.props(
+                                    xstyle={[
                                       styles.searchBarSearch2,
                                       activeOption === option
                                         ? styles.searchBarSearchOption
                                         : styles.searchBarSearchNotOption,
-                                    )}
+                                    ]}
                                   />
                                 </>,
                                 styles.optionButtonSpread,
@@ -584,7 +583,7 @@ export function SearchBar({
                           builderOption,
                           <>
                             <SlidersHorizontal
-                              {...stylex.props(styles.searchBarSlidersHorizontal)}
+                              xstyle={styles.searchBarSlidersHorizontal}
                               aria-hidden="true"
                             />
                             <span {...stylex.props(styles.searchBarSpan5)}>使用高级检索构建器</span>
@@ -638,7 +637,7 @@ export function SearchBar({
               }}
               xstyle={styles.searchBarButton2}
             >
-              <X {...stylex.props(styles.searchBarX)} aria-hidden="true" />
+              <X xstyle={styles.searchBarX} aria-hidden="true" />
             </Button>
           )}
         </div>
@@ -658,7 +657,7 @@ export function SearchBar({
               setIsBuilderOpen(true);
             }}
           >
-            <SlidersHorizontal {...stylex.props(styles.searchBarX)} aria-hidden="true" />
+            <SlidersHorizontal xstyle={styles.searchBarX} aria-hidden="true" />
             <span {...stylex.props(styles.searchBarSpan9)}>高级</span>
           </Button>
         )}
@@ -699,7 +698,7 @@ export function SearchBar({
                     disabled={!canRemove}
                     onClick={() => removeAppliedCondition(condition.id)}
                   >
-                    <X {...stylex.props(styles.searchBarX2)} aria-hidden="true" />
+                    <X xstyle={styles.searchBarX2} aria-hidden="true" />
                   </button>
                 </span>
               </li>
@@ -851,7 +850,7 @@ const styles = stylex.create({
     color: colors.primary,
   },
   searchBarPopoverContent: {
-    width: 'var(--radix-popover-trigger-width)',
+    width: 'var(--anchor-width)',
     minWidth: '18rem',
     padding: '0px',
   },

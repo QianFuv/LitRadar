@@ -1,12 +1,9 @@
 /*
  * Document-level styles that StyleX cannot express: web fonts, the element reset (Tailwind's
- * preflight with theme values inlined), inherited defaults for every element, default sizes and
- * colors of icons inside shared controls, the Radix Select value and item text (Radix drops their
- * class names), spacing between the children of the settings containers, the `relative` and
- * `sr-only` classes that Animate UI primitives render, the static skip link in index.html, and
- * scrollbar and view-transition pseudo-elements. Child and
- * descendant rules live in the base layer, so an element's own StyleX styles still win, as they
- * did over Tailwind's zero-specificity `space-y` and `divide-y`.
+ * preflight with theme values inlined), inherited defaults for every element, the utility classes
+ * that Animate UI primitives render, the static skip link in index.html, and scrollbar and
+ * view-transition pseudo-elements. The base layer sits below StyleX, so an element's own styles
+ * always win.
  *
  * Colors repeat the `light-dark()` pairs of lib/theme.stylex.tsx;
  * tests/default-chrome-theme.test.tsx keeps them in sync.
@@ -227,53 +224,12 @@
     font-feature-settings: 'liga' 1;
   }
 
-  [data-variant][data-size] svg,
-  [data-slot='dropdown-menu-item'] svg,
-  [data-slot='user-menu-item'] svg,
-  [data-slot='select-trigger'] svg,
-  [data-slot='select-item'] svg {
-    pointer-events: none;
-    flex-shrink: 0;
-    width: 1rem;
-    height: 1rem;
-  }
-
-  [data-slot='dropdown-menu-item'] svg,
-  [data-slot='user-menu-item'] svg,
-  [data-slot='select-trigger'] svg,
-  [data-slot='select-item'] svg {
-    color: light-dark(#696973, #8e8e8e);
-  }
-
-  [data-slot='dropdown-menu-item'][data-variant='destructive'] svg {
-    color: light-dark(#c10007, #fb414a);
-  }
-
-  [data-slot='badge'] > svg {
-    pointer-events: none;
-    width: 0.75rem;
-    height: 0.75rem;
-  }
-
-  [data-slot='select-trigger'] > [data-slot='select-value'] {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    overflow: hidden;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 1;
-  }
-
-  [data-slot='select-item'] > span:last-child {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  [data-slot='motion-highlight-item-container'] {
+  /* Animate UI's Highlight item container carries the Tailwind class `relative` and needs it to position the moving highlight. */
+  .relative {
     position: relative;
   }
 
+  /* Animate UI's text primitives (ShimmeringText, SlidingNumber, SplittingText) put their accessible copy in a `sr-only` span. */
   .sr-only {
     position: absolute;
     width: 1px;
@@ -284,18 +240,6 @@
     clip-path: inset(50%);
     white-space: nowrap;
     border-width: 0;
-  }
-
-  [data-slot='settings-section'] > :not(:last-child) {
-    margin-bottom: 0.75rem;
-  }
-
-  [data-slot='settings-section'] + [data-slot='settings-section'] {
-    margin-top: 2.5rem;
-  }
-
-  [data-slot='settings-group'] > :not(:last-child) {
-    border-bottom-width: 1px;
   }
 }
 

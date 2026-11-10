@@ -1,9 +1,9 @@
 /**
- * Project-styled Radix Popover primitives with shared surface motion.
+ * Project-styled Animate UI Popover primitives on Base UI with shared surface motion.
  */
 
 import * as React from 'react';
-import * as PopoverPrimitive from '@animate-ui/react/primitives/radix-ui/popover';
+import { Popover as PopoverPrimitive } from '@animate-ui/react/primitives/base-ui/popover';
 
 import { RevealScope } from '@/components/ui/reveal';
 import * as stylex from '@stylexjs/stylex';
@@ -12,71 +12,77 @@ import { colors, shadows } from '@/lib/theme.stylex';
 /**
  * Render the Popover state root.
  *
- * @param props - Radix Popover root properties.
+ * @param props - Base UI Popover root properties.
  * @returns Popover root.
  */
-function Popover({ ...props }: React.ComponentProps<typeof PopoverPrimitive.Root>) {
-  return <PopoverPrimitive.Root data-slot="popover" {...props} />;
+function Popover(props: React.ComponentProps<typeof PopoverPrimitive.Root>) {
+  return <PopoverPrimitive.Root {...props} />;
 }
 
 /**
  * Render a control that opens its Popover.
  *
- * @param props - Radix Popover trigger properties.
+ * @param props - Base UI Popover trigger properties.
  * @returns Popover trigger.
  */
-function PopoverTrigger({ ...props }: React.ComponentProps<typeof PopoverPrimitive.Trigger>) {
+function PopoverTrigger(props: React.ComponentProps<typeof PopoverPrimitive.Trigger>) {
   return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />;
 }
+
+type PopoverContentProps = Omit<React.ComponentProps<typeof PopoverPrimitive.Popup>, 'className'> &
+  Pick<
+    React.ComponentProps<typeof PopoverPrimitive.Positioner>,
+    'align' | 'side' | 'sideOffset' | 'anchor'
+  > & {
+    xstyle?: stylex.StyleXStyles;
+  };
 
 /**
  * Render positioned Popover content in a portal.
  *
- * @param props - Radix Popover content properties and positioning defaults.
+ * @param props - Base UI Popover popup properties, positioning, and style overrides.
  * @returns Portaled Popover content.
  */
 function PopoverContent({
   xstyle,
   align = 'center',
+  side = 'bottom',
   sideOffset = 4,
+  anchor,
   ...props
-}: Omit<React.ComponentProps<typeof PopoverPrimitive.Content>, 'className'> & {
-  xstyle?: stylex.StyleXStyles;
-}) {
-  const content = (
-    <PopoverPrimitive.Content
-      data-slot="popover-content"
-      align={align}
-      sideOffset={sideOffset}
-      {...stylex.props(styles.popoverContent, xstyle)}
-      {...props}
-    />
-  );
-
+}: PopoverContentProps) {
   return (
     <PopoverPrimitive.Portal>
-      <RevealScope>{content}</RevealScope>
+      <PopoverPrimitive.Positioner
+        align={align}
+        side={side}
+        sideOffset={sideOffset}
+        anchor={anchor}
+        collisionPadding={0}
+        collisionAvoidance={{ align: 'shift', fallbackAxisSide: 'none' }}
+        {...stylex.props(styles.popoverPositioner)}
+      >
+        <RevealScope>
+          <PopoverPrimitive.Popup
+            data-slot="popover-content"
+            {...stylex.props(styles.popoverContent, xstyle)}
+            {...props}
+          />
+        </RevealScope>
+      </PopoverPrimitive.Positioner>
     </PopoverPrimitive.Portal>
   );
 }
 
-/**
- * Render an optional custom positioning anchor.
- *
- * @param props - Radix Popover anchor properties.
- * @returns Popover anchor.
- */
-function PopoverAnchor({ ...props }: React.ComponentProps<typeof PopoverPrimitive.Anchor>) {
-  return <PopoverPrimitive.Anchor data-slot="popover-anchor" {...props} />;
-}
-
-export { Popover, PopoverTrigger, PopoverContent, PopoverAnchor };
+export { Popover, PopoverTrigger, PopoverContent };
 
 const styles = stylex.create({
-  popoverContent: {
+  popoverPositioner: {
     zIndex: 50,
+  },
+  popoverContent: {
     width: '18rem',
-    transformOrigin: 'var(--radix-popover-content-transform-origin)',
+    transformOrigin: 'var(--transform-origin)',
     borderRadius: '12px',
     backgroundColor: colors.popover,
     padding: '1rem',

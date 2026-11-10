@@ -4,8 +4,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2 } from 'lucide-react';
-import { Bookmark, BookmarkCheck } from '@/components/ui/animated-icons';
+import { Bookmark, BookmarkCheck, Loader2 } from '@/components/ui/animated-icons';
 import { useNavigate } from '@tanstack/react-router';
 import { useEffect, useEffectEvent, useMemo, useState } from 'react';
 
@@ -274,15 +273,9 @@ function RelationGraphFavoriteButtons({
             onClick={favorite.create}
           >
             {isBusy ? (
-              <Loader2
-                {...stylex.props(styles.relationGraphFavoriteButtonsLoader2)}
-                aria-hidden="true"
-              />
+              <Loader2 xstyle={styles.relationGraphFavoriteButtonsLoader2} aria-hidden="true" />
             ) : (
-              <Bookmark
-                {...stylex.props(styles.relationGraphFavoriteButtonsBookmark)}
-                aria-hidden="true"
-              />
+              <Bookmark xstyle={styles.relationGraphFavoriteButtonsBookmark} aria-hidden="true" />
             )}
           </Button>
         </IconTooltip>
@@ -293,34 +286,35 @@ function RelationGraphFavoriteButtons({
               savedTitle ? `已收藏：${savedTitle}${isDirty ? '（有未保存的改动）' : ''}` : '已收藏'
             }
           >
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                xstyle={styles.relationGraphFavoriteButtonsButton2}
-                aria-label={isDirty ? '已收藏的关系图操作（有未保存的改动）' : '已收藏的关系图操作'}
-                disabled={isBusy}
-              >
-                {isBusy ? (
-                  <Loader2
-                    {...stylex.props(styles.relationGraphFavoriteButtonsLoader2)}
-                    aria-hidden="true"
-                  />
-                ) : (
-                  <BookmarkCheck
-                    {...stylex.props(styles.relationGraphFavoriteButtonsBookmark)}
-                    aria-hidden="true"
-                  />
-                )}
-                {isDirty && (
-                  <span
-                    aria-hidden="true"
-                    data-testid="relation-graph-unsaved-dot"
-                    {...stylex.props(styles.relationGraphFavoriteButtonsSpan)}
-                  />
-                )}
-              </Button>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  xstyle={styles.relationGraphFavoriteButtonsButton2}
+                  aria-label={
+                    isDirty ? '已收藏的关系图操作（有未保存的改动）' : '已收藏的关系图操作'
+                  }
+                  disabled={isBusy}
+                />
+              }
+            >
+              {isBusy ? (
+                <Loader2 xstyle={styles.relationGraphFavoriteButtonsLoader2} aria-hidden="true" />
+              ) : (
+                <BookmarkCheck
+                  xstyle={styles.relationGraphFavoriteButtonsBookmark}
+                  aria-hidden="true"
+                />
+              )}
+              {isDirty && (
+                <span
+                  aria-hidden="true"
+                  data-testid="relation-graph-unsaved-dot"
+                  {...stylex.props(styles.relationGraphFavoriteButtonsSpan)}
+                />
+              )}
             </DropdownMenuTrigger>
           </IconTooltip>
           <DropdownMenuContent
@@ -331,15 +325,15 @@ function RelationGraphFavoriteButtons({
               {savedTitle ?? '已收藏的关系图'}
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => void favorite.update()}>
+            <DropdownMenuItem onClick={() => void favorite.update()}>
               {isDirty ? '保存改动到收藏' : '更新收藏'}
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={favorite.create}>另存为新收藏</DropdownMenuItem>
-            <DropdownMenuItem disabled={!savedGraph || !isDirty} onSelect={handleReset}>
+            <DropdownMenuItem onClick={favorite.create}>另存为新收藏</DropdownMenuItem>
+            <DropdownMenuItem disabled={!savedGraph || !isDirty} onClick={handleReset}>
               重置为收藏时的状态
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem isDestructive onSelect={favorite.remove}>
+            <DropdownMenuItem isDestructive onClick={favorite.remove}>
               取消收藏
             </DropdownMenuItem>
           </DropdownMenuContent>

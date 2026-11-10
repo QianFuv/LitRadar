@@ -1,15 +1,25 @@
+/**
+ * Form label with the shared label typography.
+ */
+
 import * as React from 'react';
-import * as LabelPrimitive from '@radix-ui/react-label';
 import * as stylex from '@stylexjs/stylex';
 
+/**
+ * Render a native label.
+ *
+ * @param props - Native label properties and style overrides.
+ * @returns Styled label.
+ */
 function Label({
   xstyle,
+  htmlFor,
   ...props
-}: Omit<React.ComponentProps<typeof LabelPrimitive.Root>, 'className'> & {
+}: Omit<React.ComponentProps<'label'>, 'className'> & {
   xstyle?: stylex.StyleXStyles;
 }) {
   return (
-    <LabelPrimitive.Root data-slot="label" {...stylex.props(styles.label, xstyle)} {...props} />
+    <label data-slot="label" htmlFor={htmlFor} {...stylex.props(styles.label, xstyle)} {...props} />
   );
 }
 

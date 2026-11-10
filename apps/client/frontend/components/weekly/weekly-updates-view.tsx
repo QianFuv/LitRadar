@@ -211,6 +211,10 @@ function WeeklyJournalFacet({
   return (
     <Select
       value={selectedJournal ? String(selectedJournal.journal_id) : ''}
+      items={journals.map((journal) => ({
+        value: String(journal.journal_id),
+        label: getJournalLabel(journal),
+      }))}
       onValueChange={(value) => {
         const journal = journals.find((candidate) => String(candidate.journal_id) === value);
         if (journal) onSelectJournal(journal.journal_id);
@@ -230,11 +234,10 @@ function WeeklyJournalFacet({
         <SelectValue placeholder="期刊" />
       </SelectTrigger>
       <SelectContent
-        position="popper"
         align="start"
         aria-label={`本周有 ${journals.length} 本期刊更新`}
         xstyle={styles.weeklyJournalFacetSelectContent}
-        viewportXstyle={styles.weeklyJournalViewport}
+        listXstyle={styles.weeklyJournalViewport}
       >
         {journals.map((journal) => (
           <SelectItem
@@ -313,14 +316,11 @@ export function WeeklyUpdatesView() {
                   {...stylex.props(styles.weeklyUpdatesViewDiv3)}
                 >
                   <span {...stylex.props(styles.weeklyUpdatesViewSpan)}>
-                    <Layers {...stylex.props(styles.weeklyUpdatesViewLayers)} aria-hidden="true" />
+                    <Layers xstyle={styles.weeklyUpdatesViewLayers} aria-hidden="true" />
                     {totalDatabases} 个数据库
                   </span>
                   <span {...stylex.props(styles.weeklyUpdatesViewSpan2)}>
-                    <FileText
-                      {...stylex.props(styles.weeklyUpdatesViewLayers)}
-                      aria-hidden="true"
-                    />
+                    <FileText xstyle={styles.weeklyUpdatesViewLayers} aria-hidden="true" />
                     {totalArticles} 篇新文章
                   </span>
                 </div>
@@ -994,18 +994,15 @@ const styles = stylex.create({
       ':active': {
         default: colors.accentPressed,
         ':is([data-popup-open])': colors.accent,
-        ':is([data-state="open"])': colors.accent,
         ':hover': {
           default: null,
           '@media (hover: hover)': {
             default: colors.accentPressed,
             ':is([data-popup-open])': colors.accent,
-            ':is([data-state="open"])': colors.accent,
           },
         },
       },
       ':is([data-popup-open])': colors.accent,
-      ':is([data-state="open"])': colors.accent,
       ':hover': {
         default: null,
         '@media (hover: hover)': colors.accent,

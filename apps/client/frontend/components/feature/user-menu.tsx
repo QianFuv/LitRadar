@@ -2,10 +2,11 @@
  * Accessible account controls, settings entry, theme preferences, and logout.
  */
 
-import * as DropdownMenuPrimitive from '@animate-ui/react/primitives/radix-ui/dropdown-menu';
-import { DropdownMenu as RadixDropdownMenu } from 'radix-ui';
+import { Menu as DropdownMenuPrimitive } from '@animate-ui/react/primitives/base-ui/menu';
+import { Menu } from '@base-ui/react/menu';
 import {
   AlertTriangle,
+  IconStyleProvider,
   IconTriggerProvider,
   LogOut,
   Moon,
@@ -24,7 +25,8 @@ import { createPortal } from 'react-dom';
 import { SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE } from '@/components/feature/sectioned-dialog';
 import { preloadAdminCenter, preloadSettingsCenter } from '@/components/shell/lazy-workspaces';
 import { UserAvatar } from '@/components/shell/user-avatar';
-import { keepRadixCloseFocus } from '@/components/ui/dropdown-menu';
+import { controlIconStyle } from '@/components/ui/button';
+import { menuItemIconStyle } from '@/components/ui/dropdown-menu';
 import { parseAdminSection, withAdminSection } from '@/lib/admin-center';
 import { useAuth, type LogoutRevocationWarning } from '@/lib/auth-context';
 import { WORKSPACE_ROUTE_ID } from '@/lib/search-params';
@@ -89,10 +91,7 @@ function LogoutRevocationNotice({ warning }: { warning: LogoutRevocationWarning 
   return (
     <div role="alert" {...stylex.props(styles.logoutRevocationNoticeDiv)}>
       <div {...stylex.props(styles.logoutRevocationNoticeDiv2)}>
-        <AlertTriangle
-          {...stylex.props(styles.logoutRevocationNoticeAlertTriangle)}
-          aria-hidden="true"
-        />
+        <AlertTriangle xstyle={styles.logoutRevocationNoticeAlertTriangle} aria-hidden="true" />
         <div {...stylex.props(styles.logoutRevocationNoticeDiv3)}>
           <p
             {...stylex.props(styles.logoutRevocationNoticeDivItem, styles.logoutRevocationNoticeP)}
@@ -153,17 +152,19 @@ function FixedLogoutRevocationNotice({
 
 /**
  * Render an account menu item whose icon plays while it is hovered or tapped. It uses the plain
- * Radix item, so hover paints the item's own background instead of a highlight sliding between
+ * Base UI item, so hover paints the item's own background instead of a highlight sliding between
  * items.
  *
- * @param props - Radix menu item properties.
+ * @param props - Base UI menu item properties.
  * @returns Account menu item.
  */
-function UserMenuItem(props: ComponentProps<typeof RadixDropdownMenu.Item>) {
+function UserMenuItem(props: ComponentProps<typeof Menu.Item>) {
   const { isTriggered, triggerHandlers } = useIconTrigger(props);
   return (
     <IconTriggerProvider isTriggered={isTriggered}>
-      <RadixDropdownMenu.Item data-slot="user-menu-item" {...props} {...triggerHandlers} />
+      <IconStyleProvider xstyle={[controlIconStyle, menuItemIconStyle]}>
+        <Menu.Item data-slot="user-menu-item" {...props} {...triggerHandlers} />
+      </IconStyleProvider>
     </IconTriggerProvider>
   );
 }
@@ -172,14 +173,14 @@ function UserMenuItem(props: ComponentProps<typeof RadixDropdownMenu.Item>) {
  * Render a theme choice whose icon plays while it is hovered or tapped, painted like
  * `UserMenuItem`.
  *
- * @param props - Radix radio item properties.
+ * @param props - Base UI menu radio item properties.
  * @returns Theme radio item.
  */
-function ThemeRadioItem(props: ComponentProps<typeof RadixDropdownMenu.RadioItem>) {
+function ThemeRadioItem(props: ComponentProps<typeof Menu.RadioItem>) {
   const { isTriggered, triggerHandlers } = useIconTrigger(props);
   return (
     <IconTriggerProvider isTriggered={isTriggered}>
-      <RadixDropdownMenu.RadioItem {...props} {...triggerHandlers} />
+      <Menu.RadioItem {...props} {...triggerHandlers} />
     </IconTriggerProvider>
   );
 }
@@ -255,103 +256,106 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
         <FixedLogoutRevocationNotice isMounted={isMounted} warning={logoutWarning} />
       )}
       <DropdownMenuPrimitive.Root>
-        <DropdownMenuPrimitive.Trigger asChild>
-          <button
-            ref={accountTriggerRef}
-            type="button"
-            data-slot="user-menu-trigger"
-            data-placement={placement}
-            {...stylex.props(
-              styles.userMenuTrigger,
-              accountMenuMarker,
-              placement === 'rail' ? styles.userMenuTriggerRail : styles.userMenuTriggerNotRail,
-            )}
-            aria-label={`打开账号菜单：${user.username}`}
-          >
-            <UserAvatar
-              username={user.username}
-              size={placement === 'rail' ? 'md' : 'sm'}
-              xstyle={[
-                styles.userMenuUserAvatar,
-                placement === 'rail' && styles.userMenuUserAvatarRail,
-              ]}
-            />
-            {placement === 'tab' && <span {...stylex.props(styles.userMenuSpan)}>我的</span>}
-            <span {...stylex.props(styles.userMenuSpan2)}>{user.username}</span>
-          </button>
+        <DropdownMenuPrimitive.Trigger
+          ref={accountTriggerRef}
+          data-slot="user-menu-trigger"
+          data-placement={placement}
+          {...stylex.props(
+            styles.userMenuTrigger,
+            accountMenuMarker,
+            placement === 'rail' ? styles.userMenuTriggerRail : styles.userMenuTriggerNotRail,
+          )}
+          aria-label={`打开账号菜单：${user.username}`}
+        >
+          <UserAvatar
+            username={user.username}
+            size={placement === 'rail' ? 'md' : 'sm'}
+            xstyle={[
+              styles.userMenuUserAvatar,
+              placement === 'rail' && styles.userMenuUserAvatarRail,
+            ]}
+          />
+          {placement === 'tab' && <span {...stylex.props(styles.userMenuSpan)}>我的</span>}
+          <span {...stylex.props(styles.userMenuSpan2)}>{user.username}</span>
         </DropdownMenuPrimitive.Trigger>
 
         <DropdownMenuPrimitive.Portal>
-          <DropdownMenuPrimitive.Content
-            aria-label="账号菜单"
+          <DropdownMenuPrimitive.Positioner
             align="end"
             side={placement === 'rail' ? 'right' : 'top'}
             sideOffset={placement === 'rail' ? 14 : 6}
             collisionPadding={8}
-            {...stylex.props(styles.menuContent, styles.userMenuDropdownMenuPrimitiveContent)}
-            onCloseAutoFocus={keepRadixCloseFocus}
+            collisionAvoidance={{ align: 'shift', fallbackAxisSide: 'none' }}
+            {...stylex.props(styles.menuPositioner)}
           >
-            <DropdownMenuPrimitive.Label
-              {...stylex.props(styles.userMenuDropdownMenuPrimitiveLabel)}
+            <DropdownMenuPrimitive.Popup
+              aria-label="账号菜单"
+              {...stylex.props(styles.menuContent, styles.userMenuDropdownMenuPrimitiveContent)}
             >
-              <UserAvatar username={user.username} size="lg" />
-              <span {...stylex.props(styles.logoutRevocationNoticeDiv3)}>
-                <span {...stylex.props(styles.userMenuSpan3)}>{user.username}</span>
-                <span {...stylex.props(styles.userMenuSpan4)}>
-                  {user.is_admin ? '管理员' : '普通用户'}
+              <div {...stylex.props(styles.userMenuDropdownMenuPrimitiveLabel)}>
+                <UserAvatar username={user.username} size="lg" />
+                <span {...stylex.props(styles.logoutRevocationNoticeDiv3)}>
+                  <span {...stylex.props(styles.userMenuSpan3)}>{user.username}</span>
+                  <span {...stylex.props(styles.userMenuSpan4)}>
+                    {user.is_admin ? '管理员' : '普通用户'}
+                  </span>
                 </span>
-              </span>
-            </DropdownMenuPrimitive.Label>
+              </div>
 
-            <DropdownMenuPrimitive.Separator
-              {...stylex.props(styles.userMenuDropdownMenuPrimitiveSeparator)}
-            />
+              <DropdownMenuPrimitive.Separator
+                {...stylex.props(styles.userMenuDropdownMenuPrimitiveSeparator)}
+              />
 
-            <UserMenuItem asChild>
-              <Link
-                to="/"
-                search={settingsSearch}
+              <UserMenuItem
+                render={
+                  <Link
+                    to="/"
+                    search={settingsSearch}
+                    onClick={handleSectionedDialogOpen}
+                    onFocus={preloadSettingsCenter}
+                    onPointerEnter={preloadSettingsCenter}
+                  />
+                }
                 {...stylex.props(styles.menuItem)}
-                onClick={handleSectionedDialogOpen}
-                onFocus={preloadSettingsCenter}
-                onPointerEnter={preloadSettingsCenter}
               >
                 <Settings />
                 <span>打开设置中心</span>
-              </Link>
-            </UserMenuItem>
+              </UserMenuItem>
 
-            {renderUserThemeControls(state)}
+              {renderUserThemeControls(state)}
 
-            {user.is_admin && (
-              <UserMenuItem asChild>
-                <Link
-                  to="/"
-                  search={adminSearch}
-                  aria-current={isAdminOpen ? 'page' : undefined}
+              {user.is_admin && (
+                <UserMenuItem
+                  render={
+                    <Link
+                      to="/"
+                      search={adminSearch}
+                      aria-current={isAdminOpen ? 'page' : undefined}
+                      onClick={handleSectionedDialogOpen}
+                      onFocus={preloadAdminCenter}
+                      onPointerEnter={preloadAdminCenter}
+                    />
+                  }
                   {...stylex.props(styles.menuItem, isAdminOpen && styles.userMenuLinkAdminOpen)}
-                  onClick={handleSectionedDialogOpen}
-                  onFocus={preloadAdminCenter}
-                  onPointerEnter={preloadAdminCenter}
                 >
                   <ShieldCheck />
                   <span>管理面板</span>
-                </Link>
+                </UserMenuItem>
+              )}
+
+              <DropdownMenuPrimitive.Separator
+                {...stylex.props(styles.userMenuDropdownMenuPrimitiveSeparator)}
+              />
+
+              <UserMenuItem
+                {...stylex.props(styles.menuItem, styles.userMenuUserMenuItem)}
+                onClick={handleLogout}
+              >
+                <LogOut xstyle={styles.userMenuLogOut} />
+                <span>退出登录</span>
               </UserMenuItem>
-            )}
-
-            <DropdownMenuPrimitive.Separator
-              {...stylex.props(styles.userMenuDropdownMenuPrimitiveSeparator)}
-            />
-
-            <UserMenuItem
-              {...stylex.props(styles.menuItem, styles.userMenuUserMenuItem)}
-              onSelect={handleLogout}
-            >
-              <LogOut {...stylex.props(styles.userMenuLogOut)} />
-              <span>退出登录</span>
-            </UserMenuItem>
-          </DropdownMenuPrimitive.Content>
+            </DropdownMenuPrimitive.Popup>
+          </DropdownMenuPrimitive.Positioner>
         </DropdownMenuPrimitive.Portal>
       </DropdownMenuPrimitive.Root>
     </>
@@ -359,30 +363,27 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
 }
 
 /**
- * Keep the account menu open after a theme choice so the user can compare or switch back.
+ * Render the hydration-gated theme choices. Radio items keep the menu open after a choice, so the
+ * user can compare themes or switch back.
  *
- * @param event - Radix menu item selection event.
+ * @param state - Mount state, selected theme, and theme change handler.
+ * @returns Theme choice row.
  */
-function keepMenuOpenOnSelect(event: Event): void {
-  event.preventDefault();
-}
-
-/** Retain hydration-gated theme choices and exact Radix radio structure. */
 function renderUserThemeControls(state: UserMenuViewState) {
   const { isMounted, selectedTheme, handleThemeChange } = state;
 
   return (
     <div data-slot="user-menu-theme-label" {...stylex.props(styles.userMenuThemeLabel)}>
       <span {...stylex.props(styles.renderUserThemeControlsSpan)}>
-        <SunMoon {...stylex.props(styles.renderUserThemeControlsSunMoon)} aria-hidden="true" />
+        <SunMoon xstyle={styles.renderUserThemeControlsSunMoon} aria-hidden="true" />
         <span>外观主题</span>
       </span>
       {isMounted && (
-        <RadixDropdownMenu.RadioGroup
+        <Menu.RadioGroup
           aria-label="外观主题"
           value={selectedTheme}
           onValueChange={handleThemeChange}
-          {...stylex.props(styles.renderUserThemeControlsRadixDropdownMenuRadioGroup)}
+          {...stylex.props(styles.themeRadioGroup)}
         >
           {THEME_ITEMS.map((item) => {
             const Icon = item.icon;
@@ -391,17 +392,16 @@ function renderUserThemeControls(state: UserMenuViewState) {
               <ThemeRadioItem
                 key={item.value}
                 value={item.value}
-                textValue={item.label}
-                onSelect={keepMenuOpenOnSelect}
+                label={item.label}
                 aria-label={item.label}
                 title={item.label}
                 {...stylex.props(styles.renderUserThemeControlsThemeRadioItem)}
               >
-                <Icon {...stylex.props(styles.renderUserThemeControlsIcon)} aria-hidden="true" />
+                <Icon xstyle={styles.renderUserThemeControlsIcon} aria-hidden="true" />
               </ThemeRadioItem>
             );
           })}
-        </RadixDropdownMenu.RadioGroup>
+        </Menu.RadioGroup>
       )}
     </div>
   );
@@ -532,7 +532,7 @@ const styles = stylex.create({
     gap: '0.25rem',
     color: {
       default: colors.mutedForeground,
-      ':is([data-state="open"])': colors.primaryText,
+      ':is([data-popup-open])': colors.primaryText,
     },
     boxShadow: {
       default: null,
@@ -547,7 +547,7 @@ const styles = stylex.create({
   userMenuUserAvatarRail: {
     boxShadow: {
       default: `0 0 0 2px ${colors.rail}, 0 0 0 3px ${colors.railBorder}`,
-      [stylex.when.ancestor('[data-state="open"]', accountMenuMarker)]:
+      [stylex.when.ancestor('[data-popup-open]', accountMenuMarker)]:
         `0 0 0 2px ${colors.rail}, 0 0 0 3px ${colors.primary}`,
       '@media (hover: hover)': {
         default: null,
@@ -571,9 +571,11 @@ const styles = stylex.create({
     whiteSpace: 'nowrap',
     borderWidth: 0,
   },
-  menuContent: {
+  menuPositioner: {
     zIndex: 50,
-    transformOrigin: 'var(--radix-dropdown-menu-content-transform-origin)',
+  },
+  menuContent: {
+    transformOrigin: 'var(--transform-origin)',
     borderRadius: '12px',
     backgroundColor: colors.popover,
     padding: '0.375rem',
@@ -736,7 +738,7 @@ const styles = stylex.create({
     height: '1rem',
     color: colors.mutedForeground,
   },
-  renderUserThemeControlsRadixDropdownMenuRadioGroup: {
+  themeRadioGroup: {
     display: 'flex',
     flexShrink: 0,
     alignItems: 'center',
@@ -760,7 +762,7 @@ const styles = stylex.create({
     color: {
       default: colors.mutedForeground,
       ':is([data-highlighted])': colors.foreground,
-      ':is([data-state="checked"])': colors.foreground,
+      ':is([data-checked])': colors.foreground,
     },
     transitionProperty: 'background-color, color, box-shadow',
     transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
@@ -773,7 +775,7 @@ const styles = stylex.create({
     backgroundColor: {
       default: null,
       ':is([data-highlighted])': colors.accent,
-      ':is([data-state="checked"])': colors.accent,
+      ':is([data-checked])': colors.accent,
     },
   },
   renderUserThemeControlsIcon: {

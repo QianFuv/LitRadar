@@ -2,11 +2,11 @@
  * Compact semantic state messages for workspace loading outcomes and feedback.
  */
 
-import { SearchX } from 'lucide-react';
 import {
   AlertCircle,
   AlertTriangle,
   CheckCircle2,
+  SearchX,
   type AppIcon,
 } from '@/components/ui/animated-icons';
 import type { ReactNode } from 'react';
@@ -61,7 +61,7 @@ export function StateMessage({
       {...stylex.props(styles.stateMessage, xstyle)}
     >
       <span {...stylex.props(styles.stateMessageBadge, STATE_MESSAGE_TONE_STYLES[tone])}>
-        <Icon {...stylex.props(styles.stateMessageIcon)} aria-hidden="true" />
+        <Icon xstyle={styles.stateMessageIcon} aria-hidden="true" />
       </span>
       <h2 {...stylex.props(styles.stateMessageH2)}>{title}</h2>
       {description && <p {...stylex.props(styles.stateMessageP)}>{description}</p>}

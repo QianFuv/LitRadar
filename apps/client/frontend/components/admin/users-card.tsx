@@ -1,11 +1,14 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ShieldOff } from 'lucide-react';
-import { KeyRound, ShieldCheck, Trash2, Users } from '@/components/ui/animated-icons';
+import { KeyRound, ShieldCheck, Trash2, Users, ShieldOff } from '@/components/ui/animated-icons';
 
 import { adminDeleteUser, adminGetUsers, adminResetPassword, adminSetAdmin } from '@/lib/api';
 import { AdminListHeader } from '@/components/admin/admin-list-header';
-import { SettingsGroup, StatusPill } from '@/components/settings/settings-section';
+import {
+  SettingsGroup,
+  StatusPill,
+  settingsGroupItemStyle,
+} from '@/components/settings/settings-section';
 import { UserAvatar } from '@/components/shell/user-avatar';
 import { Button } from '@/components/ui/button';
 import { IconTooltip } from '@/components/ui/tooltip';
@@ -102,7 +105,7 @@ export function AdminUsersCard({
       <Card>
         <CardHeader>
           <CardTitle xstyle={styles.adminUsersCardCardTitle}>
-            <Users {...stylex.props(styles.adminUsersCardUsers)} />
+            <Users xstyle={styles.adminUsersCardUsers} />
             账号管理
           </CardTitle>
           <CardDescription>查看和管理所有用户账号</CardDescription>
@@ -142,7 +145,7 @@ export function AdminUsersCard({
             )}
             <SettingsGroup>
               {userRows.map(({ user: u, registrationDate }) => (
-                <div key={u.id} {...stylex.props(styles.adminUsersCardDiv)}>
+                <div key={u.id} {...stylex.props(settingsGroupItemStyle, styles.adminUsersCardDiv)}>
                   <div {...stylex.props(styles.adminUsersCardDiv2)}>
                     <UserAvatar
                       username={u.username}
@@ -213,9 +216,9 @@ export function AdminUsersCard({
                         }
                       >
                         {u.is_admin ? (
-                          <ShieldOff {...stylex.props(styles.adminUsersCardShieldOff)} />
+                          <ShieldOff xstyle={styles.adminUsersCardShieldOff} />
                         ) : (
-                          <ShieldCheck {...stylex.props(styles.adminUsersCardShieldOff)} />
+                          <ShieldCheck xstyle={styles.adminUsersCardShieldOff} />
                         )}
                       </Button>
                     </IconTooltip>
@@ -235,7 +238,7 @@ export function AdminUsersCard({
                           setResetDialogOpen(true);
                         }}
                       >
-                        <KeyRound {...stylex.props(styles.adminUsersCardShieldOff)} />
+                        <KeyRound xstyle={styles.adminUsersCardShieldOff} />
                       </Button>
                     </IconTooltip>
                     <IconTooltip label="删除用户">
@@ -251,7 +254,7 @@ export function AdminUsersCard({
                           setDeleteDialogOpen(true);
                         }}
                       >
-                        <Trash2 {...stylex.props(styles.adminUsersCardShieldOff)} />
+                        <Trash2 xstyle={styles.adminUsersCardShieldOff} />
                       </Button>
                     </IconTooltip>
                   </div>

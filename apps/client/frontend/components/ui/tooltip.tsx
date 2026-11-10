@@ -1,9 +1,9 @@
 /**
- * Project-styled Radix tooltip with Animate UI anchored motion.
+ * Project-styled Base UI tooltip with Animate UI anchored motion.
  */
 
 import * as React from 'react';
-import * as TooltipPrimitive from '@animate-ui/react/primitives/radix-ui/tooltip';
+import { Tooltip as TooltipPrimitive } from '@animate-ui/react/primitives/base-ui/tooltip';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
@@ -22,17 +22,24 @@ type IconTooltipProps = {
  */
 function IconTooltip({ children, label }: IconTooltipProps) {
   return (
-    <TooltipPrimitive.Provider delayDuration={300}>
+    <TooltipPrimitive.Provider delay={300}>
       <TooltipPrimitive.Root>
-        <TooltipPrimitive.Trigger asChild>{children}</TooltipPrimitive.Trigger>
+        <TooltipPrimitive.Trigger render={children} />
         <TooltipPrimitive.Portal>
-          <TooltipPrimitive.Content
-            data-slot="tooltip-content"
+          <TooltipPrimitive.Positioner
+            side="top"
             sideOffset={6}
-            {...stylex.props(styles.tooltipContent)}
+            collisionPadding={0}
+            collisionAvoidance={{ align: 'shift', fallbackAxisSide: 'none' }}
+            {...stylex.props(styles.tooltipPositioner)}
           >
-            {label}
-          </TooltipPrimitive.Content>
+            <TooltipPrimitive.Popup
+              data-slot="tooltip-content"
+              {...stylex.props(styles.tooltipContent)}
+            >
+              {label}
+            </TooltipPrimitive.Popup>
+          </TooltipPrimitive.Positioner>
         </TooltipPrimitive.Portal>
       </TooltipPrimitive.Root>
     </TooltipPrimitive.Provider>
@@ -42,8 +49,10 @@ function IconTooltip({ children, label }: IconTooltipProps) {
 export { IconTooltip };
 
 const styles = stylex.create({
-  tooltipContent: {
+  tooltipPositioner: {
     zIndex: 50,
+  },
+  tooltipContent: {
     borderRadius: '6px',
     backgroundColor: colors.foreground,
     paddingInline: '0.5rem',

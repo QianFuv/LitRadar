@@ -1,9 +1,9 @@
 /**
- * Project-styled Radix progress bar whose fill springs to new values (Animate UI).
+ * Project-styled Base UI progress bar whose fill springs to new values (Animate UI).
  */
 
 import * as React from 'react';
-import * as ProgressPrimitive from '@animate-ui/react/primitives/radix-ui/progress';
+import { Progress as ProgressPrimitive } from '@animate-ui/react/primitives/base-ui/progress';
 import * as stylex from '@stylexjs/stylex';
 import { colors } from '@/lib/theme.stylex';
 
@@ -15,7 +15,7 @@ type ProgressProps = Omit<React.ComponentProps<typeof ProgressPrimitive.Root>, '
 /**
  * Render a thin progress track with an animated fill.
  *
- * @param props - Radix progress properties and the filled percentage.
+ * @param props - Base UI progress properties, the filled percentage, and style overrides.
  * @returns Progress bar.
  */
 function Progress({
@@ -31,10 +31,12 @@ function Progress({
       {...stylex.props(styles.progress, xstyle)}
       {...props}
     >
-      <ProgressPrimitive.Indicator
-        data-slot="progress-indicator"
-        {...stylex.props(styles.progressIndicator, styles.fill(`translateX(-${100 - percent}%)`))}
-      />
+      <ProgressPrimitive.Track {...stylex.props(styles.track)}>
+        <ProgressPrimitive.Indicator
+          data-slot="progress-indicator"
+          {...stylex.props(styles.progressIndicator)}
+        />
+      </ProgressPrimitive.Track>
     </ProgressPrimitive.Root>
   );
 }
@@ -42,9 +44,6 @@ function Progress({
 export { Progress };
 
 const styles = stylex.create({
-  fill: (transform: string) => ({
-    transform,
-  }),
   progress: {
     position: 'relative',
     display: 'block',
@@ -53,10 +52,12 @@ const styles = stylex.create({
     borderRadius: 'calc(infinity * 1px)',
     backgroundColor: colors.muted,
   },
+  track: {
+    height: '100%',
+  },
   progressIndicator: {
     display: 'block',
     height: '100%',
-    width: '100%',
     borderRadius: 'calc(infinity * 1px)',
     backgroundColor: colors.primary,
   },

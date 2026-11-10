@@ -49,7 +49,7 @@ export function TrackingHelpCard() {
             <li key={step.title} {...stylex.props(styles.trackingHelpCardLi)}>
               <div {...stylex.props(styles.trackingHelpCardDiv)}>
                 <span {...stylex.props(styles.trackingHelpCardSpan)}>
-                  <Icon {...stylex.props(styles.trackingHelpCardIcon)} aria-hidden="true" />
+                  <Icon xstyle={styles.trackingHelpCardIcon} aria-hidden="true" />
                 </span>
                 <span {...stylex.props(styles.trackingHelpCardSpan2)}>0{index + 1}</span>
               </div>

@@ -11,6 +11,7 @@ import {
   SettingsSectionHeader,
   SettingsSectionTitle,
   StatusPill,
+  settingsGroupItemStyle,
 } from '@/components/settings/settings-section';
 import { Button } from '@/components/ui/button';
 import { CopyButton } from '@/components/ui/copy-button';
@@ -98,11 +99,9 @@ export function AccessTokensCard(props: {
               if (!open) setNewTokenValue(null);
             }}
           >
-            <DialogTrigger asChild>
-              <Button size="sm" xstyle={styles.accessTokensCardButton}>
-                <Plus {...stylex.props(styles.accessTokensCardPlus)} />
-                新建
-              </Button>
+            <DialogTrigger render={<Button size="sm" xstyle={styles.accessTokensCardButton} />}>
+              <Plus xstyle={styles.accessTokensCardPlus} />
+              新建
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
@@ -214,11 +213,7 @@ function renderCreatedAccessToken(
     >
       <p {...stylex.props(styles.renderCreatedAccessTokenP)}>
         <span {...stylex.props(styles.renderCreatedAccessTokenSpan)}>
-          <Check
-            {...stylex.props(styles.renderCreatedAccessTokenCheck)}
-            strokeWidth={3}
-            aria-hidden="true"
-          />
+          <Check xstyle={styles.renderCreatedAccessTokenCheck} strokeWidth={3} aria-hidden="true" />
         </span>
         新令牌已创建：
       </p>
@@ -310,7 +305,6 @@ function renderAccessTokenForm(state: AccessTokenViewState) {
           有效期
         </div>
         <ToggleGroup
-          type="single"
           aria-label="访问令牌有效期"
           xstyle={[styles.renderAccessTokenFormDivItem, styles.renderAccessTokenFormToggleGroup]}
           value={String(tokenTtl)}
@@ -368,14 +362,14 @@ function renderAccessTokenList(
       {tokens.length === 0 ? (
         <MotionDiv
           key="empty-tokens"
-          {...stylex.props(styles.renderAccessTokenListMotionDiv)}
+          {...stylex.props(settingsGroupItemStyle, styles.renderAccessTokenListMotionDiv)}
           initial="hidden"
           animate="visible"
           exit="exit"
           variants={REVEAL_VARIANTS}
         >
           <span {...stylex.props(styles.renderAccessTokenListSpan)}>
-            <KeyRound {...stylex.props(styles.renderAccessTokenListKeyRound)} aria-hidden="true" />
+            <KeyRound xstyle={styles.renderAccessTokenListKeyRound} aria-hidden="true" />
           </span>
           <div>
             <p {...stylex.props(styles.renderAccessTokenListP)}>暂无访问令牌</p>
@@ -391,14 +385,14 @@ function renderAccessTokenList(
             <MotionDiv
               key={t.id}
               data-motion-token-key={t.id}
-              {...stylex.props(styles.renderAccessTokenListMotionDiv2)}
+              {...stylex.props(settingsGroupItemStyle, styles.renderAccessTokenListMotionDiv2)}
               initial="hidden"
               animate="visible"
               exit="exit"
               variants={DISCLOSURE_VARIANTS}
             >
               <span {...stylex.props(styles.renderAccessTokenListSpan2)}>
-                <Key {...stylex.props(styles.accessTokensCardPlus)} aria-hidden="true" />
+                <Key xstyle={styles.accessTokensCardPlus} aria-hidden="true" />
               </span>
               <div {...stylex.props(styles.renderAccessTokenListDiv)}>
                 <p {...stylex.props(styles.renderAccessTokenListP3)}>{t.name || '（未命名）'}</p>
@@ -423,7 +417,7 @@ function renderAccessTokenList(
                   setTokenToRevoke(t);
                 }}
               >
-                <Trash2 {...stylex.props(styles.accessTokensCardPlus)} />
+                <Trash2 xstyle={styles.accessTokensCardPlus} />
               </Button>
             </MotionDiv>
           );
@@ -594,15 +588,15 @@ const styles = stylex.create({
     lineHeight: lineHeights.textSm,
     backgroundColor: {
       default: null,
-      ':is([data-state="on"])': colors.background,
+      ':is([data-pressed])': colors.background,
     },
     fontWeight: {
       default: null,
-      ':is([data-state="on"])': 700,
+      ':is([data-pressed])': 700,
     },
     color: {
       default: colors.mutedForeground,
-      ':is([data-state="on"])': colors.foreground,
+      ':is([data-pressed])': colors.foreground,
       ':hover': {
         default: null,
         '@media (hover: hover)': colors.foreground,
@@ -612,9 +606,9 @@ const styles = stylex.create({
       default: null,
       ':focus-visible': {
         default: `0 0 0 2px ${colors.ring}`,
-        ':is([data-state="on"])': `0 0 0 2px ${colors.ring}, ${shadows.paper}`,
+        ':is([data-pressed])': `0 0 0 2px ${colors.ring}, ${shadows.paper}`,
       },
-      ':is([data-state="on"])': shadows.paper,
+      ':is([data-pressed])': shadows.paper,
     },
   },
   renderAccessTokenFormButton: {

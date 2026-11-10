@@ -92,10 +92,10 @@ export function CfpJournalList({
               {...stylex.props(styles.cfpJournalListButton)}
             >
               <ChevronDown
-                {...stylex.props(
+                xstyle={[
                   styles.cfpJournalListChevronDown,
                   !isExpanded && styles.cfpJournalListChevronDownExpanded,
-                )}
+                ]}
                 aria-hidden="true"
               />
               <span {...stylex.props(styles.cfpJournalListSpan)}>{group.label}</span>

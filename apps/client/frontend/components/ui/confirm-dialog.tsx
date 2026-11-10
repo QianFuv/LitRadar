@@ -66,18 +66,13 @@ export function ConfirmDialog({
       }}
     >
       <AlertDialogContent
-        onOpenAutoFocus={() => {
+        initialFocus={() => {
           if (document.activeElement instanceof HTMLElement) {
             returnFocusRef.current = document.activeElement;
           }
+          return true;
         }}
-        onCloseAutoFocus={(event) => {
-          const focusTarget = focusReturnRef?.current ?? returnFocusRef.current;
-          if (focusTarget) {
-            event.preventDefault();
-            focusTarget.focus();
-          }
-        }}
+        finalFocus={() => focusReturnRef?.current ?? returnFocusRef.current ?? true}
       >
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
@@ -93,8 +88,7 @@ export function ConfirmDialog({
           <AlertDialogAction
             xstyle={buttonStyles('destructive')}
             disabled={isPending}
-            onClick={(event) => {
-              event.preventDefault();
+            onClick={() => {
               if (!isPending) {
                 onConfirm();
               }

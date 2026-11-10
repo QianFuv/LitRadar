@@ -1,9 +1,9 @@
 /**
- * Project-styled Radix Switch primitive with restrained state motion.
+ * Project-styled Base UI Switch with restrained state motion.
  */
 
 import * as React from 'react';
-import * as SwitchPrimitive from '@animate-ui/react/primitives/radix-ui/switch';
+import { Switch as SwitchPrimitive } from '@animate-ui/react/primitives/base-ui/switch';
 import * as stylex from '@stylexjs/stylex';
 import { switchMarker } from '@/lib/markers.stylex';
 import { colors, shadows } from '@/lib/theme.stylex';
@@ -11,7 +11,7 @@ import { colors, shadows } from '@/lib/theme.stylex';
 /**
  * Render a binary control with a sliding state indicator.
  *
- * @param props - Radix Switch properties and control size.
+ * @param props - Base UI Switch properties, control size, and style overrides.
  * @returns Styled Switch control.
  */
 function Switch({
@@ -26,6 +26,7 @@ function Switch({
 > & { xstyle?: stylex.StyleXStyles }) {
   return (
     <SwitchPrimitive.Root
+      nativeButton
       data-slot="switch"
       data-size={size}
       {...stylex.props(styles.switch, stylex.defaultMarker(), switchMarker, xstyle)}
@@ -72,18 +73,18 @@ const styles = stylex.create({
     },
     backgroundColor: {
       default: null,
-      ':is([data-state="checked"])': colors.primary,
+      ':is([data-checked])': colors.primary,
       ':hover': {
         default: null,
-        ':is([data-state="checked"])': null,
+        ':is([data-checked])': null,
         '@media (hover: hover)': {
           default: null,
-          ':is([data-state="checked"])': colors.primaryHover,
-          ':is([data-state="unchecked"])': colors.inputHover,
+          ':is([data-checked])': colors.primaryHover,
+          ':is([data-unchecked])': colors.inputHover,
         },
-        ':is([data-state="unchecked"])': null,
+        ':is([data-unchecked])': null,
       },
-      ':is([data-state="unchecked"])': colors.input,
+      ':is([data-unchecked])': colors.input,
     },
   },
   switchThumb: {
@@ -104,8 +105,8 @@ const styles = stylex.create({
     },
     translate: {
       default: null,
-      ':is([data-state="checked"])': 'calc(100% - 2px) 0',
-      ':is([data-state="unchecked"])': '0px 0',
+      ':is([data-checked])': 'calc(100% - 2px) 0',
+      ':is([data-unchecked])': '0px 0',
     },
   },
 });

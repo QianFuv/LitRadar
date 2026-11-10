@@ -154,10 +154,7 @@ export function GeneralSettingsSection() {
                       <RadioGroupIndicator
                         {...stylex.props(styles.generalSettingsSectionRadioGroupIndicator)}
                       >
-                        <Check
-                          {...stylex.props(styles.generalSettingsSectionCheck)}
-                          strokeWidth={3}
-                        />
+                        <Check xstyle={styles.generalSettingsSectionCheck} strokeWidth={3} />
                       </RadioGroupIndicator>
                     </span>
                     <span {...stylex.props(styles.generalSettingsSectionSpan4)}>

@@ -10,7 +10,7 @@ import {
   type AppIcon,
 } from '@/components/ui/animated-icons';
 import { Link, useSearch } from '@tanstack/react-router';
-import type { MouseEvent, ReactNode } from 'react';
+import type { MouseEvent, PointerEvent, ReactNode } from 'react';
 
 import { UserMenu } from '@/components/feature/user-menu';
 import { SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE } from '@/components/feature/sectioned-dialog';
@@ -54,7 +54,10 @@ function RailShortcut({
   label: string;
   onIntent: () => void;
 }) {
-  const { isTriggered, triggerHandlers } = useIconTrigger<HTMLAnchorElement>({}, isCurrent);
+  const { isTriggered, triggerHandlers } = useIconTrigger<PointerEvent<HTMLAnchorElement>>(
+    {},
+    isCurrent,
+  );
   return (
     <IconTriggerProvider isTriggered={isTriggered}>
       <Link
@@ -76,7 +79,7 @@ function RailShortcut({
         }}
         {...stylex.props(styles.railShortcutLink, isCurrent && styles.railShortcutLinkCurrent)}
       >
-        <Icon {...stylex.props(styles.railShortcutIcon)} strokeWidth={1.7} aria-hidden="true" />
+        <Icon xstyle={styles.railShortcutIcon} strokeWidth={1.7} aria-hidden="true" />
       </Link>
     </IconTriggerProvider>
   );

@@ -10,6 +10,7 @@ import {
   SettingsSectionDescription,
   SettingsSectionHeader,
   SettingsSectionTitle,
+  settingsGroupItemStyle,
 } from '@/components/settings/settings-section';
 import type { TrackingPageViewModel } from '@/components/tracking/use-tracking-page';
 import { Button } from '@/components/ui/button';
@@ -36,7 +37,7 @@ export function ManualPushCard({ model }: ManualPushCardProps) {
         <SettingsSectionDescription>{model.description}</SettingsSectionDescription>
       </SettingsSectionHeader>
       <SettingsGroup>
-        <div {...stylex.props(styles.manualPushCardDiv)}>
+        <div {...stylex.props(settingsGroupItemStyle, styles.manualPushCardDiv)}>
           <div {...stylex.props(styles.manualPushCardDiv2)}>
             <span {...stylex.props(styles.manualPushCardSpan)}>
               {model.weeklyArticlesAvailable ?? '…'}
@@ -58,6 +59,7 @@ export function ManualPushCard({ model }: ManualPushCardProps) {
               data-motion-feedback="manual-push"
               role={model.hasError ? 'alert' : 'status'}
               {...stylex.props(
+                settingsGroupItemStyle,
                 model.hasError
                   ? styles.manualPushCardMotionDivError
                   : styles.manualPushCardMotionDivNotError,
@@ -87,7 +89,7 @@ function renderUnknownPushAcknowledgement(state: ManualPushViewState) {
       onClick={() => model.acknowledgeUnknownMutation.mutate(model.status?.job_id ?? '')}
       disabled={model.acknowledgeUnknownMutation.isPending}
     >
-      <ShieldCheck {...stylex.props(styles.renderUnknownPushAcknowledgementShieldCheck)} />
+      <ShieldCheck xstyle={styles.renderUnknownPushAcknowledgementShieldCheck} />
       {model.acknowledgeUnknownMutation.isPending ? '确认中…' : '确认未知并继续'}
     </Button>
   );
@@ -104,7 +106,7 @@ function renderManualPushCancel(state: ManualPushViewState) {
       onClick={() => model.cancelMutation.mutate(model.status?.job_id ?? '')}
       disabled={model.cancelMutation.isPending}
     >
-      <X {...stylex.props(styles.renderUnknownPushAcknowledgementShieldCheck)} />
+      <X xstyle={styles.renderUnknownPushAcknowledgementShieldCheck} />
       {model.cancelMutation.isPending ? '取消中…' : '取消任务'}
     </Button>
   );
@@ -127,7 +129,7 @@ function renderManualPushTrigger(state: ManualPushViewState) {
         (model.requiresTrackingFolder && !model.trackingFolder)
       }
     >
-      <Download {...stylex.props(styles.renderUnknownPushAcknowledgementShieldCheck)} />
+      <Download xstyle={styles.renderUnknownPushAcknowledgementShieldCheck} />
       {model.label}
     </Button>
   );

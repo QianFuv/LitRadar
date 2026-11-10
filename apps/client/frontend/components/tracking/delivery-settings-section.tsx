@@ -104,7 +104,7 @@ export function DeliverySettingsSection({ model }: DeliverySettingsSectionProps)
                       : styles.deliverySettingsSectionSpanNotSelected,
                   )}
                 >
-                  <Icon {...stylex.props(styles.deliverySettingsSectionIcon)} />
+                  <Icon xstyle={styles.deliverySettingsSectionIcon} />
                 </span>
                 <span {...stylex.props(styles.deliverySettingsSectionSpan2)}>
                   <span {...stylex.props(styles.deliverySettingsSectionSpan3)}>{option.label}</span>

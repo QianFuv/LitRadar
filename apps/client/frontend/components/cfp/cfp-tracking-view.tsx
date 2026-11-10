@@ -331,18 +331,11 @@ function renderCfpNotices(
     <section aria-label="征稿需求">
       <div {...stylex.props(styles.renderCfpNoticesSectionItem, styles.renderCfpNoticesDiv)}>
         <h2 {...stylex.props(styles.renderCfpNoticesH2)}>
-          <Megaphone
-            animateOnView
-            {...stylex.props(styles.renderCfpNoticesMegaphone)}
-            aria-hidden="true"
-          />
+          <Megaphone animateOnView xstyle={styles.renderCfpNoticesMegaphone} aria-hidden="true" />
           征稿需求
         </h2>
         <label {...stylex.props(styles.renderCfpNoticesLabel)}>
-          <Checkbox
-            checked={shouldShowClosed}
-            onCheckedChange={(value) => setShouldShowClosed(value === true)}
-          />
+          <Checkbox checked={shouldShowClosed} onCheckedChange={setShouldShowClosed} />
           显示已结束及历史
         </label>
       </div>
@@ -416,7 +409,7 @@ function renderCfpJournalHeader(
   return (
     <section {...stylex.props(styles.renderCfpJournalHeaderSection)}>
       <div {...stylex.props(styles.renderCfpJournalHeaderDiv)}>
-        <Layers {...stylex.props(styles.renderCfpNoticesMegaphone)} aria-hidden="true" />
+        <Layers xstyle={styles.renderCfpNoticesMegaphone} aria-hidden="true" />
         <span>{formatCfpDatabase(database)}</span>
       </div>
       <h2 {...stylex.props(styles.renderCfpJournalHeaderH2)}>{selected.title}</h2>
@@ -500,7 +493,7 @@ function renderCfpHeader(state: CfpViewState) {
         </RevealItem>
       </div>
       <div {...stylex.props(styles.renderCfpNoticeContentDivItem, styles.renderCfpHeaderDiv2)}>
-        <Search {...stylex.props(styles.renderCfpHeaderSearch)} aria-hidden="true" />
+        <Search xstyle={styles.renderCfpHeaderSearch} aria-hidden="true" />
         <Input
           aria-label="搜索征稿期刊"
           placeholder="搜索刊名或 ISSN"

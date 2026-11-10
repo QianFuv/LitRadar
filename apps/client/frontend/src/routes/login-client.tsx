@@ -2,8 +2,7 @@
  * Public authentication surface for login, registration, and logout recovery.
  */
 
-import { Radar } from 'lucide-react';
-import { Eye, EyeOff, Megaphone, Search } from '@/components/ui/animated-icons';
+import { Eye, EyeOff, Megaphone, Search, Radar } from '@/components/ui/animated-icons';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { useEffect, useRef, useState, type ComponentType, type FormEvent } from 'react';
 import { Shine } from '@animate-ui/react/primitives/effects/shine';
@@ -84,16 +83,20 @@ const FEATURE_ICON_DELAY_MS = 900;
 /** Delay between two feature icons, in milliseconds. */
 const FEATURE_ICON_STAGGER_MS = 180;
 
-type ShowcaseIcon = ComponentType<{ className?: string; animateOnView?: boolean; delay?: number }>;
+type ShowcaseIcon = ComponentType<{
+  xstyle?: stylex.StyleXStyles;
+  animateOnView?: boolean;
+  delay?: number;
+}>;
 
 /**
  * Draw lucide's radar, which has no Animate UI counterpart, still among the animated icons.
  *
- * @param props - Icon classes; animation props are ignored.
+ * @param props - Icon styles; animation props are ignored.
  * @returns Still radar icon.
  */
-function StillRadarIcon({ className }: { className?: string }) {
-  return <Radar className={className} />;
+function StillRadarIcon({ xstyle }: { xstyle?: stylex.StyleXStyles }) {
+  return <Radar xstyle={xstyle} />;
 }
 
 const AUTH_FEATURES: readonly { icon: ShowcaseIcon; title: string; description: string }[] = [
@@ -148,7 +151,7 @@ function AuthShowcase() {
               >
                 <span {...stylex.props(styles.authShowcaseSpan)}>
                   <Icon
-                    {...stylex.props(styles.authShowcaseIcon)}
+                    xstyle={styles.authShowcaseIcon}
                     animateOnView
                     delay={FEATURE_ICON_DELAY_MS + index * FEATURE_ICON_STAGGER_MS}
                   />
@@ -457,9 +460,9 @@ function renderLoginPassword(state: LoginViewState) {
           onClick={() => setIsPasswordVisible((current) => !current)}
         >
           {isPasswordVisible ? (
-            <EyeOff {...stylex.props(styles.renderLoginPasswordEyeOff)} aria-hidden="true" />
+            <EyeOff xstyle={styles.renderLoginPasswordEyeOff} aria-hidden="true" />
           ) : (
-            <Eye {...stylex.props(styles.renderLoginPasswordEyeOff)} aria-hidden="true" />
+            <Eye xstyle={styles.renderLoginPasswordEyeOff} aria-hidden="true" />
           )}
         </Button>
       </div>

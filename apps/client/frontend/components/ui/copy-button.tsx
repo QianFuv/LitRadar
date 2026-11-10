@@ -7,13 +7,20 @@ import {
   CopyButtonIcon,
   type CopyButtonProps as AnimateCopyButtonProps,
 } from '@animate-ui/react/primitives/buttons/copy';
-import type { ComponentProps, MouseEvent, ReactNode } from 'react';
+import type { ComponentProps, MouseEvent, PointerEvent, ReactNode } from 'react';
 
-import { Check, Copy, IconTriggerProvider, useIconTrigger } from '@/components/ui/animated-icons';
+import {
+  Check,
+  Copy,
+  IconStyleProvider,
+  IconTriggerProvider,
+  useIconTrigger,
+} from '@/components/ui/animated-icons';
 import * as stylex from '@stylexjs/stylex';
 
 import {
   buttonStyles,
+  controlIconStyle,
   getButtonPressMotion,
   type ButtonSize,
   type ButtonVariant,
@@ -51,7 +58,7 @@ export function CopyButton({
   variant = 'default',
   ...props
 }: CopyButtonProps) {
-  const { isTriggered, triggerHandlers } = useIconTrigger<HTMLButtonElement>(props);
+  const { isTriggered, triggerHandlers } = useIconTrigger<PointerEvent<HTMLButtonElement>>(props);
   const copyProps = {
     ...props,
     ...triggerHandlers,
@@ -65,8 +72,8 @@ export function CopyButton({
     children: (
       <>
         <CopyButtonIcon
-          icon={<Copy {...stylex.props(iconXstyle)} aria-hidden="true" />}
-          copiedIcon={<Check {...stylex.props(iconXstyle, styles.copiedIcon)} aria-hidden="true" />}
+          icon={<Copy xstyle={iconXstyle} aria-hidden="true" />}
+          copiedIcon={<Check xstyle={[iconXstyle, styles.copiedIcon]} aria-hidden="true" />}
         />
         {children}
       </>
@@ -79,7 +86,9 @@ export function CopyButton({
 
   return (
     <IconTriggerProvider isTriggered={isTriggered}>
-      <AnimateCopyButton {...copyProps} />
+      <IconStyleProvider xstyle={controlIconStyle}>
+        <AnimateCopyButton {...copyProps} />
+      </IconStyleProvider>
     </IconTriggerProvider>
   );
 }

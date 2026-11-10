@@ -3,8 +3,14 @@
  */
 
 import { useState, type Dispatch, type SetStateAction } from 'react';
-import { Radar } from 'lucide-react';
-import { Download, MoreHorizontal, Pencil, Plus, Trash2 } from '@/components/ui/animated-icons';
+import {
+  Download,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Trash2,
+  Radar,
+} from '@/components/ui/animated-icons';
 
 import type { CitationFormat, FavoriteArticleItem } from '@/lib/api';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
@@ -61,6 +67,13 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { StateMessage } from '@/components/ui/state-message';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
+
+/** Citation export formats offered in the export popover. */
+const CITATION_FORMAT_ITEMS = [
+  { value: 'bibtex', label: 'BibTeX' },
+  { value: 'ris', label: 'RIS' },
+  { value: 'endnote', label: 'EndNote XML' },
+] as const satisfies readonly { value: CitationFormat; label: string }[];
 
 type FavoritesFeedback = {
   message: string;
@@ -273,12 +286,12 @@ function renderFolderTabs(state: FavoritesViewState) {
                     >
                       {folder.is_tracking && (
                         <Radar
-                          {...stylex.props(
+                          xstyle={[
                             styles.renderFolderTabsRadar,
                             isActive
                               ? styles.renderFolderTabsRadarActive
                               : styles.renderFolderTabsRadarNotActive,
-                          )}
+                          ]}
                           aria-hidden="true"
                         />
                       )}
@@ -332,15 +345,17 @@ function renderFolderToolbar(
       <div {...stylex.props(styles.renderFolderToolbarDiv2)}>
         {renderFavoriteExport(state, selectedFolder)}
         <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={`管理收藏夹 ${selectedFolder.name}`}
-              title="管理收藏夹"
-            >
-              <MoreHorizontal aria-hidden="true" />
-            </Button>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`管理收藏夹 ${selectedFolder.name}`}
+                title="管理收藏夹"
+              />
+            }
+          >
+            <MoreHorizontal aria-hidden="true" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" xstyle={styles.renderFolderToolbarDropdownMenuContent}>
             <DropdownMenuLabel xstyle={styles.renderFolderTabsSpan}>
@@ -349,14 +364,14 @@ function renderFolderToolbar(
             <DropdownMenuItem
               aria-label={`设 ${selectedFolder.name} 为追踪文件夹`}
               disabled={selectedFolder.is_tracking}
-              onSelect={() => trackMut.mutate(selectedFolder.id)}
+              onClick={() => trackMut.mutate(selectedFolder.id)}
             >
               <Radar />
               {selectedFolder.is_tracking ? '已是追踪文件夹' : '设为追踪文件夹'}
             </DropdownMenuItem>
             <DropdownMenuItem
               aria-label={`重命名收藏夹 ${selectedFolder.name}`}
-              onSelect={() => {
+              onClick={() => {
                 setEditingId(selectedFolder.id);
                 setEditName(selectedFolder.name);
               }}
@@ -369,7 +384,7 @@ function renderFolderToolbar(
               isDestructive
               aria-label={`删除收藏夹 ${selectedFolder.name}`}
               disabled={deleteMut.isPending}
-              onSelect={() => {
+              onClick={() => {
                 deleteMut.reset();
                 setFolderToDelete({ id: selectedFolder.id, name: selectedFolder.name });
               }}
@@ -429,9 +444,7 @@ function renderFavoriteArticle(
         leading={
           <Checkbox
             checked={isSelected}
-            onCheckedChange={(checked: boolean | 'indeterminate') =>
-              toggleFavoriteSelection(favorite, checked === true)
-            }
+            onCheckedChange={(checked) => toggleFavoriteSelection(favorite, checked)}
             aria-label={`选择文章 ${favorite.title || favorite.article_id}`}
           />
         }
@@ -463,16 +476,18 @@ function renderFavoriteExport(
 
   return (
     <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          xstyle={styles.renderFavoriteExportButton}
-          aria-label="导出收藏夹"
-        >
-          <Download aria-hidden="true" />
-          <span {...stylex.props(styles.renderFavoritesHeaderSpan)}>导出</span>
-        </Button>
+      <PopoverTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="sm"
+            xstyle={styles.renderFavoriteExportButton}
+            aria-label="导出收藏夹"
+          />
+        }
+      >
+        <Download aria-hidden="true" />
+        <span {...stylex.props(styles.renderFavoritesHeaderSpan)}>导出</span>
       </PopoverTrigger>
       <PopoverContent
         align="end"
@@ -487,16 +502,19 @@ function renderFavoriteExport(
         </div>
         <Select
           value={exportFormat}
-          onValueChange={(value: string) => setExportFormat(value as CitationFormat)}
+          items={CITATION_FORMAT_ITEMS}
+          onValueChange={setExportFormat}
           disabled={exportMut.isPending}
         >
           <SelectTrigger xstyle={styles.renderFavoriteExportSelectTrigger} aria-label="导出格式">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="bibtex">BibTeX</SelectItem>
-            <SelectItem value="ris">RIS</SelectItem>
-            <SelectItem value="endnote">EndNote XML</SelectItem>
+            {CITATION_FORMAT_ITEMS.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
         <Button
@@ -510,7 +528,7 @@ function renderFavoriteExport(
             })
           }
         >
-          <Download {...stylex.props(styles.renderFavoriteExportDownload)} aria-hidden="true" />
+          <Download xstyle={styles.renderFavoriteExportDownload} aria-hidden="true" />
           {exportMut.isPending ? '导出中…' : '导出引用'}
         </Button>
         <AnimatedFeedback feedback={exportFeedback} scope="export" />
@@ -551,10 +569,9 @@ function renderFavoriteBulkActions(state: FavoritesViewState) {
       <div {...stylex.props(styles.renderFavoriteBulkActionsDiv)}>
         <div {...stylex.props(styles.renderFavoriteBulkActionsDiv2)}>
           <Checkbox
-            checked={allLoadedSelected || (hasSelection && 'indeterminate')}
-            onCheckedChange={(checked: boolean | 'indeterminate') =>
-              handleSelectAllLoaded(checked === true)
-            }
+            checked={allLoadedSelected}
+            indeterminate={!allLoadedSelected && hasSelection}
+            onCheckedChange={handleSelectAllLoaded}
             aria-label="选择当前已加载文章"
           />
           <div {...stylex.props(styles.renderFavoriteBulkActionsDiv3)}>
@@ -592,7 +609,14 @@ function renderFavoriteBulkActions(state: FavoritesViewState) {
             !hasSelection && styles.renderFavoriteBulkActionsDivSelection,
           )}
         >
-          <Select value={effectiveMoveTargetFolderId} onValueChange={setMoveTargetFolderId}>
+          <Select
+            value={effectiveMoveTargetFolderId}
+            items={moveTargetFolders.map((folder) => ({
+              value: String(folder.id),
+              label: folder.name,
+            }))}
+            onValueChange={setMoveTargetFolderId}
+          >
             <SelectTrigger
               size="sm"
               xstyle={styles.renderFavoriteBulkActionsSelectTrigger}

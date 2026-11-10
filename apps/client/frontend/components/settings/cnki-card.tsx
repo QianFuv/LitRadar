@@ -1,7 +1,13 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, QrCode } from 'lucide-react';
-import { CheckCircle2, RefreshCw, ShieldCheck, Unlink2 } from '@/components/ui/animated-icons';
+import {
+  CheckCircle2,
+  RefreshCw,
+  ShieldCheck,
+  Unlink2,
+  Loader2,
+  QrCode,
+} from '@/components/ui/animated-icons';
 
 import {
   ApiError,
@@ -18,6 +24,7 @@ import {
   SettingsSectionDescription,
   SettingsSectionTitle,
   StatusPill,
+  settingsGroupItemStyle,
 } from '@/components/settings/settings-section';
 import { Button } from '@/components/ui/button';
 import { CopyButton } from '@/components/ui/copy-button';
@@ -197,7 +204,7 @@ export function CnkiSettingsCard(props: {
   return (
     <SettingsSection aria-label="浙江图书馆 CNKI">
       <SettingsGroup>
-        <div {...stylex.props(styles.cnkiSettingsCardDiv)}>
+        <div {...stylex.props(settingsGroupItemStyle, styles.cnkiSettingsCardDiv)}>
           <span
             aria-hidden="true"
             {...stylex.props(
@@ -207,7 +214,7 @@ export function CnkiSettingsCard(props: {
                 : styles.cnkiSettingsCardSpanNotActive,
             )}
           >
-            <ShieldCheck {...stylex.props(styles.cnkiSettingsCardShieldCheck)} />
+            <ShieldCheck xstyle={styles.cnkiSettingsCardShieldCheck} />
           </span>
           <div {...stylex.props(styles.cnkiSettingsCardDiv2)}>
             <SettingsSectionTitle xstyle={styles.cnkiSettingsCardSettingsSectionTitle}>
@@ -220,7 +227,7 @@ export function CnkiSettingsCard(props: {
         {renderCnkiSessionMetadata(state)}
         {renderCnkiLoginChallenge(state)}
         {(isCnkiSessionError || cnkiMessage) && (
-          <div {...stylex.props(styles.cnkiSettingsCardDiv3)}>
+          <div {...stylex.props(settingsGroupItemStyle, styles.cnkiSettingsCardDiv3)}>
             {isCnkiSessionError && (
               <p role="alert" {...stylex.props(styles.cnkiSettingsCardP)}>
                 {cnkiSessionError instanceof Error ? cnkiSessionError.message : '获取知网状态失败'}
@@ -371,7 +378,7 @@ function renderCnkiSessionMetadata(state: Pick<CnkiViewState, 'cnkiSession'>) {
   const { cnkiSession } = state;
 
   return (
-    <dl {...stylex.props(styles.renderCnkiSessionMetadataDl)}>
+    <dl {...stylex.props(settingsGroupItemStyle, styles.renderCnkiSessionMetadataDl)}>
       <div
         {...stylex.props(
           styles.renderCnkiSessionMetadataDlItem,
@@ -419,7 +426,7 @@ function renderCnkiLoginChallenge(state: CnkiViewState) {
         <MotionDiv
           key="cnki-login"
           data-motion-cnki-login="qr"
-          {...stylex.props(styles.renderCnkiLoginChallengeMotionDiv)}
+          {...stylex.props(settingsGroupItemStyle, styles.renderCnkiLoginChallengeMotionDiv)}
           initial="hidden"
           animate="visible"
           exit="exit"
@@ -484,9 +491,9 @@ function renderCnkiLoginChallenge(state: CnkiViewState) {
                   disabled={pollCnkiLoginMut.isPending}
                 >
                   {pollCnkiLoginMut.isPending ? (
-                    <Loader2 {...stylex.props(styles.renderCnkiLoginChallengeLoader2)} />
+                    <Loader2 xstyle={styles.renderCnkiLoginChallengeLoader2} />
                   ) : (
-                    <CheckCircle2 {...stylex.props(styles.renderCnkiLoginChallengeCheckCircle2)} />
+                    <CheckCircle2 xstyle={styles.renderCnkiLoginChallengeCheckCircle2} />
                   )}
                   {pollCnkiLoginMut.isPending ? '确认并预热…' : '完成登录'}
                 </Button>
@@ -543,7 +550,7 @@ function renderCnkiSessionActions(state: CnkiViewState) {
   } = state;
 
   return (
-    <div {...stylex.props(styles.renderCnkiSessionActionsDiv)}>
+    <div {...stylex.props(settingsGroupItemStyle, styles.renderCnkiSessionActionsDiv)}>
       {cnkiSession?.configured && (
         <Button
           variant="ghost"
@@ -556,7 +563,7 @@ function renderCnkiSessionActions(state: CnkiViewState) {
           }}
           disabled={clearCnkiSessionMut.isPending}
         >
-          <Unlink2 {...stylex.props(styles.renderCnkiSessionActionsUnlink2)} />
+          <Unlink2 xstyle={styles.renderCnkiSessionActionsUnlink2} />
           清除
         </Button>
       )}
@@ -567,7 +574,7 @@ function renderCnkiSessionActions(state: CnkiViewState) {
           aria-label="刷新 CNKI 登录状态"
           onClick={() => void refetchCnkiSession()}
         >
-          <RefreshCw {...stylex.props(styles.renderCnkiSessionActionsUnlink2)} />
+          <RefreshCw xstyle={styles.renderCnkiSessionActionsUnlink2} />
           刷新
         </Button>
         <Button
@@ -577,9 +584,9 @@ function renderCnkiSessionActions(state: CnkiViewState) {
           disabled={startCnkiLoginMut.isPending}
         >
           {startCnkiLoginMut.isPending ? (
-            <Loader2 {...stylex.props(styles.renderCnkiSessionActionsLoader2)} />
+            <Loader2 xstyle={styles.renderCnkiSessionActionsLoader2} />
           ) : (
-            <QrCode {...stylex.props(styles.renderCnkiSessionActionsUnlink2)} />
+            <QrCode xstyle={styles.renderCnkiSessionActionsUnlink2} />
           )}
           {cnkiLogin ? '重新生成' : '扫码登录'}
         </Button>

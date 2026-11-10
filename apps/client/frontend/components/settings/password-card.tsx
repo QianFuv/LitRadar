@@ -10,6 +10,7 @@ import {
   SettingsSectionDescription,
   SettingsSectionHeader,
   SettingsSectionTitle,
+  settingsGroupItemStyle,
 } from '@/components/settings/settings-section';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -81,7 +82,7 @@ export function PasswordCard() {
               required
             />
           </SettingsRow>
-          <div {...stylex.props(styles.passwordCardDiv)}>
+          <div {...stylex.props(settingsGroupItemStyle, styles.passwordCardDiv)}>
             <div {...stylex.props(styles.passwordCardDiv2)}>
               <MotionPresence>
                 {pwdMsg && (

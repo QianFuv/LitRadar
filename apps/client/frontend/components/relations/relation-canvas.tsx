@@ -28,8 +28,7 @@ import {
   type SimulationLinkDatum,
   type SimulationNodeDatum,
 } from 'd3-force';
-import { Loader2 } from 'lucide-react';
-import { Minus, Plus } from '@/components/ui/animated-icons';
+import { Minus, Plus, Loader2 } from '@/components/ui/animated-icons';
 import {
   memo,
   useCallback,
@@ -210,11 +209,11 @@ function NodeToggle({ data, dotCenter }: { data: ArticleNodeData; dotCenter: num
       onClick={data.onToggle}
     >
       {data.isLoading ? (
-        <Loader2 {...stylex.props(styles.nodeToggleLoader2)} aria-hidden="true" />
+        <Loader2 xstyle={styles.nodeToggleLoader2} aria-hidden="true" />
       ) : data.isExpanded ? (
-        <Minus {...stylex.props(styles.nodeToggleMinus)} aria-hidden="true" />
+        <Minus xstyle={styles.nodeToggleMinus} aria-hidden="true" />
       ) : (
-        <Plus {...stylex.props(styles.nodeToggleMinus)} aria-hidden="true" />
+        <Plus xstyle={styles.nodeToggleMinus} aria-hidden="true" />
       )}
     </button>
   );

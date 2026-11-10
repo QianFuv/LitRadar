@@ -2,10 +2,9 @@
  * Article metadata and responsive, accessible detail actions.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type MouseEventHandler, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearch } from '@tanstack/react-router';
-import { Loader2 } from 'lucide-react';
 import {
   AlertCircle,
   AlertTriangle,
@@ -17,6 +16,7 @@ import {
   Settings,
   Share2,
   X,
+  Loader2,
 } from '@/components/ui/animated-icons';
 
 import {
@@ -194,17 +194,19 @@ export function ArticleDetailDialogContent(props: ArticleDetailDialogContentProp
   return (
     <DialogContent placement="right" xstyle={styles.articleDetailDialogContentDialogContent}>
       <div {...stylex.props(styles.articleDetailDialogContentDiv)}>
-        <DialogClose asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            static
-            aria-label="关闭"
-            xstyle={styles.articleDetailDialogContentButton}
-          >
-            <X {...stylex.props(styles.articleDetailDialogContentX)} aria-hidden="true" />
-          </Button>
+        <DialogClose
+          render={
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              static
+              aria-label="关闭"
+              xstyle={styles.articleDetailDialogContentButton}
+            />
+          }
+        >
+          <X xstyle={styles.articleDetailDialogContentX} aria-hidden="true" />
         </DialogClose>
         {trail.current ? (
           <Button
@@ -214,10 +216,7 @@ export function ArticleDetailDialogContent(props: ArticleDetailDialogContentProp
             xstyle={styles.articleDetailDialogContentButton2}
             onClick={trail.back}
           >
-            <ArrowLeft
-              {...stylex.props(styles.articleDetailDialogContentArrowLeft)}
-              aria-hidden="true"
-            />
+            <ArrowLeft xstyle={styles.articleDetailDialogContentArrowLeft} aria-hidden="true" />
             返回上一篇
           </Button>
         ) : (
@@ -377,7 +376,7 @@ function ArticlePaneView(props: ArticleDetailDialogContentProps & ArticleTrailPr
                 {...stylex.props(styles.articlePaneViewButton)}
                 onClick={props.onBack}
               >
-                <ArrowLeft {...stylex.props(styles.articlePaneViewArrowLeft)} aria-hidden="true" />
+                <ArrowLeft xstyle={styles.articlePaneViewArrowLeft} aria-hidden="true" />
                 <span {...stylex.props(styles.articlePaneViewSpan)}>返回上一篇</span>
                 {props.previousArticle && (
                   <span {...stylex.props(styles.articlePaneViewSpan2)}>
@@ -442,7 +441,7 @@ function renderArticleDetailBody(
           <span {...stylex.props(styles.renderArticleDetailBodySpan)}>
             <FileText
               animateOnView
-              {...stylex.props(styles.renderArticleDetailBodyFileText)}
+              xstyle={styles.renderArticleDetailBodyFileText}
               aria-hidden="true"
             />
             摘要
@@ -488,10 +487,7 @@ function renderRetractionNotice(article: ArticleDetailDialogArticle) {
   if (retractions.length === 0) return null;
   return (
     <div role="note" aria-label="撤稿提醒" {...stylex.props(styles.renderRetractionNoticeDiv)}>
-      <AlertTriangle
-        {...stylex.props(styles.renderRetractionNoticeAlertTriangle)}
-        aria-hidden="true"
-      />
+      <AlertTriangle xstyle={styles.renderRetractionNoticeAlertTriangle} aria-hidden="true" />
       <div {...stylex.props(styles.renderArticleDetailBodyDiv)}>
         <p {...stylex.props(styles.renderRetractionNoticeP)}>此文章已被撤稿</p>
         <p {...stylex.props(styles.renderRetractionNoticeP2)}>
@@ -566,7 +562,7 @@ function renderArticleMetadata(
         <span {...stylex.props(styles.renderArticleDetailBodySpan)}>
           <BookOpen
             animateOnView
-            {...stylex.props(styles.renderArticleDetailBodyFileText)}
+            xstyle={styles.renderArticleDetailBodyFileText}
             aria-hidden="true"
           />
           文献信息
@@ -666,7 +662,7 @@ function renderArticleRelationAction(state: ArticleDetailViewState, variant: Art
         aria-label="查看关系图"
         title="查看关系图"
       >
-        <Share2 {...stylex.props(styles.renderArticleRelationActionShare2)} aria-hidden="true" />
+        <Share2 xstyle={styles.renderArticleRelationActionShare2} aria-hidden="true" />
         {renderActionLabel('关系图', '关系')}
       </Link>
     </Button>
@@ -831,10 +827,7 @@ function renderArticleAbstractAction(state: ArticleDetailViewState) {
           aria-label={abstractAction?.label ?? '查看摘要页'}
           title={abstractAction?.label ?? '查看摘要页'}
         >
-          <ExternalLink
-            {...stylex.props(styles.renderArticleRelationActionShare2)}
-            aria-hidden="true"
-          />
+          <ExternalLink xstyle={styles.renderArticleRelationActionShare2} aria-hidden="true" />
           {renderActionLabel(
             abstractAction?.label ?? '查看摘要页',
             shortenAccessLabel(abstractAction?.label ?? '查看摘要页'),
@@ -860,10 +853,7 @@ function renderArticleFulltextAction(state: ArticleDetailViewState) {
           aria-label={fulltextAction?.label ?? '获取全文'}
           title={fulltextAction?.label ?? '获取全文'}
         >
-          <Download
-            {...stylex.props(styles.renderArticleRelationActionShare2)}
-            aria-hidden="true"
-          />
+          <Download xstyle={styles.renderArticleRelationActionShare2} aria-hidden="true" />
           {renderActionLabel(
             fulltextAction?.label ?? '获取全文',
             shortenAccessLabel(fulltextAction?.label ?? '获取全文'),
@@ -925,7 +915,7 @@ function renderArticleAccessActions(state: ArticleDetailViewState, variant: Arti
                 title={accessError instanceof Error ? accessError.message : '访问状态不可用'}
               >
                 <AlertCircle
-                  {...stylex.props(styles.renderArticleAccessActionsAlertCircle)}
+                  xstyle={styles.renderArticleAccessActionsAlertCircle}
                   aria-hidden="true"
                 />
                 {renderActionLabel('访问状态失败', '访问失败')}
@@ -935,9 +925,12 @@ function renderArticleAccessActions(state: ArticleDetailViewState, variant: Arti
             {canShowAccessActions &&
               fulltextAction?.requires_login &&
               (variant === 'dialog' ? (
-                <DialogClose asChild>
-                  {renderDataSourceSettingsLink(dataSourceSettingsSearch)}
-                </DialogClose>
+                <DialogClose
+                  nativeButton={false}
+                  render={({ onClick }) =>
+                    renderDataSourceSettingsLink(dataSourceSettingsSearch, onClick)
+                  }
+                />
               ) : (
                 renderDataSourceSettingsLink(dataSourceSettingsSearch)
               ))}
@@ -948,12 +941,22 @@ function renderArticleAccessActions(state: ArticleDetailViewState, variant: Arti
   );
 }
 
-/** Render the data-source settings shortcut shown when full text requires login. */
-function renderDataSourceSettingsLink(search: WorkspaceSearch) {
+/**
+ * Render the data-source settings shortcut shown when full text requires login.
+ *
+ * @param search - Workspace search that opens the data-source settings.
+ * @param onClick - Click handler that also closes the surrounding detail dialog; the link keeps its
+ * own link semantics instead of taking the dialog close button's.
+ * @returns Settings link styled as a button.
+ */
+function renderDataSourceSettingsLink(
+  search: WorkspaceSearch,
+  onClick?: MouseEventHandler<HTMLAnchorElement>,
+) {
   return (
     <Button asChild variant="outline" size="sm" xstyle={styles.articleActionButton}>
-      <Link to="/" search={search} aria-label="去设置登录" title="去设置登录">
-        <Settings {...stylex.props(styles.renderArticleRelationActionShare2)} aria-hidden="true" />
+      <Link to="/" search={search} aria-label="去设置登录" title="去设置登录" onClick={onClick}>
+        <Settings xstyle={styles.renderArticleRelationActionShare2} aria-hidden="true" />
         {renderActionLabel('去设置登录', '登录')}
       </Link>
     </Button>
@@ -983,10 +986,7 @@ function renderArticleFavoriteAction(state: ArticleDetailViewState) {
             aria-label="加载收藏…"
             disabled
           >
-            <Loader2
-              {...stylex.props(styles.renderArticleFavoriteActionLoader2)}
-              aria-hidden="true"
-            />
+            <Loader2 xstyle={styles.renderArticleFavoriteActionLoader2} aria-hidden="true" />
             {renderActionLabel('加载收藏…', '加载…')}
           </Button>
         </div>
@@ -1146,7 +1146,7 @@ function renderArticleAccessLoading(state: ArticleDetailViewState) {
         aria-label={isAccessPending ? '加载访问' : '刷新访问'}
         disabled
       >
-        <Loader2 {...stylex.props(styles.renderArticleFavoriteActionLoader2)} aria-hidden="true" />
+        <Loader2 xstyle={styles.renderArticleFavoriteActionLoader2} aria-hidden="true" />
         {renderActionLabel(
           isAccessPending ? '加载访问' : '刷新访问',
           isAccessPending ? '加载' : '刷新',

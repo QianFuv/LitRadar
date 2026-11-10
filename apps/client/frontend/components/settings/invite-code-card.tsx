@@ -18,6 +18,7 @@ import {
   SettingsSectionHeader,
   SettingsSectionTitle,
   StatusPill,
+  settingsGroupItemStyle,
 } from '@/components/settings/settings-section';
 import type {
   SettingsCopyFeedback,
@@ -89,7 +90,7 @@ export function InviteCodeCard(props: {
               <SettingsRow
                 leading={
                   <span {...stylex.props(styles.inviteCodeCardSpan)}>
-                    <Gift {...stylex.props(styles.inviteCodeCardGift)} aria-hidden="true" />
+                    <Gift xstyle={styles.inviteCodeCardGift} aria-hidden="true" />
                   </span>
                 }
                 title="还没有邀请码"
@@ -215,7 +216,7 @@ function renderCurrentInviteCode(
 
   return (
     <SettingsGroup>
-      <div {...stylex.props(styles.renderCurrentInviteCodeDiv)}>
+      <div {...stylex.props(settingsGroupItemStyle, styles.renderCurrentInviteCodeDiv)}>
         <div
           {...stylex.props(
             styles.renderCurrentInviteCodeDiv2,
@@ -248,6 +249,7 @@ function renderCurrentInviteCode(
       {state.copyFeedback?.scope === 'invite' && (
         <div
           {...stylex.props(
+            settingsGroupItemStyle,
             state.copyFeedback.tone === 'error'
               ? styles.renderCurrentInviteCodeDivError
               : styles.renderCurrentInviteCodeDivNotError,
@@ -256,7 +258,7 @@ function renderCurrentInviteCode(
           {renderInviteCopyFeedback(state)}
         </div>
       )}
-      <dl {...stylex.props(styles.renderCurrentInviteCodeDl)}>
+      <dl {...stylex.props(settingsGroupItemStyle, styles.renderCurrentInviteCodeDl)}>
         <div
           {...stylex.props(
             styles.renderCurrentInviteCodeDlItem,
@@ -300,7 +302,7 @@ function renderCurrentInviteCode(
           </dd>
         </div>
       </dl>
-      <div {...stylex.props(styles.renderCurrentInviteCodeDiv4)}>
+      <div {...stylex.props(settingsGroupItemStyle, styles.renderCurrentInviteCodeDiv4)}>
         {inviteCodeData.revoked_at === null && (
           <Button
             variant="ghost"
@@ -314,7 +316,7 @@ function renderCurrentInviteCode(
               setIsRevokeOpen(true);
             }}
           >
-            <CircleX {...stylex.props(styles.renderCurrentInviteCodeCircleX)} />
+            <CircleX xstyle={styles.renderCurrentInviteCodeCircleX} />
             撤销邀请码
           </Button>
         )}
@@ -328,7 +330,7 @@ function renderCurrentInviteCode(
             rotateInviteMut.mutate();
           }}
         >
-          <RotateCcw {...stylex.props(styles.renderCurrentInviteCodeCircleX)} />
+          <RotateCcw xstyle={styles.renderCurrentInviteCodeCircleX} />
           轮换邀请码
         </Button>
       </div>

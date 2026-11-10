@@ -11,7 +11,11 @@ import {
 } from '@/lib/api';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { AdminListHeader } from '@/components/admin/admin-list-header';
-import { SettingsGroup, StatusPill } from '@/components/settings/settings-section';
+import {
+  SettingsGroup,
+  StatusPill,
+  settingsGroupItemStyle,
+} from '@/components/settings/settings-section';
 import { Button } from '@/components/ui/button';
 import { IconTooltip } from '@/components/ui/tooltip';
 import { CopyButton } from '@/components/ui/copy-button';
@@ -70,17 +74,17 @@ export function AdminInviteCodesCard(props: { isEnabled: boolean }) {
     <Card>
       <CardHeader>
         <CardTitle xstyle={styles.adminInviteCodesCardCardTitle}>
-          <Gift {...stylex.props(styles.adminInviteCodesCardGift)} />
+          <Gift xstyle={styles.adminInviteCodesCardGift} />
           邀请码管理
         </CardTitle>
         <CardDescription>创建有期限和使用次数上限的邀请码，并保留撤销历史</CardDescription>
       </CardHeader>
       <CardContent xstyle={styles.adminInviteCodesCardCardContent}>
         <SettingsGroup>
-          <div {...stylex.props(styles.adminInviteCodesCardDiv)}>
+          <div {...stylex.props(settingsGroupItemStyle, styles.adminInviteCodesCardDiv)}>
             <div {...stylex.props(styles.adminInviteCodesCardDiv2)}>
               <span {...stylex.props(styles.adminInviteCodesCardSpan)}>
-                <Gift {...stylex.props(styles.adminInviteCodesCardGift2)} aria-hidden="true" />
+                <Gift xstyle={styles.adminInviteCodesCardGift2} aria-hidden="true" />
               </span>
               <div>
                 <p {...stylex.props(styles.adminInviteCodesCardP)}>生成新邀请码</p>
@@ -131,7 +135,7 @@ export function AdminInviteCodesCard(props: { isEnabled: boolean }) {
                 onClick={() => createCodeMut.mutate()}
                 disabled={createCodeMut.isPending || !isPolicyValid}
               >
-                <Plus {...stylex.props(styles.adminInviteCodesCardPlus)} />
+                <Plus xstyle={styles.adminInviteCodesCardPlus} />
                 生成邀请码
               </Button>
             </div>
@@ -309,7 +313,7 @@ function renderAdminInviteList(state: AdminInviteViewState) {
         {inviteRows.length === 0 ? (
           <MotionDiv
             key="empty-invite-codes"
-            {...stylex.props(styles.renderAdminInviteListMotionDiv)}
+            {...stylex.props(settingsGroupItemStyle, styles.renderAdminInviteListMotionDiv)}
             initial="hidden"
             animate="visible"
             exit="exit"
@@ -326,7 +330,7 @@ function renderAdminInviteList(state: AdminInviteViewState) {
               <MotionDiv
                 key={inviteCode.id}
                 data-motion-invite-key={inviteCode.id}
-                {...stylex.props(styles.renderAdminInviteListMotionDiv2)}
+                {...stylex.props(settingsGroupItemStyle, styles.renderAdminInviteListMotionDiv2)}
                 initial="hidden"
                 animate="visible"
                 exit="exit"
@@ -342,7 +346,7 @@ function renderAdminInviteList(state: AdminInviteViewState) {
                         : styles.renderAdminInviteListSpanNotActive,
                     )}
                   >
-                    <Gift {...stylex.props(styles.adminInviteCodesCardPlus)} />
+                    <Gift xstyle={styles.adminInviteCodesCardPlus} />
                   </span>
                   <div {...stylex.props(styles.renderAdminInviteListDiv2)}>
                     <div {...stylex.props(styles.renderAdminInviteListDiv3)}>
@@ -408,7 +412,7 @@ function renderAdminInviteList(state: AdminInviteViewState) {
                             setInviteCodeToRevoke(inviteCode);
                           }}
                         >
-                          <CircleX {...stylex.props(styles.adminInviteCodesCardPlus)} />
+                          <CircleX xstyle={styles.adminInviteCodesCardPlus} />
                         </Button>
                       </IconTooltip>
                     )}

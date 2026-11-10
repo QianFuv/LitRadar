@@ -3,7 +3,6 @@
  */
 
 import * as React from 'react';
-import { Slot } from '@radix-ui/react-slot';
 import * as stylex from '@stylexjs/stylex';
 
 import { colors, shadows } from '@/lib/theme.stylex';
@@ -12,25 +11,21 @@ import { colors, shadows } from '@/lib/theme.stylex';
 type BadgeVariant = keyof typeof VARIANT_STYLES;
 
 /**
- * Render a compact status badge, or pass its styling to one child element.
+ * Render a compact status badge.
  *
- * @param props - Native span properties, variant, polymorphic mode, and style overrides.
+ * @param props - Native span properties, variant, and style overrides.
  * @returns Badge element.
  */
 function Badge({
   xstyle,
   variant = 'default',
-  asChild = false,
   ...props
 }: Omit<React.ComponentProps<'span'>, 'className'> & {
   variant?: BadgeVariant;
-  asChild?: boolean;
   xstyle?: stylex.StyleXStyles;
 }) {
-  const Comp = asChild ? Slot : 'span';
-
   return (
-    <Comp
+    <span
       data-slot="badge"
       data-variant={variant}
       {...stylex.props(styles.base, VARIANT_STYLES[variant], xstyle)}

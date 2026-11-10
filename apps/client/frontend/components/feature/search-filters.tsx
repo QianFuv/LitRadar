@@ -102,7 +102,7 @@ function DateSegmentSelect({ ariaLabel, value, options, onChange }: DateSegmentS
       >
         <SelectValue />
       </SelectTrigger>
-      <SelectContent position="popper" xstyle={styles.dateSegmentSelectSelectContent}>
+      <SelectContent xstyle={styles.dateSegmentSelectSelectContent}>
         {options.map((option) => (
           <SelectItem key={option} value={option} xstyle={styles.dateSegmentSelectSelectItem}>
             {option}
@@ -144,7 +144,7 @@ export function SearchFilters({ xstyle }: { xstyle?: stylex.StyleXStyles }) {
             {...stylex.props(styles.searchFiltersButton)}
             onClick={handleClearAll}
           >
-            <X {...stylex.props(styles.searchFiltersX)} aria-hidden="true" />
+            <X xstyle={styles.searchFiltersX} aria-hidden="true" />
             清除筛选
           </button>
         )}
@@ -553,7 +553,7 @@ function renderRatingFacet(state: SearchFilterState) {
         <span {...stylex.props(styles.renderRatingFacetSpan)}>
           <MultiSelectValue>{() => visibleText}</MultiSelectValue>
         </span>
-        <ChevronDown {...stylex.props(styles.renderRatingFacetChevronDown)} aria-hidden="true" />
+        <ChevronDown xstyle={styles.renderRatingFacetChevronDown} aria-hidden="true" />
       </MultiSelectTrigger>
       <MultiSelectContent aria-label="期刊评级" xstyle={styles.renderRatingFacetMultiSelectContent}>
         <FilterPanelHeader

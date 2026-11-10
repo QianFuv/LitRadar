@@ -1,9 +1,9 @@
 /**
- * Project-styled Radix AlertDialog primitives.
+ * Project-styled Animate UI AlertDialog primitives on Base UI.
  */
 
 import * as React from 'react';
-import * as AlertDialogPrimitive from '@animate-ui/react/primitives/radix-ui/alert-dialog';
+import { AlertDialog as AlertDialogPrimitive } from '@animate-ui/react/primitives/base-ui/alert-dialog';
 
 import { buttonStyles } from '@/components/ui/button';
 import { RevealScope } from '@/components/ui/reveal';
@@ -13,67 +13,39 @@ import { colors, lineHeights } from '@/lib/theme.stylex';
 /**
  * Render the AlertDialog state root.
  *
- * @param props - Radix AlertDialog root properties.
+ * @param props - Base UI AlertDialog root properties.
  * @returns AlertDialog root.
  */
-function AlertDialog({ ...props }: React.ComponentProps<typeof AlertDialogPrimitive.Root>) {
-  return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />;
+function AlertDialog(props: React.ComponentProps<typeof AlertDialogPrimitive.Root>) {
+  return <AlertDialogPrimitive.Root {...props} />;
 }
 
 /**
- * Render AlertDialog content in a portal.
+ * Render accessible modal confirmation content with its backdrop.
  *
- * @param props - Radix AlertDialog portal properties.
- * @returns AlertDialog portal.
- */
-function AlertDialogPortal({ ...props }: React.ComponentProps<typeof AlertDialogPrimitive.Portal>) {
-  return <AlertDialogPrimitive.Portal data-slot="alert-dialog-portal" {...props} />;
-}
-
-/**
- * Render the modal backdrop.
- *
- * @param props - Radix AlertDialog overlay properties.
- * @returns Styled AlertDialog overlay.
- */
-function AlertDialogOverlay({
-  xstyle,
-  ...props
-}: Omit<React.ComponentProps<typeof AlertDialogPrimitive.Overlay>, 'className'> & {
-  xstyle?: stylex.StyleXStyles;
-}) {
-  return (
-    <AlertDialogPrimitive.Overlay
-      data-slot="alert-dialog-overlay"
-      {...stylex.props(styles.alertDialogOverlay, xstyle)}
-      {...props}
-    />
-  );
-}
-
-/**
- * Render accessible modal confirmation content.
- *
- * @param props - Radix AlertDialog content properties and children.
+ * @param props - Base UI AlertDialog popup properties, children, and style overrides.
  * @returns Portaled AlertDialog content.
  */
 function AlertDialogContent({
   xstyle,
   ...props
-}: Omit<React.ComponentProps<typeof AlertDialogPrimitive.Content>, 'className'> & {
+}: Omit<React.ComponentProps<typeof AlertDialogPrimitive.Popup>, 'className'> & {
   xstyle?: stylex.StyleXStyles;
 }) {
   return (
-    <AlertDialogPortal>
-      <AlertDialogOverlay />
+    <AlertDialogPrimitive.Portal data-slot="alert-dialog-portal">
+      <AlertDialogPrimitive.Backdrop
+        data-slot="alert-dialog-overlay"
+        {...stylex.props(styles.alertDialogOverlay)}
+      />
       <RevealScope>
-        <AlertDialogPrimitive.Content
+        <AlertDialogPrimitive.Popup
           data-slot="alert-dialog-content"
           {...stylex.props(styles.alertDialogContent, xstyle)}
           {...props}
         />
       </RevealScope>
-    </AlertDialogPortal>
+    </AlertDialogPrimitive.Portal>
   );
 }
 
@@ -118,7 +90,7 @@ function AlertDialogFooter({
 /**
  * Render the accessible AlertDialog title.
  *
- * @param props - Radix AlertDialog title properties.
+ * @param props - Base UI AlertDialog title properties.
  * @returns Styled title.
  */
 function AlertDialogTitle({
@@ -139,7 +111,7 @@ function AlertDialogTitle({
 /**
  * Render the accessible AlertDialog description.
  *
- * @param props - Radix AlertDialog description properties.
+ * @param props - Base UI AlertDialog description properties.
  * @returns Styled description.
  */
 function AlertDialogDescription({
@@ -158,19 +130,22 @@ function AlertDialogDescription({
 }
 
 /**
- * Render the action that accepts the alert.
+ * Render the action that accepts the alert. It does not close the dialog by itself, so the caller
+ * can keep the dialog open while the action is pending.
  *
- * @param props - Radix AlertDialog action properties.
+ * @param props - Native button properties and style overrides.
  * @returns Styled action control.
  */
 function AlertDialogAction({
   xstyle,
+  type = 'button',
   ...props
-}: Omit<React.ComponentProps<typeof AlertDialogPrimitive.Action>, 'className'> & {
+}: Omit<React.ComponentProps<'button'>, 'className'> & {
   xstyle?: stylex.StyleXStyles;
 }) {
   return (
-    <AlertDialogPrimitive.Action
+    <button
+      type={type}
       {...stylex.props(buttonStyles(), xstyle)}
       data-slot="alert-dialog-action"
       {...props}
@@ -179,19 +154,19 @@ function AlertDialogAction({
 }
 
 /**
- * Render the action that cancels the alert.
+ * Render the action that cancels the alert and closes the dialog.
  *
- * @param props - Radix AlertDialog cancel properties.
+ * @param props - Base UI AlertDialog close properties and style overrides.
  * @returns Styled cancel control.
  */
 function AlertDialogCancel({
   xstyle,
   ...props
-}: Omit<React.ComponentProps<typeof AlertDialogPrimitive.Cancel>, 'className'> & {
+}: Omit<React.ComponentProps<typeof AlertDialogPrimitive.Close>, 'className'> & {
   xstyle?: stylex.StyleXStyles;
 }) {
   return (
-    <AlertDialogPrimitive.Cancel
+    <AlertDialogPrimitive.Close
       {...stylex.props(buttonStyles('outline'), xstyle)}
       data-slot="alert-dialog-cancel"
       {...props}
@@ -207,8 +182,6 @@ export {
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
-  AlertDialogOverlay,
-  AlertDialogPortal,
   AlertDialogTitle,
 };
 

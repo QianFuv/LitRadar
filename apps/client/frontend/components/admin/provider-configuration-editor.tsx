@@ -28,6 +28,7 @@ import {
   SettingsSectionHeader,
   SettingsSectionTitle,
   StatusPill,
+  settingsGroupItemStyle,
 } from '@/components/settings/settings-section';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -340,7 +341,7 @@ function ProviderOrderEditor({ label, providers, order, onChange }: ProviderOrde
                 aria-label={`上移${label}第 ${index + 1} 项`}
                 onClick={() => onChange(moveProvider(order, index, -1))}
               >
-                <ArrowUp {...stylex.props(styles.providerOrderEditorArrowUp)} />
+                <ArrowUp xstyle={styles.providerOrderEditorArrowUp} />
               </Button>
               <Button
                 type="button"
@@ -350,7 +351,7 @@ function ProviderOrderEditor({ label, providers, order, onChange }: ProviderOrde
                 aria-label={`下移${label}第 ${index + 1} 项`}
                 onClick={() => onChange(moveProvider(order, index, 1))}
               >
-                <ArrowDown {...stylex.props(styles.providerOrderEditorArrowUp)} />
+                <ArrowDown xstyle={styles.providerOrderEditorArrowUp} />
               </Button>
               <Button
                 type="button"
@@ -360,7 +361,7 @@ function ProviderOrderEditor({ label, providers, order, onChange }: ProviderOrde
                 aria-label={`删除${label}第 ${index + 1} 项`}
                 onClick={() => onChange(order.filter((_, itemIndex) => itemIndex !== index))}
               >
-                <Trash2 {...stylex.props(styles.providerOrderEditorArrowUp)} />
+                <Trash2 xstyle={styles.providerOrderEditorArrowUp} />
               </Button>
             </div>
           </li>
@@ -377,7 +378,7 @@ function ProviderOrderEditor({ label, providers, order, onChange }: ProviderOrde
             if (nextAvailableProvider) onChange([...order, nextAvailableProvider.name]);
           }}
         >
-          <Plus {...stylex.props(styles.providerOrderEditorPlus)} />
+          <Plus xstyle={styles.providerOrderEditorPlus} />
           添加 Provider
         </Button>
       </li>
@@ -401,7 +402,13 @@ function DefaultProviderOrder({
   const isDisabled = order.length === 0;
 
   return (
-    <div {...stylex.props(styles.defaultProviderOrderGroupItem, styles.defaultProviderOrderDiv)}>
+    <div
+      {...stylex.props(
+        settingsGroupItemStyle,
+        styles.defaultProviderOrderGroupItem,
+        styles.defaultProviderOrderDiv,
+      )}
+    >
       <div {...stylex.props(styles.defaultProviderOrderDiv2)}>
         <Label
           xstyle={styles.defaultProviderOrderLabel}
@@ -461,7 +468,7 @@ function CatalogProviderOrder({
   const isDisabled = !isInherited && order.length === 0;
 
   return (
-    <div {...stylex.props(styles.catalogProviderOrderDiv)}>
+    <div {...stylex.props(settingsGroupItemStyle, styles.catalogProviderOrderDiv)}>
       <div {...stylex.props(styles.defaultProviderOrderDiv2)}>
         <span {...stylex.props(styles.catalogProviderOrderSpan)}>{capabilityLabel}</span>
         <div {...stylex.props(styles.providerOrderEditorLi)}>
@@ -626,6 +633,7 @@ export function ProviderConfigurationEditor({
               role="group"
               aria-labelledby={`provider-proxy-label-${provider.name}`}
               {...stylex.props(
+                settingsGroupItemStyle,
                 styles.providerConfigurationEditorSettingsGroupItem,
                 styles.providerConfigurationEditorDiv,
               )}
@@ -733,13 +741,15 @@ export function ProviderConfigurationEditor({
                 role="region"
                 aria-labelledby={`provider-catalog-${catalogInfo.stem}`}
               >
-                <div {...stylex.props(styles.providerConfigurationEditorDiv5)}>
+                <div
+                  {...stylex.props(settingsGroupItemStyle, styles.providerConfigurationEditorDiv5)}
+                >
                   <div {...stylex.props(styles.providerConfigurationEditorDiv6)}>
                     <span
                       aria-hidden="true"
                       {...stylex.props(styles.providerConfigurationEditorSpan3)}
                     >
-                      <Layers {...stylex.props(styles.providerOrderEditorPlus)} />
+                      <Layers xstyle={styles.providerOrderEditorPlus} />
                     </span>
                     <div {...stylex.props(styles.providerConfigurationEditorDiv2)}>
                       <h4

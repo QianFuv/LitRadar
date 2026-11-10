@@ -43,7 +43,7 @@ function StatCard({
       <div {...stylex.props(styles.statCardDiv2)}>
         <dt {...stylex.props(styles.statCardDt)}>{label}</dt>
         <span aria-hidden="true" {...stylex.props(styles.statCardSpan)}>
-          {Icon && <Icon {...stylex.props(styles.statCardIcon)} />}
+          {Icon && <Icon xstyle={styles.statCardIcon} />}
         </span>
       </div>
       <dd {...stylex.props(styles.statCardDd)}>
@@ -71,7 +71,7 @@ function StatGroup({
   return (
     <section>
       <h3 {...stylex.props(styles.statGroupSectionItem, styles.statGroupH3)}>
-        <Icon animateOnView {...stylex.props(styles.statGroupIcon)} aria-hidden="true" />
+        <Icon animateOnView xstyle={styles.statGroupIcon} aria-hidden="true" />
         {title}
       </h3>
       <dl {...stylex.props(styles.statGroupSectionItem, styles.statGroupDl)}>{children}</dl>
@@ -213,7 +213,7 @@ function renderIndexStatistics(state: Pick<OverviewViewState, 'indexStats'>) {
       <section>
         <div {...stylex.props(styles.statGroupSectionItem, styles.renderIndexStatisticsDiv)}>
           <h3 {...stylex.props(styles.statGroupH3)}>
-            <Layers animateOnView {...stylex.props(styles.statGroupIcon)} aria-hidden="true" />
+            <Layers animateOnView xstyle={styles.statGroupIcon} aria-hidden="true" />
             索引数据库
           </h3>
           <p {...stylex.props(styles.renderIndexStatisticsP)}>
@@ -240,7 +240,7 @@ function renderIndexStatistics(state: Pick<OverviewViewState, 'indexStats'>) {
                   )}
                 >
                   <span {...stylex.props(styles.renderIndexStatisticsSpan)}>
-                    <Layers {...stylex.props(styles.renderIndexStatisticsLayers)} />
+                    <Layers xstyle={styles.renderIndexStatisticsLayers} />
                     <span {...stylex.props(styles.renderIndexStatisticsSpan2)}>{db.db_name}</span>
                   </span>
                   <span {...stylex.props(styles.renderIndexStatisticsP)}>
@@ -281,7 +281,7 @@ function renderPushStatistics(state: Pick<OverviewViewState, 'pushStats'>) {
     pushStats.length > 0 && (
       <section>
         <h3 {...stylex.props(styles.statGroupSectionItem, styles.statGroupH3)}>
-          <BellRing animateOnView {...stylex.props(styles.statGroupIcon)} aria-hidden="true" />
+          <BellRing animateOnView xstyle={styles.statGroupIcon} aria-hidden="true" />
           推送状态
         </h3>
         <ul {...stylex.props(styles.statGroupSectionItem, styles.renderIndexStatisticsUl)}>

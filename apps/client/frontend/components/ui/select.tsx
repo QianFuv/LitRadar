@@ -1,39 +1,72 @@
 /**
- * Project-styled Radix Select primitives with shared surface motion.
+ * Project-styled Animate UI Select primitives on Base UI with shared surface motion.
  */
 
 import * as React from 'react';
-import * as SelectPrimitive from '@animate-ui/react/primitives/radix-ui/select';
+import { Select as SelectPrimitive } from '@animate-ui/react/primitives/base-ui/select';
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from 'lucide-react';
 
+import { IconStyleProvider } from '@/components/ui/animated-icons';
+import { controlIconStyle } from '@/components/ui/button';
+import { menuItemIconStyle } from '@/components/ui/dropdown-menu';
 import { RevealScope } from '@/components/ui/reveal';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
+type SelectProps<Value extends string> = Omit<
+  React.ComponentProps<typeof SelectPrimitive.Root<Value>>,
+  'value' | 'defaultValue' | 'onValueChange' | 'multiple'
+> & {
+  /** Selected value; an empty string shows the placeholder. */
+  value: Value | '';
+  /** Called with the newly selected value. */
+  onValueChange: (value: Value) => void;
+};
+
 /**
- * Render the Select state root.
+ * Render the single-value Select state root. Pass `items` so the trigger shows the selected
+ * item's label rather than its value.
  *
- * @param props - Radix Select root properties.
+ * @param props - Selected value, change handler, and Base UI Select root properties.
  * @returns Select root.
  */
-function Select({ ...props }: React.ComponentProps<typeof SelectPrimitive.Root>) {
-  return <SelectPrimitive.Root data-slot="select" {...props} />;
+function Select<Value extends string>({ value, onValueChange, ...props }: SelectProps<Value>) {
+  return (
+    <SelectPrimitive.Root<Value>
+      value={value === '' ? null : value}
+      onValueChange={(next) => {
+        if (next !== null) onValueChange(next);
+      }}
+      {...props}
+    />
+  );
 }
 
 /**
  * Render the selected value or placeholder.
  *
- * @param props - Radix Select value properties.
+ * @param props - Base UI Select value properties and style overrides.
  * @returns Select value.
  */
-function SelectValue({ ...props }: React.ComponentProps<typeof SelectPrimitive.Value>) {
-  return <SelectPrimitive.Value data-slot="select-value" {...props} />;
+function SelectValue({
+  xstyle,
+  ...props
+}: Omit<React.ComponentProps<typeof SelectPrimitive.Value>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
+  return (
+    <SelectPrimitive.Value
+      data-slot="select-value"
+      {...stylex.props(styles.selectValue, xstyle)}
+      {...props}
+    />
+  );
 }
 
 /**
  * Render the keyboard-accessible Select trigger.
  *
- * @param props - Radix Select trigger properties, control size, and style overrides for the
+ * @param props - Base UI Select trigger properties, control size, and style overrides for the
  * trigger and its chevron.
  * @returns Styled Select trigger.
  */
@@ -56,64 +89,75 @@ function SelectTrigger({
       {...stylex.props(styles.selectTrigger, stylex.defaultMarker(), xstyle)}
       {...props}
     >
-      {children}
-      <SelectPrimitive.Icon asChild>
-        <ChevronDownIcon
-          {...stylex.props(styles.selectTriggerChevronDownIcon, iconXstyle)}
-          aria-hidden="true"
-        />
-      </SelectPrimitive.Icon>
+      <IconStyleProvider xstyle={[controlIconStyle, menuItemIconStyle]}>
+        {children}
+      </IconStyleProvider>
+      <ChevronDownIcon
+        {...stylex.props(styles.selectTriggerChevronDownIcon, iconXstyle)}
+        aria-hidden="true"
+      />
     </SelectPrimitive.Trigger>
   );
 }
 
+type SelectContentProps = Omit<React.ComponentProps<typeof SelectPrimitive.Popup>, 'className'> & {
+  /** Alignment of the popup against the trigger. */
+  align?: 'start' | 'center' | 'end';
+  /** Extra styles for the scrolling option list. */
+  listXstyle?: stylex.StyleXStyles;
+  xstyle?: stylex.StyleXStyles;
+};
+
 /**
- * Render positioned Select options in a portal.
+ * Render the Select options below the trigger in a portal.
  *
- * @param props - Radix Select content properties and positioning defaults.
+ * @param props - Base UI Select popup properties, alignment, and style overrides.
  * @returns Portaled Select options.
  */
 function SelectContent({
   xstyle,
   children,
-  position = 'popper',
   align = 'start',
-  viewportXstyle,
+  listXstyle,
   ...props
-}: Omit<
-  React.ComponentProps<typeof SelectPrimitive.Content> & {
-    /** Extra styles for the scrolling option viewport. */
-    viewportXstyle?: stylex.StyleXStyles;
-  },
-  'className'
-> & { xstyle?: stylex.StyleXStyles }) {
+}: SelectContentProps) {
   return (
     <SelectPrimitive.Portal>
-      <RevealScope>
-        <SelectPrimitive.Content
-          data-slot="select-content"
-          {...stylex.props(
-            styles.selectContent,
-            position === 'popper' && styles.selectContentPopper,
-            xstyle,
-          )}
-          position={position}
-          align={align}
-          {...props}
-        >
-          <SelectScrollUpButton />
-          <SelectPrimitive.Viewport
-            {...stylex.props(
-              styles.selectViewport,
-              viewportXstyle,
-              position === 'popper' && styles.selectViewportPopper,
-            )}
+      <SelectPrimitive.Positioner
+        align={align}
+        sideOffset={4}
+        collisionPadding={10}
+        collisionAvoidance={{ align: 'shift', fallbackAxisSide: 'none' }}
+        alignItemWithTrigger={false}
+        {...stylex.props(styles.selectPositioner)}
+      >
+        <RevealScope>
+          <SelectPrimitive.Popup
+            data-slot="select-content"
+            {...stylex.props(styles.selectContent, xstyle)}
+            {...props}
           >
-            {children}
-          </SelectPrimitive.Viewport>
-          <SelectScrollDownButton />
-        </SelectPrimitive.Content>
-      </RevealScope>
+            <SelectPrimitive.ScrollUpArrow
+              data-slot="select-scroll-up-button"
+              {...stylex.props(styles.selectScrollArrow, styles.selectScrollUpArrow)}
+            >
+              <ChevronUpIcon {...stylex.props(styles.selectItemCheckIcon)} />
+            </SelectPrimitive.ScrollUpArrow>
+            <SelectPrimitive.List
+              data-slot="select-list"
+              {...stylex.props(styles.selectViewport, listXstyle)}
+            >
+              {children}
+            </SelectPrimitive.List>
+            <SelectPrimitive.ScrollDownArrow
+              data-slot="select-scroll-down-button"
+              {...stylex.props(styles.selectScrollArrow, styles.selectScrollDownArrow)}
+            >
+              <ChevronDownIcon {...stylex.props(styles.selectItemCheckIcon)} />
+            </SelectPrimitive.ScrollDownArrow>
+          </SelectPrimitive.Popup>
+        </RevealScope>
+      </SelectPrimitive.Positioner>
     </SelectPrimitive.Portal>
   );
 }
@@ -121,7 +165,8 @@ function SelectContent({
 /**
  * Render one selectable option and its checked indicator.
  *
- * @param props - Radix Select item properties, visible label, and optional trailing detail.
+ * @param props - Base UI Select item properties, visible label, optional trailing detail, and
+ * style overrides.
  * @returns Styled Select item.
  */
 function SelectItem({
@@ -144,12 +189,18 @@ function SelectItem({
     >
       <span data-slot="select-item-indicator" {...stylex.props(styles.selectItemIndicator)}>
         <SelectPrimitive.ItemIndicator>
-          <CheckIcon {...stylex.props(styles.selectItemCheckIcon)} />
+          <CheckIcon
+            {...stylex.props(controlIconStyle, menuItemIconStyle, styles.selectItemCheckIcon)}
+          />
         </SelectPrimitive.ItemIndicator>
       </span>
-      <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      <SelectPrimitive.ItemText
+        {...stylex.props(detail === undefined && styles.selectItemLastSpan)}
+      >
+        {children}
+      </SelectPrimitive.ItemText>
       {detail !== undefined && (
-        <span {...stylex.props(styles.selectItemSpan)}>
+        <span {...stylex.props(styles.selectItemSpan, styles.selectItemLastSpan)}>
           <span {...stylex.props(styles.selectItemSpan2)}> · </span>
           {detail}
         </span>
@@ -158,71 +209,15 @@ function SelectItem({
   );
 }
 
-/**
- * Render the upward overflow affordance.
- *
- * @param props - Radix Select scroll-up properties.
- * @returns Styled scroll-up control.
- */
-function SelectScrollUpButton({
-  xstyle,
-  ...props
-}: Omit<React.ComponentProps<typeof SelectPrimitive.ScrollUpButton>, 'className'> & {
-  xstyle?: stylex.StyleXStyles;
-}) {
-  return (
-    <SelectPrimitive.ScrollUpButton
-      data-slot="select-scroll-up-button"
-      {...stylex.props(styles.selectScrollUpButton, xstyle)}
-      {...props}
-    >
-      <ChevronUpIcon {...stylex.props(styles.selectItemCheckIcon)} />
-    </SelectPrimitive.ScrollUpButton>
-  );
-}
-
-/**
- * Render the downward overflow affordance.
- *
- * @param props - Radix Select scroll-down properties.
- * @returns Styled scroll-down control.
- */
-function SelectScrollDownButton({
-  xstyle,
-  ...props
-}: Omit<React.ComponentProps<typeof SelectPrimitive.ScrollDownButton>, 'className'> & {
-  xstyle?: stylex.StyleXStyles;
-}) {
-  return (
-    <SelectPrimitive.ScrollDownButton
-      data-slot="select-scroll-down-button"
-      {...stylex.props(styles.selectScrollUpButton, xstyle)}
-      {...props}
-    >
-      <ChevronDownIcon {...stylex.props(styles.selectItemCheckIcon)} />
-    </SelectPrimitive.ScrollDownButton>
-  );
-}
-
-export {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectScrollDownButton,
-  SelectScrollUpButton,
-  SelectTrigger,
-  SelectValue,
-};
+export { Select, SelectContent, SelectItem, SelectTrigger, SelectValue };
 
 const styles = stylex.create({
   selectViewport: {
+    minHeight: 0,
+    overflowY: 'auto',
     padding: '0.25rem',
-  },
-  selectViewportPopper: {
-    height: 'var(--radix-select-trigger-height)',
-    width: '100%',
-    minWidth: 'var(--radix-select-trigger-width)',
     scrollMarginBlock: '0.25rem',
+    scrollPaddingBlock: '1.5rem',
   },
   selectTrigger: {
     display: 'flex',
@@ -242,7 +237,10 @@ const styles = stylex.create({
       },
       ':hover': {
         default: null,
-        '@media (hover: hover)': colors.accent,
+        '@media (hover: hover)': {
+          default: colors.accent,
+          ':is([data-popup-open])': colors.card,
+        },
       },
     },
     paddingInline: '0.75rem',
@@ -284,38 +282,48 @@ const styles = stylex.create({
     },
   },
   selectTriggerChevronDownIcon: {
+    pointerEvents: 'none',
+    flexShrink: 0,
     width: '1rem',
     height: '1rem',
+    color: colors.mutedForeground,
     opacity: '50%',
     transitionProperty: 'transform, translate, scale, rotate',
     transitionTimingFunction: 'cubic-bezier(0.215, 0.61, 0.355, 1)',
     transitionDuration: '220ms',
     rotate: {
       default: null,
-      [stylex.when.ancestor('[data-state="open"]')]: '180deg',
+      [stylex.when.ancestor('[data-popup-open]')]: '180deg',
     },
+  },
+  selectPositioner: {
+    zIndex: 50,
+  },
+  selectValue: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    overflow: 'hidden',
+    WebkitBoxOrient: 'vertical',
+    WebkitLineClamp: 1,
+  },
+  selectItemLastSpan: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
   },
   selectContent: {
     position: 'relative',
-    zIndex: 50,
-    maxHeight: 'var(--radix-select-content-available-height)',
-    minWidth: '8rem',
-    transformOrigin: 'var(--radix-select-content-transform-origin)',
-    overflowX: 'hidden',
-    overflowY: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    maxHeight: 'var(--available-height)',
+    minWidth: 'max(8rem, var(--anchor-width))',
+    transformOrigin: 'var(--transform-origin)',
+    overflow: 'hidden',
     borderRadius: '12px',
     backgroundColor: colors.popover,
     color: colors.popoverForeground,
     boxShadow: shadows.overlay,
-  },
-  selectContentPopper: {
-    translate: {
-      default: null,
-      ':is([data-side="bottom"])': '0 0.25rem',
-      ':is([data-side="left"])': '-0.25rem 0',
-      ':is([data-side="right"])': '0.25rem 0',
-      ':is([data-side="top"])': '0 -0.25rem',
-    },
   },
   selectItem: {
     position: 'relative',
@@ -404,11 +412,20 @@ const styles = stylex.create({
     whiteSpace: 'nowrap',
     borderWidth: 0,
   },
-  selectScrollUpButton: {
+  selectScrollArrow: {
+    insetInline: 0,
+    zIndex: 1,
     display: 'flex',
     cursor: 'default',
     alignItems: 'center',
     justifyContent: 'center',
     paddingBlock: '0.25rem',
+    backgroundColor: colors.popover,
+  },
+  selectScrollUpArrow: {
+    top: 0,
+  },
+  selectScrollDownArrow: {
+    bottom: 0,
   },
 });

@@ -1,9 +1,10 @@
 /**
- * Project-styled Animate UI Dialog primitives: centered dialogs tip forward, edge placements slide in.
+ * Project-styled Animate UI Dialog primitives on Base UI: centered dialogs tip forward, edge
+ * placements slide in.
  */
 
 import * as React from 'react';
-import * as DialogPrimitive from '@animate-ui/react/primitives/radix-ui/dialog';
+import { Dialog as DialogPrimitive } from '@animate-ui/react/primitives/base-ui/dialog';
 import { X as XIcon } from '@/components/ui/animated-icons';
 
 import { Button } from '@/components/ui/button';
@@ -14,68 +15,41 @@ import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 /**
  * Render the Dialog state root.
  *
- * @param props - Radix Dialog root properties.
+ * @param props - Base UI Dialog root properties.
  * @returns Dialog root.
  */
-function Dialog({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />;
+function Dialog(props: React.ComponentProps<typeof DialogPrimitive.Root>) {
+  return <DialogPrimitive.Root {...props} />;
 }
 
 /**
  * Render a control that opens its Dialog.
  *
- * @param props - Radix Dialog trigger properties.
+ * @param props - Base UI Dialog trigger properties.
  * @returns Dialog trigger.
  */
-function DialogTrigger({ ...props }: React.ComponentProps<typeof DialogPrimitive.Trigger>) {
+function DialogTrigger(props: React.ComponentProps<typeof DialogPrimitive.Trigger>) {
   return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />;
-}
-
-/**
- * Render Dialog content in a portal.
- *
- * @param props - Radix Dialog portal properties.
- * @returns Dialog portal.
- */
-function DialogPortal({ ...props }: React.ComponentProps<typeof DialogPrimitive.Portal>) {
-  return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />;
 }
 
 /**
  * Render a control that closes its Dialog.
  *
- * @param props - Radix Dialog close properties.
+ * @param props - Base UI Dialog close properties.
  * @returns Dialog close control.
  */
-function DialogClose({ ...props }: React.ComponentProps<typeof DialogPrimitive.Close>) {
+function DialogClose(props: React.ComponentProps<typeof DialogPrimitive.Close>) {
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />;
-}
-
-/**
- * Render the modal backdrop.
- *
- * @param props - Radix Dialog overlay properties.
- * @returns Styled Dialog overlay.
- */
-function DialogOverlay({
-  xstyle,
-  ...props
-}: Omit<React.ComponentProps<typeof DialogPrimitive.Overlay>, 'className'> & {
-  xstyle?: stylex.StyleXStyles;
-}) {
-  return (
-    <DialogPrimitive.Overlay
-      data-slot="dialog-overlay"
-      {...stylex.props(styles.dialogOverlay, xstyle)}
-      {...props}
-    />
-  );
 }
 
 type DialogPlacement = 'center' | 'left' | 'right' | 'bottom' | 'takeover';
 
-type DialogContentProps = React.ComponentProps<typeof DialogPrimitive.Content> & {
+type DialogContentProps = Omit<
+  React.ComponentProps<typeof DialogPrimitive.Popup>,
+  'className' | 'from'
+> & {
   placement?: DialogPlacement;
+  xstyle?: stylex.StyleXStyles;
 };
 
 /**
@@ -92,20 +66,18 @@ const PLACEMENT_SIDES: Record<DialogPlacement, 'left' | 'right' | 'bottom' | und
 /**
  * Render accessible modal content as a centered dialog, side sheet, bottom sheet, or takeover.
  *
- * @param props - Radix Dialog content properties, children, and placement.
- * @returns Portaled Dialog content.
+ * @param props - Base UI Dialog popup properties, children, placement, and style overrides.
+ * @returns Portaled Dialog content with its backdrop.
  */
-function DialogContent({
-  xstyle,
-  children,
-  placement = 'center',
-  ...props
-}: Omit<DialogContentProps, 'className'> & { xstyle?: stylex.StyleXStyles }) {
+function DialogContent({ xstyle, children, placement = 'center', ...props }: DialogContentProps) {
   return (
-    <DialogPortal data-slot="dialog-portal">
-      <DialogOverlay />
+    <DialogPrimitive.Portal data-slot="dialog-portal">
+      <DialogPrimitive.Backdrop
+        data-slot="dialog-overlay"
+        {...stylex.props(styles.dialogOverlay)}
+      />
       <RevealScope>
-        <DialogPrimitive.Content
+        <DialogPrimitive.Popup
           data-slot="dialog-content"
           data-motion-placement={placement}
           data-side={PLACEMENT_SIDES[placement]}
@@ -122,26 +94,25 @@ function DialogContent({
         >
           {children}
           {placement === 'center' && (
-            <DialogPrimitive.Close data-slot="dialog-close" asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                static
-                aria-label="关闭"
-                xstyle={styles.dialogContentButton}
-              >
-                <XIcon
-                  {...stylex.props(styles.dialogContentXIcon)}
-                  strokeWidth={1.5}
-                  aria-hidden="true"
+            <DialogPrimitive.Close
+              data-slot="dialog-close"
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  static
+                  aria-label="关闭"
+                  xstyle={styles.dialogContentButton}
                 />
-              </Button>
+              }
+            >
+              <XIcon xstyle={styles.dialogContentXIcon} strokeWidth={1.5} aria-hidden="true" />
             </DialogPrimitive.Close>
           )}
-        </DialogPrimitive.Content>
+        </DialogPrimitive.Popup>
       </RevealScope>
-    </DialogPortal>
+    </DialogPrimitive.Portal>
   );
 }
 
@@ -178,7 +149,7 @@ function DialogFooter({
 /**
  * Render the accessible Dialog title.
  *
- * @param props - Radix Dialog title properties.
+ * @param props - Base UI Dialog title properties and style overrides.
  * @returns Styled title.
  */
 function DialogTitle({
@@ -199,7 +170,7 @@ function DialogTitle({
 /**
  * Render the accessible Dialog description.
  *
- * @param props - Radix Dialog description properties.
+ * @param props - Base UI Dialog description properties and style overrides.
  * @returns Styled description.
  */
 function DialogDescription({
@@ -224,8 +195,6 @@ export {
   DialogDescription,
   DialogFooter,
   DialogHeader,
-  DialogOverlay,
-  DialogPortal,
   DialogTitle,
   DialogTrigger,
 };

@@ -14,7 +14,11 @@ import {
   type ScheduledTaskInfo,
 } from '@/lib/api';
 import { AdminListHeader } from '@/components/admin/admin-list-header';
-import { SettingsGroup, StatusPill } from '@/components/settings/settings-section';
+import {
+  SettingsGroup,
+  StatusPill,
+  settingsGroupItemStyle,
+} from '@/components/settings/settings-section';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -306,7 +310,7 @@ export function ScheduledTasksCard({ isActive = true }: { isActive?: boolean } =
     <Card>
       <CardHeader>
         <CardTitle xstyle={styles.scheduledTasksCardCardTitle}>
-          <Clock3 {...stylex.props(styles.scheduledTasksCardClock3)} />
+          <Clock3 xstyle={styles.scheduledTasksCardClock3} />
           定时任务
         </CardTitle>
         <CardDescription>管理后台自动执行的类型化任务</CardDescription>
@@ -635,11 +639,9 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
 
   return (
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-      <DialogTrigger asChild>
-        <Button size="sm" onClick={openCreateDialog}>
-          <Plus {...stylex.props(styles.renderScheduledTaskEditorPlus)} />
-          新建任务
-        </Button>
+      <DialogTrigger render={<Button size="sm" onClick={openCreateDialog} />}>
+        <Plus xstyle={styles.renderScheduledTaskEditorPlus} />
+        新建任务
       </DialogTrigger>
       <DialogContent xstyle={styles.renderScheduledTaskEditorDialogContent}>
         <DialogHeader>
@@ -657,7 +659,7 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
                   styles.renderScheduledTaskEditorDiv3,
                 )}
               >
-                <AlertTriangle {...stylex.props(styles.renderScheduledTaskEditorAlertTriangle)} />
+                <AlertTriangle xstyle={styles.renderScheduledTaskEditorAlertTriangle} />
                 旧任务已自动停用
               </div>
               <p
@@ -774,7 +776,7 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
           </div>
           <div {...stylex.props(styles.renderScheduledTaskEditorDiv5)}>
             <Label htmlFor="scheduled-task-preset">任务预设</Label>
-            <Select value={jobPreset} onValueChange={(value: JobPresetId) => setJobPreset(value)}>
+            <Select value={jobPreset} items={JOB_PRESETS} onValueChange={setJobPreset}>
               <SelectTrigger
                 id="scheduled-task-preset"
                 xstyle={styles.renderScheduledTaskEditorSelectTrigger}
@@ -950,7 +952,7 @@ function renderScheduledTaskList(state: SchedulerViewState) {
       {tasks.length === 0 ? (
         <MotionParagraph
           key="empty-scheduled-tasks"
-          {...stylex.props(styles.renderScheduledTaskListMotionParagraph)}
+          {...stylex.props(settingsGroupItemStyle, styles.renderScheduledTaskListMotionParagraph)}
           initial="hidden"
           animate="visible"
           exit="exit"
@@ -963,7 +965,7 @@ function renderScheduledTaskList(state: SchedulerViewState) {
           <MotionDiv
             key={task.id}
             data-motion-scheduled-task-key={task.id}
-            {...stylex.props(styles.renderScheduledTaskListMotionDiv)}
+            {...stylex.props(settingsGroupItemStyle, styles.renderScheduledTaskListMotionDiv)}
             initial="hidden"
             animate="visible"
             exit="exit"
@@ -979,7 +981,7 @@ function renderScheduledTaskList(state: SchedulerViewState) {
                     : styles.renderScheduledTaskListSpanNotEnabled,
                 )}
               >
-                <Clock3 {...stylex.props(styles.renderScheduledTaskListClock3)} />
+                <Clock3 xstyle={styles.renderScheduledTaskListClock3} />
               </span>
               <div {...stylex.props(styles.renderScheduledTaskListDiv2)}>
                 <div
@@ -1055,7 +1057,7 @@ function renderScheduledTaskList(state: SchedulerViewState) {
                   aria-label={`编辑定时任务 ${task.name}`}
                   onClick={() => openEditDialog(task)}
                 >
-                  <Pencil {...stylex.props(styles.renderScheduledTaskEditorPlus)} />
+                  <Pencil xstyle={styles.renderScheduledTaskEditorPlus} />
                 </Button>
                 <Button
                   variant="ghost"
@@ -1068,7 +1070,7 @@ function renderScheduledTaskList(state: SchedulerViewState) {
                     setTaskToDelete(task);
                   }}
                 >
-                  <Trash2 {...stylex.props(styles.renderScheduledTaskEditorPlus)} />
+                  <Trash2 xstyle={styles.renderScheduledTaskEditorPlus} />
                 </Button>
               </div>
             </div>
@@ -1097,7 +1099,7 @@ function renderRecentSchedulerRuns(
           >
             <Clock
               animateOnView
-              {...stylex.props(styles.renderRecentSchedulerRunsClock)}
+              xstyle={styles.renderRecentSchedulerRunsClock}
               aria-hidden="true"
             />
             最近调度运行

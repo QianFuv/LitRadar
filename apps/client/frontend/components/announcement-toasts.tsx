@@ -161,7 +161,7 @@ function AnnouncementToast({ toast }: { toast: Toast.Root.ToastObject<Announceme
           </Button>
         </div>
         <Toast.Close aria-label="关闭" {...stylex.props(styles.announcementToastToastClose)}>
-          <X {...stylex.props(styles.announcementToastX)} aria-hidden="true" />
+          <X xstyle={styles.announcementToastX} aria-hidden="true" />
         </Toast.Close>
       </Toast.Content>
     </Toast.Root>

@@ -1,12 +1,18 @@
 /** Checkbox colors and feedback shared by filters and configuration forms. */
 
 import * as React from 'react';
-import * as CheckboxPrimitive from '@animate-ui/react/primitives/radix-ui/checkbox';
+import { Checkbox as CheckboxPrimitive } from '@animate-ui/react/primitives/base-ui/checkbox';
 import { CheckIcon } from 'lucide-react';
 import * as stylex from '@stylexjs/stylex';
 import { colors } from '@/lib/theme.stylex';
 
-/** Render checkbox borders and focus feedback inside the control so paint-contained lists cannot clip them. */
+/**
+ * Render a checkbox as a native button whose borders and focus feedback stay inside the control,
+ * so paint-contained lists cannot clip them.
+ *
+ * @param props - Base UI checkbox properties and style overrides.
+ * @returns Styled checkbox.
+ */
 function Checkbox({
   xstyle,
   ...props
@@ -15,6 +21,8 @@ function Checkbox({
 }) {
   return (
     <CheckboxPrimitive.Root
+      nativeButton
+      render={(props) => <button {...props} type="button" />}
       data-slot="checkbox"
       {...stylex.props(styles.checkbox, stylex.defaultMarker(), xstyle)}
       {...props}
@@ -39,18 +47,18 @@ const styles = stylex.create({
     borderRadius: '4px',
     backgroundColor: {
       default: colors.card,
-      ':is([data-state="checked"])': colors.primary,
+      ':is([data-checked])': colors.primary,
       ':hover': {
         default: null,
-        ':is([data-state="checked"])': null,
+        ':is([data-checked])': null,
         '@media (hover: hover)': {
           default: null,
-          ':is([data-state="checked"])': colors.primaryHover,
-          ':is([data-state="unchecked"])': colors.accent,
+          ':is([data-checked])': colors.primaryHover,
+          ':is([data-unchecked])': colors.accent,
         },
-        ':is([data-state="unchecked"])': null,
+        ':is([data-unchecked])': null,
       },
-      ':is([data-state="unchecked"])': null,
+      ':is([data-unchecked])': null,
     },
     boxShadow: {
       default: `inset 0 0 0 1px ${colors.input}`,
@@ -77,7 +85,7 @@ const styles = stylex.create({
     },
     color: {
       default: null,
-      ':is([data-state="checked"])': colors.primaryForeground,
+      ':is([data-checked])': colors.primaryForeground,
     },
   },
   checkboxIndicator: {

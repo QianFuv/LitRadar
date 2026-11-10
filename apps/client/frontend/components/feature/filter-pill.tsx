@@ -21,7 +21,7 @@ import { colors, lineHeights } from '@/lib/theme.stylex';
 /**
  * Build the styles of one filter pill trigger.
  *
- * Pills stay open-styled for both Radix (`data-state`) and Base UI (`data-popup-open`) triggers.
+ * Pills stay open-styled while their popup (`data-popup-open`) is open.
  *
  * @param isActive - Whether the filter currently narrows results.
  * @returns Pill styles.
@@ -51,7 +51,7 @@ export function FilterPillLabel({ text }: { text: string }) {
           {text}
         </MotionSpan>
       </MotionPresence>
-      <ChevronDown {...stylex.props(styles.filterPillLabelChevronDown)} aria-hidden="true" />
+      <ChevronDown xstyle={styles.filterPillLabelChevronDown} aria-hidden="true" />
     </>
   );
 }
@@ -152,16 +152,18 @@ export function FilterFacet({
 
   return (
     <Popover>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          aria-label={accessibleName}
-          title={accessibleName}
-          data-active={isActive ? 'true' : 'false'}
-          {...stylex.props(filterPillStyles(isActive))}
-        >
-          <FilterPillLabel text={visibleText} />
-        </button>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            aria-label={accessibleName}
+            title={accessibleName}
+            data-active={isActive ? 'true' : 'false'}
+            {...stylex.props(filterPillStyles(isActive))}
+          />
+        }
+      >
+        <FilterPillLabel text={visibleText} />
       </PopoverTrigger>
       <PopoverContent
         align="start"
@@ -215,20 +217,22 @@ export function DatabasePill({
   value,
 }: DatabasePillProps) {
   return (
-    <Select value={value} onValueChange={onChange} disabled={isDisabled}>
+    <Select
+      value={value}
+      items={databases.map((database) => ({ value: database, label: formatLabel(database) }))}
+      onValueChange={onChange}
+      disabled={isDisabled}
+    >
       <SelectTrigger
         aria-label={ariaLabel}
         size="sm"
         xstyle={styles.databasePillSelectTrigger}
         iconXstyle={styles.databasePillIcon}
       >
-        <Layers
-          {...stylex.props(styles.databasePillLayers, styles.databasePillIcon)}
-          aria-hidden="true"
-        />
+        <Layers xstyle={[styles.databasePillLayers, styles.databasePillIcon]} aria-hidden="true" />
         <SelectValue placeholder="选择数据库" />
       </SelectTrigger>
-      <SelectContent position="popper" align="start">
+      <SelectContent align="start">
         {databases.map((database) => (
           <SelectItem key={database} value={database}>
             {formatLabel(database)}
@@ -254,7 +258,6 @@ const styles = stylex.create({
     backgroundColor: {
       default: colors.background,
       ':is([data-popup-open])': colors.accent,
-      ':is([data-state="open"])': colors.accent,
       ':hover': {
         default: null,
         '@media (hover: hover)': colors.accent,
@@ -284,7 +287,6 @@ const styles = stylex.create({
         '@media (hover: hover)': colors.info,
       },
       ':is([data-popup-open])': colors.info,
-      ':is([data-state="open"])': colors.info,
     },
     fontWeight: 700,
     color: colors.infoForeground,
@@ -380,7 +382,10 @@ const styles = stylex.create({
       },
       ':hover': {
         default: null,
-        '@media (hover: hover)': `color-mix(in oklab, ${colors.foreground} 85%, transparent)`,
+        '@media (hover: hover)': {
+          default: `color-mix(in oklab, ${colors.foreground} 85%, transparent)`,
+          ':is([data-popup-open])': colors.foreground,
+        },
       },
     },
     paddingInline: {
