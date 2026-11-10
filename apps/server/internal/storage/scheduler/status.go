@@ -5,31 +5,34 @@ import (
 	"database/sql"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/scheduler"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/schedulerdb"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
 // LastCheckedAt reports the cursor and fails if its required singleton row is missing.
 func (repository *Repository) LastCheckedAt(ctx context.Context) (*float64, error) {
-	var value optionalNumber
+	var value *sqlite.Number
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
-		return connection.QueryRowContext(ctx, "SELECT last_checked_at FROM scheduler_state WHERE id=1").Scan(&value)
+		var err error
+		value, err = queries.Cursor(ctx, connection)
+		return err
 	})
-	return value.Value, err
+	return (*float64)(value), err
 }
 
 // RecordCheck never moves the persisted cursor backward, including when the clock regresses.
 func (repository *Repository) RecordCheck(ctx context.Context, now float64) error {
 	return repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
-		_, err := connection.ExecContext(ctx, `UPDATE scheduler_state SET last_checked_at=CASE WHEN last_checked_at IS NULL OR last_checked_at<?1 THEN ?1 ELSE last_checked_at END WHERE id=1`, now)
+		_, err := queries.RecordCheck(ctx, connection, schedulerdb.RecordCheckParams{LastCheckedAt: new(sqlite.Number(now))})
 		return err
 	})
 }
 
 func heartbeat(ctx context.Context, connection *sql.Conn, worker string, now float64) error {
-	if _, err := connection.ExecContext(ctx, `INSERT INTO scheduler_workers(worker_id,started_at,heartbeat_at) VALUES(?1,?2,?2) ON CONFLICT(worker_id) DO UPDATE SET heartbeat_at=excluded.heartbeat_at`, worker, now); err != nil {
+	if _, err := queries.WorkerHeartbeat(ctx, connection, schedulerdb.WorkerHeartbeatParams{WorkerID: sqlite.Text(worker), StartedAt: sqlite.Number(now)}); err != nil {
 		return err
 	}
-	_, err := connection.ExecContext(ctx, `INSERT INTO service_heartbeats(service,instance_id,started_at,heartbeat_at) VALUES('worker',?1,?2,?2) ON CONFLICT(service,instance_id) DO UPDATE SET heartbeat_at=excluded.heartbeat_at`, worker, now)
+	_, err := queries.ServiceHeartbeat(ctx, connection, schedulerdb.ServiceHeartbeatParams{InstanceID: sqlite.Text(worker), StartedAt: sqlite.Number(now)})
 	return err
 }
 
@@ -39,7 +42,7 @@ func (repository *Repository) RecordHeartbeat(ctx context.Context, worker string
 		if err := heartbeat(ctx, connection, worker, now); err != nil {
 			return err
 		}
-		_, err := connection.ExecContext(ctx, "DELETE FROM scheduler_workers WHERE worker_id<>? AND heartbeat_at<?", worker, now-604800)
+		_, err := queries.PruneWorkers(ctx, connection, schedulerdb.PruneWorkersParams{WorkerID: sqlite.Text(worker), HeartbeatAt: sqlite.Number(now - 604800)})
 		return err
 	})
 }
@@ -48,45 +51,26 @@ func (repository *Repository) RecordHeartbeat(ctx context.Context, worker string
 func (repository *Repository) Status(ctx context.Context, now, healthyWindow float64, limit uint64) (domain.Status, error) {
 	result := domain.Status{Workers: []domain.Worker{}, RecentRuns: []domain.Run{}}
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
-		var cursor optionalNumber
-		if err := connection.QueryRowContext(ctx, "SELECT last_checked_at FROM scheduler_state WHERE id=1").Scan(&cursor); err != nil {
-			return err
-		}
-		result.LastCheckedAt = cursor.Value
-		rows, err := connection.QueryContext(ctx, "SELECT worker_id,started_at,heartbeat_at FROM scheduler_workers ORDER BY heartbeat_at DESC")
+		cursor, err := queries.Cursor(ctx, connection)
 		if err != nil {
 			return err
 		}
-		for rows.Next() {
-			var worker sqlite.Text
-			var started, heartbeat sqlite.Number
-			if err := rows.Scan(&worker, &started, &heartbeat); err != nil {
-				rows.Close()
-				return err
-			}
-			result.Workers = append(result.Workers, domain.Worker{WorkerId: string(worker), StartedAt: float64(started), HeartbeatAt: float64(heartbeat), IsHealthy: float64(heartbeat) >= now-healthyWindow})
-		}
-		err = rows.Err()
-		rows.Close()
+		result.LastCheckedAt = (*float64)(cursor)
+		workers, err := queries.Workers(ctx, connection)
 		if err != nil {
 			return err
 		}
-		rows, err = connection.QueryContext(ctx, `SELECT id,task_id,task_name,scheduled_for,status,worker_id,claimed_at,started_at,finished_at FROM scheduled_task_runs ORDER BY scheduled_for DESC,id DESC LIMIT ?`, int64(limit))
+		for _, row := range workers {
+			result.Workers = append(result.Workers, domain.Worker{WorkerId: string(row.WorkerID), StartedAt: float64(row.StartedAt), HeartbeatAt: float64(row.HeartbeatAt), IsHealthy: float64(row.HeartbeatAt) >= now-healthyWindow})
+		}
+		runs, err := queries.RecentRuns(ctx, connection, schedulerdb.RecentRunsParams{Limit: int64(limit)})
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-		for rows.Next() {
-			var id, taskId, slot sqlite.Integer
-			var name, status sqlite.Text
-			var worker sqlite.OptionalText
-			var claimed, started, finished optionalNumber
-			if err := rows.Scan(&id, &taskId, &name, &slot, &status, &worker, &claimed, &started, &finished); err != nil {
-				return err
-			}
-			result.RecentRuns = append(result.RecentRuns, domain.Run{Id: int64(id), TaskId: int64(taskId), TaskName: string(name), ScheduledFor: int64(slot), Status: domain.PersistedState(string(status)), WorkerId: worker.Value, ClaimedAt: claimed.Value, StartedAt: started.Value, FinishedAt: finished.Value})
+		for _, row := range runs {
+			result.RecentRuns = append(result.RecentRuns, domain.Run{Id: int64(row.ID), TaskId: int64(row.TaskID), TaskName: string(row.TaskName), ScheduledFor: int64(row.ScheduledFor), Status: domain.PersistedState(string(row.Status)), WorkerId: (*string)(row.WorkerID), ClaimedAt: (*float64)(row.ClaimedAt), StartedAt: (*float64)(row.StartedAt), FinishedAt: (*float64)(row.FinishedAt)})
 		}
-		return rows.Err()
+		return nil
 	})
 	return result, err
 }
