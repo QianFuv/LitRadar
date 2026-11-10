@@ -2,7 +2,8 @@
 
 本文档说明当前实现中的设计变量（token）、基础组件、应用框架、布局和无障碍约定。修改界面时先复用这里的语义变量和组件，再核对实现来源：
 
-- [全局样式](../../apps/client/frontend/src/globals.css)：主题、字体、圆角、阴影、动画和全局行为
+- [设计 token](../../apps/client/frontend/lib/theme.stylex.tsx)：`stylex.defineVars` 定义的颜色与阴影
+- [全局样式](../../apps/client/frontend/src/globals.css)：字体、元素重置、共享控件内图标与设置分组子项间距、滚动条和全局行为
 - [根布局](../../apps/client/frontend/src/app.tsx)、[根级上下文](../../apps/client/frontend/src/providers.tsx)：根文档、主题和根级无障碍
 - [基础组件目录](../../apps/client/frontend/components/ui)：组件变体
 - [应用框架](../../apps/client/frontend/components/shell)：导航轨、手机底栏与账号头像
@@ -16,7 +17,7 @@
 | 层                  | 职责                                                                           |
 | ------------------- | ------------------------------------------------------------------------------ |
 | 语义 token          | light/dark 的背景、文字、交互、边框、状态色，以及阅读桌面与导航轨表面          |
-| Tailwind theme 映射 | 把 CSS 变量映射为 `bg-background`、`bg-canvas`、`bg-rail` 等 utility           |
+| StyleX 样式         | 组件文件末尾的 `stylex.create` 引用 `colors.*` / `shadows.*`，经 `stylex.props` 应用 |
 | UI primitives       | Button、Badge、Card、Dialog、DropdownMenu、Input、Select、Popover 等           |
 | 应用框架            | `AppFrame`（导航轨 + 主区域 + 手机底栏）与 `WorkspaceShell`（列表栏 + 阅读台） |
 | 业务组件            | 检索、收藏、周报、征稿、关系图、设置和管理页面的组合与少量场景色               |
@@ -34,7 +35,9 @@
 
 `JetBrainsLxgwNerdMono` 是正文、控件、标题、文章内容、设置/管理页面和代码区域的统一首选字体。`apps/client/frontend/assets/JetBrainsLxgwNerdMono-Regular/result.css` 通过 344 个本地 WOFF2 分片提供 400 字重，`apps/client/frontend/assets/JetBrainsLxgwNerdMono-Bold/result.css` 通过 324 个本地 WOFF2 分片提供 700 字重；两套生成样式都保留生成器、版权与 OFL/MIT 授权元数据，按 Unicode range 引用字体并为每个 `@font-face` 使用 `font-display: swap`。根布局不加载 Google 托管字体，字体链只在本地字体缺失时回退系统 `monospace`；正文与代码继续启用 `'liga' 1`。
 
-字体只有 400 与 700 两个字重：`font-medium` 实际渲染为 400，`font-semibold` 渲染为 700。需要强调时直接使用 `font-bold`。这套等宽中文字体的粗细差异较小，因此检索命中词同时使用粗体与 `bg-info` 浅蓝底，不能只靠字重表达。
+字体只有 400 与 700 两个字重：`font-medium` 实际渲染为 400，`font-semibold` 渲染为 700。需要强调时直接使用 `font-bold`。这套等宽中文字体的粗细差异较小，因此检索命中词同时使用粗体与 info 浅蓝底，不能只靠字重表达。
+
+字号阶梯中除不尽的无单位行高（xs、sm、lg、2xl）放在 `lib/theme.stylex.tsx` 的 `lineHeights` token 中，保持 `calc()` 精确比值；直接写在样式里会被构建四舍五入到五位小数，使文字产生亚像素偏移。
 
 可读性通过字号、行高与版面调整，不替换字体：
 
@@ -44,7 +47,7 @@
 | 列表元信息     | 12 px；作者单行截断，期刊粗体后接卷期与日期               |
 | 列表摘要       | 12.5 px、行高 20 px，最多两行                             |
 | 阅读台标题     | 22 px（`2xl` 起 26 px）、行高 1.35、粗体，字距 -0.01em    |
-| 阅读台摘要正文 | 15 px、行高 1.95，`text-pretty`，阅读栏最宽 42 rem        |
+| 阅读台摘要正文 | 15 px、行高 1.95，`text-wrap: pretty`，阅读栏最宽 42 rem  |
 | 页面标题       | 列表栏 18 px 粗体；设置分区 20 px 粗体；登录页 28 px 粗体 |
 
 ## 主题
@@ -59,59 +62,59 @@ ThemeProvider 使用 `attribute="class"`、`defaultTheme="system"` 和 `enableSy
 
 ### 核心颜色
 
-黑白中性灰构成结构，蓝色 `#2563eb` 是唯一强调色（主按钮、选中、焦点与当前导航指示）。所有结构 token 保持 R=G=B 的纯中性灰；成功、警告、错误和信息只用于状态语义，并始终配合文字、图标或 ARIA。
+颜色 token 定义在 `lib/theme.stylex.tsx` 的 `colors` 中，每个值是一组 `light-dark()`。next-themes 和 `public/theme-init.js` 在根元素上设置 `color-scheme`，token 随之切换，组件不需要 dark 条件样式。黑白中性灰构成结构，蓝色是唯一强调色（主按钮、选中、焦点与当前导航指示）。结构 token 保持近中性灰；成功、警告、错误和信息只用于状态语义，并始终配合文字、图标或 ARIA。
 
-| Token                                        | Light                             | Dark                              | 用途                                 |
-| -------------------------------------------- | --------------------------------- | --------------------------------- | ------------------------------------ |
-| `--background`                               | `#ffffff`                         | `#111111`                         | 列表栏、浮层底与页面背景             |
-| `--foreground`                               | `#1a1a1a`                         | `#ececec`                         | 主文字                               |
-| `--card` / `--popover`                       | `#ffffff`                         | `#171717` / `#1a1a1a`             | 卡片与浮层表面                       |
-| `--canvas`                                   | `#f4f4f4`                         | `#0a0a0a`                         | 阅读台占位、少量次级底色             |
-| `--paper`                                    | `#ffffff`                         | `#151515`                         | 保留 token，当前页面不再使用纸张表面 |
-| `--primary`                                  | `#2563eb`                         | `#2563eb`                         | 主按钮、选中开关与复选框             |
-| `--primary-hover` / `--primary-pressed`      | `#1d4ed8` / `#1e40af`             | `#1d4ed8` / `#1e40af`             | 主操作悬停与按下                     |
-| `--primary-text`                             | `#1d4ed8`                         | `#8ab4ff`                         | 链接与强调文字                       |
-| `--secondary`                                | `#f3f3f3`                         | `#222222`                         | 次级表面                             |
-| `--muted`                                    | `#f6f6f6`                         | `#171717`                         | 弱表面、搜索框底、工具条             |
-| `--muted-foreground`                         | `#666666`                         | `#a3a3a3`                         | 辅助文字                             |
-| `--accent` / `--accent-pressed`              | `#f2f2f2` / `#e8e8e8`             | `#1f1f1f` / `#2b2b2b`             | 悬停与按下                           |
-| `--border`                                   | `#e8e8e8`                         | `#262626`                         | 分隔线                               |
-| `--input` / `--input-hover`                  | `#dadada` / `#c2c2c2`             | `#363636` / `#4a4a4a`             | 控件轮廓与悬停                       |
-| `--ring` / `--sidebar-ring`                  | `#3b82f6`                         | `#60a5fa`                         | 键盘焦点                             |
-| `--rail` / `--rail-hover` / `--rail-border`  | `#f7f7f7` / `#ebebeb` / `#e8e8e8` | `#0b0b0b` / `#1c1c1c` / `#1f1f1f` | 导航轨表面、悬停与分隔               |
-| `--rail-foreground` / `--rail-active`        | `#737373` / `#111111`             | `#8a8a8a` / `#f5f5f5`             | 导航轨图标与当前项                   |
-| `--info` / `--info-foreground`               | `#eef3fe` / `#1d4ed8`             | `#12224a` / `#a5c2ff`             | 选中行、已应用筛选与命中高亮         |
-| `--success` / `--success-foreground`         | `#ecfdf3` / `#166534`             | `#0f2a1c` / `#6ee7a0`             | 开放获取、征稿中、成功               |
-| `--warning` / `--warning-foreground`         | `#fffbeb` / `#92400e`             | `#2b1d06` / `#fbbf24`             | 收藏与警告                           |
-| `--destructive` / `--destructive-foreground` | `#dc2626` / `#ffffff`             | `#f87171` / `#450a0a`             | 错误文字与危险按钮                   |
-| `--destructive-hover`                        | `#b91c1c`                         | `#fca5a5`                         | 危险按钮悬停                         |
+| Token | Light | Dark | 用途 |
+| --- | --- | --- | --- |
+| `background` | `#f6f6f6` | `#141414` | 页面、列表栏与浮层底 |
+| `foreground` | `#27272a` | `#f5f5f5` | 主文字 |
+| `card / popover` | `#fbfbfb` | `#1b1b1b` | 卡片与浮层表面 |
+| `canvas` | `#f6f6f6` | `#141414` | 阅读台占位、少量次级底色 |
+| `paper` | `#f8f8f8` | `#1b1b1b` | 征稿纸张表面 |
+| `primary` | `#1b4ed8` | `#346bf1` | 主按钮、选中开关与复选框 |
+| `primaryHover / primaryPressed` | `#3160db / #1740b0` | `#3061d9 / #2a55c0` | 主操作悬停与按下 |
+| `primaryText` | `#1b4ed8` | `#51a2ff` | 链接与强调文字 |
+| `secondary / muted` | `#f3f3f3` | `#1b1b1b` | 次级与弱表面、搜索框底、工具条 |
+| `mutedForeground` | `#696973` | `#8e8e8e` | 辅助文字 |
+| `accent / accentPressed` | `#ededee / #e4e4e6` | `#1e1e1e / #262626` | 悬停与按下 |
+| `border` | `#e0e0e3` | `#242424` | 分隔线 |
+| `input / inputHover` | `#d0d0d4 / #b8b8bd` | `#2a2a2a / #3a3a3a` | 控件轮廓与悬停 |
+| `ring` | `#1b4ed8` | `#346bf1` | 键盘焦点 |
+| `rail / railHover / railBorder` | `#efefef / #e9e9ea / #e0e0e3` | `#1c1c1c / #2c2c2c / #2b2b2b` | 导航轨表面、悬停与分隔 |
+| `railForeground / railActive` | `#676771 / #27272a` | `#a3a3a3 / #f1f3f7` | 导航轨图标与当前项 |
+| `info / infoForeground` | `#dbe1f2 / #1b4ed8` | `#1b2440 / #51a2ff` | 选中行、已应用筛选与命中高亮 |
+| `success / successForeground` | `#ecfdf3 / #166534` | `#0f2a1c / #6ee7a0` | 开放获取、征稿中、成功 |
+| `warning / warningForeground` | `#f7efe2 / #b54b00` | `#3b2a11 / #ffb900` | 收藏与警告 |
+| `destructive / destructiveForeground` | `#c10007 / #ffffff` | `#fb414a / #141414` | 错误文字与危险按钮 |
+| `destructiveHover` | `#a10006` | `#ff6467` | 危险按钮悬停 |
+| `destructiveRing` | destructive 20% | destructive 40% | 无效输入与危险按钮的焦点环 |
 
-`success-border` 和 `warning-border` 提供配套状态边框。`--sidebar-*` 保留为中性 token，供历史组件与契约测试使用。滚动条保持中性灰。`public/litradar-logo.png` 是品牌图像，出现在导航轨顶部、登录页与 favicon；账号头像使用用户名首字母。CNKI 二维码属于内容资产，保持原色与必要的白底。独立根错误页不能依赖失效的根样式，使用对应深色值作为内联后备。
+`successBorder` 和 `warningBorder` 提供配套状态边框。`globals.css` 只能写字面量的规则（`body` 底色与文字、默认边框色、滚动条、skip link）重复对应 token 的 `light-dark()` 值，`tests/default-chrome-theme.test.tsx` 保证两边一致。滚动条保持中性灰。`public/litradar-logo.png` 是品牌图像，出现在导航轨顶部、登录页与 favicon；账号头像使用用户名首字母。CNKI 二维码属于内容资产，保持原色与必要的白底。独立根错误页不能依赖失效的根样式，使用对应深色值作为内联后备。
 
 ## 圆角
 
-基础值为 `--radius: 8px`。Tailwind 映射：
+圆角直接写在样式里，常用值：
 
-| Utility token | 计算值 | 常见用途                       |
-| ------------- | -----: | ------------------------------ |
-| `radius-sm`   |   4 px | 复选框、紧凑标记               |
-| `radius-md`   |   6 px | 紧凑按钮尺寸、内嵌行           |
-| `radius-lg`   |   8 px | 按钮、输入框、选择器、菜单项   |
-| `radius-xl`   |  12 px | 卡片、浮层、搜索框、导航轨项   |
-| `radius-2xl`  |  16 px | 居中对话框、征稿纸张、设置面板 |
-| `radius-3xl`  |  20 px | —                              |
-| `radius-4xl`  |  24 px | —                              |
+| 值     | 常见用途                       |
+| -----: | ------------------------------ |
+|   4 px | 复选框、紧凑标记               |
+|   6 px | 紧凑按钮尺寸、内嵌行           |
+|   8 px | 按钮、输入框、选择器、菜单项   |
+|  12 px | 卡片、浮层、搜索框、导航轨项   |
+|  16 px | 居中对话框、征稿纸张、设置面板 |
 
 筛选胶囊、收藏夹标签、Badge、头像和滚动条使用全圆角。
 
 ## 阴影与边框
 
-| Token                  | 定义                          | 用途                                       |
-| ---------------------- | ----------------------------- | ------------------------------------------ |
-| `--shadow-vercel-ring` | `0 0 0 1px var(--input)` 等值 | outline Button、Input、Select 等控件轮廓   |
-| `--shadow-vercel-card` | 边框外环 + 1 px/2 px 轻阴影   | Card、skip link                            |
-| `--shadow-paper`       | 细外环 + 8 px/24 px 柔和投影  | 仅用于少量选择卡片的悬停，页面表面不再使用 |
-| `--shadow-overlay`     | 细外环 + 12 px/32 px 投影     | Dialog、Popover、Select、DropdownMenu      |
+| Token                | 定义                         | 用途                                       |
+| -------------------- | ---------------------------- | ------------------------------------------ |
+| `shadows.vercelRing` | `input` 色 1 px 外环         | outline Button、Input、Select 等控件轮廓   |
+| `shadows.vercelCard` | 边框外环 + 1 px/2 px 轻阴影  | skip link 与少量卡片表面                   |
+| `shadows.paper`      | 细外环 + 8 px/24 px 柔和投影 | 仅用于少量选择卡片的悬停，页面表面不再使用 |
+| `shadows.overlay`    | 细外环 + 12 px/32 px 投影    | Dialog、Popover、Select、DropdownMenu      |
+
+只在一个主题出现的阴影层在另一主题用透明色占位，因此每层只需一个 `light-dark()`。
 
 表面层级：所有页面主体都是白色 `background`，列表栏、阅读台、设置与管理内容处在同一平面，只用 1 px 细线分隔；阴影与浮起只留给浮层（菜单、对话框、弹出面板）。这一处理参照 Apple HIG 的分栏视图与 Linear 的界面改版：两栏平铺、导航调暗、强调色克制。
 
@@ -121,7 +124,7 @@ ThemeProvider 使用 `attribute="class"`、`defaultTheme="system"` 和 `enableSy
 
 外观变体：`default`、`destructive`、`outline`、`secondary`、`ghost`、`link`；尺寸：`xs`、`sm`、`default`、`lg` 与 `icon-xs`、`icon-sm`、`icon`、`icon-lg`。
 
-Button 统一使用 `rounded-lg`、禁用态 opacity、有限属性 transition 和 3 px `focus-visible` ring。非 link 按钮在按下时使用 `scale(0.96)`，只在未请求 reduced motion 且未禁用时启用；`static` 可关闭按压缩放，用于搜索清空、关闭按钮等需要保持锚点稳定的操作。图标按钮必须提供可访问名称。
+Button 统一使用 8 px 圆角、禁用态 opacity、有限属性 transition 和 3 px `focus-visible` ring。非 link 按钮在按下时使用 `scale(0.96)`，只在未请求 reduced motion 且未禁用时启用；`static` 可关闭按压缩放，用于搜索清空、关闭按钮等需要保持锚点稳定的操作。图标按钮必须提供可访问名称。
 
 ### Badge
 
@@ -129,15 +132,15 @@ Badge 默认全圆角、11 px 文字，支持 `default`（info）、`secondary`�
 
 ### Card
 
-Card 使用 card token、`rounded-xl`、`shadow-vercel-card` 与统一 header/content/footer 结构。管理面板由 `AdminPanel` 把顶层 Card 压平为透明分区，避免在白色内容面板里再嵌一层卡片。
+Card 只用于管理面板：每张卡片是一个透明的扁平分区，header 仅读屏可见（分类标题已在外壳中显示），避免在白色内容面板里再嵌一层卡片。
 
 ### 表单与浮层
 
 | 组件              | 实现约定                                                                         |
 | ----------------- | -------------------------------------------------------------------------------- |
-| Input             | 36 px 高、`rounded-lg`、shadow ring、移动端 16 px 字号、3 px focus ring          |
+| Input             | 36 px 高、8 px 圆角、shadow ring、移动端 16 px 字号、3 px focus ring             |
 | Checkbox / Switch | Radix 状态属性驱动颜色、焦点和禁用态；Switch 为 20 × 36 px                       |
-| Select / Popover  | Radix portal、`rounded-xl` 与 `shadow-overlay`；内容限制在 viewport 内           |
+| Select / Popover  | Radix portal、12 px 圆角与 `shadows.overlay`；内容限制在 viewport 内             |
 | DropdownMenu      | `components/ui/dropdown-menu.tsx` 统一菜单表面、菜单项与危险项样式               |
 | ScrollArea        | Radix viewport 与自定义 scrollbar                                                |
 | Skeleton          | muted pulse；文章列表使用与条目同构的 `ArticleListSkeleton`                      |
@@ -151,7 +154,7 @@ Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制�
 
 | placement  | 用途                          | 形态                                               |
 | ---------- | ----------------------------- | -------------------------------------------------- |
-| `center`   | 确认、新建/重命名、公告、表单 | 居中、`rounded-2xl`、`md:max-w-xl`，右上角关闭按钮 |
+| `center`   | 确认、新建/重命名、公告、表单 | 居中、16 px 圆角、`md` 起最宽 36 rem，右上角关闭按钮 |
 | `right`    | 窄屏文章详情、征稿详情        | 手机全屏；`md` 起右侧 46 rem 宽面板，顶部关闭按钮  |
 | `bottom`   | 手机端筛选面板与期刊选择      | 底部抽屉、顶部拖拽条、底部「完成」按钮             |
 | `takeover` | 设置中心、管理面板            | 全屏页面式外壳，顶部标题栏与分类标签               |
@@ -175,7 +178,7 @@ Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制�
 
 `WorkspaceShell` 是检索、收藏、周报、征稿和关系图共用的两栏布局：
 
-- **列表栏**：`xl` 以下占满宽度。顶部 `workspace-list-header` 固定，放置页面标题、搜索框和筛选胶囊；下方 `#results-scroll-container` 独立滚动，底部留白避开手机底栏（`workspace-bottom-space`）。征稿目录使用 `isListSelfScrolling`，由分组列表各自滚动。
+- **列表栏**：`xl` 以下占满宽度。顶部 `workspace-list-header` 固定，放置页面标题、搜索框和筛选胶囊；下方 `#results-scroll-container` 独立滚动，底部留白避开手机底栏（含 safe area）。征稿目录使用 `isListSelfScrolling`，由分组列表各自滚动。
 - **阅读台**（`xl` 即 1280 px 及以上）停靠在列表右侧，按 `emphasis` 分配宽度：
   - `emphasis="list"`（检索、收藏、周报）：列表与详情栏按 3 : 2 弹性分配（1440 宽时约 826 px 与 550 px）。列表是页面主体；详情栏为白底加左侧分隔线，内容直接排版、不加卡片，详情较短时下方自然留白而不显空洞。`shouldAutoSelectFirst` 让详情栏在进入页面、切换筛选或数据库后自动显示列表第一篇。
   - `emphasis="reader"`（征稿）：期刊目录固定 460 px（`2xl` 起 520 px），右侧白色阅读台用细线分段呈现期刊抬头与各条征稿。
@@ -210,9 +213,9 @@ Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制�
 - `FilterFacet`：普通胶囊，`md` 起以浮层打开面板，`md` 以下以底部抽屉打开并提供「完成」按钮。面板标题区带说明与单项「清除」。
 - `FilterOptionRow`：复选行，整行可点，右侧显示数量。
 
-未应用时胶囊显示维度名；已应用时显示摘要并使用 `bg-info` 粗体样式。可访问名称为「维度：摘要」，多选时读作「已选 N 项 / 本 / 个」。有已应用筛选时末尾出现「清除筛选」（title「清空全部筛选」），只清除领域、期刊、评级与时间，保留检索词和数据库。发表时间面板提供「不限 / 近 1、3、5 年 / 自定义范围」单选组（`role="radio"`），自定义时显示起止年月选择。期刊选项只在面板打开后构建，大量选中项用 Set 判断成员关系。
+未应用时胶囊显示维度名；已应用时显示摘要并使用 info 底色粗体样式。可访问名称为「维度：摘要」，多选时读作「已选 N 项 / 本 / 个」。有已应用筛选时末尾出现「清除筛选」（title「清空全部筛选」），只清除领域、期刊、评级与时间，保留检索词和数据库。发表时间面板提供「不限 / 近 1、3、5 年 / 自定义范围」单选组（`role="radio"`），自定义时显示起止年月选择。期刊选项只在面板打开后构建，大量选中项用 Set 判断成员关系。
 
-胶囊行在 `md` 起自动换行，在手机端横向滚动并以 `fade-x-edges` 在右侧渐隐。可滚动的面板列表左侧至少留 3 px 给焦点环，右侧至少留 8 px 避开滚动条。
+胶囊行在 `md` 起自动换行，在手机端横向滚动并在右侧渐隐。可滚动的面板列表左侧至少留 3 px 给焦点环，右侧至少留 8 px 避开滚动条。
 
 ### 收藏、周报与征稿
 
@@ -244,7 +247,7 @@ Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制�
 | `SettingsGroupBody` | 面板中的自由内容区                                                                            |
 | `StatusPill`        | 带圆点的状态标签，tone 为 neutral / success / warning / danger / info                         |
 
-面板底部的操作区使用 `bg-muted/40` 底条，主操作在右，破坏性操作为左侧红色 ghost 按钮。各分区的具体形态：
+面板底部的操作区使用 40% 不透明度的 muted 底条，主操作在右，破坏性操作为左侧红色 ghost 按钮。各分区的具体形态：
 
 - **常规**：主题以界面缩略图卡片呈现（跟随系统为斜切的明暗双拼），下方是单选圆点与说明。
 - **文献追踪**：顶部四步流程条；追踪文件夹为「当前文件夹 + 新建」两行；关键词与研究方向使用芯片与输入合一的标签输入框；推送数据库为逐行复选并带范围进度条；主/备 AI 配置是带深色图标块标题的行式表单，密钥状态用 `StatusPill`。
@@ -280,10 +283,10 @@ Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制�
 | `xl` 1280    | 阅读台停靠：文献页列表与详情 3 : 2，征稿目录 460 px              |
 | `2xl` 1536   | 征稿目录 520 px；详情栏加大内边距与标题字号                      |
 
-- 全视口 shell 使用 `h-dvh`，固定头部与滚动正文使用 `flex`、`min-h-0` 和 `flex-1` 分配高度。
+- 全视口 shell 使用 `100dvh` 高度，固定头部与滚动正文用 flex、`min-height: 0` 和 `flex: 1` 分配高度。
 - 搜索框、清空、搜索、帮助、筛选胶囊、数据库胶囊、收藏夹标签与收藏操作在移动端保留至少 44 px 的实际命中高度，桌面多为 32–40 px；不使用会重叠的伪元素扩展命中区。
 - 手机底栏与内容底部留白都计入 `--safe-area-inset-bottom`。
-- 长列表使用独立滚动容器、Intersection Observer 和 `content-visibility-*` 类。
+- 长列表使用独立滚动容器、Intersection Observer 和 `content-visibility: auto`。
 
 ## 无障碍与动效
 

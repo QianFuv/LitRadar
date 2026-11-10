@@ -22,10 +22,10 @@ CI 与前端构建阶段使用：
 | React / React DOM | 19.2.3                                                                  |
 | Motion for React  | 13.1.1                                                                  |
 | TypeScript        | 7.x                                                                     |
-| Tailwind CSS      | 4.x                                                                     |
+| StyleX            | 0.19.x（`@stylexjs/unplugin` 编译为原子 CSS，经 Lightning CSS 处理）    |
 | Go                | 1.27.3；生成 OpenAPI、启动后端和 full-stack e2e 时需要，不需要 C 编译器 |
 
-依赖由仓库根目录的 pnpm workspace `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Router、TanStack Query、Zod、next-themes、Radix UI、Motion、class-variance-authority 和 lucide-react。Motion 只通过 `components/ui/motion.tsx` 的 `LazyMotion` / `domAnimation` 封装进入业务代码；Radix portal 的浮层过渡仍由共享 CSS motion token 驱动。
+依赖由仓库根目录的 pnpm workspace `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Router、TanStack Query、Zod、next-themes、Radix UI、StyleX、Motion 和 lucide-react。样式写在各组件文件末尾的 `stylex.create`，颜色与阴影引用 `lib/theme.stylex.tsx` 的 token；接受样式覆盖的组件使用 `xstyle` 属性（类型为 `stylex.StyleXStyles`），不再接受 `className`。Motion 只通过 `components/ui/motion.tsx` 的 `LazyMotion` / `domAnimation` 封装进入业务代码；Radix portal 的浮层过渡由各组件 StyleX 样式中的 transition 驱动。
 
 ## 本地运行
 
@@ -109,7 +109,7 @@ apps/client/frontend/
 │   ├── router.tsx         路由树与 router 工厂
 │   ├── devtools.tsx       仅开发环境懒加载的 TanStack Devtools（Router 与 Query 面板）
 │   ├── routes/            首页工作区、登录、404 与认证守卫
-│   ├── globals.css        Tailwind、主题 token、字体和全局无障碍规则
+│   ├── globals.css        字体、元素重置、共享控件内图标与分组间距、滚动条与 skip link
 │   ├── error-boundary.tsx 可复位的错误边界
 │   ├── route-error.tsx    常规路由错误画面与重试入口
 │   ├── global-error.tsx   Router 或 Providers 失败时的独立错误画面
@@ -124,7 +124,7 @@ apps/client/frontend/
 │   ├── settings/          聚合设置中心、分类内容与设置组件
 │   ├── tracking/          追踪设置内容与共享 view model
 │   ├── weekly/            每周更新工作区视图与查询编排
-│   └── ui/                Radix/CVA 基础组件
+│   └── ui/                Radix + StyleX 基础组件
 ├── lib/
 │   ├── api/               按 auth/index/favorites/tracking/admin 拆分的 facade 与共享 transport
 │   ├── platform/          ClientPlatform 接口与 Web 实现
