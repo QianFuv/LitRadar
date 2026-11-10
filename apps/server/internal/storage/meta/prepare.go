@@ -9,8 +9,11 @@ import (
 	"slices"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/metadb"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
+
+var queries metadb.Queries
 
 // CatalogReport distinguishes adoption and customization from actual file replacement.
 type CatalogReport struct {
@@ -82,7 +85,16 @@ func prepare(ctx context.Context, configuration config.Config, directory string,
 // admitBundleVersion rejects downgrade before any persistent directory or file change.
 func admitBundleVersion(ctx context.Context, connection *sql.Conn, version int64) error {
 	var maximum storage.OptionalInteger
-	if err := connection.QueryRowContext(ctx, "SELECT MAX(bundle_version) FROM managed_meta_catalogs").Scan(&maximum); err != nil {
+	if err := func() error {
+		queryResult, err := queries.MaximumVersion(ctx, connection)
+		if err != nil {
+			return err
+		}
+		if err := (&maximum).Scan(queryResult); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
 		return err
 	}
 	if maximum.Value != nil && *maximum.Value > version {
@@ -133,7 +145,15 @@ func applyCatalogs(ctx context.Context, connection *sql.Conn, directory string, 
 func readCatalogState(ctx context.Context, connection *sql.Conn, filename string) (state, bool, error) {
 	var previous state
 	var stored storage.Text
-	err := connection.QueryRowContext(ctx, "SELECT bundle_version,applied_sha256 FROM managed_meta_catalogs WHERE filename=?", filename).Scan(&previous.version, &stored)
+	err := func() error {
+		queryResult, err := queries.CatalogState(ctx, connection, metadb.CatalogStateParams{Filename: storage.Text(filename)})
+		if err != nil {
+			return err
+		}
+		previous.version = storage.Integer(queryResult.BundleVersion)
+		stored = storage.Text(queryResult.AppliedSHA256)
+		return nil
+	}()
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return state{}, false, err
 	}
@@ -226,6 +246,6 @@ func storeCatalogState(ctx context.Context, connection *sql.Conn, candidate cata
 			return err
 		}
 	}
-	_, err := connection.ExecContext(ctx, `INSERT INTO managed_meta_catalogs(filename,bundle_version,applied_sha256) VALUES(?,?,?) ON CONFLICT(filename) DO UPDATE SET bundle_version=excluded.bundle_version,applied_sha256=excluded.applied_sha256`, candidate.filename, version, candidate.sha256)
+	_, err := queries.StoreCatalogState(ctx, connection, metadb.StoreCatalogStateParams{Filename: storage.Text(candidate.filename), BundleVersion: storage.Integer(version), AppliedSHA256: storage.Text(candidate.sha256)})
 	return err
 }
