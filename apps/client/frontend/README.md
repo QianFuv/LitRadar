@@ -18,14 +18,14 @@ CI 与前端构建阶段使用：
 | Node.js           | 26.11.1                                                                 |
 | pnpm              | 12.16.1                                                                 |
 | Vite+（`vp`）     | 1.5.x；内含 Vite 8、Vitest 5、Oxlint、Oxfmt，版本随 Vite+ 锁定          |
-| React Router      | 7.x（声明式路由）                                                       |
+| TanStack Router   | 1.x（代码式路由树，search 用 Zod 4 校验）                               |
 | React / React DOM | 19.2.3                                                                  |
 | Motion for React  | 13.1.1                                                                  |
 | TypeScript        | 7.x                                                                     |
 | Tailwind CSS      | 4.x                                                                     |
 | Go                | 1.27.3；生成 OpenAPI、启动后端和 full-stack e2e 时需要，不需要 C 编译器 |
 
-依赖由仓库根目录的 pnpm workspace `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Query、nuqs、next-themes、Radix UI、Motion、class-variance-authority 和 lucide-react。Motion 只通过 `components/ui/motion.tsx` 的 `LazyMotion` / `domAnimation` 封装进入业务代码；Radix portal 的浮层过渡仍由共享 CSS motion token 驱动。
+依赖由仓库根目录的 pnpm workspace `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Router、TanStack Query、Zod、next-themes、Radix UI、Motion、class-variance-authority 和 lucide-react。Motion 只通过 `components/ui/motion.tsx` 的 `LazyMotion` / `domAnimation` 封装进入业务代码；Radix portal 的浮层过渡仍由共享 CSS motion token 驱动。
 
 ## 本地运行
 
@@ -67,6 +67,7 @@ pnpm --filter litradar-frontend dev
 
 - 请求统一经过 `lib/platform/` 的 `ClientPlatform`；Web 实现从 `window.location.origin` 生成同源 API URL 并携带会话 Cookie。
 - `lib/api/client.tsx` 为每次请求设置 60 秒超时，传递调用方 `AbortSignal`，并对幂等 GET 在网络失败或不超过 5 秒的 `Retry-After`（429/503）时最多重试两次。
+- 非 2xx 响应体按 RFC 9457 `application/problem+json` 用 Zod 解析为 `ApiError`：`detail` 作为显示文本（缺失时使用调用方的回退文案），`type`、`title`、`instance` 与 `errors[]` 原样保留，`findErrorDetail(location)` 读取 `errors[]` 中某个 `location` 的 `message`（例如 CNKI 工作流的 `code` 与 `phase`）。只有带 `Retry-After` 的 429/503 响应才标记为 `retryable`；格式异常的成员按缺失处理。
 - `pnpm dev` / `pnpm preview` 只使用 `vite.config.ts` 中的开发代理。
 - 生产环境由外部反向代理让网页与 API 共用一个 Origin。
 - 浏览器跨源直连和构建时 API 地址覆盖不再受支持；需要不同公网入口时，应在同一 Origin 前部署反向代理。
@@ -83,11 +84,13 @@ pnpm --filter litradar-frontend dev
 | `?settings=<section>`   | 已登录   | 在当前受保护工作区上打开聚合设置中心          |
 | `?admin=<section>`      | 管理员   | 在当前受保护工作区上打开分栏管理面板          |
 
-路由表位于 `src/app.tsx`（React Router 声明式路由）。除 `/login` 外，页面都在 `src/routes/require-auth.tsx` 守卫之下，它通过 `AuthProvider` 恢复当前用户并把未登录访问重定向到 `/login?next=...`。管理面板只由全局 Dialog 提供；账号菜单入口与手工添加的 `admin` query 都检查 `is_admin`，普通用户的管理参数会被移除且不会挂载管理数据组件。
+路由树位于 `src/router.tsx`（TanStack Router 代码式路由，不生成路由树文件）：根路由提供错误页与 404，`/login` 是公开页，无路径的工作区布局（route id `/_workspace`）承载受保护的首页。除 `/login` 外，页面都在 `src/routes/require-auth.tsx` 守卫之下，它通过 `AuthProvider` 恢复当前用户，并在认证状态变化时把未登录访问一次性重定向到 `/login?next=...`。管理面板只由全局 Dialog 提供；账号菜单入口与手工添加的 `admin` query 都检查 `is_admin`，普通用户的管理参数会被移除且不会挂载管理数据组件。
 
 根路由通过 `view` 参数切换检索、收藏、每周更新和征稿工作区。省略 `view` 或传入未知值时显示检索；四个固定入口分别使用 `/`、`/?view=favorites`、`/?view=weekly-updates` 和 `/?view=cfp-tracking`，因此可直接访问、刷新并使用浏览器前进/后退。切换固定入口会清除上一工作区的私有参数；收藏继续使用 `folder`，周报继续使用 `db`、`journal` 和 `weekly_q`；征稿使用独立的 `cfp_db`、`cfp_journal`，不覆盖文章检索的数据库偏好。`/favorites` 与 `/weekly-updates` 已直接删除，访问时返回普通 404，不提供重定向或兼容页面。
 
 设置中心由受保护布局全局挂载，合法分类为 `general`、`tracking`、`notifications`、`data-sources`、`account` 和 `tokens`。管理面板同样由该布局挂载，合法分类为 `overview`、`users`、`invite-codes`、`runtime-settings`、`scheduled-tasks` 和 `announcements`。打开、切换与关闭只修改对应的 `settings` 或 `admin` 参数并保留其他工作区状态；两个中心互斥，未知分类会被移除。`/admin`、`/settings` 和 `/tracking` 都不是页面路由，访问时返回普通 404，不提供重定向或兼容页面。
+
+URL search 的契约集中在 `lib/search-params.tsx`：工作区与登录页各有一个 Zod schema，非法值按缺失处理，未知参数原样保留。查询串保持普通的 `key=value` 形式，列表参数（`area`、`journal_id` 与四个评级）以逗号连接、元素内的逗号转义为 `%2C`，与迁移前的链接兼容。组件用 `useSearch({ from: WORKSPACE_ROUTE_ID })` 读取、用 `useUpdateWorkspaceSearch()` 写入；写入替换当前历史记录且不重置滚动位置，空字符串和空列表不会出现在 URL 中。
 
 `index.html` 提供默认标题与描述；四个查询参数工作区和管理 Dialog 共用它，登录页与 404 页通过 React 19 `<title>`/`<meta>` 覆盖。未知路由使用自定义 404 页面；路由错误边界（`src/error-boundary.tsx`）提供重试和首页入口并在导航后复位，Router 或 Providers 失败时由不依赖 Providers 的独立全局错误画面兜底。首屏主题由 `public/theme-init.js` 在渲染前应用，避免闪烁。
 
@@ -102,13 +105,15 @@ apps/client/frontend/
 ├── index.html             静态元数据、主题初始化脚本、skip link 与挂载点
 ├── src/
 │   ├── main.tsx           浏览器入口
-│   ├── app.tsx            全局错误边界、BrowserRouter、Providers 与路由表
+│   ├── app.tsx            全局错误边界、服务端选择、Providers 与 RouterProvider
+│   ├── router.tsx         路由树与 router 工厂
+│   ├── devtools.tsx       仅开发环境懒加载的 TanStack Devtools（Router 与 Query 面板）
 │   ├── routes/            首页工作区、登录、404 与认证守卫
 │   ├── globals.css        Tailwind、主题 token、字体和全局无障碍规则
 │   ├── error-boundary.tsx 可复位的错误边界
 │   ├── route-error.tsx    常规路由错误画面与重试入口
 │   ├── global-error.tsx   Router 或 Providers 失败时的独立错误画面
-│   └── providers.tsx      Theme、Motion、nuqs、React Query 与认证上下文
+│   └── providers.tsx      Theme、Motion、React Query 与认证上下文
 ├── assets/                 本地字体 CSS 与 Unicode-range WOFF2 分片
 ├── components/
 │   ├── admin/             全局管理面板 Dialog 与管理功能卡片
@@ -145,7 +150,7 @@ apps/client/frontend/
 | 状态                   | 所有者                                                                               |
 | ---------------------- | ------------------------------------------------------------------------------------ |
 | 后端查询与 mutation    | TanStack Query                                                                       |
-| 工作区、搜索和筛选选择 | nuqs URL query state                                                                 |
+| 工作区、搜索和筛选选择 | TanStack Router URL search（`lib/search-params.tsx` 的 Zod schema）                  |
 | 登录用户               | `AuthProvider` + `GET /api/auth/me`；非秘密用户缓存 `localStorage: litradar:v1:user` |
 | 退出撤销未确认提示     | `localStorage: litradar:v1:logout_revocation_unconfirmed`                            |
 | 当前数据库             | `localStorage: litradar:v1:selected_database`                                        |
@@ -156,7 +161,7 @@ apps/client/frontend/
 
 旧版搜索历史键 `search_history` 和数据库选择键 `selected_database` 会迁移到对应的新命名空间并删除；其他升级前的浏览器键不会被读取或复制。升级后用户需要重新登录。
 
-Web Storage helper 会容忍 SSR、隐私模式和 quota 错误；调用方不应假定写入必然成功。
+Web Storage helper 会容忍 SSR、隐私模式和 quota 错误；调用方不应假定写入必然成功。读取的 JSON 值（搜索历史、退出撤销提示、检索构建器与关系图会话快照）经 `parseStoredJson` 用 Zod 校验，不符合的值按缺失处理。
 
 站点图标、导航轨与登录页品牌图像使用 `public/litradar-logo.png` 本地静态资源，不依赖第三方图片域名。
 
