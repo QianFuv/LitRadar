@@ -7,6 +7,7 @@
 LitRadar 只有一个进程级 Go slog 日志处理器：
 
 - 服务端事件写入 `stderr`，默认每行一个 JSON 对象；CLI 的业务结果继续独占 `stdout`。
+- Wails web 和原生客户端的宿主启动失败通过标准 `slog` 默认处理器写入 `stderr`，事件名为 `client.failed`，随后以退出码 1 终止；该客户端文本输出不使用服务端的 JSON/compact 处理器。
 - 未知 CLI 子命令和无效或缺失的 `--retries` 值会在 `process.failed` 事件中附带固定的 `diagnostic` 提示，保留 `error_kind=command_failed`；不记录原始参数值或底层错误文本。JSON 和 compact 格式均包含该提示。
 - Docker 不在应用文件系统中写日志。Compose 收集容器 `stderr`，应用根文件系统仍为只读。
 - 调度启动的 `litradar` 子进程继承父进程 `stderr`，因此事件实时进入同一容器日志。

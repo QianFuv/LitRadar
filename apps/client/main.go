@@ -4,16 +4,18 @@ package main
 
 import (
 	"io/fs"
-	"log"
+	"log/slog"
 	"os"
 
 	"github.com/QianFuv/LitRadar/apps/client/internal/webhost"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
+// main reports startup failures before exiting with a nonzero status.
 func main() {
 	if err := run(); err != nil {
-		log.Fatal(err)
+		slog.Error("client.failed", "error", err)
+		os.Exit(1)
 	}
 }
 
