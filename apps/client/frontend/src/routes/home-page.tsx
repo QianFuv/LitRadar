@@ -33,13 +33,13 @@ export default function Home() {
   let workspaceContent: ReactNode;
 
   if (view === 'favorites') {
-    workspaceContent = user ? <FAVORITES_WORKSPACE.Component userId={user.id} /> : null;
+    workspaceContent = user ? <FAVORITES_WORKSPACE userId={user.id} /> : null;
   } else if (view === 'weekly-updates') {
-    workspaceContent = <WEEKLY_UPDATES_VIEW.Component />;
+    workspaceContent = <WEEKLY_UPDATES_VIEW />;
   } else if (view === 'cfp-tracking') {
-    workspaceContent = <CFP_TRACKING_VIEW.Component />;
+    workspaceContent = <CFP_TRACKING_VIEW />;
   } else if (view === 'relations') {
-    workspaceContent = <RELATIONS_WORKSPACE_VIEW.Component />;
+    workspaceContent = <RELATIONS_WORKSPACE_VIEW />;
   } else {
     workspaceContent = <SearchWorkspaceView />;
   }

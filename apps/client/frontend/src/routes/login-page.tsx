@@ -5,10 +5,10 @@
 import LoginClient from '@/src/routes/login-client';
 
 /** Document title rendered by the login route. */
-export const LOGIN_PAGE_TITLE = '登录 | LitRadar';
+const LOGIN_PAGE_TITLE = '登录 | LitRadar';
 
 /** Document description rendered by the login route. */
-export const LOGIN_PAGE_DESCRIPTION = '登录或注册 LitRadar 账号。';
+const LOGIN_PAGE_DESCRIPTION = '登录或注册 LitRadar 账号。';
 
 /**
  * Render the login client with route-specific document metadata.

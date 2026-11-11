@@ -3,48 +3,55 @@
  */
 
 import { Suspense, useState } from 'react';
-import { useSearch } from '@tanstack/react-router';
+import { lazyRouteComponent, useSearch } from '@tanstack/react-router';
 
 import { Skeleton } from '@/components/ui/skeleton';
-import { createPreloadableComponent } from '@/lib/lazy-component';
 import { WORKSPACE_ROUTE_ID } from '@/lib/search-params';
 import type { WorkspaceView } from '@/lib/workspace-view';
 import * as stylex from '@stylexjs/stylex';
 
 /** Favorites workspace, loaded on its first visit. */
-export const FAVORITES_WORKSPACE = createPreloadableComponent(
-  async () => (await import('@/components/favorites/favorites-workspace')).FavoritesWorkspace,
+export const FAVORITES_WORKSPACE = lazyRouteComponent(
+  () => import('@/components/favorites/favorites-workspace'),
+  'FavoritesWorkspace',
 );
 
 /** Weekly updates workspace, loaded on its first visit. */
-export const WEEKLY_UPDATES_VIEW = createPreloadableComponent(
-  async () => (await import('@/components/weekly/weekly-updates-view')).WeeklyUpdatesView,
+export const WEEKLY_UPDATES_VIEW = lazyRouteComponent(
+  () => import('@/components/weekly/weekly-updates-view'),
+  'WeeklyUpdatesView',
 );
 
 /** Call-for-papers workspace, loaded on its first visit. */
-export const CFP_TRACKING_VIEW = createPreloadableComponent(
-  async () => (await import('@/components/cfp/cfp-tracking-view')).CfpTrackingView,
+export const CFP_TRACKING_VIEW = lazyRouteComponent(
+  () => import('@/components/cfp/cfp-tracking-view'),
+  'CfpTrackingView',
 );
 
 /** Relation graph workspace with the graph canvas and force layout, loaded on its first visit. */
-export const RELATIONS_WORKSPACE_VIEW = createPreloadableComponent(
-  async () =>
-    (await import('@/components/relations/relations-workspace-view')).RelationsWorkspaceView,
+export const RELATIONS_WORKSPACE_VIEW = lazyRouteComponent(
+  () => import('@/components/relations/relations-workspace-view'),
+  'RelationsWorkspaceView',
 );
 
-const SETTINGS_CENTER_DIALOG = createPreloadableComponent(
-  async () => (await import('@/components/settings/settings-center-dialog')).SettingsCenterDialog,
+const SETTINGS_CENTER_DIALOG = lazyRouteComponent(
+  () => import('@/components/settings/settings-center-dialog'),
+  'SettingsCenterDialog',
 );
 
-const ADMIN_CENTER_DIALOG = createPreloadableComponent(
-  async () => (await import('@/components/admin/admin-center-dialog')).AdminCenterDialog,
+const ADMIN_CENTER_DIALOG = lazyRouteComponent(
+  () => import('@/components/admin/admin-center-dialog'),
+  'AdminCenterDialog',
 );
 
-const WORKSPACE_VIEW_PRELOADERS: Readonly<Partial<Record<WorkspaceView, () => void>>> = {
-  favorites: FAVORITES_WORKSPACE.preload,
-  'weekly-updates': WEEKLY_UPDATES_VIEW.preload,
-  'cfp-tracking': CFP_TRACKING_VIEW.preload,
-  relations: RELATIONS_WORKSPACE_VIEW.preload,
+/** Code-split component behind each lazily loaded workspace view. */
+const LAZY_WORKSPACE_VIEWS: Readonly<
+  Partial<Record<WorkspaceView, { preload?: () => Promise<void> | undefined }>>
+> = {
+  favorites: FAVORITES_WORKSPACE,
+  'weekly-updates': WEEKLY_UPDATES_VIEW,
+  'cfp-tracking': CFP_TRACKING_VIEW,
+  relations: RELATIONS_WORKSPACE_VIEW,
 };
 
 /**
@@ -53,14 +60,18 @@ const WORKSPACE_VIEW_PRELOADERS: Readonly<Partial<Record<WorkspaceView, () => vo
  * @param view - Workspace view behind the hovered, focused, or touched link.
  */
 export function preloadWorkspaceView(view: WorkspaceView): void {
-  WORKSPACE_VIEW_PRELOADERS[view]?.();
+  void LAZY_WORKSPACE_VIEWS[view]?.preload?.();
 }
 
 /** Start fetching the settings center the user is about to open. */
-export const preloadSettingsCenter = SETTINGS_CENTER_DIALOG.preload;
+export function preloadSettingsCenter(): void {
+  void SETTINGS_CENTER_DIALOG.preload?.();
+}
 
 /** Start fetching the administrator center the user is about to open. */
-export const preloadAdminCenter = ADMIN_CENTER_DIALOG.preload;
+export function preloadAdminCenter(): void {
+  void ADMIN_CENTER_DIALOG.preload?.();
+}
 
 /**
  * Render the workspace placeholder shown while a view's code loads.
@@ -111,7 +122,7 @@ export function LazySettingsCenterDialog() {
   }
   return (
     <Suspense fallback={<CenterLoadingStatus label="正在打开设置中心…" />}>
-      <SETTINGS_CENTER_DIALOG.Component />
+      <SETTINGS_CENTER_DIALOG />
     </Suspense>
   );
 }
@@ -132,7 +143,7 @@ export function LazyAdminCenterDialog() {
   }
   return (
     <Suspense fallback={<CenterLoadingStatus label="正在打开管理面板…" />}>
-      <ADMIN_CENTER_DIALOG.Component />
+      <ADMIN_CENTER_DIALOG />
     </Suspense>
   );
 }

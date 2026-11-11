@@ -48,7 +48,7 @@ const workspaceRoute = createRoute({
 const homeRoute = createRoute({
   getParentRoute: () => workspaceRoute,
   path: '/',
-  component: HOME_PAGE.Component,
+  component: HOME_PAGE,
 });
 
 const ROUTE_TREE = rootRoute.addChildren([loginRoute, workspaceRoute.addChildren([homeRoute])]);

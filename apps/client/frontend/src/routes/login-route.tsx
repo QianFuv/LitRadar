@@ -15,7 +15,7 @@ import { RouteLoadingFallback } from '@/src/routes/route-loading-fallback';
 export default function LoginRoute() {
   return (
     <Suspense fallback={<RouteLoadingFallback />}>
-      <LOGIN_PAGE.Component />
+      <LOGIN_PAGE />
     </Suspense>
   );
 }

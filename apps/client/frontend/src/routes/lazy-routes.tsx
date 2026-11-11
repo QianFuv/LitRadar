@@ -2,25 +2,19 @@
  * Code-split route modules and their intent preloaders.
  */
 
-import { createPreloadableComponent } from '@/lib/lazy-component';
+import { lazyRouteComponent } from '@tanstack/react-router';
 
 /** Public login route, loaded only when an anonymous visitor needs it. */
-export const LOGIN_PAGE = createPreloadableComponent(
-  async () => (await import('@/src/routes/login-page')).default,
-);
+export const LOGIN_PAGE = lazyRouteComponent(() => import('@/src/routes/login-page'));
 
 /** Authenticated frame with navigation, workspace outlet, and query-driven centers. */
-export const PROTECTED_LAYOUT = createPreloadableComponent(
-  async () => (await import('@/src/routes/protected-layout')).default,
-);
+export const PROTECTED_LAYOUT = lazyRouteComponent(() => import('@/src/routes/protected-layout'));
 
 /** Root workspace route with the default search view. */
-export const HOME_PAGE = createPreloadableComponent(
-  async () => (await import('@/src/routes/home-page')).default,
-);
+export const HOME_PAGE = lazyRouteComponent(() => import('@/src/routes/home-page'));
 
 /** Start fetching the authenticated frame and root workspace before they render. */
 export function preloadWorkspaceRoutes(): void {
-  PROTECTED_LAYOUT.preload();
-  HOME_PAGE.preload();
+  void PROTECTED_LAYOUT.preload?.();
+  void HOME_PAGE.preload?.();
 }

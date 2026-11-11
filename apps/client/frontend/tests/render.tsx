@@ -3,7 +3,13 @@
  */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, waitFor, type RenderOptions, type RenderResult } from '@testing-library/react';
+import {
+  act,
+  render,
+  waitFor,
+  type RenderOptions,
+  type RenderResult,
+} from '@testing-library/react';
 import type { UserEvent } from '@testing-library/user-event';
 import {
   createMemoryHistory,
@@ -125,7 +131,8 @@ export function createTestQueryClient(): QueryClient {
  * Render a component under an isolated QueryClientProvider and an in-memory router.
  *
  * The router finishes its initial load before rendering, so route hooks are ready on the first
- * synchronous query.
+ * synchronous query. Rendering inside an awaited `act` lets components that suspend on `use()`,
+ * such as lazily loaded route components, resume once their module loads.
  *
  * @param element - React element to render.
  * @param options - Initial location and Testing Library render options.
@@ -159,7 +166,14 @@ export async function renderWithQuery(
     );
   }
 
-  return { ...render(element, { ...options, wrapper: Wrapper }), queryClient, router };
+  let result: RenderResult | undefined;
+  await act(async () => {
+    result = render(element, { ...options, wrapper: Wrapper });
+  });
+  if (!result) {
+    throw new Error('Render did not complete');
+  }
+  return { ...result, queryClient, router };
 }
 
 /**

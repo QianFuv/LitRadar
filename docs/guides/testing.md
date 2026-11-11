@@ -58,9 +58,12 @@ Vitest Browser Mode 覆盖 jsdom 无法忠实验证的行为：
 - Dialog 的 pointer、Escape 和焦点归还；
 - 真实 Clipboard API 的成功与不可用反馈；
 - 原生 IntersectionObserver、布局、滚动和事件链；
-- 真实退出动效生命周期与减少动态效果偏好。
+- 真实退出动效生命周期与减少动态效果偏好；
+- next-themes 在首次渲染即报告已存储主题与系统主题（主题控件因此不需要挂载守卫）。
 
 普通渲染、表单、缓存、错误、mutation 和路由状态仍由 jsdom 拥有。新增 Browser Mode 用例前，应先证明所需 Web API、布局或事件顺序在 jsdom 中不可忠实验证。
+
+`tests/render.tsx` 的 `renderWithQuery` 在 await 的 `act` 中渲染。按需加载的组件（TanStack Router `lazyRouteComponent`）通过 React `use()` 挂起，在未 await 的 `act` 中挂起会丢失恢复渲染，模块加载后界面停在 Suspense fallback；自行渲染路由树的测试同样需要 `await act(async () => render(...))`。
 
 Playwright 有两个独立角色：
 

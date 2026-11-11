@@ -50,7 +50,7 @@ export default function RequireAuth() {
 
   return (
     <Suspense fallback={<RouteLoadingFallback />}>
-      <PROTECTED_LAYOUT.Component />
+      <PROTECTED_LAYOUT />
     </Suspense>
   );
 }

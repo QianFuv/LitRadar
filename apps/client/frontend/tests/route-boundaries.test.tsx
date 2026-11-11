@@ -73,7 +73,9 @@ const LAZY_ROUTE_WAIT = { timeout: 30_000 };
 async function renderAppRoute(initialEntry: string) {
   const router = createAppRouter(createMemoryHistory({ initialEntries: [initialEntry] }));
   await router.load();
-  render(<RouterProvider router={router} />);
+  await act(async () => {
+    render(<RouterProvider router={router} />);
+  });
   return router;
 }
 
