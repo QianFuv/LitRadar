@@ -19,7 +19,10 @@ import {
   type NotificationSettings,
   type NotificationSettingsUpdate,
 } from '@/lib/api';
+import { useTransientState } from '@/lib/use-transient-state';
 
+/** Time the saved-settings notice stays visible. */
+const SETTINGS_SAVED_NOTICE_MS = 2000;
 const EMPTY_DATABASES: string[] = [];
 const EMPTY_AI_ENDPOINTS: string[] = [];
 
@@ -67,7 +70,7 @@ export function useTrackingPage(userId: number) {
   const [draftSettings, setDraftSettings] = useState<NotificationSettingsUpdate | null>(null);
   const [keywordInput, setKeywordInput] = useState('');
   const [directionInput, setDirectionInput] = useState('');
-  const [settingsSaved, setSettingsSaved] = useState(false);
+  const [settingsSaved, setSettingsSaved] = useTransientState(false, SETTINGS_SAVED_NOTICE_MS);
   const [databaseSelectionNotice, setDatabaseSelectionNotice] = useState<string | null>(null);
 
   const { data: status, isPending: isStatusLoading } = useQuery({
@@ -141,7 +144,7 @@ export function useTrackingPage(userId: number) {
       setDraftSettings((current) => updater(current || normalizeTrackingSettings(notifySettings)));
       setSettingsSaved(false);
     },
-    [notifySettings],
+    [notifySettings, setSettingsSaved],
   );
 
   useEffect(() => {
@@ -260,7 +263,6 @@ export function useTrackingPage(userId: number) {
       void queryClient.invalidateQueries({ queryKey: ['notification-settings', userId] });
       void queryClient.invalidateQueries({ queryKey: ['tracking-status'] });
       setSettingsSaved(true);
-      setTimeout(() => setSettingsSaved(false), 2000);
     },
   });
   const resetSaveSettingsMutation = saveSettingsMut.reset;
@@ -273,7 +275,7 @@ export function useTrackingPage(userId: number) {
     setDirectionInput('');
     setSettingsSaved(false);
     resetSaveSettingsMutation();
-  }, [resetSaveSettingsMutation]);
+  }, [resetSaveSettingsMutation, setSettingsSaved]);
 
   /** Add the trimmed keyword draft when it is new. */
   function addKeyword() {

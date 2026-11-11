@@ -48,11 +48,13 @@ import { copyTextToClipboard } from '@/lib/clipboard';
 import { getDoiUrl } from '@/lib/citation';
 import { getArticleDisplayTitle, hasArticleTitle } from '@/lib/article-title';
 import { useFtsHighlighter } from '@/lib/fts-highlight';
+import { useTransientState } from '@/lib/use-transient-state';
 import { JOURNAL_RATING_SYSTEMS } from '@/lib/journal-ratings';
 import { buildRelationSearch } from '@/lib/relation-graph';
 import { WORKSPACE_ROUTE_ID, type WorkspaceSearch } from '@/lib/search-params';
 import { withSettingsSection } from '@/lib/settings-center';
 import * as stylex from '@stylexjs/stylex';
+import { animations } from '@/lib/animations.stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
 
 type ArticleDetailDialogArticle = Article;
@@ -71,6 +73,9 @@ type ArticleDetailDialogContentProps = {
 type ArticleCopyTarget = 'title' | 'info';
 
 type ArticleDetailVariant = 'dialog' | 'pane';
+
+/** Time copy feedback stays visible after the last copy. */
+const COPY_FEEDBACK_MS = 3000;
 
 /** Short forms of the default access labels used when the docked toolbar is narrow. */
 const ACCESS_SHORT_LABELS = new Map(
@@ -671,7 +676,7 @@ function renderArticleRelationAction(state: ArticleDetailViewState, variant: Art
   );
 }
 
-/** Own unchanged detail hooks, query settings, clipboard ref and completion/timer order. */
+/** Own unchanged detail hooks, query settings, and debounced copy feedback. */
 function useArticleDetailViewState({
   article,
   dbName,
@@ -683,9 +688,12 @@ function useArticleDetailViewState({
 }: ArticleDetailDialogContentProps) {
   const search = useSearch({ from: WORKSPACE_ROUTE_ID });
   const highlightText = useFtsHighlighter(search.q ?? null);
-  const [copyStatus, setCopyStatus] = useState<ArticleCopyTarget | null>(null);
-  const [copyError, setCopyError] = useState<string | null>(null);
-  const copyResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [copyFeedback, setCopyFeedback] = useTransientState<{
+    status: ArticleCopyTarget | null;
+    error: string | null;
+  } | null>(null, COPY_FEEDBACK_MS);
+  const copyStatus = copyFeedback?.status ?? null;
+  const copyError = copyFeedback?.error ?? null;
   const isAccessQueryEnabled = !!dbName && !!article.article_id;
   const canCopyTitle = hasArticleTitle(article);
   const {
@@ -711,15 +719,6 @@ function useArticleDetailViewState({
     retry: false,
   });
 
-  useEffect(
-    () => () => {
-      if (copyResetTimeoutRef.current !== null) {
-        clearTimeout(copyResetTimeoutRef.current);
-      }
-    },
-    [],
-  );
-
   /**
    * Copy one article value and update its inline state.
    *
@@ -727,22 +726,12 @@ function useArticleDetailViewState({
    * @param status - Copy action identifier.
    */
   const handleCopy = async (text: string, status: ArticleCopyTarget) => {
-    if (copyResetTimeoutRef.current !== null) {
-      clearTimeout(copyResetTimeoutRef.current);
-    }
     try {
       await copyTextToClipboard(text);
-      setCopyStatus(status);
-      setCopyError(null);
+      setCopyFeedback({ status, error: null });
     } catch {
-      setCopyStatus(null);
-      setCopyError('复制失败，请手动选择文本复制。');
+      setCopyFeedback({ status: null, error: '复制失败，请手动选择文本复制。' });
     }
-    copyResetTimeoutRef.current = setTimeout(() => {
-      setCopyStatus(null);
-      setCopyError(null);
-      copyResetTimeoutRef.current = null;
-    }, 3000);
   };
 
   /** Copy the article title. */
@@ -920,7 +909,7 @@ function renderArticleAccessActions(state: ArticleDetailViewState, variant: Arti
                   xstyle={styles.renderArticleAccessActionsAlertCircle}
                   aria-hidden="true"
                 />
-                {renderActionLabel('访问状态失败', '访问失败')}
+                {renderActionLabel('访问状态失败', '状态失败')}
               </Button>
             )}
             {renderArticleFulltextAction(state)}
@@ -1157,8 +1146,6 @@ function renderArticleAccessLoading(state: ArticleDetailViewState) {
     )
   );
 }
-
-const spinKeyframes = stylex.keyframes({ to: { transform: 'rotate(360deg)' } });
 
 const styles = stylex.create({
   groupFieldset: {
@@ -1559,7 +1546,7 @@ const styles = stylex.create({
   renderArticleFavoriteActionLoader2: {
     height: '1rem',
     width: '1rem',
-    animationName: spinKeyframes,
+    animationName: animations.spin,
     animationDuration: '1s',
     animationTimingFunction: 'linear',
     animationIterationCount: 'infinite',

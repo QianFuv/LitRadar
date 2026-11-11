@@ -34,6 +34,10 @@ import { RevealItem } from '@/components/ui/reveal';
 import { LoadingText } from '@/components/ui/loading-text';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
+import { useTransientState } from '@/lib/use-transient-state';
+
+/** Time copy feedback stays visible after the last copy. */
+const COPY_FEEDBACK_MS = 3000;
 
 const INVITE_STATUS_LABELS: Record<InviteCodeStatus, string> = {
   active: '可用',
@@ -200,11 +204,11 @@ function useAdminInviteViewState({ isEnabled }: { isEnabled: boolean }) {
     Number.isInteger(maxUsesValue) &&
     maxUsesValue >= 1 &&
     maxUsesValue <= 1000;
-  const [copyFeedback, setCopyFeedback] = useState<{
+  const [copyFeedback, setCopyFeedback] = useTransientState<{
     code: string;
     message: string;
     tone: 'error' | 'success';
-  } | null>(null);
+  } | null>(null, COPY_FEEDBACK_MS);
   const [inviteCodeToRevoke, setInviteCodeToRevoke] = useState<AdminInviteCode | null>(null);
   const {
     data: inviteCodes,
@@ -252,7 +256,6 @@ function useAdminInviteViewState({ isEnabled }: { isEnabled: boolean }) {
     } catch {
       setCopyFeedback({ code, message: '复制失败，请手动选择文本复制。', tone: 'error' });
     }
-    setTimeout(() => setCopyFeedback(null), 3000);
   };
 
   return {

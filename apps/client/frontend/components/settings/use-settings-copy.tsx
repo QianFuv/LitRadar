@@ -1,6 +1,8 @@
-import { useState } from 'react';
-
 import { copyTextToClipboard } from '@/lib/clipboard';
+import { useTransientState } from '@/lib/use-transient-state';
+
+/** Time copy feedback stays visible after the last copy. */
+const COPY_FEEDBACK_MS = 3000;
 
 export type SettingsCopyScope = 'cnkiQr' | 'invite' | 'token';
 export type SettingsCopyFeedback = {
@@ -15,7 +17,10 @@ export type SettingsCopyFeedback = {
  * @returns Current feedback and a scoped copy action.
  */
 export function useSettingsCopy() {
-  const [copyFeedback, setCopyFeedback] = useState<SettingsCopyFeedback | null>(null);
+  const [copyFeedback, setCopyFeedback] = useTransientState<SettingsCopyFeedback | null>(
+    null,
+    COPY_FEEDBACK_MS,
+  );
 
   /**
    * Copy a settings value and publish scoped feedback.
@@ -35,7 +40,6 @@ export function useSettingsCopy() {
     } catch {
       setCopyFeedback({ message: '复制失败，请手动选择文本复制。', scope, tone: 'error' });
     }
-    setTimeout(() => setCopyFeedback(null), 3000);
   };
 
   return { copyFeedback, handleCopy };
