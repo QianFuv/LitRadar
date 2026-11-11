@@ -3,7 +3,6 @@ package api
 import (
 	"bytes"
 	"context"
-
 	"encoding/json"
 	"net/http"
 	"os"
@@ -14,7 +13,6 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/cfp"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
-
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/cfp"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 	migration "github.com/QianFuv/LitRadar/apps/server/internal/storage/migrations/auth"
@@ -159,7 +157,7 @@ func TestCfpSummaryKeepsSourceTiesLeaseClockAndStateOrder(t *testing.T) {
 
 func TestCfpCursorRejectsMalformedAuthenticatedPlaintext(t *testing.T) {
 	handlers, _, _ := cfpFixture(t)
-	for _, plaintext := range []string{`{}`, `[]`, `null`, `{"database":"a","database":"b"}`, `["x","y",false,"r",1,-1,"source-v1"]`, `["x","y",false,"r",1,0,"source-v1",null]`, `["x","y",false,"r",1,0,"source-v1"] garbage`} {
+	for _, plaintext := range []string{`["x","y",false,"r",1,0,"source-v1"]`, `{}`, `[]`, `null`, `{"database":"a","database":"b"}`, `["x","y",false,"r",1,-1,"source-v1"]`, `["x","y",false,"r",1,0,"source-v1",null]`, `["x","y",false,"r",1,0,"source-v1"] garbage`} {
 		ciphertext, err := handlers.codec.Encrypt(plaintext, cfpCursorContext)
 		if err != nil {
 			t.Fatal(err)
@@ -168,7 +166,7 @@ func TestCfpCursorRejectsMalformedAuthenticatedPlaintext(t *testing.T) {
 			t.Fatal("accepted", plaintext)
 		}
 	}
-	for _, plaintext := range []string{`["x","y",false,"r",1,0,"source-v1"]`, `{"database":"x","catalog_id":"y","include_closed":false,"revision":"r","evaluated_at":1,"position":18446744073709551615,"order":"source-v1"}`} {
+	for _, plaintext := range []string{`{"database":"x","catalog_id":"y","include_closed":false,"revision":"r","evaluated_at":1,"position":18446744073709551615,"order":"source-v1"}`} {
 		ciphertext, _ := handlers.codec.Encrypt(plaintext, cfpCursorContext)
 		if _, failure := decodeCfpCursor(handlers.codec, ciphertext); failure != nil {
 			t.Fatal(plaintext, failure)

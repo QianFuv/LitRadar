@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/jsonobject"
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/rootfile"
 	"github.com/QianFuv/LitRadar/apps/server/internal/transport"
 )
 
@@ -26,7 +27,12 @@ var ErrManifestJson = errors.New("Invalid change manifest JSON")
 
 // LoadChangeManifest reads one publication without modifying it or admitting a run.
 func LoadChangeManifest(filename, dbName string) (ChangeManifest, error) {
-	data, err := os.ReadFile(filename)
+	root, name, err := rootfile.Parent(filename)
+	if err != nil {
+		return ChangeManifest{}, err
+	}
+	defer func() { _ = root.Close() }()
+	data, err := root.ReadFile(name)
 	if err != nil {
 		return ChangeManifest{}, err
 	}
@@ -100,34 +106,26 @@ func manifestFields(data []byte, known map[string]bool) (map[string]any, error) 
 	return fields, nil
 }
 
-// ParseSnapshot accepts original map defaults and positional structs while rejecting malformed stored checkpoint state.
+// ParseSnapshot accepts object snapshots with default empty counts while rejecting malformed stored checkpoint state.
 func ParseSnapshot(data []byte) (Snapshot, error) {
-	invalid := errors.New("Stored delivery checkpoint is invalid")
-	data = bytes.TrimSpace(data)
-	if !json.Valid(data) {
+	invalid := errors.New("stored delivery checkpoint is invalid or obsolete; expected a typed object")
+	var wire struct {
+		Issue   map[string]*int64 `json:"issue_article_counts" default:"true"`
+		Inpress map[string]*int64 `json:"inpress_article_counts" default:"true"`
+	}
+	if jsonobject.DecodeWithOptions(data, &wire, jsonobject.Options{AllowUnknown: true}) != nil {
 		return Snapshot{}, invalid
 	}
-	fields, err := snapshotParsedFields(data, invalid)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	rawFields := snapshotRawFields(data)
 	result := Snapshot{IssueArticleCounts: map[string]int64{}, InpressArticleCounts: map[string]int64{}}
-	for _, field := range []struct {
-		name   string
+	for _, group := range []struct {
+		source map[string]*int64
 		target map[string]int64
-	}{{"issue_article_counts", result.IssueArticleCounts}, {"inpress_article_counts", result.InpressArticleCounts}} {
-		value, exists := fields[field.name]
-		if !exists {
-			continue
-		}
-		object, ok := value.(map[string]any)
-		if !ok {
-			return Snapshot{}, invalid
-		}
-		_ = object
-		if err := decodeSnapshotCounts(rawFields[field.name], field.target, invalid); err != nil {
-			return Snapshot{}, err
+	}{{wire.Issue, result.IssueArticleCounts}, {wire.Inpress, result.InpressArticleCounts}} {
+		for key, count := range group.source {
+			if count == nil {
+				return Snapshot{}, invalid
+			}
+			group.target[key] = *count
 		}
 	}
 	return result, nil
@@ -208,77 +206,6 @@ func readManifestField(data []byte, decoder *json.Decoder) (string, json.RawMess
 		return "", nil, ErrManifestJson
 	}
 	return name, raw, nil
-}
-
-func snapshotParsedFields(data []byte, invalid error) (map[string]any, error) {
-	known := map[string]bool{"issue_article_counts": true, "inpress_article_counts": true}
-	var fields map[string]any
-	if len(data) > 0 && data[0] == '[' {
-		var values []json.RawMessage
-		if json.Unmarshal(data, &values) != nil || len(values) > 2 {
-			return nil, invalid
-		}
-		fields = map[string]any{}
-		for index, value := range values {
-			parsed, err := transport.ParseJson(value)
-			if err != nil {
-				return nil, invalid
-			}
-			fields[[]string{"issue_article_counts", "inpress_article_counts"}[index]] = parsed
-		}
-	} else {
-		var err error
-		fields, err = manifestFields(data, known)
-		if err != nil {
-			return nil, invalid
-		}
-	}
-	return fields, nil
-}
-
-func snapshotRawFields(data []byte) map[string]json.RawMessage {
-	rawFields := map[string]json.RawMessage{}
-	if data[0] == '[' {
-		var values []json.RawMessage
-		if err := json.Unmarshal(data, &values); err != nil {
-			return nil
-		}
-		for index, value := range values {
-			rawFields[[]string{"issue_article_counts", "inpress_article_counts"}[index]] = value
-		}
-	} else {
-		if err := json.Unmarshal(data, &rawFields); err != nil {
-			return nil
-		}
-	}
-	return rawFields
-}
-
-func decodeSnapshotCounts(raw json.RawMessage, target map[string]int64, invalid error) error {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if _, err := decoder.Token(); err != nil {
-		return invalid
-	}
-	for decoder.More() {
-		key, err := decoder.Token()
-		if err != nil {
-			return invalid
-		}
-		var item any
-		if decoder.Decode(&item) != nil {
-			return invalid
-		}
-		if _, isString := item.(string); isString {
-			return invalid
-		}
-		number, ok := jsonInt64(item)
-		if !ok {
-			return invalid
-		}
-		target[key.(string)] = number
-	}
-	return nil
 }
 
 func validateManifestDatabase(database *string, dbName string) error {

@@ -19,7 +19,7 @@ func TestProxySelectionValidationAndPrecedence(t *testing.T) {
 		{"", `{"cnki":"bad","cnki":true}`, ErrProxyPolicy}, {"", `{"cnki":null,"cnki":false}`, ErrProxyPolicy},
 		{"", `{"unknown":false}`, ErrUnknownProxyProvider}, {"bad", `{"unknown":false}`, ErrUnknownProxyProvider},
 		{"bad", `{}`, transport.ErrProxyUrl}, {"", `{"cnki":true}`, ErrMissingProxyUrl}, {" \t", `{"cnki":true}`, ErrMissingProxyUrl},
-		{"http://localhost:8080", `{"cnki":true,"cnki":false}`, nil}, {"http://localhost:8080", `{"cnki":false,"cnki":true}`, nil},
+		{"http://localhost:8080", `{"cnki":true,"cnki":false}`, ErrProxyPolicy}, {"http://localhost:8080", `{"cnki":false,"cnki":true}`, ErrProxyPolicy},
 	} {
 		t.Run(test.policy+test.url, func(t *testing.T) {
 			_, err := NewProxySelection(test.url, test.policy)

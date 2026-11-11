@@ -19,7 +19,7 @@ func TestAuthorDecodingPreservesCompleteRepresentations(t *testing.T) {
 	}{
 		{`[]`, []string{}},
 		{`["A",""," A ","A"]`, []string{"A", "", " A ", "A"}},
-		{`[{"display_name":"A"},["B"],{"display_name":""}]`, []string{"A", "B", ""}},
+		{`[{"display_name":"A"},{"display_name":"B"},{"display_name":""}]`, []string{"A", "B", ""}},
 	}
 	for _, item := range cases {
 		actual, err := DecodeAuthorNames(item.payload)

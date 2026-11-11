@@ -7,35 +7,33 @@ import (
 	"testing"
 )
 
-// TestNumberVariantsPreserveIdentity distinguishes integer tokens and signed floating zero.
-func TestNumberVariantsPreserveIdentity(t *testing.T) {
-	for _, entry := range []struct {
-		token string
-		kind  byte
-	}{
-		{"0", 'u'}, {"-0", 'f'}, {"9223372036854775808", 'u'},
-		{"-9223372036854775808", 'i'}, {"-9223372036854775809", 'f'},
-		{"18446744073709551616.1", 'f'}, {"-0e2147483648", 'f'},
-	} {
-		number, err := ParseNumber(json.Number(entry.token))
-		if err != nil || number.kind != entry.kind {
-			t.Fatal(entry.token, number, err)
+// TestNumberRetainsTokensAndUsesStandardConversion checks exact integers and rounded decimals.
+func TestNumberRetainsTokensAndUsesStandardConversion(t *testing.T) {
+	for _, token := range []string{"0", "-0", "9223372036854775808", "-9223372036854775809", "18446744073709551616.1", "-0e2147483648"} {
+		number, err := ParseNumber(json.Number(token))
+		if err != nil || number.String() != token {
+			t.Fatal(token, number, err)
 		}
 	}
 	number, err := ParseNumber("-1e-2147483648")
-	if err != nil || math.Float64bits(number.AsFloat64()) != 1<<63 {
-		t.Fatal("negative exponent overflow lost signed zero", number, err)
+	if err != nil || !math.Signbit(number.AsFloat64()) {
+		t.Fatal(number, err)
+	}
+	integer, err := ParseNumber("9007199254740993")
+	if value, ok := integer.AsInt64(); err != nil || !ok || value != 9007199254740993 {
+		t.Fatal(integer, err)
+	}
+	if _, err := ParseNumber("1e400"); err != ErrInvalidNumber {
+		t.Fatal(err)
 	}
 }
 
-// TestJsonFailureReportsFirstOrderedError preserves sorted-key error priority without partial output.
-func TestJsonFailureReportsFirstOrderedError(t *testing.T) {
-	encoded, err := Json(map[string]any{"z": make(chan int), "a": []any{true, "\xff"}})
-	if err == nil || err.Error() != "source JSON string is not UTF-8" || encoded != nil {
+func TestJsonUsesStandardEncoding(t *testing.T) {
+	if encoded, err := Json(map[string]any{"invalid": make(chan int)}); err == nil || encoded != nil {
 		t.Fatal(string(encoded), err)
 	}
-	encoded, err = Json([]any{[]any(nil), map[string]any(nil)})
-	if err != nil || string(encoded) != "[[],{}]" {
+	encoded, err := Json([]any{[]any(nil), map[string]any(nil), "<>&"})
+	if err != nil || string(encoded) != `[[],{},"<>&"]` {
 		t.Fatal(string(encoded), err)
 	}
 }
@@ -57,7 +55,6 @@ func TestIssueRejectsFloatingYearWithoutReplacingReceiver(t *testing.T) {
 func TestProgressFailureDoesNotReplaceReceiver(t *testing.T) {
 	for _, raw := range []string{
 		`["continue",null]`, `["complete",1]`,
-		`{"state":"continue","checkpoint":"x","\u0063heckpoint":"y"}`,
 		`{"state":"complete","checkpoint":"x"}`,
 	} {
 		value := ProviderProgress{State: Continue, Checkpoint: new("original")}
@@ -67,7 +64,7 @@ func TestProgressFailureDoesNotReplaceReceiver(t *testing.T) {
 		}
 	}
 	value := ProviderProgress{State: Continue, Checkpoint: new("original")}
-	if err := value.UnmarshalJSON([]byte(`["complete"]`)); err != nil || value.Checkpoint != nil || value.State != Complete {
+	if err := value.UnmarshalJSON([]byte(`{"state":"complete"}`)); err != nil || value.Checkpoint != nil || value.State != Complete {
 		t.Fatal(value, err)
 	}
 }

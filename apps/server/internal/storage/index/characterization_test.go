@@ -12,33 +12,15 @@ import (
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
 )
 
-// TestAuthorFieldErrorsPrecedeMalformedValues checks actionable diagnostics at the storage boundary.
-func TestAuthorFieldErrorsPrecedeMalformedValues(t *testing.T) {
-	for _, scenario := range []struct{ text, message string }{
-		{`[{"other":!}]`, "unknown field"},
-		{`[{"display_name":"kept","display_name":!}]`, "duplicate field"},
-	} {
-		_, err := decodeCanonicalAuthors(scenario.text)
-		var typed *AuthorJsonError
-		if !errors.As(err, &typed) {
-			t.Fatalf("missing typed diagnostic: %v", err)
-		}
-		if !strings.HasPrefix(typed.Message, scenario.message) || typed.Line != 1 || typed.Column != strings.LastIndex(scenario.text, ":") {
-			t.Fatalf("unexpected field diagnostic: %v", err)
+// TestCanonicalAuthorDecodingRejectsInvalidFormats checks persisted data before mutation.
+func TestCanonicalAuthorDecodingRejectsInvalidFormats(t *testing.T) {
+	for _, text := range []string{`[{"other":!}]`, `[{"display_name":"kept","display_name":!}]`, `[["old tuple"]]`, `null`, `[{"display_name":null}]`} {
+		if authors, err := decodeCanonicalAuthors(text); err == nil || authors != nil {
+			t.Fatal(text, authors, err)
 		}
 	}
-}
-
-func TestAuthorDiagnosticLocationsCountUtf8Bytes(t *testing.T) {
-	text := "[\n{\"display_name\":\"作者\",\"other\":!}]"
-	_, err := diagnoseCanonicalAuthors(text)
-	var typed *AuthorJsonError
-	if !errors.As(err, &typed) {
-		t.Fatalf("diagnostic=%v", err)
-	}
-	keyEnd := strings.LastIndex(text, ":")
-	if typed.Line != 2 || typed.Column != keyEnd-strings.IndexByte(text, '\n')-1 {
-		t.Fatalf("expected byte location: %v", err)
+	if authors, err := decodeCanonicalAuthors(`[{"display_name":"作者"}]`); err != nil || len(authors) != 1 || authors[0].DisplayName != "作者" {
+		t.Fatal(authors, err)
 	}
 }
 
@@ -96,7 +78,7 @@ func TestHistoryPruningReturnsEarlierRemovalOnMalformedLaterFile(t *testing.T) {
 	directory := t.TempDir()
 	first := filepath.Join(directory, strings.Repeat("0", 64)+".changes.json")
 	last := filepath.Join(directory, strings.Repeat("f", 64)+".changes.json")
-	if err := os.WriteFile(first, []byte("{\"generated_at\":\" 99 \"}"), 0600); err != nil {
+	if err := os.WriteFile(first, []byte("{\"generated_at\":\"1970-01-01T00:01:39Z\"}"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(last, []byte("invalid JSON"), 0600); err != nil {

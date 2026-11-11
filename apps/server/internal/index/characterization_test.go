@@ -32,10 +32,10 @@ func TestWorkerFieldDecodingCharacterization(t *testing.T) {
 		expected            workerDecodeCharacterization
 	}{
 		{`{"count":2,"values":[],"tail":true}`, 0, false, false, workerDecodeCharacterization{Count: 2, Values: []uint64{}, Tail: true}},
-		{`[2,null,[],true]`, 0, false, false, workerDecodeCharacterization{Count: 2, Values: []uint64{}, Tail: true}},
+		{`[2,null,[],true]`, 0, false, true, workerDecodeCharacterization{}},
 		{`[2,[]]`, 0, false, true, workerDecodeCharacterization{}},
 		{`{"count":2,"values":[]}`, 1, false, false, workerDecodeCharacterization{Count: 2, Values: []uint64{}}},
-		{`{"unknown":1,"unknown":2,"count":2,"values":[],"tail":true}`, 0, true, false, workerDecodeCharacterization{Count: 2, Values: []uint64{}, Tail: true}},
+		{`{"unknown":1,"unknown":2,"count":2,"values":[],"tail":true}`, 0, true, true, workerDecodeCharacterization{}},
 		{`{"count":2,"count":3,"values":[],"tail":true}`, 0, true, true, workerDecodeCharacterization{}},
 		{`{"count":2,"values":[3,"bad"],"tail":true}`, 0, false, true, workerDecodeCharacterization{}},
 		{`{"count":2,"optional":7,"values":[],"tail":true}`, 0, false, true, workerDecodeCharacterization{}},
@@ -104,10 +104,10 @@ func TestExistingManifestAdmissionCharacterization(t *testing.T) {
 		body       string
 		shouldFail bool
 	}{
-		{`{"run_id":"old-run","generated_at":"old","db_name":"catalog.sqlite","summary":{}}`, false},
-		{`{"run_id":"","run_id":"old-run","generated_at":"old","db_name":"catalog.sqlite","summary":{},"unknown":true}`, false},
-		{`{"run_id":"old-run","generated_at":"old","db_name":"catalog.sqlite","summary":null}`, true},
-		{`{"run_id":"old-run","generated_at":"old","db_name":"wrong.sqlite","summary":{}}`, true},
+		{`{"run_id":"old-run","generated_at":"2026-01-01T00:00:00Z","db_name":"catalog.sqlite","summary":{}}`, false},
+		{`{"run_id":"","run_id":"old-run","generated_at":"2026-01-01T00:00:00Z","db_name":"catalog.sqlite","summary":{},"unknown":true}`, true},
+		{`{"run_id":"old-run","generated_at":"2026-01-01T00:00:00Z","db_name":"catalog.sqlite","summary":null}`, true},
+		{`{"run_id":"old-run","generated_at":"2026-01-01T00:00:00Z","db_name":"wrong.sqlite","summary":{}}`, true},
 		{`[]`, true},
 		{`null`, true},
 	} {
@@ -118,6 +118,12 @@ func TestExistingManifestAdmissionCharacterization(t *testing.T) {
 		if shouldPublish || (err != nil) != candidate.shouldFail {
 			t.Fatalf("body=%s publish=%t err=%v", candidate.body, shouldPublish, err)
 		}
+	}
+	if err := os.WriteFile(path, []byte(`{"run_id":"old-run","generated_at":"100","db_name":"catalog.sqlite","summary":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if publish, err := shouldPublishManifest(config, input, storage.BatchCatalogOutcome{RunId: "new-run"}, intent); err != nil || !publish {
+		t.Fatal("obsolete timestamp was not scheduled for rebuilding", publish, err)
 	}
 	assertManifestRecoveryBypassesFileAdmission(t, config, input, intent)
 }

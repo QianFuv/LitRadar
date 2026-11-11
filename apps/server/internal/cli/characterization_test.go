@@ -42,8 +42,8 @@ func TestIndexParserRejectsInvalidExecutionOptions(t *testing.T) {
 	}
 }
 
-// TestDeliveryTargetInferenceRetainsDuplicateLastValueAndDirectoryAdmission checks exact changes-file grammar.
-func TestDeliveryTargetInferenceRetainsDuplicateLastValueAndDirectoryAdmission(t *testing.T) {
+// TestDeliveryTargetInferenceRejectsDuplicateAndRetainsDirectoryAdmission checks exact changes-file grammar.
+func TestDeliveryTargetInferenceRejectsDuplicateAndRetainsDirectoryAdmission(t *testing.T) {
 	configuration := config.FromProjectRoot(t.TempDir())
 	directory := filepath.Join(configuration.IndexDir, "visible.sqlite")
 	if err := os.MkdirAll(directory, 0700); err != nil {
@@ -54,10 +54,16 @@ func TestDeliveryTargetInferenceRetainsDuplicateLastValueAndDirectoryAdmission(t
 		t.Fatal(err)
 	}
 	expected := []deliveryTarget{{directory, "visible.sqlite"}}
-	for _, selected := range []*string{nil, &changes} {
-		actual, err := deliveryTargets(configuration, nil, nil, selected)
-		if err != nil || !reflect.DeepEqual(actual, expected) {
-			t.Fatal(actual, err)
-		}
+	if actual, err := deliveryTargets(configuration, nil, nil, nil); err != nil || !reflect.DeepEqual(actual, expected) {
+		t.Fatal(actual, err)
+	}
+	if actual, err := deliveryTargets(configuration, nil, nil, &changes); err == nil || len(actual) != 0 {
+		t.Fatal("duplicate database name accepted", actual, err)
+	}
+	if err := os.WriteFile(changes, []byte(`{"db_name":"visible"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if actual, err := deliveryTargets(configuration, nil, nil, &changes); err != nil || !reflect.DeepEqual(actual, expected) {
+		t.Fatal(actual, err)
 	}
 }

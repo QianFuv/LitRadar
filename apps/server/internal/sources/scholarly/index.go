@@ -162,13 +162,6 @@ func (index *IndexProvider) fetchIndexContinuation(ctx context.Context, catalog 
 			return batch, err
 		}
 		return index.recoverIndexWorkset(catalog, window, *source.State)
-	case "crossref":
-		prepareIndexReplay(&window)
-		frozen, err := index.frozenEpoch()
-		if err != nil {
-			return domain.ProviderBatch{}, err
-		}
-		return index.startWorkset(catalog, window, source.Issn, frozen, nil)
 	case "open_alex":
 		return index.fetchOpenAlex(ctx, catalog, window, source)
 	}

@@ -35,8 +35,8 @@ func TestSnapshotRejectsEarlierInvalidDuplicateEvenWhenLaterValueIsValid(t *test
 		}
 	}
 	value, err := ParseSnapshot([]byte(`{"issue_article_counts":{"1:2":1,"1:2":2}}`))
-	if err != nil || value.IssueArticleCounts["1:2"] != 2 {
-		t.Fatal("valid duplicate did not keep last count", value, err)
+	if err == nil {
+		t.Fatal("duplicate count was accepted", value, err)
 	}
 }
 

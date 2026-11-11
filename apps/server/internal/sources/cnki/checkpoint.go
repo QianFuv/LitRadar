@@ -1,11 +1,12 @@
+//go:build go1.27
+
 package cnki
 
 import (
 	"encoding/json"
-	"fmt"
-	"reflect"
+	jsonv2 "encoding/json/v2"
 
-	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/jsonobject"
 )
 
 const CheckpointVersion uint32 = 2
@@ -26,71 +27,38 @@ type Checkpoint struct {
 	PageIndex            uint64  `json:"page_index"`
 }
 
-// UnmarshalJSON accepts the original strict struct object and positional representations.
+// UnmarshalJSON validates a typed anchor object before replacing the receiver.
 func (anchor *Anchor) UnmarshalJSON(body []byte) error {
-	var decoded Anchor
-	if err := decodeState(body, []string{"version", "year_issue_id"}, &decoded); err != nil {
+	type wire Anchor
+	var decoded wire
+	if err := jsonobject.Decode(body, &decoded); err != nil {
 		return err
 	}
-	*anchor = decoded
+	*anchor = Anchor(decoded)
 	return nil
 }
 
-// UnmarshalJSON retains nullable base anchors while rejecting unknown or duplicate fields.
+// UnmarshalJSON validates a typed checkpoint object before replacing the receiver.
 func (checkpoint *Checkpoint) UnmarshalJSON(body []byte) error {
-	var decoded Checkpoint
-	if err := decodeState(body, []string{"version", "base_anchor_issue_id", "candidate_head_issue_id", "current_issue_id", "page_index"}, &decoded); err != nil {
+	type wire Checkpoint
+	var decoded wire
+	if err := jsonobject.Decode(body, &decoded); err != nil {
 		return err
 	}
-	*checkpoint = decoded
-	return nil
-}
-func decodeState(body []byte, names []string, target any) error {
-	values, err := decodeFields(body, names, false, true)
-	if err != nil {
-		return err
-	}
-	value := reflect.ValueOf(target).Elem()
-	for index, name := range names {
-		raw, exists := values[name]
-		if !exists {
-			if value.Field(index).Kind() == reflect.Pointer {
-				continue
-			}
-			return errFixtureJson
-		}
-		if err := decodeTyped(raw, value.Field(index)); err != nil {
-			return err
-		}
-	}
+	*checkpoint = Checkpoint(decoded)
 	return nil
 }
 
-// Encode preserves declared field order and non-HTML-escaped compact JSON.
+// Encode serializes the typed anchor with encoding/json.
 func (anchor Anchor) Encode() (string, error) {
-	id, err := domain.Json(anchor.YearIssueId)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf(`{"version":%d,"year_issue_id":%s}`, anchor.Version, id), nil
+	encoded, err := jsonv2.Marshal(anchor)
+	return string(encoded), err
 }
 
-// Encode emits the complete checkpoint, including an explicit null base anchor.
+// Encode serializes the typed checkpoint with encoding/json.
 func (checkpoint Checkpoint) Encode() (string, error) {
-	var base any
-	if checkpoint.BaseAnchorIssueId != nil {
-		base = *checkpoint.BaseAnchorIssueId
-	}
-	fields := []any{base, checkpoint.CandidateHeadIssueId, checkpoint.CurrentIssueId}
-	encoded := make([][]byte, len(fields))
-	for index, value := range fields {
-		var err error
-		encoded[index], err = domain.Json(value)
-		if err != nil {
-			return "", err
-		}
-	}
-	return fmt.Sprintf(`{"version":%d,"base_anchor_issue_id":%s,"candidate_head_issue_id":%s,"current_issue_id":%s,"page_index":%d}`, checkpoint.Version, encoded[0], encoded[1], encoded[2], checkpoint.PageIndex), nil
+	encoded, err := jsonv2.Marshal(checkpoint)
+	return string(encoded), err
 }
 
 // IsStableIssueId checks the opaque identifier grammar without imposing calendar semantics.

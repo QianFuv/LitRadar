@@ -3,7 +3,6 @@ package cfp
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,7 +17,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/jsonobject"
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/process"
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/rootfile"
 	whatwg "github.com/nlnwa/whatwg-url/url"
 )
 
@@ -81,12 +82,17 @@ func (transport *LiveTransport) httpDocument(ctx context.Context, config SourceC
 			return Document{}, ErrHelper
 		}
 		defer func() {
-			if err := os.RemoveAll(directory); err != nil {
+			if err := removeCaptureDirectory(directory); err != nil {
 				slog.Warn("cleanup.failed", "operation", "os.RemoveAll", "error", err)
 			}
 		}()
 		input, output := filepath.Join(directory, "source.pdf"), filepath.Join(directory, "source.txt")
-		if os.WriteFile(input, response.Bytes, 0600) != nil {
+		root, err := os.OpenRoot(directory)
+		if err != nil {
+			return Document{}, ErrHelper
+		}
+		defer func() { _ = root.Close() }()
+		if root.WriteFile("source.pdf", response.Bytes, 0600) != nil {
 			return Document{}, ErrHelper
 		}
 		data, err := runHelper(ctx, process.Config{Path: executable(transport.options.PdftotextPath, "pdftotext"), Args: []string{"-enc", "UTF-8", "-eol", "unix", "-nopgbrk", input, output}}, deadline, output)
@@ -121,7 +127,7 @@ func (transport *LiveTransport) obscuraDocument(ctx context.Context, config Sour
 		return Document{}, ErrHelper
 	}
 	defer func() {
-		if err := os.RemoveAll(directory); err != nil {
+		if err := removeCaptureDirectory(directory); err != nil {
 			slog.Warn("cleanup.failed", "operation", "os.RemoveAll", "error", err)
 		}
 	}()
@@ -148,14 +154,7 @@ func decodeObscura(config SourceConfig, data []byte) (Document, error) {
 	if !jsonvalue.ValidJson(string(data)) {
 		return Document{}, ErrHelper
 	}
-	data = bytes.TrimSpace(data)
-	var fields []string
-	var err error
-	if len(data) > 0 && data[0] == '[' {
-		fields, err = decodeObscuraSequence(data)
-	} else {
-		fields, err = decodeObscuraObject(data)
-	}
+	fields, err := decodeObscuraObject(data)
 	if err != nil {
 		return Document{}, err
 	}
@@ -229,7 +228,12 @@ func runHelper(ctx context.Context, config process.Config, deadline time.Time, o
 
 // readHelperOutput bounds file bytes before final deadline admission and closes the file.
 func readHelperOutput(output string, deadline time.Time) (resultValue1 []byte, resultError error) {
-	file, err := os.Open(output)
+	root, name, err := rootfile.Parent(output)
+	if err != nil {
+		return nil, ErrHelper
+	}
+	defer func() { _ = root.Close() }()
+	file, err := root.Open(name)
 	if err != nil {
 		return nil, ErrHelper
 	}
@@ -271,41 +275,16 @@ func obscuraEnvironment() []string {
 	return environment
 }
 
-// decodeObscuraSequence requires three nonnull strings in declared protocol order.
-func decodeObscuraSequence(data []byte) ([]string, error) {
-	var fields []string
-	var values []*string
-	if json.Unmarshal(data, &values) != nil || len(values) != 3 {
-		return nil, ErrHelper
-	}
-	for _, value := range values {
-		if value == nil {
-			return nil, ErrHelper
-		}
-		fields = append(fields, *value)
-	}
-	return fields, nil
-}
-
-// decodeObscuraObject rejects unknown, duplicate and null fields before projection.
 func decodeObscuraObject(data []byte) ([]string, error) {
-	var fields []string
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	token, err := decoder.Token()
-	if err != nil || token != json.Delim('{') {
+	var document struct {
+		Protocol string `json:"protocol"`
+		FinalUrl string `json:"finalUrl"`
+		Html     string `json:"html"`
+	}
+	if jsonobject.Decode(data, &document) != nil {
 		return nil, ErrHelper
 	}
-	values := map[string]string{}
-	for decoder.More() {
-		if err := decodeObscuraField(decoder, values); err != nil {
-			return nil, err
-		}
-	}
-	if len(values) != 3 {
-		return nil, ErrHelper
-	}
-	fields = []string{values["protocol"], values["finalUrl"], values["html"]}
-	return fields, nil
+	return []string{document.Protocol, document.FinalUrl, document.Html}, nil
 }
 
 // waitForHelper retains tree ownership and gives close failure priority over acquisition errors.
@@ -330,31 +309,6 @@ func waitForHelper(ctx context.Context, child *process.Child, deadline time.Time
 	return nil
 }
 
-// decodeObscuraField admits an exact unique name before a nonnull string value.
-func decodeObscuraField(decoder *json.Decoder, values map[string]string) error {
-	key, err := decoder.Token()
-	if err != nil {
-		return ErrHelper
-	}
-	name := key.(string)
-	if name != "protocol" && name != "finalUrl" && name != "html" {
-		return ErrHelper
-	}
-	if _, has := values[name]; has {
-		return ErrHelper
-	}
-	var raw json.RawMessage
-	if decoder.Decode(&raw) != nil || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return ErrHelper
-	}
-	var text string
-	if json.Unmarshal(raw, &text) != nil {
-		return ErrHelper
-	}
-	values[name] = text
-	return nil
-}
-
 // helperAdmissionFailure checks cancellation and deadline before inspecting output size.
 func helperAdmissionFailure(ctx context.Context, deadline time.Time, output string) error {
 	failure := check(ctx, deadline)
@@ -364,4 +318,13 @@ func helperAdmissionFailure(ctx context.Context, deadline time.Time, output stri
 		}
 	}
 	return failure
+}
+
+func removeCaptureDirectory(directory string) error {
+	root, name, err := rootfile.Parent(directory)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	return root.RemoveAll(name)
 }

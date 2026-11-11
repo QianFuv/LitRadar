@@ -1,10 +1,9 @@
 package api
 
 import (
-	"bytes"
-	"encoding/json"
 	"slices"
 
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/jsonobject"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/delivery"
 )
 
@@ -26,91 +25,26 @@ type manualPushStatus struct {
 	FolderName            *string  `json:"folder_name" required:"false" nullable:"true"`
 }
 
-// manualOutcome admits a complete typed result and a strictly represented status.
-func manualOutcome(encoded string) map[string]any {
-	fields, err := storedFields(encoded, []string{"status", "message", "pushed", "selected", "total_candidates", "summary", "folder_id", "folder_name"})
-	if err != nil {
-		return nil
-	}
-	required := map[string]any{"message": new(string), "pushed": new(int64), "selected": new(int64), "summary": new(string)}
-	result := map[string]any{}
-	for name, target := range required {
-		raw, exists := fields[name]
-		if !exists || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			return nil
-		}
-		if err := json.Unmarshal(raw, target); err != nil {
-			return nil
-		}
-		switch value := target.(type) {
-		case *string:
-			result[name] = *value
-		case *int64:
-			result[name] = *value
-		}
-	}
-	for _, name := range []string{"total_candidates", "folder_id", "folder_name"} {
-		raw, exists := fields[name]
-		if !exists {
-			continue
-		}
-		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			continue
-		}
-		if name == "folder_name" {
-			var value string
-			if err := json.Unmarshal(raw, &value); err != nil {
-				return nil
-			}
-			result[name] = value
-		} else {
-			var value int64
-			if err := json.Unmarshal(raw, &value); err != nil {
-				return nil
-			}
-			result[name] = value
-		}
-	}
-	name, ok := manualOutcomeStatus(fields["status"])
-	if !ok {
-		return nil
-	}
-	result["status"] = name
-	return result
+type manualOutcomeValue struct {
+	Status          string  `json:"status"`
+	Message         string  `json:"message"`
+	Pushed          int64   `json:"pushed"`
+	Selected        int64   `json:"selected"`
+	TotalCandidates *int64  `json:"total_candidates"`
+	Summary         string  `json:"summary"`
+	FolderId        *int64  `json:"folder_id"`
+	FolderName      *string `json:"folder_name"`
 }
 
-func manualOutcomeStatus(raw json.RawMessage) (string, bool) {
-	var name string
-	if json.Unmarshal(raw, &name) != nil || name == "" {
-		var isValid bool
-		name, isValid = manualOutcomeUnit(raw)
-		if !isValid {
-			return "", false
-		}
+func manualOutcome(encoded string) *manualOutcomeValue {
+	var result manualOutcomeValue
+	if jsonobject.DecodeWithOptions([]byte(encoded), &result, jsonobject.Options{AllowUnknown: true}) != nil {
+		return nil
 	}
-	return name, slices.Contains([]string{"idle", "pending", "running", "completed", "failed", "cancelled", "timed_out", "unknown"}, name)
-}
-
-// manualOutcomeUnit rejects extra members and non-null unit payloads.
-func manualOutcomeUnit(raw json.RawMessage) (string, bool) {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	token, err := decoder.Token()
-	if err != nil || token != json.Delim('{') || !decoder.More() {
-		return "", false
+	if !slices.Contains([]string{"idle", "pending", "running", "completed", "failed", "cancelled", "timed_out", "unknown"}, result.Status) {
+		return nil
 	}
-	token, err = decoder.Token()
-	if err != nil {
-		return "", false
-	}
-	name, isString := token.(string)
-	if !isString {
-		return "", false
-	}
-	var unit json.RawMessage
-	if decoder.Decode(&unit) != nil || !bytes.Equal(bytes.TrimSpace(unit), []byte("null")) || decoder.More() {
-		return "", false
-	}
-	return name, true
+	return &result
 }
 
 // manualStatus projects durable run state before optional decoded result metrics.
@@ -150,21 +84,14 @@ func applyManualOutcome(result *manualPushStatus, run *storage.RunRecord) {
 	}
 	outcome := manualOutcome(*run.ResultJson)
 	if outcome == nil {
+		result.Summary = "Stored manual delivery result is invalid or obsolete"
 		return
 	}
-	if (run.Status == storage.RunStatusCompleted || run.Status == storage.RunStatusSkipped) && outcome["status"] == "completed" && outcome["message"].(string) != "" {
-		result.Message = outcome["message"].(string)
+	if (run.Status == storage.RunStatusCompleted || run.Status == storage.RunStatusSkipped) && outcome.Status == "completed" && outcome.Message != "" {
+		result.Message = outcome.Message
 	}
-	result.Pushed, result.Selected, result.Summary = outcome["pushed"].(int64), outcome["selected"].(int64), outcome["summary"].(string)
-	if value, ok := outcome["total_candidates"].(int64); ok {
-		result.TotalCandidates = &value
-	}
-	if value, ok := outcome["folder_id"].(int64); ok {
-		result.FolderId = &value
-	}
-	if value, ok := outcome["folder_name"].(string); ok {
-		result.FolderName = &value
-	}
+	result.Pushed, result.Selected, result.Summary = outcome.Pushed, outcome.Selected, outcome.Summary
+	result.TotalCandidates, result.FolderId, result.FolderName = outcome.TotalCandidates, outcome.FolderId, outcome.FolderName
 }
 
 var manualErrorMessage = map[string]string{

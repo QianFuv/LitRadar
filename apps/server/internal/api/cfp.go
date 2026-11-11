@@ -1,11 +1,8 @@
 package api
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-
 	"path/filepath"
 	"slices"
 	"strings"
@@ -18,8 +15,8 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
 	metadata "github.com/QianFuv/LitRadar/apps/server/internal/domain/storage"
 	"github.com/QianFuv/LitRadar/apps/server/internal/index"
-
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/executor"
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/jsonobject"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/cfp"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/secrets"
@@ -341,20 +338,9 @@ func decodeCfpCursor(codec *secrets.Codec, ciphertext string) (*cfpCursor, *apiE
 	if err != nil {
 		return nil, cfpCursorError()
 	}
-	fields, err := storedFields(plaintext, []string{"database", "catalog_id", "include_closed", "revision", "evaluated_at", "position", "order"})
-	if err != nil || len(fields) != 7 {
+	var result cfpCursor
+	if jsonobject.Decode([]byte(plaintext), &result) != nil {
 		return nil, cfpCursorError()
-	}
-	result := cfpCursor{}
-	targets := map[string]any{"database": &result.Database, "catalog_id": &result.CatalogId, "include_closed": &result.IncludeClosed, "revision": &result.Revision, "evaluated_at": &result.EvaluatedAt, "position": &result.Position, "order": &result.Order}
-	for name, target := range targets {
-		raw, exists := fields[name]
-		if !exists || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			return nil, cfpCursorError()
-		}
-		if err := json.Unmarshal(raw, target); err != nil {
-			return nil, cfpCursorError()
-		}
 	}
 	return &result, nil
 }

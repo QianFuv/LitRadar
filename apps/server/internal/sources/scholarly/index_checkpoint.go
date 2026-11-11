@@ -1,7 +1,6 @@
 package scholarly
 
 import (
-	"bytes"
 	"encoding/json"
 	"reflect"
 	"strings"
@@ -43,18 +42,9 @@ func (window *indexWindow) UnmarshalJSON(body []byte) error {
 type indexUnit string
 
 func (unit *indexUnit) UnmarshalJSON(body []byte) error {
-	body = bytes.TrimSpace(body)
 	var name string
-	if len(body) > 0 && body[0] == '"' {
-		if json.Unmarshal(body, &name) != nil {
-			return errWorksetJson
-		}
-	} else {
-		var err error
-		name, err = decodeIndexUnitObject(body)
-		if err != nil {
-			return err
-		}
+	if json.Unmarshal(body, &name) != nil {
+		return errWorksetJson
 	}
 	*unit = indexUnit(name)
 	return nil
@@ -67,25 +57,15 @@ func (window indexWindow) clone() indexWindow {
 }
 
 type indexSource struct {
-	Kind              string
-	State             *CrossrefCheckpoint
-	Issn              string
-	Cursor            *string
-	PageIndex         uint64
-	CursorRefreshedAt *uint64
-	SourceId          string
+	Kind     string
+	State    *CrossrefCheckpoint
+	Cursor   *string
+	SourceId string
 }
 
 type worksetSourceWire struct {
 	Kind  string             `json:"kind"`
 	State CrossrefCheckpoint `json:"state"`
-}
-type legacySourceWire struct {
-	Kind              string  `json:"kind"`
-	Issn              string  `json:"issn"`
-	Cursor            *string `json:"cursor,omitempty"`
-	PageIndex         uint64  `json:"page_index"`
-	CursorRefreshedAt *uint64 `json:"cursor_refreshed_at_epoch_seconds,omitempty"`
 }
 type openAlexSourceWire struct {
 	Kind     string  `json:"kind"`
@@ -100,8 +80,6 @@ func (source indexSource) MarshalJSON() ([]byte, error) {
 			return nil, errWorksetJson
 		}
 		return encodeWorksetStruct(worksetSourceWire{source.Kind, *source.State})
-	case "crossref":
-		return encodeWorksetStruct(legacySourceWire{source.Kind, source.Issn, source.Cursor, source.PageIndex, source.CursorRefreshedAt})
 	case "open_alex":
 		return encodeWorksetStruct(openAlexSourceWire{source.Kind, source.SourceId, source.Cursor})
 	default:
@@ -122,12 +100,6 @@ func (source *indexSource) UnmarshalJSON(body []byte) error {
 			return err
 		}
 		decoded.State = &wire.State
-	case "crossref":
-		var wire legacySourceWire
-		if err := decodeWorksetStruct(body, &wire); err != nil {
-			return err
-		}
-		decoded.Issn, decoded.Cursor, decoded.PageIndex, decoded.CursorRefreshedAt = wire.Issn, wire.Cursor, wire.PageIndex, wire.CursorRefreshedAt
 	case "open_alex":
 		var wire openAlexSourceWire
 		if err := decodeWorksetStruct(body, &wire); err != nil {
@@ -176,34 +148,21 @@ func decodeIndexAnchor(raw string) (*Anchor, error) {
 	return &anchor, nil
 }
 
-func decodeIndexCheckpoint(raw string, currentDate *string) (indexCheckpoint, error) {
+func decodeIndexCheckpoint(raw string, _ *string) (indexCheckpoint, error) {
 	var checkpoint indexCheckpoint
 	if len(raw) > 65536 {
 		return checkpoint, invalidWorkset("scholarly checkpoint exceeds the provider contract limit")
 	}
 	if json.Unmarshal([]byte(raw), &checkpoint) != nil {
-		return checkpoint, invalidWorkset("scholarly checkpoint is invalid")
+		return checkpoint, invalidWorkset("scholarly checkpoint is invalid or obsolete; restart the indexing run")
 	}
-	normalizeIndexReplay(&checkpoint, currentDate)
 	source, window := checkpoint.Source, checkpoint.Window
 	isSourceValid := validIndexSource(checkpoint.Version, source)
 	isWindowValid := validIndexWindowAnchors(window) && validIndexWindowProgress(window)
-	if checkpoint.Version != 1 && checkpoint.Version != 2 || !isSourceValid || !isWindowValid {
-		return checkpoint, invalidWorkset("scholarly checkpoint is invalid")
+	if checkpoint.Version != 2 || !isSourceValid || !isWindowValid {
+		return checkpoint, invalidWorkset("scholarly checkpoint is invalid or obsolete; restart the indexing run")
 	}
 	return checkpoint, nil
-}
-
-func normalizeIndexReplay(checkpoint *indexCheckpoint, currentDate *string) {
-	source := checkpoint.Source
-	isHead := isIndexSourceHead(source)
-	window := &checkpoint.Window
-	if isLegacyIndexReplay(checkpoint.Version, *window) && isHead {
-		window.HasReachedCandidate = false
-		if currentDate != nil && window.BaseAnchor.FromSyncDate != nil && *window.BaseAnchor.FromSyncDate > *currentDate {
-			window.Phase = "bounded"
-		}
-	}
 }
 
 func indexWindowFromContext(context domain.IndexFetchContext, currentDate *string) (indexWindow, *indexSource, error) {
@@ -269,40 +228,15 @@ func indexWorksetScope(catalog domain.JournalCatalogEntry, window indexWindow) (
 	return "[" + string(encodedCatalog) + "," + string(mode) + "," + string(anchor) + "]", nil
 }
 
-// decodeIndexUnitObject admits exactly one null-valued unit variant.
-func decodeIndexUnitObject(body []byte) (string, error) {
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	opening, err := decoder.Token()
-	if err != nil || opening != json.Delim('{') || !decoder.More() {
-		return "", errWorksetJson
-	}
-	key, err := decoder.Token()
-	if err != nil {
-		return "", errWorksetJson
-	}
-	var value json.RawMessage
-	if decoder.Decode(&value) != nil || !bytes.Equal(bytes.TrimSpace(value), []byte("null")) || decoder.More() {
-		return "", errWorksetJson
-	}
-	return key.(string), nil
-}
-
 // validIndexSource preserves version, cursor and state admission for each source variant.
 func validIndexSource(version uint32, source indexSource) bool {
 	switch source.Kind {
 	case "crossref_workset":
 		return version == 2 && source.State != nil && source.State.Validate() == nil
-	case "crossref":
-		return validLegacyIndexSource(version, source)
 	case "open_alex":
 		return strings.TrimSpace(source.SourceId) != "" && (source.Cursor == nil || *source.Cursor != "")
 	}
 	return false
-}
-
-// validLegacyIndexSource admits either an untouched head or a refreshed nonempty cursor.
-func validLegacyIndexSource(version uint32, source indexSource) bool {
-	return version == 1 && strings.TrimSpace(source.Issn) != "" && (source.Cursor == nil && source.PageIndex == 0 && source.CursorRefreshedAt == nil || source.Cursor != nil && *source.Cursor != "" && source.CursorRefreshedAt != nil)
 }
 
 // validIndexWindowAnchors checks anchor validity and bounded-window authority.
@@ -313,14 +247,4 @@ func validIndexWindowAnchors(window indexWindow) bool {
 // validIndexWindowProgress preserves candidate and base-observation state implications.
 func validIndexWindowProgress(window indexWindow) bool {
 	return (window.CandidateAnchor != nil || !window.HasReachedCandidate && !window.HasSeenBase) && (!window.HasSeenBase || window.Phase == "bounded" && window.HasReachedCandidate)
-}
-
-// isIndexSourceHead identifies the original unstarted legacy source shapes.
-func isIndexSourceHead(source indexSource) bool {
-	return source.Kind == "crossref" && source.Cursor == nil && source.PageIndex == 0 && source.CursorRefreshedAt == nil || source.Kind == "open_alex" && source.Cursor == nil
-}
-
-// isLegacyIndexReplay recognizes the historical candidate-free reached marker.
-func isLegacyIndexReplay(version uint32, window indexWindow) bool {
-	return (version == 1 || version == 2) && window.Phase == "unbounded" && window.BaseAnchor != nil && window.CandidateAnchor == nil && window.HasReachedCandidate && !window.HasSeenBase
 }

@@ -122,12 +122,12 @@ func TestHelperLifecycleAndWholeTreeOwnership(t *testing.T) {
 func TestObscuraProtocolAndOneAttempt(t *testing.T) {
 	config := SourceConfig{AllowedUrls: []UrlRule{{Host: "link.springer.com", PathPrefix: "/collections"}}}
 	valid := `{"protocol":"litradar.cfp.page.v1","finalUrl":"https://link.springer.com/collections/a","html":"<main>complete text</main>"}`
-	for _, payload := range []string{valid, `["litradar.cfp.page.v1","https://link.springer.com/collections/a","<main>complete text</main>"]`} {
+	for _, payload := range []string{valid} {
 		if _, err := decodeObscura(config, []byte(payload)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, payload := range []string{`[null,"https://link.springer.com/collections/a","x"]`, `["litradar.cfp.page.v1",null,"x"]`, `["litradar.cfp.page.v1","https://link.springer.com/collections/a",null]`, valid + "{}", strings.Replace(valid, `"html":`, `"unknown":`, 1), strings.Replace(valid, `"html":`, `"protocol":"duplicate","html":`, 1)} {
+	for _, payload := range []string{`["litradar.cfp.page.v1","https://link.springer.com/collections/a","<main>complete text</main>"]`, `[null,"https://link.springer.com/collections/a","x"]`, `["litradar.cfp.page.v1",null,"x"]`, `["litradar.cfp.page.v1","https://link.springer.com/collections/a",null]`, valid + "{}", strings.Replace(valid, `"html":`, `"unknown":`, 1), strings.Replace(valid, `"html":`, `"protocol":"duplicate","html":`, 1)} {
 		if _, err := decodeObscura(config, []byte(payload)); !errors.Is(err, ErrHelper) {
 			t.Fatalf("%s: %v", payload, err)
 		}

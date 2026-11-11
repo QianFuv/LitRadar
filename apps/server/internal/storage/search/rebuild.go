@@ -78,9 +78,6 @@ func decodeAuthorName(author json.RawMessage, isCanonical bool) (string, error) 
 	if !isCanonical {
 		return decodeAuthorString(author)
 	}
-	if bytes.HasPrefix(bytes.TrimSpace(author), []byte("[")) {
-		return decodePositionalAuthor(author)
-	}
 	return decodeObjectAuthor(author)
 }
 
@@ -88,16 +85,6 @@ func decodeAuthorName(author json.RawMessage, isCanonical bool) (string, error) 
 func decodeAuthorString(author json.RawMessage) (string, error) {
 	var name string
 	if !bytes.HasPrefix(bytes.TrimSpace(author), []byte(`"`)) || json.Unmarshal(author, &name) != nil {
-		return "", ErrInvalidAuthors
-	}
-	return name, nil
-}
-
-// decodePositionalAuthor retains exact single-field arity and string admission.
-func decodePositionalAuthor(author json.RawMessage) (string, error) {
-	var fields []json.RawMessage
-	var name string
-	if json.Unmarshal(author, &fields) != nil || len(fields) != 1 || !bytes.HasPrefix(bytes.TrimSpace(fields[0]), []byte(`"`)) || json.Unmarshal(fields[0], &name) != nil {
 		return "", ErrInvalidAuthors
 	}
 	return name, nil

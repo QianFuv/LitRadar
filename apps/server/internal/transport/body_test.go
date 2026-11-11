@@ -136,15 +136,13 @@ func TestLossyTextIgnoresCharsetAndPreservesBom(t *testing.T) {
 	}
 }
 
-func TestJsonChecksEveryNumberBeforeDiscardingDuplicateValues(t *testing.T) {
-	for _, input := range []string{`{"x":1e400,"x":1}`, `{"x":[1e400],"x":1}`, `{"ignored":2e308}`, `{"x":"\ud800","x":0}`, `1 2`} {
-		if _, err := ParseJson([]byte(input)); err != ErrInvalidJson {
-			t.Fatalf("%s: %v", input, err)
-		}
+func TestJsonRetainsNumericTokensAndRejectsMultipleValues(t *testing.T) {
+	if _, err := ParseJson([]byte(`1 2`)); err != ErrInvalidJson {
+		t.Fatal(err)
 	}
-	for _, input := range []string{`{"x":-0e999999999999999999999999999999999999999}`, `{"x":1e-999999999999999999999999999999999999999}`, `{"x":1e308}`, `{"x":"1e400","quoted":"\\\"1e400"}`} {
+	for _, input := range []string{`{"x":1e400}`, `{"x":1e-400}`, `{"x":9007199254740993}`} {
 		if _, err := ParseJson([]byte(input)); err != nil {
-			t.Fatalf("%s: %v", input, err)
+			t.Fatal(input, err)
 		}
 	}
 }

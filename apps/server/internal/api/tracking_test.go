@@ -191,7 +191,7 @@ func TestManualUnknownAcknowledgementRemainsOwnerOnlyAndAtomic(t *testing.T) {
 
 func TestManualPublicOutcomeRequiresStrictDecodedState(t *testing.T) {
 	assertMalformedManualResultsAreHidden(t)
-	encoded := `{"status":{"completed":null},"message":"Public result","pushed":7,"selected":8,"summary":"Public summary"}`
+	encoded := `{"status":"completed","message":"Public result","pushed":7,"selected":8,"summary":"Public summary"}`
 	for _, state := range []storage.RunStatus{storage.RunStatusCompleted, storage.RunStatusRunning, storage.RunStatusUnknown} {
 		value := manualStatus(&storage.RunRecord{Status: state, ResultJson: &encoded})
 		if value.Pushed != 7 || value.Selected != 8 || value.Summary != "Public summary" {
@@ -325,7 +325,7 @@ func assertMalformedManualResultsAreHidden(t *testing.T) {
 	t.Helper()
 	for _, encoded := range []string{`{}`, `{"status":"completed","message":"private","pushed":null,"selected":1,"summary":"x"}`, `{"status":"invented","message":"private","pushed":1,"selected":1,"summary":"x"}`, `{"status":"completed","status":"completed","message":"private","pushed":1,"selected":1,"summary":"x"}`, `{"status":{"completed":null,"completed":null},"message":"private","pushed":1,"selected":1,"summary":"x"}`} {
 		value := manualStatus(&storage.RunRecord{Status: storage.RunStatusCompleted, ResultJson: &encoded})
-		if value.Message != "Manual push completed" || value.Pushed != 0 || value.Summary != "" {
+		if value.Message != "Manual push completed" || value.Pushed != 0 || value.Summary != "Stored manual delivery result is invalid or obsolete" {
 			t.Fatal("invalid result disclosed", encoded, value)
 		}
 	}

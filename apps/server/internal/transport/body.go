@@ -1,15 +1,16 @@
+//go:build go1.27
+
 package transport
 
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"io"
 	"net/http"
 	"unicode/utf8"
 
-	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
-	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
 	"golang.org/x/text/encoding/unicode"
 )
 
@@ -62,10 +63,9 @@ func LossyUtf8(body []byte) string {
 	return string(decoded)
 }
 
-// ParseJson retains exact integer tokens and rejects serde-incompatible lossy input.
+// ParseJson retains numeric tokens while applying encoding/json validation.
 func ParseJson(body []byte) (any, error) {
-	masked, isValid := maskJsonNumbers(body)
-	if !isValid || !jsonvalue.ValidJson(string(masked)) {
+	if !jsontext.Value(body).IsValid() {
 		return nil, ErrInvalidJson
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
@@ -77,30 +77,6 @@ func ParseJson(body []byte) (any, error) {
 	return result, nil
 }
 
-// maskJsonNumbers validates every numeric token while retaining non-number bytes unchanged.
-func maskJsonNumbers(body []byte) ([]byte, bool) {
-	masked := make([]byte, 0, len(body))
-	for index := 0; index < len(body); {
-		start := index
-		if body[index] == '"' {
-			index = jsonStringEnd(body, index)
-			masked = append(masked, body[start:index]...)
-			continue
-		}
-		if body[index] == '-' || body[index] >= '0' && body[index] <= '9' {
-			index = jsonNumberEnd(body, index)
-			if _, err := domain.ParseNumber(json.Number(body[start:index])); err != nil {
-				return nil, false
-			}
-			masked = append(masked, '0')
-			continue
-		}
-		masked = append(masked, body[index])
-		index++
-	}
-	return masked, true
-}
-
 // BoundedJson reads a bounded response before applying strict JSON validation.
 func BoundedJson(response *http.Response, maximum int64) (any, error) {
 	body, err := BoundedBytes(response, maximum)
@@ -108,33 +84,4 @@ func BoundedJson(response *http.Response, maximum int64) (any, error) {
 		return nil, err
 	}
 	return ParseJson(body)
-}
-
-// jsonStringEnd skips escaped bytes without replacing the later strict string validation.
-func jsonStringEnd(body []byte, index int) int {
-	index++
-	for index < len(body) {
-		character := body[index]
-		index++
-		if character == '\\' && index < len(body) {
-			index++
-		} else if character == '"' {
-			break
-		}
-	}
-	return index
-}
-
-// jsonNumberEnd consumes the complete maximal numeric alphabet before domain admission.
-func jsonNumberEnd(body []byte, index int) int {
-	index++
-	for index < len(body) && isJsonNumberCharacter(body[index]) {
-		index++
-	}
-	return index
-}
-
-// isJsonNumberCharacter retains signs, decimal points and exponent markers in the token.
-func isJsonNumberCharacter(character byte) bool {
-	return character >= '0' && character <= '9' || character == '-' || character == '+' || character == '.' || character == 'e' || character == 'E'
 }

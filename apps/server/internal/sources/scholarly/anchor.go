@@ -96,7 +96,7 @@ func (anchor Anchor) MarshalJSON() ([]byte, error) {
 	return encodeWorksetStruct(wire(anchor))
 }
 
-// UnmarshalJSON accepts strict struct maps and complete positional sequences.
+// UnmarshalJSON accepts typed JSON objects.
 func (anchor *Anchor) UnmarshalJSON(body []byte) error {
 	type wire Anchor
 	var decoded wire

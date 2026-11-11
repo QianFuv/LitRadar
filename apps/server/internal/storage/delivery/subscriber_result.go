@@ -1,10 +1,9 @@
 package delivery
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
-	"reflect"
+
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/jsonobject"
 )
 
 // SubscriberResult is the durable summary used to reconstruct a terminal delivery without repeating effects.
@@ -14,10 +13,10 @@ type SubscriberResult struct {
 	MessageId          *string `json:"message_id" default:"true"`
 }
 
-// ParseSubscriberResult preserves typed serde defaults, duplicate rejection and positional struct support.
+// ParseSubscriberResult decodes a typed object with default values.
 func ParseSubscriberResult(data []byte) (SubscriberResult, error) {
 	result := SubscriberResult{SelectedArticleIds: []int64{}}
-	if !json.Valid(data) || decodeLegacyValue(bytes.TrimSpace(data), reflect.ValueOf(&result).Elem()) != nil {
+	if jsonobject.DecodeWithOptions(data, &result, jsonobject.Options{AllowUnknown: true}) != nil {
 		return SubscriberResult{}, errors.New("Stored subscriber result is invalid")
 	}
 	return result, nil

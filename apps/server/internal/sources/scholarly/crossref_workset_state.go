@@ -138,7 +138,7 @@ func (state CrossrefCheckpoint) MarshalJSON() ([]byte, error) {
 	return encodeWorksetStruct(wire(state))
 }
 
-// UnmarshalJSON accepts the original strict map and positional struct representations.
+// UnmarshalJSON accepts typed JSON objects.
 func (state *CrossrefCheckpoint) UnmarshalJSON(body []byte) error {
 	type wire CrossrefCheckpoint
 	var decoded wire

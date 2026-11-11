@@ -483,7 +483,7 @@ func TestMalformedSchemaDoesNotPreemptVersionCheck(t *testing.T) {
 }
 
 func TestStrictJsonRejectsLossySyntaxAndValidatesOverwrittenValues(t *testing.T) {
-	for _, raw := range []string{`["\ud800"]`, `["\udc00"]`, string([]byte{'[', '"', 255, '"', ']'}), `{"x":1e999,"x":"cnki"}`, strings.Repeat("[", 128) + "0" + strings.Repeat("]", 128)} {
+	for _, raw := range []string{`["\ud800"]`, `["\udc00"]`, string([]byte{'[', '"', 255, '"', ']'}), `{"x":1e999,"x":"cnki"}`} {
 		if validJson(raw) {
 			t.Fatalf("accepted invalid input %q", raw)
 		}
@@ -492,8 +492,11 @@ func TestStrictJsonRejectsLossySyntaxAndValidatesOverwrittenValues(t *testing.T)
 		t.Fatal("invalid overwritten typed map value accepted")
 	}
 	orders, err := parseOrders(`{"default":[],"catalogs":{"x":["cnki"],"x":[]}}`)
-	if err != nil || len(orders.Catalogs["x"]) != 0 {
-		t.Fatalf("valid last map value: %+v %v", orders, err)
+	if err == nil {
+		t.Fatalf("duplicate map value accepted: %+v %v", orders, err)
+	}
+	if !validJson(strings.Repeat("[", 128)+"0"+strings.Repeat("]", 128)) || !validJson("1e999") {
+		t.Fatal("standard JSON token validation was restricted by legacy limits")
 	}
 	for _, value := range []string{"\u2028", "\u2029", `\u2028`, `\u2029`, "😀"} {
 		assertMigrationStringRoundTrip(t, value)
@@ -528,7 +531,7 @@ func TestLegacyProviderValidationPrecedesOverrides(t *testing.T) {
 func TestProviderRetirementRetainsEquivalentFormatting(t *testing.T) {
 	filename, connection := historicalDatabase(t, 18)
 	raw := " { \"catalogs\" : {\"empty\": []}, \"default\" : [\"cnki\"] } "
-	duplicate := `{"default":[null],"default":["cnki_oversea","cnki"],"catalogs":{}}`
+	duplicate := `{"default":["cnki_oversea","cnki"],"catalogs":{}}`
 	mustExecute(t, connection, "INSERT INTO runtime_settings VALUES('article_fulltext_provider_orders',?,10),('article_abstract_provider_orders',?,20)", raw, duplicate)
 	if _, err := Migrate(context.Background(), filename); err != nil {
 		t.Fatal(err)
@@ -609,5 +612,17 @@ func TestVersionTwentyTwoRelationGraphFavorites(t *testing.T) {
 	}
 	if scalar[int](t, connection, "SELECT count(*) FROM pragma_index_list('relation_graph_favorites') WHERE name='idx_relation_graph_favorites_user_updated'") != 1 {
 		t.Fatal("missing graph index")
+	}
+}
+
+func TestProviderRetirementRejectsDuplicateStateWithoutChangingData(t *testing.T) {
+	filename, connection := historicalDatabase(t, 18)
+	raw := `{"default":[null],"default":["cnki_oversea","cnki"],"catalogs":{}}`
+	mustExecute(t, connection, "INSERT INTO runtime_settings VALUES('article_abstract_provider_orders',?,20)", raw)
+	if _, err := Migrate(context.Background(), filename); !errors.Is(err, ErrProviderState) {
+		t.Fatal(err)
+	}
+	if scalar[int](t, connection, "PRAGMA user_version") != 18 || scalar[string](t, connection, "SELECT value FROM runtime_settings WHERE key='article_abstract_provider_orders'") != raw {
+		t.Fatal("rejected historical state was changed")
 	}
 }

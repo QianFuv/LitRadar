@@ -1,253 +1,40 @@
+//go:build go1.27
+
 package scholarly
 
 import (
-	"bytes"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
-	"reflect"
-	"strings"
 
-	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
-	"github.com/QianFuv/LitRadar/apps/server/internal/transport"
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/jsonobject"
 )
 
-var errWorksetJson = errors.New("invalid Crossref workset metadata")
+var errWorksetJson = errors.New("invalid Crossref workset metadata; restart the indexing run")
 
 func decodeWorksetStruct(body []byte, target any) error {
-	if _, err := transport.ParseJson(body); err != nil {
-		return errWorksetJson
-	}
-	value := reflect.ValueOf(target).Elem()
-	kind := value.Type()
-	names := map[string]int{}
-	seen := make([]bool, kind.NumField())
-	for index := 0; index < kind.NumField(); index++ {
-		name, _, _ := strings.Cut(kind.Field(index).Tag.Get("json"), ",")
-		names[name] = index
-	}
-	body = bytes.TrimSpace(body)
-	if body[0] == '[' {
-		if err := decodeWorksetSequence(body, value, seen); err != nil {
-			return err
-		}
-	} else if body[0] == '{' {
-		if err := decodeWorksetObject(body, value, names, seen); err != nil {
-			return err
-		}
-	} else {
-		return errWorksetJson
-	}
-	for index, hasField := range seen {
-		if !hasField && value.Field(index).Kind() != reflect.Pointer {
-			return errWorksetJson
-		}
-	}
-	return nil
-}
-func decodeWorksetValue(raw []byte, value reflect.Value) error {
-	raw = bytes.TrimSpace(raw)
-	if value.Kind() == reflect.Pointer {
-		if bytes.Equal(raw, []byte("null")) {
-			value.SetZero()
-			return nil
-		}
-		value.Set(reflect.New(value.Type().Elem()))
-		return decodeWorksetValue(raw, value.Elem())
-	}
-	if bytes.Equal(raw, []byte("null")) {
-		return errWorksetJson
-	}
-	if value.Kind() == reflect.Int64 {
-		number, err := domain.ParseNumber(json.Number(raw))
-		if err != nil {
-			return errWorksetJson
-		}
-		integer, ok := number.AsInt64()
-		if !ok {
-			return errWorksetJson
-		}
-		value.SetInt(integer)
-		return nil
-	}
-	if json.Unmarshal(raw, value.Addr().Interface()) != nil {
+	if err := jsonobject.Decode(body, target); err != nil {
 		return errWorksetJson
 	}
 	return nil
 }
+
 func worksetKind(body []byte) (string, error) {
-	if _, err := transport.ParseJson(body); err != nil {
+	var selector struct {
+		Kind string `json:"kind"`
+	}
+	if jsonv2.Unmarshal(body, &selector) != nil || selector.Kind == "" {
 		return "", errWorksetJson
 	}
-	body = bytes.TrimSpace(body)
-	if len(body) == 0 {
-		return "", errWorksetJson
-	}
-	var kind string
-	if body[0] == '[' {
-		var fields []json.RawMessage
-		if json.Unmarshal(body, &fields) != nil || len(fields) == 0 || json.Unmarshal(fields[0], &kind) != nil {
-			return "", errWorksetJson
-		}
-		return kind, nil
-	}
-	if body[0] != '{' {
-		return "", errWorksetJson
-	}
-	return worksetObjectKind(body)
+	return selector.Kind, nil
 }
 
 func decodeUnitPhase(body []byte) error {
-	body = bytes.TrimSpace(body)
-	if body[0] == '[' {
-		var fields []json.RawMessage
-		if json.Unmarshal(body, &fields) != nil || len(fields) != 1 {
-			return errWorksetJson
-		}
-	}
-	return nil
-}
-
-func encodeWorksetStruct(value any) ([]byte, error) {
-	fields := reflect.ValueOf(value)
-	kind := fields.Type()
-	var output bytes.Buffer
-	output.WriteByte('{')
-	count := 0
-	for index := 0; index < fields.NumField(); index++ {
-		name, options, _ := strings.Cut(kind.Field(index).Tag.Get("json"), ",")
-		field := fields.Field(index)
-		if options == "omitempty" && field.Kind() == reflect.Pointer && field.IsNil() {
-			continue
-		}
-		encoded, err := encodeWorksetValue(field)
-		if err != nil {
-			return nil, err
-		}
-		key, err := domain.Json(name)
-		if err != nil {
-			return nil, err
-		}
-		if count > 0 {
-			output.WriteByte(',')
-		}
-		count++
-		output.Write(key)
-		output.WriteByte(':')
-		output.Write(encoded)
-	}
-	output.WriteByte('}')
-	return output.Bytes(), nil
-}
-func encodeWorksetValue(value reflect.Value) ([]byte, error) {
-	if value.Kind() == reflect.Pointer {
-		if value.IsNil() {
-			return []byte("null"), nil
-		}
-		return encodeWorksetValue(value.Elem())
-	}
-	if marshaler, ok := value.Interface().(json.Marshaler); ok {
-		return marshaler.MarshalJSON()
-	}
-	switch value.Kind() {
-	case reflect.Uint8, reflect.Uint32, reflect.Uint64:
-		return domain.Json(value.Uint())
-	case reflect.Int64:
-		return domain.Json(value.Int())
-	case reflect.String:
-		return domain.Json(value.String())
-	case reflect.Bool:
-		return domain.Json(value.Bool())
-	case reflect.Slice:
-		return encodeWorksetSlice(value)
-	case reflect.Struct:
-		return encodeWorksetStruct(value.Interface())
-	}
-	return nil, errWorksetJson
-}
-
-// decodeWorksetSequence decodes complete positional fields in declaration order.
-func decodeWorksetSequence(body []byte, value reflect.Value, seen []bool) error {
-	var fields []json.RawMessage
-	if json.Unmarshal(body, &fields) != nil || len(fields) != value.NumField() {
+	var value map[string]json.RawMessage
+	if jsonv2.Unmarshal(body, &value) != nil || value == nil || len(value) != 1 {
 		return errWorksetJson
 	}
-	for index, raw := range fields {
-		if err := decodeWorksetValue(raw, value.Field(index)); err != nil {
-			return err
-		}
-		seen[index] = true
-	}
 	return nil
 }
 
-// decodeWorksetObject rejects unknown and duplicate fields before decoding values.
-func decodeWorksetObject(body []byte, value reflect.Value, names map[string]int, seen []bool) error {
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	if _, err := decoder.Token(); err != nil {
-		return errWorksetJson
-	}
-	for decoder.More() {
-		name, err := decoder.Token()
-		if err != nil {
-			return errWorksetJson
-		}
-		index, ok := names[name.(string)]
-		if !ok || seen[index] {
-			return errWorksetJson
-		}
-		seen[index] = true
-		var raw json.RawMessage
-		if decoder.Decode(&raw) != nil {
-			return errWorksetJson
-		}
-		if err := decodeWorksetValue(raw, value.Field(index)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// worksetObjectKind retains duplicate-kind rejection and required discriminator handling.
-func worksetObjectKind(body []byte) (string, error) {
-	var kind string
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	if _, err := decoder.Token(); err != nil {
-		return "", errWorksetJson
-	}
-	hasKind := false
-	for decoder.More() {
-		name, _ := decoder.Token()
-		var raw json.RawMessage
-		if decoder.Decode(&raw) != nil {
-			return "", errWorksetJson
-		}
-		if name == "kind" {
-			if hasKind || json.Unmarshal(raw, &kind) != nil {
-				return "", errWorksetJson
-			}
-			hasKind = true
-		}
-	}
-	if !hasKind {
-		return "", errWorksetJson
-	}
-	return kind, nil
-}
-
-// encodeWorksetSlice preserves slice order and recursive encoding error propagation.
-func encodeWorksetSlice(value reflect.Value) ([]byte, error) {
-	var output bytes.Buffer
-	output.WriteByte('[')
-	for index := 0; index < value.Len(); index++ {
-		if index > 0 {
-			output.WriteByte(',')
-		}
-		encoded, err := encodeWorksetValue(value.Index(index))
-		if err != nil {
-			return nil, err
-		}
-		output.Write(encoded)
-	}
-	output.WriteByte(']')
-	return output.Bytes(), nil
-}
+func encodeWorksetStruct(value any) ([]byte, error) { return jsonv2.Marshal(value) }
