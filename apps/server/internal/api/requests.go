@@ -5,6 +5,8 @@ import (
 	delivery "github.com/QianFuv/LitRadar/apps/server/internal/domain/delivery"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	scheduled "github.com/QianFuv/LitRadar/apps/server/internal/domain/scheduler"
+	"github.com/QianFuv/LitRadar/apps/server/internal/openapi"
+	"github.com/danielgtaylor/huma/v2"
 )
 
 // AdminInviteCodeCreate describes optional administrator overrides for a newly issued invite code.
@@ -207,6 +209,12 @@ type RuntimeSettingsUpdate struct {
 	SecretPoolUpdates map[string]RuntimeSecretPoolUpdate `json:"secret_pool_updates,omitempty" nullable:"false" doc:"Incremental secret-pool mutations keyed by API field name."`
 	// Values describes values keyed by API field name; null clears and a blank secret preserves.
 	Values map[string]*string `json:"values,omitempty" nullable:"false" doc:"Values keyed by API field name; null clears and a blank secret preserves."`
+}
+
+// TransformSchema documents JSON encoded in individual runtime setting strings.
+func (RuntimeSettingsUpdate) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	openapi.DescribeRuntimeSettingValues(schema.Properties["values"])
+	return schema
 }
 
 // ScheduledTaskCreate describes scheduled task creation payload.

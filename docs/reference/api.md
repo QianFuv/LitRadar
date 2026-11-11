@@ -298,6 +298,8 @@ SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户�
 
 `GET /api/admin/runtime-settings` 为每个字段返回 group、control、apply mode、allowed values、秘密状态和值来源；前端据此覆盖全部后端设置，而不是维护第二份字段清单。`GET /api/admin/provider-catalog` 按逻辑 Provider 名称聚合索引、摘要页和全文 capability，并列出从 `data/meta/*.csv` 与 `data/index/*.sqlite` 发现的安全 catalog stem/文件名。它不返回上游 URL、凭据或文件路径。
 
+Provider 设置的内部 JSON 结构同时发布为 OpenAPI 命名 schema：`ProviderOrders` 描述两个 `article_*_provider_orders`，`IndexProviderRoutes` 描述 `index_provider_routes`，`ProviderProxyPolicy` 描述 `provider_proxy_policy`。响应 `Info` 根据 `field` 用 `if`/`then` 为 `value` 标注 `contentMediaType: application/json` 和对应的 `contentSchema` 引用；更新请求的 `values` 为这四个已知 key 提供相同标注，并保留其他设置的通用字符串值。传输仍是 JSON 字符串，更新时仍可用 `null` 清除设置；这些标注不把字段转换成对象，也不代替服务端的语义校验。前端可引用生成的 `components['schemas'][名称]` 描述解码结果，无需另写内部结构类型。
+
 `PUT /api/admin/runtime-settings` 会在管理员认证后原子校验全部变更，包括 CORS/MCP Origin、Provider capability、Provider 顺序、日志格式和 tracing filter。无效值返回 `400`，且同一请求的任何字段都不会保存。不同字段按响应中的 apply mode 在下一请求、下一命令或进程重启后生效；完整语法及旧配置恢复边界见[配置参考](configuration.md)。
 
 ### 负载遥测

@@ -139,6 +139,8 @@ Scholarly 默认每个期刊执行器使用 6 个来源工作线程，同时运�
 
 ### Provider 路由语法
 
+以下 JSON 设置通过 runtime-setting API 传输时仍是字符串。OpenAPI 分别注册 `IndexProviderRoutes`、`ProviderOrders` 和 `ProviderProxyPolicy`，并在相应值上标注 `contentMediaType`/`contentSchema`；使用者需自行解码字符串，解码后的类型直接引用生成 schema。此描述同时覆盖读取响应和更新请求，持久化值和清除设置所用的 `null` 不变。
+
 `index_provider_routes` 必须是非空 JSON object。key 是不含 `.csv` 的规范目录 stem，value 是已注册的索引 Provider 名称；二者只接受小写 ASCII 名称及内部的 `.`、`_`、`-`。保存时按 key 排序并压缩为规范 JSON。
 
 `article_abstract_provider_orders` 和 `article_fulltext_provider_orders` 使用同一个严格 JSON 结构：

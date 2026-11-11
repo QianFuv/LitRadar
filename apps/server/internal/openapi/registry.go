@@ -9,6 +9,7 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/delivery"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/scheduler"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/settings"
 	"github.com/danielgtaylor/huma/v2"
 )
 
@@ -53,7 +54,9 @@ func newRegistry() *registry {
 	inner.RegisterTypeAlias(reflect.TypeFor[json.RawMessage](), reflect.TypeFor[map[string]any]())
 	inner.RegisterTypeAlias(reflect.TypeFor[delivery.SecretUpdate](), reflect.TypeFor[*string]())
 	inner.RegisterTypeAlias(reflect.TypeFor[scheduler.Job](), reflect.TypeFor[jobSchema]())
-	return &registry{Registry: inner}
+	result := &registry{Registry: inner}
+	registerRuntimeSettingSchemas(result)
+	return result
 }
 
 // Schema derives nullability from the same Go fields used to encode response bodies.
@@ -63,6 +66,9 @@ func (r *registry) Schema(value reflect.Type, allowRef bool, hint string) *huma.
 		typeOf := r.TypeFromRef("#/components/schemas/" + name)
 		if typeOf == nil || typeOf.Kind() != reflect.Struct {
 			continue
+		}
+		if typeOf == reflect.TypeFor[settings.Info]() && len(definition.AllOf) == 0 {
+			describeRuntimeSettingInfo(definition)
 		}
 		r.normalizeFields(typeOf, definition)
 	}

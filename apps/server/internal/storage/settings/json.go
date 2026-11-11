@@ -13,6 +13,12 @@ import (
 
 var errJsonShape = errors.New("invalid runtime JSON shape")
 
+// IndexProviderRoutes maps catalog stems to their indexing providers.
+type IndexProviderRoutes map[string]string
+
+// ProviderProxyPolicy enables the managed proxy independently for each provider.
+type ProviderProxyPolicy map[string]bool
+
 // readObject validates every typed value before applying map duplicate-key semantics.
 // Struct callers additionally reject unknown, missing and duplicate members.
 func readObject(raw string, fields []string, consume func(string, json.RawMessage) error) error {
@@ -109,7 +115,7 @@ func sortedKeys[Value any](values map[string]Value) []string {
 
 func normalizeProxyPolicy(raw string) (string, error) {
 	invalid := errors.New("Provider proxy policy must be a JSON object with boolean values and lowercase ASCII Provider names")
-	result := map[string]bool{}
+	result := ProviderProxyPolicy{}
 	err := readObject(raw, nil, func(key string, value json.RawMessage) error {
 		if string(value) != "true" && string(value) != "false" {
 			return errJsonShape
@@ -130,7 +136,7 @@ func normalizeProxyPolicy(raw string) (string, error) {
 
 func normalizeRoutes(raw string) (string, error) {
 	invalid := func(detail string) error { return fmt.Errorf("Invalid index_provider_routes: %s", detail) }
-	result := map[string]string{}
+	result := IndexProviderRoutes{}
 	if readObject(raw, nil, func(key string, value json.RawMessage) error {
 		name, err := jsonString(value)
 		result[key] = name
@@ -155,8 +161,8 @@ func normalizeRoutes(raw string) (string, error) {
 
 // ProviderOrders preserves ordered fallbacks and deterministic catalog overrides.
 type ProviderOrders struct {
-	Default  []string            `json:"default"`
-	Catalogs map[string][]string `json:"catalogs"`
+	Default  []string            `json:"default" nullable:"false"`
+	Catalogs map[string][]string `json:"catalogs" nullable:"false"`
 }
 
 func normalizeOrders(field, raw string) (string, error) {
