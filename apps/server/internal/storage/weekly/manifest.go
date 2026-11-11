@@ -1,17 +1,25 @@
 package weekly
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 )
 
 func manifestPaths(directory string) ([]string, error) {
-	entries, err := os.ReadDir(directory)
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	entries, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
 		return nil, err
 	}
@@ -25,15 +33,17 @@ func manifestPaths(directory string) ([]string, error) {
 			paths = append(paths, filepath.Join(directory, entry.Name()))
 		}
 	}
-	history := filepath.Join(directory, "history")
-	if _, err := os.Stat(history); err != nil {
-		return paths, nil
+	if _, err := root.Stat("history"); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return paths, nil
+		}
+		return nil, err
 	}
-	catalogs, err := os.ReadDir(history)
+	catalogs, err := fs.ReadDir(root.FS(), "history")
 	if err != nil {
 		return nil, err
 	}
-	historyPaths, err := historyManifestPaths(history, catalogs)
+	historyPaths, err := historyManifestPaths(root, catalogs)
 	if err != nil {
 		return nil, err
 	}
@@ -59,8 +69,8 @@ func managedHistoryName(name string) bool {
 	return true
 }
 
-func readManifest(filename string) (*Manifest, error) {
-	data, err := os.ReadFile(filename)
+func readRootManifest(root *os.Root, name string) (*Manifest, error) {
+	data, err := root.ReadFile(name)
 	if err != nil {
 		return nil, err
 	}
@@ -90,14 +100,23 @@ func LoadManifests(configuration config.Config, start, end Timestamp, cache *Cac
 	if err != nil {
 		return nil, err
 	}
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
 	result := []Manifest{}
 	seen := map[string]bool{}
 	for _, filename := range paths {
+		name, err := filepath.Rel(directory, filename)
+		if err != nil {
+			return nil, err
+		}
 		var manifest *Manifest
 		if cache == nil {
-			manifest, err = readManifest(filename)
+			manifest, err = readRootManifest(root, name)
 		} else {
-			manifest, err = cache.read(filename)
+			manifest, err = cache.readRootAt(root, name, time.Now())
 		}
 		if err != nil {
 			return nil, err
@@ -149,31 +168,23 @@ func manifestKey(manifest Manifest) string {
 	return result.String()
 }
 
-func canonicalPath(filename string) (string, error) {
-	resolved, err := filepath.EvalSymlinks(filename)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Abs(resolved)
-}
-
-func fingerprint(filename string) (fileFingerprint, error) {
-	info, err := os.Stat(filename)
+func rootFingerprint(root *os.Root, name string) (fileFingerprint, error) {
+	info, err := root.Stat(name)
 	if err != nil {
 		return fileFingerprint{}, err
 	}
-	created, hasCreated := creationTime(filename, info)
+	created, hasCreated := creationTime(filepath.Join(root.Name(), name), info)
 	return fileFingerprint{info.Size(), info.ModTime().Unix(), info.ModTime().Nanosecond(), created, hasCreated}, nil
 }
 
 // historyManifestPaths admits regular managed publications beneath actual catalog directories.
-func historyManifestPaths(history string, catalogs []os.DirEntry) ([]string, error) {
+func historyManifestPaths(root *os.Root, catalogs []os.DirEntry) ([]string, error) {
 	paths := []string{}
 	for _, catalog := range catalogs {
 		if !catalog.IsDir() {
 			continue
 		}
-		entries, err := os.ReadDir(filepath.Join(history, catalog.Name()))
+		entries, err := fs.ReadDir(root.FS(), "history/"+catalog.Name())
 		if err != nil {
 			return nil, err
 		}
@@ -183,7 +194,7 @@ func historyManifestPaths(history string, catalogs []os.DirEntry) ([]string, err
 				return nil, err
 			}
 			if info.Mode().IsRegular() && managedHistoryName(entry.Name()) {
-				paths = append(paths, filepath.Join(history, catalog.Name(), entry.Name()))
+				paths = append(paths, filepath.Join(root.Name(), "history", catalog.Name(), entry.Name()))
 			}
 		}
 	}

@@ -2,9 +2,13 @@ package weekly
 
 import (
 	"container/list"
+	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/rootfile"
 )
 
 const cacheCapacity = 64
@@ -85,19 +89,22 @@ func (cache *Cache) read(filename string) (*Manifest, error) {
 }
 
 func (cache *Cache) readAt(filename string, now time.Time) (*Manifest, error) {
-	path, err := canonicalPath(filename)
+	root, name, err := rootfile.Parent(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	return cache.readRootAt(root, name, now)
+}
+
+func (cache *Cache) readRootAt(root *os.Root, name string, now time.Time) (*Manifest, error) {
+	path := filepath.Join(root.Name(), name)
+	before, err := rootFingerprint(root, name)
 	if err != nil {
 		cache.mutex.Lock()
 		cache.entries = nil
 		cache.order.Init()
 		cache.articleIds = 0
-		cache.mutex.Unlock()
-		return nil, err
-	}
-	before, err := fingerprint(path)
-	if err != nil {
-		cache.mutex.Lock()
-		cache.remove(path)
 		cache.mutex.Unlock()
 		return nil, err
 	}
@@ -107,12 +114,12 @@ func (cache *Cache) readAt(filename string, now time.Time) (*Manifest, error) {
 	if hit {
 		return result, nil
 	}
-	parsed, err := readManifest(path)
+	parsed, err := readRootManifest(root, name)
 	if err != nil {
 		return nil, err
 	}
 	count := articleCount(parsed)
-	after, err := fingerprint(path)
+	after, err := rootFingerprint(root, name)
 	if count > cacheArticleLimit || err != nil || before != after {
 		return parsed, nil
 	}

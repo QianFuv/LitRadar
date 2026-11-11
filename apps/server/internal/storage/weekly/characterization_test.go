@@ -23,12 +23,12 @@ func TestManifestAdmissionPreservesSourceValues(t *testing.T) {
 		invalid bool
 	}{
 		{`{"db_name":"catalog","run_id":" source ","generated_at":"2026-10-03T12:00:00Z","notifiable_article_ids":[0,-1,-0,1,1,1.0,1e0,9223372036854775808]}`, []int64{0, -1, 1}, " source ", false},
-		{`["catalog","2026-10-03T12:00:00Z"," source ",[1]]`, []int64{1}, " source ", false},
+		{`["catalog","2026-10-03T12:00:00Z"," source ",[1]]`, nil, "", true},
 		{`{"db_name":null,"generated_at":false}`, nil, "", true},
 		{`{"db_name":null,"notifiable_article_ids":[1]}`, nil, "", false},
-		{`{"db_name":"catalog","generated_at":"invalid","run_id":"2026-10-03T12:00:00Z","notifiable_article_ids":[1]}`, nil, "", false},
+		{`{"db_name":"catalog","generated_at":"invalid","run_id":"2026-10-03T12:00:00Z","notifiable_article_ids":[1]}`, nil, "", true},
 		{`{"db_name":"catalog","db_name":"catalog"}`, nil, "", true},
-		{`{"ignored":1,"ignored":2}`, nil, "", false},
+		{`{"ignored":1,"ignored":2}`, nil, "", true},
 	}
 	for _, item := range cases {
 		manifest, err := ParseManifest([]byte(item.body))
@@ -53,20 +53,20 @@ func assertManifestSource(t *testing.T, manifest *Manifest, ids []int64, run str
 	}
 }
 
-// TestTimestampGrammarRetainsLeapSecondsAndOffsetSign checks exact fractional and timezone grammar.
-func TestTimestampGrammarRetainsLeapSecondsAndOffsetSign(t *testing.T) {
+// TestTimestampUsesStandardRFC3339Nano checks the standard parser and rejects obsolete timestamp spellings.
+func TestTimestampUsesStandardRFC3339Nano(t *testing.T) {
 	cases := []struct {
 		input   string
 		seconds int64
 		nanos   uint32
 		valid   bool
 	}{
-		{" 1970-01-01t00:00:60.12345678999z ", 59, 1123456789, true},
-		{"1970-01-01 00:00:00−00:01", 60, 0, true},
+		{" 1970-01-01t00:00:60.12345678999z ", 0, 0, false},
+		{"1970-01-01 00:00:00−00:01", 0, 0, false},
 		{"1970-01-01T00:00:00+00:01", -60, 0, true},
 		{"1970-01-01T00:00:00.Z", 0, 0, false},
 		{"2026-02-29T00:00:00Z", 0, 0, false},
-		{"1970-01-01T00:00:00+24:00", 0, 0, false},
+		{"1970-01-01T00:00:00+24:00", -86400, 0, true},
 	}
 	for _, item := range cases {
 		stamp, valid := ParseTimestamp(item.input)

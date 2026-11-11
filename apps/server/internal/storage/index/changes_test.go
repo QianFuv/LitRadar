@@ -2,11 +2,9 @@ package index
 
 import (
 	"context"
-
 	"errors"
 	"os"
 	"path/filepath"
-
 	"strconv"
 	"strings"
 	"testing"
@@ -29,7 +27,7 @@ func TestPublicationFailureRetainsOutboxAndPreparedCursor(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertPublicationFailureRetainsEvents(t, content, directory)
-	prepared, err := PrepareContentChangeManifest(ctx, content.Conn, "example.sqlite", "run", "100")
+	prepared, err := PrepareContentChangeManifest(ctx, content.Conn, "example.sqlite", "run", "1970-01-01T00:01:40Z")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,9 +47,9 @@ func TestPublicationFailureRetainsOutboxAndPreparedCursor(t *testing.T) {
 	assertPublicationRetryBytes(t, current, history, prepared.Payload)
 }
 
-func TestHistoryPruningUsesOnlyCanonicalEpochAndManagedName(t *testing.T) {
+func TestHistoryPruningUsesRFC3339NanoAndManagedName(t *testing.T) {
 	directory := t.TempDir()
-	values := []string{`"99"`, `"100"`, `"101"`, `" 99 "`, `"+99"`, `"099"`, `"-0"`, `99`, `null`, `"2026-01-01T00:00:00Z"`, `"-1"`}
+	values := []string{`"1970-01-01T00:01:39Z"`, `"1970-01-01T00:01:40Z"`, `"1970-01-01T00:01:41Z"`, `"1970-01-01T00:01:39.9Z"`, `"+99"`, `"099"`, `"-0"`, `99`, `null`, `"2026-01-01T00:00:00Z"`, `"1969-12-31T23:59:59Z"`}
 	writeHistoryPruningFixtures(t, directory, values)
 	count, err := PruneContentChangeHistory(directory, 100)
 	if err != nil || count != 3 {
@@ -77,15 +75,16 @@ func assertPublicationFailureRetainsEvents(t *testing.T, content *Connection, di
 	if err := os.Mkdir(blocked, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := WriteContentChangeManifest(ctx, content.Conn, "example.sqlite", "run", "100", blocked); err == nil {
+	if _, err := WriteContentChangeManifest(ctx, content.Conn, "example.sqlite", "run", "1970-01-01T00:01:40Z", blocked); err == nil {
 		t.Fatal("published over directory")
 	}
 	events, err := ListContentChangeEvents(ctx, content.Conn, 0, 100)
 	if err != nil || len(events) != 1 {
 		t.Fatalf("lost outbox after failure: %v %v", events, err)
 	}
-	if _, err := os.Stat(manifestTempPath(blocked)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("temporary leak: %v", err)
+	leaks, err := filepath.Glob(filepath.Join(filepath.Dir(blocked), "."+filepath.Base(blocked)+"-*"))
+	if err != nil || len(leaks) != 0 {
+		t.Fatalf("temporary leaks: %v %v", leaks, err)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"time"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/contentdb"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
@@ -73,6 +74,9 @@ func DiscardContentChangeEvents(ctx context.Context, connection *sql.Conn) (uint
 
 // PrepareContentChangeManifest reads pages without acknowledging events and freezes the exact bytes to publish.
 func PrepareContentChangeManifest(ctx context.Context, connection *sql.Conn, database, run, generatedAt string) (PreparedContentChangeManifest, error) {
+	if _, err := time.Parse(time.RFC3339Nano, generatedAt); err != nil {
+		return PreparedContentChangeManifest{}, fmt.Errorf("manifest generated_at must be RFC3339Nano: %w", err)
+	}
 	events := []ContentChangeEvent{}
 	cursor := int64(0)
 	for {

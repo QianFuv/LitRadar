@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -321,7 +320,7 @@ func writeFixtureManifest(root string, articleId int64) error {
 	if err := os.MkdirAll(pushState, 0777); err != nil {
 		return err
 	}
-	manifest, err := json.MarshalIndent(map[string]any{"db_name": databaseName, "generated_at": strconv.FormatInt(time.Now().Unix(), 10), "run_id": "full-stack-seed-v1", "notifiable_article_ids": []int64{articleId}}, "", "  ")
+	manifest, err := json.MarshalIndent(map[string]any{"db_name": databaseName, "generated_at": time.Now().UTC().Format(time.RFC3339Nano), "run_id": "full-stack-seed-v1", "notifiable_article_ids": []int64{articleId}}, "", "  ")
 	if err != nil {
 		return err
 	}

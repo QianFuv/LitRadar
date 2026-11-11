@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	authstorage "github.com/QianFuv/LitRadar/apps/server/internal/storage/auth"
 	cfpstorage "github.com/QianFuv/LitRadar/apps/server/internal/storage/cfp"
@@ -128,7 +129,7 @@ func fixtureArticleIdentity(t *testing.T, ctx context.Context, content *indexsto
 	return articleId
 }
 
-// assertFixtureWeeklyManifest checks one matching ID and a nonempty generation timestamp.
+// assertFixtureWeeklyManifest checks one matching ID and an RFC3339Nano generation timestamp.
 func assertFixtureWeeklyManifest(t *testing.T, root string, articleId int64) {
 	t.Helper()
 	manifest, err := os.ReadFile(filepath.Join(root, "data", "push_state", "full-stack.changes.json"))
@@ -141,6 +142,9 @@ func assertFixtureWeeklyManifest(t *testing.T, root string, articleId int64) {
 	}
 	if err := json.Unmarshal(manifest, &weekly); err != nil || len(weekly.Ids) != 1 || weekly.Ids[0] != articleId || weekly.GeneratedAt == "" {
 		t.Fatal("weekly fixture changed", weekly, err)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, weekly.GeneratedAt); err != nil {
+		t.Fatal("weekly fixture uses an obsolete timestamp", err)
 	}
 }
 

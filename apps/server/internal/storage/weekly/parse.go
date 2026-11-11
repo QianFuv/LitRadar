@@ -1,18 +1,20 @@
+//go:build go1.27
+
 package weekly
 
 import (
 	"bytes"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"strconv"
 	"strings"
 
-	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 )
 
 // ErrManifestJson distinguishes invalid typed publications from intentionally ignored ones.
-var ErrManifestJson = errors.New("invalid weekly manifest JSON")
+var ErrManifestJson = errors.New("invalid weekly manifest JSON; expected an object with an RFC3339Nano generated_at; rerun indexing to rebuild the publication")
 
 // Manifest retains source order and untrimmed publication identity before optional delivery enrichment.
 type Manifest struct {
@@ -22,129 +24,40 @@ type Manifest struct {
 	ArticleIds  []int64
 }
 
-// ParseManifest distinguishes malformed input from a valid but non-notifiable publication.
+// ParseManifest decodes object publications and requires RFC3339Nano generation times.
 func ParseManifest(data []byte) (*Manifest, error) {
-	if !json.Valid(data) {
+	var wire struct {
+		DbName      *string         `json:"db_name"`
+		GeneratedAt *string         `json:"generated_at"`
+		RunId       *string         `json:"run_id"`
+		ArticleIds  json.RawMessage `json:"notifiable_article_ids"`
+	}
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || data[0] != '{' || jsonv2.Unmarshal(data, &wire) != nil {
 		return nil, ErrManifestJson
 	}
-	fields, err := decodeManifestFields(data)
-	if err != nil {
-		return nil, err
-	}
-	optional, err := decodeManifestOptionalStrings(fields)
-	if err != nil {
-		return nil, err
-	}
-	if optional[0] == nil {
+	if wire.DbName == nil {
 		return nil, nil
 	}
-	database := config.NormalizeDatabaseName(*optional[0])
+	database := config.NormalizeDatabaseName(*wire.DbName)
 	if database == "" {
 		return nil, nil
 	}
-	ids, err := decodeManifestArticleIds(fields["notifiable_article_ids"])
+	ids, err := decodeManifestArticleIds(wire.ArticleIds)
 	if err != nil {
 		return nil, err
 	}
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	stamp, ok := manifestTimestamp(optional)
+	if wire.GeneratedAt == nil {
+		return nil, ErrManifestJson
+	}
+	stamp, ok := ParseTimestamp(*wire.GeneratedAt)
 	if !ok {
-		return nil, nil
-	}
-	return &Manifest{database, optional[2], stamp, ids}, nil
-}
-
-// manifestFieldNames retains positional array field order.
-func manifestFieldNames() []string {
-	return []string{"db_name", "generated_at", "run_id", "notifiable_article_ids"}
-}
-
-// isManifestField recognizes only source identity and notification membership fields.
-func isManifestField(name string) bool {
-	return name == "db_name" || name == "generated_at" || name == "run_id" || name == "notifiable_article_ids"
-}
-
-// decodeManifestFields preserves strict keys and duplicate recognized-field rejection.
-func decodeManifestFields(data []byte) (map[string]json.RawMessage, error) {
-	fields := map[string]json.RawMessage{}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	opening, err := decoder.Token()
-	if err != nil {
 		return nil, ErrManifestJson
 	}
-	names := manifestFieldNames()
-	switch opening {
-	case json.Delim('['):
-		var values []json.RawMessage
-		if json.Unmarshal(data, &values) != nil || len(values) < 3 || len(values) > 4 {
-			return nil, ErrManifestJson
-		}
-		for index, value := range values {
-			fields[names[index]] = value
-		}
-	case json.Delim('{'):
-		if err := decodeManifestObject(data, decoder, fields); err != nil {
-			return nil, err
-		}
-	default:
-		return nil, ErrManifestJson
-	}
-	return fields, nil
-}
-
-// decodeManifestObject reads every key while ignoring unknown field values.
-func decodeManifestObject(data []byte, decoder *json.Decoder, fields map[string]json.RawMessage) error {
-	for decoder.More() {
-		start := decoder.InputOffset()
-		key, err := decoder.Token()
-		if err != nil {
-			return ErrManifestJson
-		}
-		name, ok := key.(string)
-		if !ok {
-			return ErrManifestJson
-		}
-		rawKey := bytes.TrimSpace(data[start:decoder.InputOffset()])
-		rawKey = bytes.TrimSpace(bytes.TrimPrefix(rawKey, []byte(",")))
-		if !jsonvalue.ValidJson(string(rawKey)) {
-			return ErrManifestJson
-		}
-		var value json.RawMessage
-		if decoder.Decode(&value) != nil {
-			return ErrManifestJson
-		}
-		if !isManifestField(name) {
-			continue
-		}
-		if _, exists := fields[name]; exists {
-			return ErrManifestJson
-		}
-		fields[name] = value
-	}
-	return nil
-}
-
-// decodeManifestOptionalStrings validates retained JSON before decoding the three optional strings.
-func decodeManifestOptionalStrings(fields map[string]json.RawMessage) ([]*string, error) {
-	optional := make([]*string, 3)
-	names := manifestFieldNames()
-	for _, value := range fields {
-		if !jsonvalue.ValidJson("[" + string(value) + "]") {
-			return nil, ErrManifestJson
-		}
-	}
-	for index, name := range names[:3] {
-		if value, exists := fields[name]; exists && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-			var text string
-			if json.Unmarshal(value, &text) != nil {
-				return nil, ErrManifestJson
-			}
-			optional[index] = &text
-		}
-	}
-	return optional, nil
+	return &Manifest{database, wire.RunId, stamp, ids}, nil
 }
 
 // manifestArticleId stores admitted integer tokens without retaining each element's encoded JSON.
@@ -185,16 +98,4 @@ func decodeManifestArticleIds(value json.RawMessage) ([]int64, error) {
 		}
 	}
 	return ids, nil
-}
-
-// manifestTimestamp falls back to run identity only when generated time is absent.
-func manifestTimestamp(optional []*string) (Timestamp, bool) {
-	date := optional[1]
-	if date == nil {
-		date = optional[2]
-	}
-	if date == nil {
-		return Timestamp{}, false
-	}
-	return parseManifestTime(*date)
 }

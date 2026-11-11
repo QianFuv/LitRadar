@@ -8,10 +8,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/rootfile"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/index"
 )
 
@@ -25,7 +25,7 @@ func prepareCatalogManifest(ctx context.Context, config LiveConfig, input storag
 			resultError = errors.Join(resultError, fmt.Errorf("close content: %w", closeError))
 		}
 	}()
-	generated := strconv.FormatInt(time.Now().Unix(), 10)
+	generated := time.Now().UTC().Format(time.RFC3339Nano)
 	prepared, err := storage.PrepareContentChangeManifest(ctx, content.Conn, catalogDatabaseName(input), outcome.RunId, generated)
 	if err != nil {
 		return storage.ManifestIntent{}, err
@@ -33,6 +33,9 @@ func prepareCatalogManifest(ctx context.Context, config LiveConfig, input storag
 	return storage.NewManifestIntent(prepared.Payload, prepared.ThroughEventId, catalogManifestPath(input), outcome.RunId, generated)
 }
 func validateManifestRecovery(input storage.CatalogInput, outcome storage.BatchCatalogOutcome, intent storage.ManifestIntent) error {
+	if _, err := time.Parse(time.RFC3339Nano, intent.GeneratedAt); err != nil {
+		return invalidWorker("manifest recovery timestamp is obsolete or invalid; restart the indexing run")
+	}
 	expected := catalogManifestPath(input)
 	if intent.RunId != outcome.RunId || intent.Path != expected || outcome.ManifestPath != nil && *outcome.ManifestPath != expected {
 		return &storage.BatchError{Kind: "state", Reason: "manifest recovery metadata does not match the frozen catalog"}
@@ -54,7 +57,12 @@ func shouldPublishManifest(config LiveConfig, input storage.CatalogInput, outcom
 	if invalidExistingManifestFile(metadata) {
 		return false, invalidWorker("existing change manifest is not a bounded regular file")
 	}
-	body, err := os.ReadFile(path)
+	root, name, err := rootfile.Parent(path)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = root.Close() }()
+	body, err := root.ReadFile(name)
 	if err != nil {
 		return false, err
 	}
@@ -67,6 +75,12 @@ func shouldPublishManifest(config LiveConfig, input storage.CatalogInput, outcom
 	}
 	if err := validateExistingManifestIdentity(manifest, input); err != nil {
 		return false, err
+	}
+	var generated string
+	if json.Unmarshal(manifest["generated_at"], &generated) == nil {
+		if _, err := time.Parse(time.RFC3339Nano, generated); err != nil {
+			return true, nil
+		}
 	}
 	return false, nil
 }
