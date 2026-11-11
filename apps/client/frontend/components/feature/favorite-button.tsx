@@ -52,6 +52,28 @@ type FavoriteButtonProps = {
    */
   toggleFolderId?: number;
 };
+/** Compact label for an unknown favorite state, contained in its accessible name. */
+const UNKNOWN_SHORT_LABEL = '状态未知';
+
+/**
+ * Render the visible favorite label; the unknown state shortens itself in a compact toolbar.
+ *
+ * @param label - Full favorite label, also used as the accessible name.
+ * @param isFavoriteUnknown - Whether the membership lookup failed.
+ * @returns Visible label content.
+ */
+function renderFavoriteLabel(label: string, isFavoriteUnknown: boolean) {
+  if (!isFavoriteUnknown) {
+    return label;
+  }
+  return (
+    <>
+      <span {...stylex.props(styles.unknownFullLabel)}>{label}</span>
+      <span {...stylex.props(styles.unknownShortLabel)}>{UNKNOWN_SHORT_LABEL}</span>
+    </>
+  );
+}
+
 /** Own the unchanged cache, optimistic state, queries, mutations and confirmation ref. */
 function useFavoriteButtonState({
   articleId,
@@ -260,7 +282,9 @@ function renderFavoriteButton(state: FavoriteButtonViewState) {
             />
             <span {...stylex.props(styles.renderFavoriteButtonSpan2)}>
               <span {...stylex.props(styles.renderFavoriteButtonSpan3)}>已收藏</span>
-              <span {...stylex.props(styles.renderFavoriteButtonSpan4)}>{favoriteLabel}</span>
+              <span {...stylex.props(styles.renderFavoriteButtonSpan4)}>
+                {renderFavoriteLabel(favoriteLabel, isFavoriteUnknown)}
+              </span>
             </span>
           </span>
         </PopoverTrigger>
@@ -349,7 +373,9 @@ function renderFavoriteToggle(state: FavoriteButtonViewState, folderId: number) 
           />
           <span {...stylex.props(styles.renderFavoriteButtonSpan2)}>
             <span {...stylex.props(styles.renderFavoriteButtonSpan3)}>已收藏</span>
-            <span {...stylex.props(styles.renderFavoriteButtonSpan4)}>{label}</span>
+            <span {...stylex.props(styles.renderFavoriteButtonSpan4)}>
+              {renderFavoriteLabel(label, isFavoriteUnknown)}
+            </span>
           </span>
         </span>
       </Button>
@@ -538,6 +564,18 @@ const styles = stylex.create({
   renderFavoriteButtonSpan4: {
     gridColumnStart: 1,
     gridRowStart: 1,
+  },
+  unknownFullLabel: {
+    display: {
+      default: 'inline',
+      '@container (width < 43rem)': 'none',
+    },
+  },
+  unknownShortLabel: {
+    display: {
+      default: 'none',
+      '@container (width < 43rem)': 'inline',
+    },
   },
   renderFavoriteButtonPopoverContent: {
     width: '14rem',

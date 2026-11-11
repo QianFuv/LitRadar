@@ -2702,6 +2702,34 @@ async function articleDataSourceSettingsTest({ page }: { page: Page }): Promise<
 test('opens usable data-source settings from article details', articleDataSourceSettingsTest);
 
 /**
+ * Verify the docked reader toolbar keeps every labelled action on one 56 px row without overflow.
+ *
+ * @param readingDesk - Reading desk region that holds the toolbar.
+ */
+async function expectSingleRowToolbar(readingDesk: Locator): Promise<void> {
+  const toolbar = readingDesk.locator('[data-slot="article-detail-toolbar"]');
+  await expect
+    .poll(() =>
+      toolbar.evaluate((element) => {
+        const controls = [...element.querySelectorAll<HTMLElement>('button, a')].filter(
+          (control) => control.offsetParent,
+        );
+        const centers = controls.map((control) => {
+          const box = control.getBoundingClientRect();
+          return Math.round(box.top + box.height / 2);
+        });
+        return {
+          height: Math.round(element.getBoundingClientRect().height),
+          isOverflowing: element.scrollWidth > element.clientWidth,
+          isSingleRow: Math.max(...centers) - Math.min(...centers) <= 2,
+          hasTextLabels: controls.every((control) => control.innerText.trim().length > 0),
+        };
+      }),
+    )
+    .toEqual({ height: 56, isOverflowing: false, isSingleRow: true, hasTextLabels: true });
+}
+
+/**
  * Keep the docked reader toolbar on one labelled row after opening a related article.
  *
  * @param fixtures - Playwright page fixture.
@@ -2735,31 +2763,40 @@ async function relatedArticleToolbarTest({ page }: { page: Page }): Promise<void
   await expect(readingDesk.getByRole('button', { name: '返回上一篇' })).toBeVisible();
   await expect(readingDesk.getByRole('link', { name: '去设置登录' })).toBeVisible();
 
-  const toolbar = readingDesk.locator('[data-slot="article-detail-toolbar"]');
-  await expect
-    .poll(() =>
-      toolbar.evaluate((element) => {
-        const controls = [...element.querySelectorAll<HTMLElement>('button, a')].filter(
-          (control) => control.offsetParent,
-        );
-        const centers = controls.map((control) => {
-          const box = control.getBoundingClientRect();
-          return Math.round(box.top + box.height / 2);
-        });
-        return {
-          height: Math.round(element.getBoundingClientRect().height),
-          isOverflowing: element.scrollWidth > element.clientWidth,
-          isSingleRow: Math.max(...centers) - Math.min(...centers) <= 2,
-          hasTextLabels: controls.every((control) => control.innerText.trim().length > 0),
-        };
-      }),
-    )
-    .toEqual({ height: 56, isOverflowing: false, isSingleRow: true, hasTextLabels: true });
+  await expectSingleRowToolbar(readingDesk);
 }
 
 test(
   'keeps the reader toolbar on one row after opening a related article',
   relatedArticleToolbarTest,
+);
+
+/**
+ * Keep the toolbar on one row when the favorite lookup fails and the compact label is shown.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function unknownFavoriteToolbarTest({ page }: { page: Page }): Promise<void> {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.route('**/api/**', serveArticleSettingsApi);
+  await page.route('**/api/favorites/check**', (route) =>
+    fulfillJson(route, { detail: 'favorites unavailable' }, 500),
+  );
+  await page.goto('/?q=graph');
+  await page
+    .getByRole('button', { name: /^查看文章详情：/ })
+    .first()
+    .click();
+  const readingDesk = page.getByRole('region', { name: '阅读台' });
+  const favoriteButton = readingDesk.getByRole('button', { name: '收藏状态未知' });
+  await expect(favoriteButton).toBeVisible();
+  await expect(favoriteButton).toHaveText('状态未知', { useInnerText: true });
+  await expectSingleRowToolbar(readingDesk);
+}
+
+test(
+  'keeps the reader toolbar on one row when the favorite state is unknown',
+  unknownFavoriteToolbarTest,
 );
 
 /**
