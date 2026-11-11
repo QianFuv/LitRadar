@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/settings"
@@ -122,9 +123,9 @@ func referenceRateLimitCheck(limiter *authRateLimiter, kind authAttempt, source 
 		return limiter.rejection(kind, "username", source.class, retry, now)
 	}
 	if kind == loginAttempt {
-		retry = limiter.globalLogin.acquire(now, limiter.policy.GlobalLogin)
+		retry = limiter.globalLogin.acquire(now)
 	} else {
-		retry = limiter.globalRegister.acquire(now, limiter.policy.GlobalRegister)
+		retry = limiter.globalRegister.acquire(now)
 	}
 	if retry != 0 {
 		return limiter.rejection(kind, "global_breaker", source.class, retry, now)
@@ -145,11 +146,11 @@ func referenceAcquireTracked(buckets map[bucketKey]*trackedBucket, key bucketKey
 			}
 			delete(buckets, oldestKey)
 		}
-		tracked = &trackedBucket{bucket: fullBucket(policy, now)}
+		tracked = &trackedBucket{bucket: newTokenBucket(policy)}
 		buckets[key] = tracked
 	}
 	tracked.lastUsed = sequence
-	return tracked.bucket.acquire(now, policy)
+	return tracked.bucket.acquire(now)
 }
 
 func TestRateLimitRandomizedReferenceTrace(t *testing.T) {
@@ -162,6 +163,7 @@ func TestRateLimitRandomizedReferenceTrace(t *testing.T) {
 				actual.nextSequence, reference.nextSequence = sequence, sequence
 				random := rand.New(rand.NewPCG(17, 43))
 				names := []string{" Alice ", "ALICE", "beta", "Gamma", "İALICE", strings.Repeat("密", 40), "", "z"}
+				var now uint64
 				for step := range 3000 {
 					kind := authAttempt(random.IntN(2))
 					username := names[random.IntN(len(names))]
@@ -174,7 +176,7 @@ func TestRateLimitRandomizedReferenceTrace(t *testing.T) {
 							address = fmt.Sprintf("2001:db8::%x", random.IntN(16))
 						}
 						source := directSource(address)
-						now := uint64(random.IntN(150))
+						now = uint64(random.IntN(150))
 						got, want := actual.checkAt(kind, source, username, now), referenceRateLimitCheck(reference, kind, source, username, now)
 						if !reflect.DeepEqual(got, want) {
 							t.Fatalf("step %d rejection got %+v want %+v", step, got, want)
@@ -203,12 +205,12 @@ func TestRateLimitRandomizedReferenceTrace(t *testing.T) {
 						}
 						for key, want := range pair[1] {
 							got := pair[0][key]
-							if got == nil || got.bucket != want.bucket || got.lastUsed != want.lastUsed {
+							if got == nil || got.bucket.TokensAt(time.Unix(int64(now), 0)) != want.bucket.TokensAt(time.Unix(int64(now), 0)) || got.lastUsed != want.lastUsed {
 								t.Fatalf("step %d map %d key %+v differs", step, index, key)
 							}
 						}
 					}
-					if actual.globalLogin != reference.globalLogin || actual.globalRegister != reference.globalRegister || actual.nextSequence != reference.nextSequence || !reflect.DeepEqual(actual.rejectionCounts, reference.rejectionCounts) || !reflect.DeepEqual(actual.lastAudit, reference.lastAudit) {
+					if actual.globalLogin.TokensAt(time.Unix(int64(now), 0)) != reference.globalLogin.TokensAt(time.Unix(int64(now), 0)) || actual.globalRegister.TokensAt(time.Unix(int64(now), 0)) != reference.globalRegister.TokensAt(time.Unix(int64(now), 0)) || actual.nextSequence != reference.nextSequence || !reflect.DeepEqual(actual.rejectionCounts, reference.rejectionCounts) || !reflect.DeepEqual(actual.lastAudit, reference.lastAudit) {
 						t.Fatalf("step %d accounting differs", step)
 					}
 				}
@@ -266,7 +268,7 @@ func assertRateLimitBoundsBothOperations(t *testing.T, limiter *authRateLimiter)
 	}
 }
 
-// assertRateLimitSaturationAndRefill checks deterministic saturated eviction and integer refill.
+// assertRateLimitSaturationAndRefill checks deterministic saturated eviction and token refill.
 func assertRateLimitSaturationAndRefill(t *testing.T) {
 	t.Helper()
 	policy := settings.TokenBucketPolicy{Capacity: 1, RefillTokens: 1, RefillSeconds: 10}
@@ -278,8 +280,8 @@ func assertRateLimitSaturationAndRefill(t *testing.T) {
 	if buckets[bucketKey{username: "a"}] != nil || buckets[bucketKey{username: "z"}] == nil {
 		t.Fatal("saturated sequence must evict by key order")
 	}
-	bucket := fullBucket(policy, 0)
-	if bucket.acquire(0, policy) != 0 || bucket.acquire(9, policy) != 1 || bucket.acquire(^uint64(0), policy) != 0 {
-		t.Fatal("integer refill/overflow changed")
+	bucket := newTokenBucket(policy)
+	if bucket.acquire(0) != 0 || bucket.acquire(9) != 1 || bucket.acquire(20) != 0 {
+		t.Fatal("token refill changed")
 	}
 }

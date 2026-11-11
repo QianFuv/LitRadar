@@ -2,12 +2,14 @@ package api
 
 import (
 	"container/list"
+	"math"
 	"net/netip"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/settings"
+	"golang.org/x/time/rate"
 )
 
 type authAttempt uint8
@@ -37,7 +39,7 @@ type rejectionKey struct {
 	kind   authAttempt
 	bucket string
 }
-type tokenBucket struct{ available, lastRefill uint64 }
+type tokenBucket struct{ *rate.Limiter }
 type trackedBucket struct {
 	bucket   tokenBucket
 	lastUsed uint64
@@ -58,7 +60,7 @@ type authRateLimiter struct {
 func newAuthRateLimiter(policy settings.RateLimitPolicy) *authRateLimiter {
 	return &authRateLimiter{
 		policy: policy, started: time.Now(), ipBuckets: make(map[bucketKey]*trackedBucket), usernameBuckets: make(map[bucketKey]*trackedBucket),
-		globalLogin: fullBucket(policy.GlobalLogin, 0), globalRegister: fullBucket(policy.GlobalRegister, 0),
+		globalLogin: newTokenBucket(policy.GlobalLogin), globalRegister: newTokenBucket(policy.GlobalRegister),
 		rejectionCounts: make(map[rejectionKey]uint64), lastAudit: make(map[rejectionKey]uint64),
 	}
 }
@@ -86,9 +88,9 @@ func (limiter *authRateLimiter) checkAt(kind authAttempt, source authClientSourc
 		}
 	}
 	if kind != registerAttempt {
-		retry = limiter.globalLogin.acquire(now, limiter.policy.GlobalLogin)
+		retry = limiter.globalLogin.acquire(now)
 	} else {
-		retry = limiter.globalRegister.acquire(now, limiter.policy.GlobalRegister)
+		retry = limiter.globalRegister.acquire(now)
 	}
 	if retry != 0 {
 		return limiter.rejection(kind, "global_breaker", source.class, retry, now)
@@ -118,27 +120,19 @@ func (limiter *authRateLimiter) rejection(kind authAttempt, bucket, source strin
 	return &rateLimitRejection{retry, "rate_limit_exceeded", bucket, source, count, shouldAudit}
 }
 
-func fullBucket(policy settings.TokenBucketPolicy, now uint64) tokenBucket {
-	return tokenBucket{policy.Capacity * policy.RefillSeconds, now}
+func newTokenBucket(policy settings.TokenBucketPolicy) tokenBucket {
+	return tokenBucket{rate.NewLimiter(rate.Limit(float64(policy.RefillTokens)/float64(policy.RefillSeconds)), int(policy.Capacity))}
 }
 
-func (bucket *tokenBucket) acquire(now uint64, policy settings.TokenBucketPolicy) uint64 {
-	if now > bucket.lastRefill {
-		maximum := policy.Capacity * policy.RefillSeconds
-		missing := maximum - bucket.available
-		elapsed := now - bucket.lastRefill
-		if elapsed >= (missing+policy.RefillTokens-1)/policy.RefillTokens {
-			bucket.available = maximum
-		} else {
-			bucket.available += elapsed * policy.RefillTokens
-		}
-		bucket.lastRefill = now
-	}
-	if bucket.available >= policy.RefillSeconds {
-		bucket.available -= policy.RefillSeconds
+func (bucket *tokenBucket) acquire(now uint64) uint64 {
+	instant := time.Unix(int64(now), 0)
+	if bucket.AllowN(instant, 1) {
 		return 0
 	}
-	return (policy.RefillSeconds - bucket.available + policy.RefillTokens - 1) / policy.RefillTokens
+	reservation := bucket.ReserveN(instant, 1)
+	delay := reservation.DelayFrom(instant)
+	reservation.CancelAt(instant)
+	return max(1, uint64(math.Ceil(delay.Seconds())))
 }
 
 // acquireTracked reuses an evicted node before recording this ordered token acquisition.
@@ -152,12 +146,12 @@ func acquireTracked(buckets map[bucketKey]*trackedBucket, order *list.List, key 
 			tracked = &trackedBucket{}
 			tracked.element = order.PushBack(tracked)
 		}
-		tracked.key, tracked.bucket = key, fullBucket(policy, now)
+		tracked.key, tracked.bucket = key, newTokenBucket(policy)
 		buckets[key] = tracked
 	}
 	tracked.lastUsed = sequence
 	order.MoveToBack(tracked.element)
-	return tracked.bucket.acquire(now, policy)
+	return tracked.bucket.acquire(now)
 }
 
 // trackedEviction retains deterministic key ordering when the usage sequence is saturated.
