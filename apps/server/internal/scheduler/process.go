@@ -78,7 +78,13 @@ func (config ProcessConfig) run(ctx context.Context, task domain.Task, claim sto
 	return execution
 }
 
+// runProcesses executes ordered job commands within one shared deadline.
 func (config ProcessConfig) runProcesses(ctx context.Context, task domain.Task, claim store.Claim, heartbeat func() bool) processResult {
+	return config.runProcessesWith(ctx, task, claim, heartbeat, executeProcess)
+}
+
+// runProcessesWith separates command sequencing from OS supervision for deterministic time tests.
+func (config ProcessConfig) runProcessesWith(ctx context.Context, task domain.Task, claim store.Claim, heartbeat func() bool, runner func(context.Context, scheduledProcess, store.Claim, int, time.Time, time.Duration, func() bool) processResult) processResult {
 	commands, err := config.processes(*task.Job)
 	if err != nil {
 		return processResult{domain.Error, "scheduler: invalid job"}
@@ -90,7 +96,7 @@ func (config ProcessConfig) runProcesses(ctx context.Context, task domain.Task, 
 			summaries = append(summaries, "scheduler: cancelled")
 			return processResult{domain.Cancelled, boundedSummary(strings.Join(summaries, "\n"))}
 		}
-		execution := executeProcess(ctx, command, claim, ordinal+1, deadline, processHeartbeatInterval, heartbeat)
+		execution := runner(ctx, command, claim, ordinal+1, deadline, processHeartbeatInterval, heartbeat)
 		if execution.summary != "" {
 			summaries = append(summaries, execution.summary)
 		}

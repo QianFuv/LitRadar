@@ -1,7 +1,9 @@
 package scheduler
 
 import (
+	"bufio"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +13,7 @@ import (
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/scheduler"
 )
 
+// TestSchedulerRealCrashRecovery kills children only after their durable-state pipe barrier.
 func TestSchedulerRealCrashRecovery(t *testing.T) {
 	for _, boundary := range []string{"claimed", "running", "finished"} {
 		t.Run(boundary, func(t *testing.T) {
@@ -27,6 +30,10 @@ func TestSchedulerRealCrashRecovery(t *testing.T) {
 				t.Fatal(err)
 			}
 			command := exec.Command(executable)
+			output, err := command.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
 			if err := command.Start(); err != nil {
 				t.Fatal(err)
 			}
@@ -41,15 +48,20 @@ func TestSchedulerRealCrashRecovery(t *testing.T) {
 					}
 				}
 			}()
-			hasReached := false
-			for deadline := time.Now().Add(8 * time.Second); time.Now().Before(deadline); {
-				if data, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "barrier")); err == nil && string(data) == boundary {
-					hasReached = true
-					break
+			barrier := make(chan error, 1)
+			go func() {
+				line, err := bufio.NewReader(output).ReadString('\n')
+				if err == nil && line != boundary+"\n" {
+					err = fmt.Errorf("unexpected durable barrier %q", line)
 				}
-				time.Sleep(10 * time.Millisecond)
-			}
-			if !hasReached {
+				barrier <- err
+			}()
+			select {
+			case err := <-barrier:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(processFixtureStartupTimeout):
 				t.Fatal("child did not reach durable barrier")
 			}
 			if err := command.Process.Kill(); err != nil {

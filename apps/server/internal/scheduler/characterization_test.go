@@ -23,7 +23,7 @@ func TestSchedulerHeartbeatPanicRetainsObservedStateAndReapsChild(t *testing.T) 
 	address := ""
 	recovered := func() (value any) {
 		defer func() { value = recover() }()
-		executeProcess(context.Background(), command, testClaim(), 1, time.Now().Add(8*time.Second), 0, func() bool {
+		executeProcess(t.Context(), command, testClaim(), 1, time.Now().Add(processFixtureStartupTimeout), 0, func() bool {
 			address = waitDescendant(t, directory)
 			panic("fixture heartbeat panic")
 		})

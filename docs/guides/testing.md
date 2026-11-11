@@ -156,6 +156,8 @@ CI 的 artifact upload 使用 `if: always()`。失败时先看 workflow summary 
 
 ## 重试、flaky 与时长
 
+Go scheduler 的共享 deadline、命令顺序和取消测试使用 `testing/synctest` 虚拟时间，避免通过真实休眠和耗时上限判断正确性。真实子进程测试继续验证 argv、退出码、输出裁剪和进程树清理；超时/心跳终止在后代 readiness 后触发，崩溃恢复通过子进程 stdout barrier 确认持久状态已提交。它们保留有界的 30 秒启动/响应等待，以便区分启动失败与计时规则回归。
+
 - Go 本地和 CI 不自动重试，`-count=1` 禁用结果缓存；`check-go.mjs` 的全模块常规与 race 测试每条上限 25 分钟，其他命令 15 分钟，失败即停止。
 - Playwright 本地零重试；CI 最多一次重试，只用于取得 trace/video。`failOnFlakyTests` 已启用，因此 retry-pass 仍使 CI 失败，不能作为稳定完成证据。
 - Vitest 和统一脚本不自动重试。不要通过重复运行直到通过来关闭缺陷。

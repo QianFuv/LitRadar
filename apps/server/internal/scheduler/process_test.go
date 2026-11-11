@@ -21,7 +21,7 @@ import (
 	store "github.com/QianFuv/LitRadar/apps/server/internal/storage/scheduler"
 )
 
-const processFixtureStartupTimeout = 15 * time.Second
+const processFixtureStartupTimeout = 30 * time.Second
 
 func TestMain(tests *testing.M) {
 	role := os.Getenv("LITRADAR_SCHEDULER_TEST_ROLE")
@@ -77,6 +77,7 @@ func testClaim() store.Claim {
 	return store.Claim{RunId: 42, WorkerId: "fixture", Task: domain.Task{Id: 1, Name: "fixture"}}
 }
 
+// TestSchedulerWindowsSignedExitCode checks signed exit status without a short startup deadline.
 func TestSchedulerWindowsSignedExitCode(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows u32 process status")
@@ -84,20 +85,21 @@ func TestSchedulerWindowsSignedExitCode(t *testing.T) {
 	command, _ := processFixture(t, "exit")
 	for _, code := range []int{-1, -1073741819} {
 		t.Setenv("LITRADAR_SCHEDULER_TEST_EXIT", strconv.Itoa(code))
-		result := executeProcess(context.Background(), command, testClaim(), 1, time.Now().Add(5*time.Second), time.Second, func() bool { return true })
+		result := executeProcess(t.Context(), command, testClaim(), 1, time.Now().Add(processFixtureStartupTimeout), time.Second, func() bool { return true })
 		if result.status != domain.Failed || result.summary != fmt.Sprintf("index: exit code %d", code) {
 			t.Fatalf("%d: %#v", code, result)
 		}
 	}
 }
 
+// TestSchedulerOutputBoundedAndRedacted checks real child output independently of timing assertions.
 func TestSchedulerOutputBoundedAndRedacted(t *testing.T) {
 	command, _ := processFixture(t, "output")
 	var logs bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
 	defer slog.SetDefault(previous)
-	result := executeProcess(context.Background(), command, testClaim(), 1, time.Now().Add(5*time.Second), time.Second, func() bool { return true })
+	result := executeProcess(t.Context(), command, testClaim(), 1, time.Now().Add(processFixtureStartupTimeout), time.Second, func() bool { return true })
 	expected := "stdout: " + strings.Repeat("x", 2047) + "�"
 	if result.status != domain.Success || result.summary != expected {
 		t.Fatalf("unexpected captured output: %s length=%d", result.status, len(result.summary))
@@ -156,6 +158,7 @@ func assertDescendantStopped(t *testing.T, address string) {
 	}
 }
 
+// TestSchedulerTreeTermination starts timeout and heartbeat termination only after descendant readiness.
 func TestSchedulerTreeTermination(t *testing.T) {
 	for _, reason := range []string{"cancel", "timeout", "heartbeat", "leader-exit"} {
 		t.Run(reason, func(t *testing.T) {
@@ -164,7 +167,7 @@ func TestSchedulerTreeTermination(t *testing.T) {
 				role = reason
 			}
 			command, directory := processFixture(t, role)
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			resultChannel := make(chan processResult, 1)
 			var address string
@@ -179,15 +182,15 @@ func TestSchedulerTreeTermination(t *testing.T) {
 					}
 				}()
 				address = waitDescendant(t, directory)
-				deadline := time.Now().Add(5 * time.Second)
+				deadline := time.Now().Add(processFixtureStartupTimeout)
 				if reason == "timeout" {
-					deadline = time.Now().Add(1200 * time.Millisecond)
+					deadline = time.Now()
 				}
 				go func() {
 					var result processResult
 					var errorKind string
 					var exitCode *int
-					waitScheduledProcess(ctx, child, command.command, deadline, 1200*time.Millisecond, func() bool { return reason != "heartbeat" }, &result, &errorKind, &exitCode)
+					waitScheduledProcess(ctx, child, command.command, deadline, 0, func() bool { return reason != "heartbeat" }, &result, &errorKind, &exitCode)
 					if err := child.Close(); err != nil {
 						result = processResult{domain.Error, err.Error()}
 					}
@@ -195,7 +198,7 @@ func TestSchedulerTreeTermination(t *testing.T) {
 				}()
 			} else {
 				go func() {
-					resultChannel <- executeProcess(ctx, command, testClaim(), 1, time.Now().Add(20*time.Second), 1200*time.Millisecond, func() bool { return true })
+					resultChannel <- executeProcess(ctx, command, testClaim(), 1, time.Now().Add(2*processFixtureStartupTimeout), time.Second, func() bool { return true })
 				}()
 				address = waitDescendant(t, directory)
 			}
@@ -208,7 +211,7 @@ func TestSchedulerTreeTermination(t *testing.T) {
 				if result.status != expected {
 					t.Fatalf("%s: %#v", reason, result)
 				}
-			case <-time.After(12 * time.Second):
+			case <-time.After(processFixtureStartupTimeout):
 				t.Fatal("supervisor did not finish")
 			}
 			assertDescendantStopped(t, address)
@@ -216,27 +219,18 @@ func TestSchedulerTreeTermination(t *testing.T) {
 	}
 }
 
-func TestSchedulerCommandsSequenceAndSharedDeadline(t *testing.T) {
-	for _, scenario := range []string{"success", "first-failed", "deadline"} {
+// TestSchedulerCommandsSequence checks real argv, working directory and failure short-circuiting.
+func TestSchedulerCommandsSequence(t *testing.T) {
+	for _, scenario := range []string{"success", "first-failed"} {
 		t.Run(scenario, func(t *testing.T) {
 			command, directory := processFixture(t, "sequence")
 			if scenario == "first-failed" {
 				t.Setenv("LITRADAR_SCHEDULER_TEST_FAIL", "index")
 			}
-			if scenario == "deadline" {
-				t.Setenv("LITRADAR_SCHEDULER_TEST_DELAY", "yes")
-			}
-			task := domain.Task{Id: 1, Job: &domain.Job{Kind: "index", Notify: true, Push: true}, TimeoutSeconds: 5}
-			if scenario == "deadline" {
-				task.TimeoutSeconds = 15
-			}
+			task := domain.Task{Id: 1, Job: &domain.Job{Kind: "index", Notify: true, Push: true}, TimeoutSeconds: 60}
 			config := ProcessConfig{ProjectRoot: "explicit root with spaces", AuthDatabase: "auth path", Executable: command.path, SecretKeyFile: "key path"}
-			started := time.Now()
-			result := config.runProcesses(context.Background(), task, testClaim(), func() bool { return true })
-			if scenario == "deadline" && time.Since(started) > 18500*time.Millisecond {
-				t.Fatal("deadline was reset between commands")
-			}
-			expected := map[string]domain.State{"success": domain.Success, "first-failed": domain.Failed, "deadline": domain.TimedOut}[scenario]
+			result := config.runProcesses(t.Context(), task, testClaim(), func() bool { return true })
+			expected := map[string]domain.State{"success": domain.Success, "first-failed": domain.Failed}[scenario]
 			if result.status != expected {
 				t.Fatalf("%#v", result)
 			}
@@ -245,7 +239,7 @@ func TestSchedulerCommandsSequenceAndSharedDeadline(t *testing.T) {
 				t.Fatal(err)
 			}
 			lines := bytes.Split(bytes.TrimSpace(data), []byte("\n"))
-			count := map[string]int{"success": 3, "first-failed": 1, "deadline": 2}[scenario]
+			count := map[string]int{"success": 3, "first-failed": 1}[scenario]
 			if len(lines) != count {
 				t.Fatalf("ran %d commands, want %d", len(lines), count)
 			}
@@ -288,7 +282,7 @@ func runClaimCrashFixture(directory string) {
 	if err := repository.Close(); err != nil {
 		os.Exit(99)
 	}
-	if err := os.WriteFile(filepath.Join(directory, "barrier"), []byte(boundary), 0600); err != nil {
+	if _, err := fmt.Fprintln(os.Stdout, boundary); err != nil {
 		os.Exit(99)
 	}
 	time.Sleep(24 * time.Hour)
@@ -314,7 +308,7 @@ func writeStartedCrashEffect(repository *store.Repository, claim store.Claim, di
 	}
 }
 
-// runProcessSequenceFixture records exact argv and working directory before delay or selected exit.
+// runProcessSequenceFixture records exact argv and working directory before a selected exit.
 func runProcessSequenceFixture(directory string) {
 	file, err := os.OpenFile(filepath.Join(directory, "commands.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
@@ -330,9 +324,6 @@ func runProcessSequenceFixture(directory string) {
 	}
 	if err := file.Close(); err != nil {
 		os.Exit(99)
-	}
-	if os.Getenv("LITRADAR_SCHEDULER_TEST_DELAY") == "yes" {
-		time.Sleep(8 * time.Second)
 	}
 	if os.Getenv("LITRADAR_SCHEDULER_TEST_FAIL") == os.Args[1] {
 		os.Exit(7)
