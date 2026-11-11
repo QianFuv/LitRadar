@@ -15,12 +15,16 @@ import (
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/index"
 )
 
-func prepareCatalogManifest(ctx context.Context, config LiveConfig, input storage.CatalogInput, outcome storage.BatchCatalogOutcome) (storage.ManifestIntent, error) {
+func prepareCatalogManifest(ctx context.Context, config LiveConfig, input storage.CatalogInput, outcome storage.BatchCatalogOutcome) (resultValue1 storage.ManifestIntent, resultError error) {
 	content, err := storage.OpenContent(ctx, catalogContentPath(config, input))
 	if err != nil {
 		return storage.ManifestIntent{}, fmt.Errorf("index database %s cannot be used: %w", catalogContentPath(config, input), err)
 	}
-	defer content.Close()
+	defer func() {
+		if closeError := content.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close content: %w", closeError))
+		}
+	}()
 	generated := strconv.FormatInt(time.Now().Unix(), 10)
 	prepared, err := storage.PrepareContentChangeManifest(ctx, content.Conn, catalogDatabaseName(input), outcome.RunId, generated)
 	if err != nil {
@@ -66,12 +70,16 @@ func shouldPublishManifest(config LiveConfig, input storage.CatalogInput, outcom
 	}
 	return false, nil
 }
-func publishCatalogManifest(ctx context.Context, config LiveConfig, input storage.CatalogInput, intent storage.ManifestIntent) error {
+func publishCatalogManifest(ctx context.Context, config LiveConfig, input storage.CatalogInput, intent storage.ManifestIntent) (resultError error) {
 	content, err := storage.OpenContent(ctx, catalogContentPath(config, input))
 	if err != nil {
 		return fmt.Errorf("index database %s cannot be used: %w", catalogContentPath(config, input), err)
 	}
-	defer content.Close()
+	defer func() {
+		if closeError := content.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close content: %w", closeError))
+		}
+	}()
 	history := catalogHistoryDirectory(config, input)
 	if intent.ThroughEventId != nil {
 		if err := storage.PublishContentChangeHistory(filepath.Join(history, intent.Sha256+".changes.json"), intent.Payload); err != nil {

@@ -132,7 +132,9 @@ func TestBootstrapRetainsOldOutboxUntilResumedCatalogCompletes(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = connection.ExecContext(ctx, "INSERT INTO article_change_events(content_revision,article_id,change_kind,journal_id,in_press,created_at) VALUES('old-revision',42,'upsert',1,0,'2026-01-01'); CREATE TRIGGER forbid_bootstrap_events BEFORE INSERT ON article_change_events BEGIN SELECT RAISE(ABORT,'bootstrap emitted event'); END")
-	connection.Close()
+	if err := connection.Close(); err != nil {
+		t.Fatalf("connection.Close: %v", err)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +187,9 @@ func assertRetainedBootstrapOutbox(t *testing.T, ctx context.Context, filename s
 	if err := connection.QueryRowContext(ctx, "SELECT article_id FROM articles").Scan(&originalId); err != nil {
 		t.Fatal(err)
 	}
-	connection.Close()
+	if err := connection.Close(); err != nil {
+		t.Fatalf("connection.Close: %v", err)
+	}
 	return originalId
 }
 
@@ -196,7 +200,11 @@ func assertResumedBootstrapIdentity(t *testing.T, ctx context.Context, filename 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connection.Close()
+	defer func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("connection.Close: %v", err)
+		}
+	}()
 	var resumedId int64
 	if err := connection.QueryRowContext(ctx, "SELECT article_id FROM articles").Scan(&resumedId); err != nil || resumedId != originalId {
 		t.Fatal(resumedId, originalId, err)

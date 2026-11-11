@@ -69,7 +69,9 @@ func runIndexStderrOwnerFixture() {
 		os.Exit(30)
 	}
 	if child.Wait(context.Background()) != nil {
-		child.Close()
+		if err := child.Close(); err != nil {
+			os.Exit(99)
+		}
 		os.Exit(31)
 	}
 	if child.Close() != nil {
@@ -108,15 +110,21 @@ func runEarlyIndexChildFixture(mode string, request WorkerRequest) {
 		os.Exit(0)
 	}
 	if mode == "wait" {
-		io.Copy(io.Discard, os.Stdin)
+		if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
+			os.Exit(99)
+		}
 		os.Exit(0)
 	}
 	if mode == "failed" {
-		WriteProtocol(os.Stdout, WorkerMessage{Type: "failed", ProtocolVersion: 8, WorkerId: request.WorkerId, Failure: &WorkerFailure{Class: "provider", Operation: "provider_request"}})
+		if err := WriteProtocol(os.Stdout, WorkerMessage{Type: "failed", ProtocolVersion: 8, WorkerId: request.WorkerId, Failure: &WorkerFailure{Class: "provider", Operation: "provider_request"}}); err != nil {
+			os.Exit(99)
+		}
 		os.Exit(0)
 	}
 	if mode == "premature" {
-		WriteProtocol(os.Stdout, WorkerMessage{Type: "succeeded", ProtocolVersion: 8, WorkerId: request.WorkerId})
+		if err := WriteProtocol(os.Stdout, WorkerMessage{Type: "succeeded", ProtocolVersion: 8, WorkerId: request.WorkerId}); err != nil {
+			os.Exit(99)
+		}
 		os.Exit(0)
 	}
 }
@@ -133,8 +141,12 @@ func indexChildFixtureProvider(mode string) provider.IndexContent {
 // finishIndexChildFixture preserves stdin EOF, exit status and extra-frame fixture behavior.
 func finishIndexChildFixture(mode string) {
 	if mode == "stdin-eof" {
-		os.Stdout.Close()
-		io.Copy(io.Discard, os.Stdin)
+		if err := os.Stdout.Close(); err != nil {
+			os.Exit(99)
+		}
+		if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
+			os.Exit(99)
+		}
 	}
 	if mode == "nonzero" {
 		os.Exit(25)

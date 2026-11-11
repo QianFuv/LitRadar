@@ -3,7 +3,9 @@ package index
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"os/exec"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/process"
@@ -79,7 +81,7 @@ type NotifyProcessConfig struct {
 }
 
 // RunNotifyProcess forwards the selected auth store, bounds retained output and closes native tree ownership.
-func RunNotifyProcess(ctx context.Context, config NotifyProcessConfig, database, manifest, attempt string) (NotifyObservation, error) {
+func RunNotifyProcess(ctx context.Context, config NotifyProcessConfig, database, manifest, attempt string) (resultValue1 NotifyObservation, resultError error) {
 	arguments := []string{"notify", "--secret-key-file", config.SecretKeyFile, "--db", database, "--changes-file", manifest, "--project-root", config.ProjectRoot, "--attempt-id", attempt, "--internal-handoff-json"}
 	if config.AuthDbPath != "" {
 		arguments = append(arguments, "--auth-db", config.AuthDbPath)
@@ -91,8 +93,14 @@ func RunNotifyProcess(ctx context.Context, config NotifyProcessConfig, database,
 	if err != nil {
 		return NotifyObservation{}, err
 	}
-	defer child.Close()
-	child.Stdin.Close()
+	defer func() {
+		if closeError := child.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close child: %w", closeError))
+		}
+	}()
+	if err := child.Stdin.Close(); err != nil {
+		slog.Warn("cleanup.failed", "operation", "child.Stdin.Close", "error", err)
+	}
 	body, exceeded, readError := readNotifyOutput(child.Stdout)
 	waitError := child.Wait(ctx)
 	var exit *int32

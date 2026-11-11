@@ -59,7 +59,11 @@ func assertLiveContent(t *testing.T, config LiveConfig, name string, articles, e
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connection.Close()
+	defer func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("connection.Close: %v", err)
+		}
+	}()
 	for table, expected := range map[string]int{"articles": articles, "article_change_events": events} {
 		var count int
 		if err := connection.Conn.QueryRowContext(context.Background(), "SELECT count(*) FROM "+table).Scan(&count); err != nil || count != expected {
@@ -239,7 +243,11 @@ func TestLiveRejectsIncompleteCatalogLedgerBeforeAnyExecution(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer connection.Close()
+			defer func() {
+				if err := connection.Close(); err != nil {
+					t.Errorf("connection.Close: %v", err)
+				}
+			}()
 			admission, err := storage.AdmitBatch(ctx, connection.Conn, request, true, "test-owner", time.Now().Unix())
 			if err != nil {
 				t.Fatal(err)

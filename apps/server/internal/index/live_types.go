@@ -27,7 +27,7 @@ type LiveConfig struct {
 
 // Format omits credential and proxy values from every diagnostic representation.
 func (value LiveConfig) Format(state fmt.State, verb rune) {
-	fmt.Fprintf(state, "LiveConfig{root:%q file:%v resume:%t update:%t full_rescan:%t notify:%t credentials:[REDACTED]}", value.ProjectRoot, value.File, value.ShouldResume, value.ShouldUpdate, value.ShouldFullRescan, value.ShouldNotify)
+	_, _ = fmt.Fprintf(state, "LiveConfig{root:%q file:%v resume:%t update:%t full_rescan:%t notify:%t credentials:[REDACTED]}", value.ProjectRoot, value.File, value.ShouldResume, value.ShouldUpdate, value.ShouldFullRescan, value.ShouldNotify)
 }
 
 // LiveRunOutcome summarizes the ordered catalog boundaries reached by one invocation.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,7 +28,7 @@ func crashConfiguration(root string) LiveConfig {
 }
 
 // runCrashFixture reproduces each original kill boundary using its own durable operations.
-func runCrashFixture(root, point string) error {
+func runCrashFixture(root, point string) (resultError error) {
 	ctx := context.Background()
 	config := crashConfiguration(root)
 	input, err := FreezeCatalog(filepath.Join(root, "data", "meta", "alpha.csv"), "cnki")
@@ -42,7 +43,7 @@ func runCrashFixture(root, point string) error {
 	if err != nil {
 		return err
 	}
-	defer connection.Close()
+	defer func() { resultError = errors.Join(resultError, connection.Close()) }()
 	admission, err := storage.AdmitBatch(ctx, connection.Conn, request, true, "crash-owner", time.Now().Unix())
 	if err != nil {
 		return err
@@ -114,7 +115,11 @@ func TestActualKillRestartAtEveryIndexDurableBoundary(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer child.Close()
+			defer func() {
+				if err := child.Close(); err != nil {
+					t.Errorf("child.Close: %v", err)
+				}
+			}()
 			var ready crashReady
 			ticker := time.NewTicker(10 * time.Millisecond)
 			defer ticker.Stop()
@@ -144,7 +149,9 @@ func TestActualKillRestartAtEveryIndexDurableBoundary(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err = batch.Conn.ExecContext(ctx, "UPDATE index_batch_lease SET expires_at=0")
-			batch.Close()
+			if err := batch.Close(); err != nil {
+				t.Errorf("batch.Close: %v", err)
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -153,7 +160,9 @@ func TestActualKillRestartAtEveryIndexDurableBoundary(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err = control.Conn.ExecContext(ctx, "UPDATE provider_leases SET expires_at=0")
-			control.Close()
+			if err := control.Close(); err != nil {
+				t.Errorf("control.Close: %v", err)
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -197,7 +206,7 @@ func TestActualKillRestartAtEveryIndexDurableBoundary(t *testing.T) {
 }
 
 // commitCrashFixtureContent stops between canonical content and checkpoint commit.
-func commitCrashFixtureContent(ctx context.Context, config LiveConfig, input storage.CatalogInput, batch storage.IndexBatch, boundary func(string)) error {
+func commitCrashFixtureContent(ctx context.Context, config LiveConfig, input storage.CatalogInput, batch storage.IndexBatch, boundary func(string)) (resultError error) {
 	if err := os.MkdirAll(filepath.Dir(catalogContentPath(config, input)), 0700); err != nil {
 		return err
 	}
@@ -205,12 +214,12 @@ func commitCrashFixtureContent(ctx context.Context, config LiveConfig, input sto
 	if err != nil {
 		return err
 	}
-	defer control.Close()
+	defer func() { resultError = errors.Join(resultError, control.Close()) }()
 	content, err := storage.OpenContent(ctx, catalogContentPath(config, input))
 	if err != nil {
 		return err
 	}
-	defer content.Close()
+	defer func() { resultError = errors.Join(resultError, content.Close()) }()
 	run := storage.SyncRun{Scope: storage.SyncScope{CatalogName: "alpha", ProviderName: "cnki", CatalogId: input.Entries[0].CatalogId}, BatchId: batch.BatchId, RunId: "crash-run", Mode: domain.Incremental}
 	if err := storage.AcquireLease(ctx, control.Conn, "alpha", "cnki", run.RunId, time.Now().Unix()); err != nil {
 		return err
@@ -230,7 +239,7 @@ func commitCrashFixtureContent(ctx context.Context, config LiveConfig, input sto
 }
 
 // publishCrashFixtureManifest exposes frozen intent, path, history, current file and event ACK boundaries.
-func publishCrashFixtureManifest(ctx context.Context, connection *sql.Conn, config LiveConfig, input storage.CatalogInput, batch storage.IndexBatch, outcome storage.BatchCatalogOutcome, ready *crashReady, boundary func(string)) (storage.BatchCatalogOutcome, error) {
+func publishCrashFixtureManifest(ctx context.Context, connection *sql.Conn, config LiveConfig, input storage.CatalogInput, batch storage.IndexBatch, outcome storage.BatchCatalogOutcome, ready *crashReady, boundary func(string)) (resultValue1 storage.BatchCatalogOutcome, resultError error) {
 	intent, err := prepareCatalogManifest(ctx, config, input, outcome)
 	if err != nil {
 		return outcome, err
@@ -258,7 +267,9 @@ func publishCrashFixtureManifest(ctx context.Context, connection *sql.Conn, conf
 		return outcome, err
 	}
 	_, err = storage.AcknowledgeContentChangeEvents(ctx, content.Conn, *intent.ThroughEventId)
-	content.Close()
+	if err := content.Close(); err != nil {
+		return resultValue1, err
+	}
 	if err != nil {
 		return outcome, err
 	}

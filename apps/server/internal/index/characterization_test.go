@@ -197,7 +197,11 @@ func installNotificationRecordingFailure(t *testing.T, ctx context.Context, conf
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connection.Close()
+	defer func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("connection.Close: %v", err)
+		}
+	}()
 	_, err = connection.ExecContext(ctx, `CREATE TRIGGER reject_notification_result BEFORE UPDATE OF notify_status ON index_batch_catalogs WHEN NEW.notify_status='failed' BEGIN SELECT RAISE(FAIL,'injected notification recording failure'); END`)
 	if err != nil {
 		t.Fatal(err)

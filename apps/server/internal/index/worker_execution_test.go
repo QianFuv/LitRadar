@@ -47,10 +47,26 @@ func TestFetchWorkerWaitsForExactDurableAck(t *testing.T) {
 	outputReader, outputWriter := io.Pipe()
 	input := bufio.NewWriter(inputWriter)
 	output := bufio.NewWriter(outputWriter)
-	defer inputReader.Close()
-	defer inputWriter.Close()
-	defer outputReader.Close()
-	defer outputWriter.Close()
+	defer func() {
+		if err := inputReader.Close(); err != nil {
+			t.Errorf("inputReader.Close: %v", err)
+		}
+	}()
+	defer func() {
+		if err := inputWriter.Close(); err != nil {
+			t.Errorf("inputWriter.Close: %v", err)
+		}
+	}()
+	defer func() {
+		if err := outputReader.Close(); err != nil {
+			t.Errorf("outputReader.Close: %v", err)
+		}
+	}()
+	defer func() {
+		if err := outputWriter.Close(); err != nil {
+			t.Errorf("outputWriter.Close: %v", err)
+		}
+	}()
 	go func() { <-ctx.Done(); inputReader.CloseWithError(ctx.Err()); outputReader.CloseWithError(ctx.Err()) }()
 	var calls atomic.Int32
 	var closed atomic.Bool
@@ -72,7 +88,9 @@ func TestFetchWorkerWaitsForExactDurableAck(t *testing.T) {
 		done <- RunFetchWorker(ctx, request, inputReader, output, func(WorkerRequest, WorkerBootstrap) (provider.IndexContent, func(), error) {
 			return implementation, func() { closed.Store(true) }, nil
 		})
-		outputWriter.Close()
+		if err := outputWriter.Close(); err != nil {
+			t.Errorf("outputWriter.Close: %v", err)
+		}
 	}()
 	if err := WriteProtocol(input, WorkerBootstrap{ProtocolVersion: 8, WorkerId: 0}); err != nil {
 		t.Fatal(err)
@@ -113,8 +131,12 @@ func TestFetchWorkerRejectsEveryAckCorrelationMismatch(t *testing.T) {
 				ack.IsComplete = false
 			}
 			var input, output bytes.Buffer
-			WriteProtocol(&input, WorkerBootstrap{ProtocolVersion: 8})
-			WriteProtocol(&input, ack)
+			if err := WriteProtocol(&input, WorkerBootstrap{ProtocolVersion: 8}); err != nil {
+				t.Errorf("WriteProtocol: %v", err)
+			}
+			if err := WriteProtocol(&input, ack); err != nil {
+				t.Errorf("WriteProtocol: %v", err)
+			}
 			calls := 0
 			err := RunFetchWorker(context.Background(), request, &input, &output, func(WorkerRequest, WorkerBootstrap) (provider.IndexContent, func(), error) {
 				return workerTestProvider(func(context.Context, domain.JournalCatalogEntry, domain.IndexFetchContext) (domain.ProviderBatch, error) {
@@ -139,8 +161,12 @@ func TestRepeatedCheckpointFailsOnlyAfterAck(t *testing.T) {
 	request.Assignments[0].TraversalCheckpoint = testCheckpoint("repeat")
 	batch.Progress = domain.ProviderProgress{State: domain.Continue, Checkpoint: testCheckpoint("repeat")}
 	var input, output bytes.Buffer
-	WriteProtocol(&input, WorkerBootstrap{ProtocolVersion: 8})
-	WriteProtocol(&input, ParentMessage{"committed", 8, 0, 0, 4, 0, false})
+	if err := WriteProtocol(&input, WorkerBootstrap{ProtocolVersion: 8}); err != nil {
+		t.Fatalf("WriteProtocol: %v", err)
+	}
+	if err := WriteProtocol(&input, ParentMessage{"committed", 8, 0, 0, 4, 0, false}); err != nil {
+		t.Fatalf("WriteProtocol: %v", err)
+	}
 	if err := RunFetchWorker(context.Background(), request, &input, &output, func(WorkerRequest, WorkerBootstrap) (provider.IndexContent, func(), error) {
 		return workerTestProvider(func(context.Context, domain.JournalCatalogEntry, domain.IndexFetchContext) (domain.ProviderBatch, error) {
 			return batch, nil
@@ -159,7 +185,9 @@ func TestWorkerBootstrapValidationPrecedesProviderConstruction(t *testing.T) {
 	request, _ := workerFixtureRequest(t)
 	for _, bootstrap := range []WorkerBootstrap{{ProtocolVersion: 7}, {ProtocolVersion: 8, WorkerId: 2}, {ProtocolVersion: 8, ProviderProxyUrl: testCheckpoint("http://user:password@bad/path")}, {ProtocolVersion: 8, ScholarlyWorksetDir: testCheckpoint("relative")}} {
 		var input, output bytes.Buffer
-		WriteProtocol(&input, bootstrap)
+		if err := WriteProtocol(&input, bootstrap); err != nil {
+			t.Fatalf("WriteProtocol: %v", err)
+		}
 		called := false
 		if err := RunFetchWorker(context.Background(), request, &input, &output, func(WorkerRequest, WorkerBootstrap) (provider.IndexContent, func(), error) {
 			called = true
@@ -182,12 +210,20 @@ func parentWriterFixture(t *testing.T) (*ParentWriter, WorkerRequest, domain.Pro
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { content.Close() })
+	t.Cleanup(func() {
+		if err := content.Close(); err != nil {
+			t.Errorf("content.Close: %v", err)
+		}
+	})
 	control, err := storage.OpenControl(ctx, filepath.Join(root, "control.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { control.Close() })
+	t.Cleanup(func() {
+		if err := control.Close(); err != nil {
+			t.Errorf("control.Close: %v", err)
+		}
+	})
 	request, batch := workerFixtureRequest(t)
 	writerContext := WriterContext{"catalog", "cnki", "batch", "run", "epoch"}
 	if err := storage.AcquireLease(ctx, control.Conn, "catalog", "cnki", "run", time.Now().Unix()); err != nil {
@@ -264,7 +300,9 @@ func TestParentPipeIdentityAndTerminalRules(t *testing.T) {
 				t.Fatal("invalid message accepted")
 			}
 			var count int
-			content.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM articles").Scan(&count)
+			if err := content.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM articles").Scan(&count); err != nil {
+				t.Errorf("(*database/sql.Row).Scan: %v", err)
+			}
 			if count != 0 || ack.Len() != 0 {
 				t.Fatal("invalid pipe message mutated content")
 			}
@@ -315,7 +353,9 @@ func TestWorkerPartitionSkipsCompletedBeforeRoundRobin(t *testing.T) {
 func TestWorkerFailureDoesNotExposeProviderMessage(t *testing.T) {
 	request, _ := workerFixtureRequest(t)
 	var input, output bytes.Buffer
-	WriteProtocol(&input, WorkerBootstrap{ProtocolVersion: 8})
+	if err := WriteProtocol(&input, WorkerBootstrap{ProtocolVersion: 8}); err != nil {
+		t.Fatalf("WriteProtocol: %v", err)
+	}
 	err := RunFetchWorker(context.Background(), request, &input, &output, func(WorkerRequest, WorkerBootstrap) (provider.IndexContent, func(), error) {
 		return workerTestProvider(func(context.Context, domain.JournalCatalogEntry, domain.IndexFetchContext) (domain.ProviderBatch, error) {
 			return domain.ProviderBatch{}, errors.New("secret-provider-response")

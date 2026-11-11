@@ -25,7 +25,7 @@ type WorkerAssignment struct {
 
 // Format hides opaque provider recovery payloads.
 func (value WorkerAssignment) Format(state fmt.State, verb rune) {
-	fmt.Fprintf(state, "WorkerAssignment{ordinal:%d entry:%v mode:%s has_anchor:%t has_checkpoint:%t}", value.JournalOrdinal, value.Entry, value.Mode, value.CommittedAnchor != nil, value.TraversalCheckpoint != nil)
+	_, _ = fmt.Fprintf(state, "WorkerAssignment{ordinal:%d entry:%v mode:%s has_anchor:%t has_checkpoint:%t}", value.JournalOrdinal, value.Entry, value.Mode, value.CommittedAnchor != nil, value.TraversalCheckpoint != nil)
 }
 
 // WorkerRequest is the credential-free request persisted by the parent process.
@@ -44,7 +44,7 @@ type WorkerRequest struct {
 
 // Format reports scheduling and correlation metadata without provider state.
 func (value WorkerRequest) Format(state fmt.State, verb rune) {
-	fmt.Fprintf(state, "WorkerRequest{version:%d catalog:%q provider:%q run:%q worker:%d processes:%d source_workers:%d epoch:%d timeout:%d assignments:%d credentials:[REDACTED]}", value.ProtocolVersion, value.CatalogName, value.ProviderName, value.RunId, value.WorkerId, value.ProcessCount, value.SourceWorkerCount, value.ScheduleEpochUnixMillis, value.TimeoutSeconds, len(value.Assignments))
+	_, _ = fmt.Fprintf(state, "WorkerRequest{version:%d catalog:%q provider:%q run:%q worker:%d processes:%d source_workers:%d epoch:%d timeout:%d assignments:%d credentials:[REDACTED]}", value.ProtocolVersion, value.CatalogName, value.ProviderName, value.RunId, value.WorkerId, value.ProcessCount, value.SourceWorkerCount, value.ScheduleEpochUnixMillis, value.TimeoutSeconds, len(value.Assignments))
 }
 
 // WorkerBootstrap carries one-shot secrets only over the owned child stdin pipe.
@@ -59,7 +59,7 @@ type WorkerBootstrap struct {
 
 // Format never includes credentials, proxy URLs or workset paths.
 func (value WorkerBootstrap) Format(state fmt.State, verb rune) {
-	fmt.Fprintf(state, "WorkerBootstrap{version:%d worker:%d credentials:[REDACTED]}", value.ProtocolVersion, value.WorkerId)
+	_, _ = fmt.Fprintf(state, "WorkerBootstrap{version:%d worker:%d credentials:[REDACTED]}", value.ProtocolVersion, value.WorkerId)
 }
 
 // WorkerFailureClass is a redacted error family crossing the private worker boundary.

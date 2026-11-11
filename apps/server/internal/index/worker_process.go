@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -67,8 +68,12 @@ func runWorkerProcesses(ctx context.Context, writer *ParentWriter, requests []Wo
 	defer func() {
 		cancel()
 		for _, worker := range children {
-			worker.child.Close()
-			removeWorkerFile(worker.path)
+			if err := worker.child.Close(); err != nil {
+				slog.Warn("cleanup.failed", "operation", "worker.child.Close", "error", err)
+			}
+			if err := removeWorkerFile(worker.path); err != nil {
+				slog.Warn("cleanup.failed", "operation", "removeWorkerFile", "error", err)
+			}
 		}
 		readers.Wait()
 	}()
@@ -105,12 +110,16 @@ func launchOwnedWorker(ctx context.Context, request WorkerRequest, config Worker
 		return ownedWorker{}, err
 	}
 	if err := os.WriteFile(path, body, 0666); err != nil {
-		removeWorkerFile(path)
+		if err := removeWorkerFile(path); err != nil {
+			slog.Warn("cleanup.failed", "operation", "removeWorkerFile", "error", err)
+		}
 		return ownedWorker{}, err
 	}
 	child, err := launcher(ctx, path, request.WorkerId)
 	if err != nil {
-		removeWorkerFile(path)
+		if err := removeWorkerFile(path); err != nil {
+			slog.Warn("cleanup.failed", "operation", "removeWorkerFile", "error", err)
+		}
 		return ownedWorker{}, err
 	}
 	return ownedWorker{child, path}, nil
@@ -170,14 +179,18 @@ func finishWorkerProcess(ctx context.Context, writer *ParentWriter, worker owned
 	if !writer.progress[event.worker].hasTerminal {
 		return parentProtocolFailure(event.worker)
 	}
-	worker.child.Stdin.Close()
+	if err := worker.child.Stdin.Close(); err != nil {
+		slog.Warn("cleanup.failed", "operation", "worker.child.Stdin.Close", "error", err)
+	}
 	if err := writer.End(event.worker, worker.child.Wait(ctx)); err != nil {
 		return err
 	}
 	if err := worker.child.Close(); err != nil {
 		return parentFailure(event.worker, WorkerFailure{Class: "worker", Operation: "worker_process"})
 	}
-	removeWorkerFile(worker.path)
+	if err := removeWorkerFile(worker.path); err != nil {
+		slog.Warn("cleanup.failed", "operation", "removeWorkerFile", "error", err)
+	}
 	return nil
 }
 

@@ -3,7 +3,9 @@ package index
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,7 +23,7 @@ func RunLiveIndex(ctx context.Context, config LiveConfig) (LiveRunOutcome, error
 }
 
 // runLiveIndex completes configuration and frozen selection admission before owning a batch connection.
-func runLiveIndex(ctx context.Context, config LiveConfig, run catalogRunner, notify notifyRunner) (LiveRunOutcome, error) {
+func runLiveIndex(ctx context.Context, config LiveConfig, run catalogRunner, notify notifyRunner) (resultValue1 LiveRunOutcome, resultError error) {
 	if err := validateLiveConfig(config); err != nil {
 		return LiveRunOutcome{}, err
 	}
@@ -50,7 +52,11 @@ func runLiveIndex(ctx context.Context, config LiveConfig, run catalogRunner, not
 	if err != nil {
 		return LiveRunOutcome{}, err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	owner := storage.NewBatchOwnerId()
 	admission, err := storage.AdmitBatch(ctx, connection.Conn, request, config.ShouldResume, owner, time.Now().Unix())
 	if err != nil {
@@ -202,24 +208,36 @@ func runAdmittedLiveBatch(ctx context.Context, connection *sql.Conn, config Live
 	if admission.IsAbandoning {
 		replacement, err := replaceAbandoningLiveBatch(ctx, connection, config, batch, request, owner)
 		if err != nil {
-			storage.ReleaseBatchLease(context.Background(), connection, batch.BatchId, owner)
+			if err := storage.ReleaseBatchLease(context.Background(), connection, batch.BatchId, owner); err != nil {
+				slog.Warn("cleanup.failed", "operation", "storage.ReleaseBatchLease", "error", err)
+			}
 			return LiveRunOutcome{}, err
 		}
 		batch = replacement
 	}
-	heartbeat := startLeaseHeartbeat(func() error {
+	heartbeat := startLeaseHeartbeat(func() (resultError error) {
 		separate, err := storage.OpenBatch(context.Background(), batchPath)
 		if err != nil {
 			return err
 		}
-		defer separate.Close()
+		defer func() {
+			if closeError := separate.Close(); closeError != nil {
+				resultError = errors.Join(resultError, fmt.Errorf("close separate: %w", closeError))
+			}
+		}()
 		return storage.HeartbeatBatchLease(context.Background(), separate.Conn, batch.BatchId, owner, time.Now().Unix())
 	}, "batch heartbeat thread panicked", 30*time.Second)
-	defer heartbeat.stopAndCheck()
+	defer func() {
+		if err := heartbeat.stopAndCheck(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "heartbeat.stopAndCheck", "error", err)
+		}
+	}()
 	outcomes, executionError := executeAdmittedLiveBatch(ctx, connection, config, request, batch, stopAfter, run, notify)
 	heartbeatError := heartbeat.stopAndCheck()
 	if executionError != nil || heartbeatError != nil {
-		storage.ReleaseBatchLease(context.Background(), connection, batch.BatchId, owner)
+		if err := storage.ReleaseBatchLease(context.Background(), connection, batch.BatchId, owner); err != nil {
+			slog.Warn("cleanup.failed", "operation", "storage.ReleaseBatchLease", "error", err)
+		}
 		if executionError != nil {
 			return LiveRunOutcome{}, executionError
 		}
@@ -236,7 +254,9 @@ func replaceAbandoningLiveBatch(ctx context.Context, connection *sql.Conn, confi
 			return storage.IndexBatch{}, err
 		}
 		_, err = storage.AbandonBatchCheckpoints(ctx, control.Conn, batch.BatchId)
-		control.Close()
+		if closeError := control.Close(); closeError != nil {
+			err = errors.Join(err, fmt.Errorf("close catalog control: %w", closeError))
+		}
 		if err != nil {
 			return storage.IndexBatch{}, err
 		}
@@ -253,7 +273,9 @@ func executeAdmittedLiveBatch(ctx context.Context, connection *sql.Conn, config 
 				return nil, err
 			}
 			_, err = storage.AdoptLegacyBatchState(ctx, control.Conn, input.CatalogName, input.ProviderName, batch.BatchId, request.Mode, request.Selection == "explicit_file")
-			control.Close()
+			if closeError := control.Close(); closeError != nil {
+				err = errors.Join(err, fmt.Errorf("close catalog control: %w", closeError))
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -272,7 +294,9 @@ func finishLiveBatch(ctx context.Context, connection *sql.Conn, batch storage.In
 		return LiveRunOutcome{Status: "paused", Message: &message, Csvs: outcomes}, nil
 	}
 	if err := storage.CompleteBatch(ctx, connection, batch.BatchId, owner, time.Now().Unix()); err != nil {
-		storage.ReleaseBatchLease(context.Background(), connection, batch.BatchId, owner)
+		if err := storage.ReleaseBatchLease(context.Background(), connection, batch.BatchId, owner); err != nil {
+			slog.Warn("cleanup.failed", "operation", "storage.ReleaseBatchLease", "error", err)
+		}
 		return LiveRunOutcome{}, err
 	}
 	return LiveRunOutcome{Status: "succeeded", Csvs: outcomes}, nil

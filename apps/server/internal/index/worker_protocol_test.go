@@ -22,8 +22,16 @@ func (writer peerClosingWriter) Write(body []byte) (int, error) {
 
 func TestFinalAckSucceedsWhenWorkerClosesAfterDecode(t *testing.T) {
 	reader, writer := io.Pipe()
-	defer reader.Close()
-	defer writer.Close()
+	defer func() {
+		if err := reader.Close(); err != nil {
+			t.Errorf("reader.Close: %v", err)
+		}
+	}()
+	defer func() {
+		if err := writer.Close(); err != nil {
+			t.Errorf("writer.Close: %v", err)
+		}
+	}()
 	timer := time.AfterFunc(5*time.Second, func() { reader.CloseWithError(io.ErrNoProgress) })
 	defer timer.Stop()
 	closed := make(chan struct{})
@@ -35,7 +43,9 @@ func TestFinalAckSucceedsWhenWorkerClosesAfterDecode(t *testing.T) {
 		if err == nil && actual != expected {
 			err = fmt.Errorf("acknowledgement=%+v", actual)
 		}
-		reader.Close()
+		if err := reader.Close(); err != nil {
+			t.Errorf("reader.Close: %v", err)
+		}
 		close(closed)
 		received <- err
 	}()

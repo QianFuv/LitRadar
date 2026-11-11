@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -23,7 +24,7 @@ func runLiveCatalog(ctx context.Context, config LiveConfig, input storage.Catalo
 }
 
 // runLiveCatalogWithFactory owns catalog connections and captures one lease and schedule epoch.
-func runLiveCatalogWithFactory(ctx context.Context, config LiveConfig, input storage.CatalogInput, batchId string, factory WorkerProviderFactory) (LiveCatalogOutcome, error) {
+func runLiveCatalogWithFactory(ctx context.Context, config LiveConfig, input storage.CatalogInput, batchId string, factory WorkerProviderFactory) (resultValue1 LiveCatalogOutcome, resultError error) {
 	concurrency, err := catalogConcurrency(config, input.ProviderName)
 	if err != nil {
 		return LiveCatalogOutcome{}, err
@@ -40,7 +41,11 @@ func runLiveCatalogWithFactory(ctx context.Context, config LiveConfig, input sto
 	if err != nil {
 		return LiveCatalogOutcome{}, err
 	}
-	defer control.Close()
+	defer func() {
+		if closeError := control.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close control: %w", closeError))
+		}
+	}()
 	captured := time.Now()
 	seconds := max(captured.Unix(), 0)
 	epoch := uint64(max(captured.UnixMilli(), 0))
@@ -54,10 +59,16 @@ func runLiveCatalogWithFactory(ctx context.Context, config LiveConfig, input sto
 	}
 	content, err := storage.OpenContent(ctx, contentPath)
 	if err != nil {
-		release()
+		if err := release(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "release", "error", err)
+		}
 		return LiveCatalogOutcome{}, fmt.Errorf("index database %s cannot be used: %w", contentPath, err)
 	}
-	defer content.Close()
+	defer func() {
+		if closeError := content.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close content: %w", closeError))
+		}
+	}()
 	execution := liveCatalogExecution{ctx: ctx, config: config, input: input, content: content.Conn, control: control.Conn, contentPath: contentPath, controlPath: controlPath, writer: WriterContext{input.CatalogName, input.ProviderName, batchId, runId, timestamp}, epoch: epoch, concurrency: concurrency, release: release}
 	return execution.run(factory)
 }
@@ -148,18 +159,24 @@ func reconcileLiveCatalogIdentities(ctx context.Context, content, control *sql.C
 // run preserves execution-before-heartbeat errors and finalization-before-release errors.
 func (execution *liveCatalogExecution) run(factory WorkerProviderFactory) (LiveCatalogOutcome, error) {
 	if err := reconcileLiveCatalogIdentities(execution.ctx, execution.content, execution.control, execution.input, execution.contentPath); err != nil {
-		execution.release()
+		if err := execution.release(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "execution.release", "error", err)
+		}
 		return LiveCatalogOutcome{}, err
 	}
 	isMultiprocess := execution.concurrency.ConfiguredProcesses > 1 && len(execution.input.Entries) > 1
 	workset, err := filepath.Abs(filepath.Join(execution.config.ProjectRoot, "data", "index-work", "scholarly"))
 	if err != nil {
-		execution.release()
+		if err := execution.release(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "execution.release", "error", err)
+		}
 		return LiveCatalogOutcome{}, err
 	}
 	metrics, executionError, heartbeatError := execution.execute(factory, workset, isMultiprocess)
 	if executionError != nil {
-		execution.release()
+		if err := execution.release(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "execution.release", "error", err)
+		}
 		execution.emitFailureMetrics()
 		return LiveCatalogOutcome{}, executionError
 	}
@@ -167,7 +184,9 @@ func (execution *liveCatalogExecution) run(factory WorkerProviderFactory) (LiveC
 		execution.setInlineExecutors(metrics)
 	}
 	if heartbeatError != nil {
-		execution.release()
+		if err := execution.release(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "execution.release", "error", err)
+		}
 		return LiveCatalogOutcome{}, heartbeatError
 	}
 	if err := execution.finalize(); err != nil {
@@ -209,15 +228,23 @@ func (execution *liveCatalogExecution) runProcesses(workset string) (RunMetrics,
 func (execution *liveCatalogExecution) runInline(factory WorkerProviderFactory, workset string) (RunMetrics, error, error) {
 	var metrics RunMetrics
 	var executionError, heartbeatError error
-	heartbeat := startLeaseHeartbeat(func() error {
+	heartbeat := startLeaseHeartbeat(func() (resultError error) {
 		separate, err := storage.OpenControl(context.Background(), execution.controlPath)
 		if err != nil {
 			return err
 		}
-		defer separate.Close()
+		defer func() {
+			if closeError := separate.Close(); closeError != nil {
+				resultError = errors.Join(resultError, fmt.Errorf("close separate: %w", closeError))
+			}
+		}()
 		return storage.HeartbeatLease(context.Background(), separate.Conn, execution.input.CatalogName, execution.input.ProviderName, execution.writer.RunId, time.Now().Unix())
 	}, "index heartbeat thread panicked", 30*time.Second)
-	defer heartbeat.stopAndCheck()
+	defer func() {
+		if err := heartbeat.stopAndCheck(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "heartbeat.stopAndCheck", "error", err)
+		}
+	}()
 	request := WorkerRequest{ProtocolVersion: 8, CatalogName: execution.input.CatalogName, ProviderName: execution.input.ProviderName, RunId: execution.writer.RunId, ProcessCount: 1, SourceWorkerCount: execution.concurrency.ConfiguredWorkers, ScheduleEpochUnixMillis: execution.epoch, TimeoutSeconds: execution.config.TimeoutSeconds}
 	implementation, closeProvider, err := factory(request, liveBootstrap(execution.config, request, workset))
 	executionError = err

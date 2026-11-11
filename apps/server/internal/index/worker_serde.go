@@ -70,7 +70,9 @@ func decodeWorkerSequence(body []byte, value reflect.Value, defaultTail int, see
 // decodeWorkerObject rejects duplicate known fields before decoding their values.
 func decodeWorkerObject(body []byte, value reflect.Value, fields map[string]int, seen []bool, shouldIgnoreUnknown bool) error {
 	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.Token()
+	if _, err := decoder.Token(); err != nil {
+		return errWorkerJson
+	}
 	for decoder.More() {
 		key, err := decoder.Token()
 		if err != nil {
@@ -197,7 +199,9 @@ func decodeWorkerEnum(body []byte, variants []string) (string, error) {
 	var value string
 	if body[0] == '{' {
 		decoder := json.NewDecoder(bytes.NewReader(body))
-		decoder.Token()
+		if _, err := decoder.Token(); err != nil {
+			return "", errWorkerJson
+		}
 		if !decoder.More() {
 			return "", errWorkerJson
 		}
@@ -267,7 +271,9 @@ func workerSequenceVariant(body []byte) (string, []byte, error) {
 // workerObjectVariant retains ordered raw payload values and rejects every duplicate key.
 func workerObjectVariant(body []byte) (string, []byte, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.Token()
+	if _, err := decoder.Token(); err != nil {
+		return "", nil, errWorkerJson
+	}
 	seen := map[string]bool{}
 	var tag string
 	var remainder bytes.Buffer
