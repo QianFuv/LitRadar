@@ -27,6 +27,12 @@ wc -c secrets/litradar.key
 
 `litradar serve`、`litradar index`、`litradar notify`、`litradar push` 和 `litradar scheduler` 都要求 `--secret-key-file`。`litradar admin secrets` 使用相应 key 参数；`litradar admin bootstrap` 和 `litradar admin backup` 不需要密钥。
 
+## OIDC 身份验证
+
+Web 与原生登录共用 `github.com/coreos/go-oidc/v3` 的 discovery、JWKS 签名验证和 UserInfo 获取。discovery 必须提供可用的 `jwks_uri`，服务端需要能够访问该端点；不接受伪造或缺少有效签名的 ID token。Provider metadata 缓存五分钟，签名 key 由库缓存，遇到新 kid 时重新获取 JWKS。保留 issuer、audience、azp、iat、nonce、UserInfo subject、已验证邮箱及显式账号关联检查；库同时检查标准 nbf。任何签名或 Provider 文档错误只返回现有的 `provider` 分类，不向客户端暴露 token、URL 或原始库错误。
+
+Provider 文档、token、JWKS 和 UserInfo 响应的读取上限为 1 MiB，HTTP 超时及禁止重定向策略继续有效。服务端与原生客户端的 PKCE verifier／S256 challenge 使用 `golang.org/x/oauth2` 生成；一次性授权码、状态 Cookie 的签名与过期、回调限制和令牌存储规则保持不变。
+
 ## 原生客户端 OIDC
 
 Windows/Android 客户端通过系统浏览器访问 `GET /api/auth/oidc/native/login`，携带 `redirect_uri`、43 字符的 base64url S256 `code_challenge` 与 16–128 字符的 `[A-Za-z0-9._~-]` 客户端 `state`。回调地址仅允许 `http://127.0.0.1:<port>/oidc/callback`（端口 1024–65535）和 `litradar://oidc/callback`，不得带查询或片段。
@@ -166,7 +172,7 @@ unset ADMIN_PASSWORD
 
 ## 登录和注册限流
 
-每个 `litradar serve` 进程在公开登录或注册请求进入字段校验、密码哈希或数据库写入前，按客户端 IP → 当前操作的规范化用户名 → 高阈值全局熔断器顺序检查 token bucket。前置桶拒绝后不会消耗后续额度：
+每个 `litradar serve` 进程在公开登录或注册请求进入字段校验、密码哈希或数据库写入前，按客户端 IP → 当前操作的规范化用户名 → 高阈值全局熔断器顺序检查 `golang.org/x/time/rate` token bucket。前置桶拒绝后不会消耗后续额度：
 
 | 桶                     | burst | 补充速率 | 内存 key 上限   |
 | ---------------------- | ----: | -------- | --------------- |
@@ -229,7 +235,7 @@ AI 与 PushPlus 共用以下出站边界：
 - 非 2xx 响应不读取 body；错误只保留固定分类、HTTP 状态和可选上游 request ID
 - 请求对象的 `String`/`GoString` 输出不包含 API key、prompt、文章、通知正文或 URL query
 
-AI 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retry-After` 上限 60 秒，其他情况使用指数 full jitter。PushPlus 只重试能证明请求尚未发送的连接建立失败；timeout、所有 HTTP 响应和其他连接后错误均只尝试一次并作为不确定投递结果处理。手动任务跨主备 Endpoint、格式和摘要请求共享 8 次 AI HTTP 预算；输出格式降级只发生在成功响应的明确兼容性失败之后。
+AI 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retry-After` 上限 60 秒，其他情况使用指数 full jitter，随机采样由 `math/rand/v2` 提供。PushPlus 只重试能证明请求尚未发送的连接建立失败；timeout、所有 HTTP 响应和其他连接后错误均只尝试一次并作为不确定投递结果处理。手动任务跨主备 Endpoint、格式和摘要请求共享 8 次 AI HTTP 预算；输出格式降级只发生在成功响应的明确兼容性失败之后。
 
 应用层策略不能替代基础设施隔离。对外访问时仍应在容器、主机或云网络层设置 egress ACL，只放行确有需要的 AI/PushPlus 目标和 DNS/TLS 基础设施。
 

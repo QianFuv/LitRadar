@@ -204,6 +204,8 @@ huma 在调用业务 handler 之前解码并按 OpenAPI schema 校验 typed path
 
 CNKI 会话按 LitRadar 用户隔离；状态接口只返回安全元数据，不返回 token 或 Cookie 值。
 
+浏览器会话 Cookie 由 `net/http` 解析和序列化，继续使用首个 Cookie header 中的首个同名项。带引号的值和名称后的空白按 Go Cookie 规则处理；不会对 Cookie 值做 URL 解码。`Set-Cookie` 使用标准属性顺序与 `SameSite=Lax` 拼写，Max-Age 仍向下取整，清除时仍为 `Max-Age=0`。
+
 ### 访问令牌创建规则
 
 `POST /api/auth/tokens` 按以下固定顺序处理新令牌请求：
@@ -299,6 +301,8 @@ SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户�
 公告 `priority` 只接受精确的小写枚举 `high`、`normal`、`low`，创建时默认 `normal`；不再对优先级修剪空白或转换大小写。非法值在认证前返回 `422`。
 
 计划任务的 `name`、`cron`、`timezone` 不接受空字符串（`422`）；仅含空白、非法 cron 语法或无效时区仍在认证后返回 `400`。创建默认 UTC、3,600 秒超时、启用和 coalesce；显式 `false` 及更新时的字段省略语义保持不变。
+
+计划任务使用 robfig/cron 的五字段语法，不接受 seconds 字段、`@daily` 等 descriptor 或内联 `CRON_TZ`；时区仍由 `timezone` 字段指定。星期日使用 `0` 或 `SUN`，`7` 不再有效。单值步进会扩展到字段上界，例如分钟 `5/2` 匹配 5、7、9 等；day-of-month 与 day-of-week 按库规则组合，`*/2` 不再等同于无约束通配。重复逗号按库规则忽略空项。UTC slot、DST 重复时刻、coalesce 和租约身份保持不变。已保存但不再有效的 cron 会显示在 scheduler 的 `skipped` 中并附原因，不会执行或自动改写；管理员需更新表达式。
 
 计划任务只接受固定的类型化 job。内嵌调度器将已验证字段转换为当前可执行文件加 `index`、`notify` 或 `push` 子命令的完整 argv，不会执行 shell 命令。应用终止时，活动子进程会被结束并等待，运行状态保存为 `cancelled`。旧 `legacy_command` 只供审阅，不能启用或执行。
 
@@ -396,6 +400,8 @@ Web host 对 `/assets/*` 哈希资源使用长期 immutable 缓存，SPA HTML �
 | 收藏   | `list_folders`、`add_favorite`、`remove_favorite`                                            |
 
 工具结果的 text content 是 JSON 字符串。收藏工具始终使用当前认证用户 ID，不能访问其他用户的数据。所有 MCP 字符串参数最多 2,048 个 Unicode 字符，数组参数最多 500 项；超限作为 tool-level error 返回，不进入 SQLite 查询。
+
+MCP 的 Host／Origin 语法由 `net/url` 解析；Host 禁止 userinfo、非法 IPv6 和无效端口（包括带 `+` 的端口）。非标准 scheme 如 `1://` 不再有效。Origin 仍按 scheme、host 和端口匹配，path/query/fragment 不参与匹配，其语法采用 Go URL 规则。Host 白名单、Origin 白名单、端口限制和 DNS rebinding 防护保持启用。
 
 `mcp_allowed_hosts` 默认只允许本机 host；经公网域名、局域网地址或反向代理访问时必须显式配置。浏览器跨源调用 MCP 时再设置 `mcp_allowed_origins`。详见[配置参考](configuration.md)。
 

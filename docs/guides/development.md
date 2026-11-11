@@ -22,6 +22,8 @@ pnpm 会转发已有的 `NODE_OPTIONS`，并为子进程关闭 Node.js 实验性
 
 ### 后端开发工具
 
+后端通用能力使用标准库或已有成熟依赖：OIDC 使用 go-oidc v3，五字段 cron 使用 robfig/cron v3，认证限流使用 x/time/rate，可取消的简单并发额度使用 x/sync/semaphore，CFP 并行任务使用 errgroup.SetLimit。周报缓存的 LRU 使用 container/list；测试中的纯时间和并发等待优先用 testing/synctest 与 t.Context。admission 的已接纳任务占位、Scholarly 调度及独立 transport 状态的 worker pool 仍保留各自业务语义。
+
 后端检查工具的固定版本与 `.github/workflows/backend.yaml` 一致：
 
 | 工具          | 版本   | 配置                    |

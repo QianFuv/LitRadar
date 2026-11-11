@@ -261,6 +261,16 @@ Scholarly 默认每个期刊执行器使用 6 个来源工作线程，同时运�
 
 前端单项删除只提交引用，不回传掩码或保留项。清除整个池仍使用 `values[field]=null`。最终完整池继续作为一个 `litradarenc:v1:` 认证密文存入原 `runtime_settings` 行，不增加数据库表或明文列。
 
+## 通用库与上游 HTTP 行为
+
+OIDC 使用 go-oidc，并要求 Provider metadata 中的 `jwks_uri` 能从服务端访问。计划任务使用 robfig/cron 的五字段语法；旧表达式的差异及修正方式见 [API 参考](api.md#管理接口)。
+
+来源 HTTP 的重定向、方法转换、Cookie 和 gzip 解压由 `net/http` 负责。只跟随 301/302/303/307/308；空 Location 不再重发同一请求，畸形 Location 或非法 URL 转义返回请求错误。反斜杠采用 Go URL 转义，不再解释成路径分隔符；响应 URL 的 fragment 保留在元数据中，不发送到 HTTP 请求行；Zjlib 等原本禁止 fragment 的 Provider 会在下一跳发送前拒绝该 URL。显式 Referer 按标准客户端规则保留，敏感认证头在跨域重定向时由标准客户端限制。各来源的目标域、路径、跳数限制仍在发送下一跳前检查；CFP 每条重定向链共享一次 acquisition 的 20 秒上限与 source deadline，获取失败的重试会从链头开始，部分 body 不重试。投递出站仍禁止重定向和压缩。
+
+gzip 使用 Go 的自动协商与多成员解压，不再只读取第一个 member。解压后仍检查原有响应大小上限。Retry-After 的日期部分只接受 `http.ParseTime` 支持的 HTTP 日期，不再接受 Chrono 的闰秒、注释和非 HTTP 时区扩展；无符号整数秒及超长延迟的安全上限处理保持不变。
+
+URL query／form 编码使用 `net/url`，保留有序 pair 与重复 key 的顺序；`*` 变为 `%2A`，`~` 不再写成 `%7E`。DOI 路径使用 `url.PathEscape` 并保留路径分隔符；合法 URI 的含义保持一致。代理凭据和 CNKI 查询中的非法百分号转义被明确拒绝；Zjlib 的 query 采用 `url.ParseQuery`，值中的裸分号需编码为 `%3B`。损坏的查询不能绕过日志脱敏。
+
 ## `litradar serve`
 
 优先级和启动顺序：
