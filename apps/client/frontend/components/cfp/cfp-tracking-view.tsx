@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useDebouncer } from '@tanstack/react-pacer';
-import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { hashKey, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearch } from '@tanstack/react-router';
 import { Layers, Megaphone, Search } from '@/components/ui/animated-icons';
 
@@ -204,7 +204,7 @@ function useCfpViewState() {
     }
     journalPrefetcher.maybeExecute(catalogId);
   }
-  const cursorRecoveryKey = JSON.stringify(noticeQueryKey);
+  const cursorRecoveryKey = hashKey(noticeQueryKey);
   useEffect(() => {
     if (
       noticesQuery.error instanceof ApiError &&
