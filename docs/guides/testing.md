@@ -43,13 +43,13 @@ Go huma operations + request/response types
 
 当前共享语料仅包含登录、文章页、每周更新、掩码通知设置和标准错误五类稳定响应。规则如下：
 
-1. Go 路由测试构造真实临时存储，通过原版迁移观测语料和响应断言验证兼容性；前端消费这里的共享 JSON。当前 Go 测试不直接加载这些前端共享场景，不能将两条证据链混为一谈。
+1. Go 路由测试构造真实临时存储，通过原版迁移观测语料和响应断言验证兼容性；前端消费这里的共享 JSON。Go 侧只有 `apps/server/internal/platform/httpwire/response_test.go` 加载 `article-page.json`，验证线路编码原样输出（含十进制字符串 ID），不能把它当作路由行为的证据。
 2. TypeScript 通过生成的 `components['schemas']` 类型约束 JSON；认证、秘密设置等敏感响应还必须经过 `apps/client/frontend/lib/api-contract.tsx` 的现有运行时解析器。
 3. 共享 JSON 不得包含 token、Cookie、密码、凭据、绝对路径、随机 ID 或运行时生成时间，也不得成为第二套 schema。
 4. 修改路由或请求/响应类型后，在 `apps/client/frontend/` 运行 `pnpm generate:api:check`；不要手工编辑 `lib/generated/`。
 5. 不增加跨 Go/TypeScript 的共享 helper、Pact 或另一套 schema 生成器来替代该链路。
 
-MSW 的全局 server 不安装登录态或业务默认值，并以 `onUnhandledRequest: 'error'` 拒绝未声明请求。测试从 `apps/client/frontend/tests/mocks/handlers/` 显式安装 auth、discovery/index、favorites、tracking 或 admin 场景 bundle；单个失败场景只覆盖必要 handler，测试结束后由公共 setup 重置。这样每个请求依赖在套件中可见，不会由其他测试留下的状态暗中满足。组件查询经 openapi-react-query 直接发出 HTTP 请求，因此测试用 MSW handler 提供响应，而不是 `vi.mock('@/lib/api')` 替换 facade 函数；需要读写缓存时用对应 query 工厂的 `.queryKey`（如 `foldersQuery().queryKey`），不手写数组 key。路径和查询参数中的文章、期刊 ID 按 OpenAPI 契约以数字发送，fixture 应使用十进制数字字符串作为 ID。
+MSW 的全局 server 不安装登录态或业务默认值，并以 `onUnhandledRequest: 'error'` 拒绝未声明请求。测试从 `apps/client/frontend/tests/mocks/handlers/` 显式安装 auth、discovery/index、favorites、tracking 或 admin 场景 bundle；单个失败场景只覆盖必要 handler，测试结束后由公共 setup 重置。这样每个请求依赖在套件中可见，不会由其他测试留下的状态暗中满足。组件查询经 openapi-react-query 直接发出 HTTP 请求，因此测试用 MSW handler 提供响应，而不是 `vi.mock('@/lib/api')` 替换 facade 函数；需要读写缓存时用对应 query 工厂的 `.queryKey`（如 `foldersQuery().queryKey`），不手写数组 key。文章、期刊和期次 ID 是 63 位哈希，大多超过 `Number.MAX_SAFE_INTEGER`，在线路、路径、查询参数和前端状态中一律是十进制字符串，不得经 `Number`、`parseInt` 或数字比较转换。fixture 用 `tests/mocks/ids.tsx` 的 `hashedId(n)` 生成超过 2^53 的 19 位 ID，使任何数字转换都会让请求路径与 handler 不一致而失败；`hashed-article-ids.test.tsx` 断言详情、相关文章、访问状态与期刊请求逐字携带原 ID。
 
 ## 浏览器边界
 
