@@ -134,10 +134,10 @@ func admitted[Body any](ctx context.Context, pool *executor.Pool, work func() (B
 		return outcome{value, failure}, nil
 	})
 	if err != nil {
-		return nil, mapExecutorError(err).problem()
+		return nil, requestFailure(ctx, err, mapExecutorError).problem()
 	}
 	if result.err != nil {
-		return nil, classify(result.err).problem()
+		return nil, requestFailure(ctx, result.err, classify).problem()
 	}
 	return &output[Body]{Body: result.value}, nil
 }

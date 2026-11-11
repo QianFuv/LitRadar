@@ -41,6 +41,10 @@ litradar openapi > openapi.json 2> litradar.log
 
 事件专有字段只允许使用计数、状态码、有限枚举、安全内部 ID 和有界关联 ID。消费者必须按字段名读取，并容忍未来增加字段；不能依赖 JSON 键顺序。
 
+客户端取消的完成事件使用 `status=499`、`outcome=client_closed`、`error_kind=context_canceled` 和 INFO 级别；遥测按 4xx 分类，不记为 5xx。该状态也用于底层读操作因请求上下文取消而中断的情况。已发送响应后才观察到取消时，499 表示服务端观测结果，不能当作客户端实际收到的 HTTP 状态。
+
+公共准入执行、认证存储及 tracking 存储边界的内部失败会先记录 `http.operation.failed`，再返回脱敏的 problem 响应。该事件携带同一 `request_id`、安全的 `error_kind`、Go `error_type` 和状态码；SQLite 错误另带整数 `sqlite_code`，可区分 busy、locked、interrupt、corruption 等错误。按 `request_id` 与 `http.request.completed` 的路由模板关联排查。日志不包含原始错误文本、SQL、标题、数据库路径或凭据；准入关闭和超时分别标为 `admission_closed`、`deadline_exceeded`。取消请求不产生内部失败事件。
+
 典型运行事件：
 
 ```json

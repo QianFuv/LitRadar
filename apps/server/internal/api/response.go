@@ -4,6 +4,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/query"
 	"github.com/danielgtaylor/huma/v2"
+	"modernc.org/sqlite"
 )
 
 type apiError struct {
@@ -21,6 +23,8 @@ type apiError struct {
 	details    []error
 	retryAfter *uint64
 }
+
+const statusClientClosedRequest = 499
 
 func (failure *apiError) Error() string { return failure.detail }
 
@@ -64,10 +68,42 @@ func (failure *apiError) model() huma.StatusError {
 }
 
 func mapExecutorError(err error) *apiError {
+	if errors.Is(err, context.Canceled) {
+		return &apiError{status: statusClientClosedRequest, detail: "Client closed request"}
+	}
 	if errors.Is(err, admission.ErrClosed) || errors.Is(err, context.DeadlineExceeded) {
 		return serviceUnavailable()
 	}
 	return internalError()
+}
+
+// requestFailure preserves cancellation and records safe diagnostics before public error mapping.
+func requestFailure(ctx context.Context, err error, classify func(error) *apiError) *apiError {
+	if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+		return mapExecutorError(context.Canceled)
+	}
+	failure := classify(err)
+	if failure.status >= 500 {
+		kind := "internal_error"
+		requestID, _ := ctx.Value(requestIDKey{}).(string)
+		attributes := []slog.Attr{slog.String("event", "http.operation.failed"), slog.String("component", "http"), slog.String("request_id", requestID), slog.Int("status", failure.status)}
+		errorType := fmt.Sprintf("%T", err)
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			kind = "deadline_exceeded"
+		case errors.Is(err, admission.ErrClosed):
+			kind = "admission_closed"
+		default:
+			if sqliteError, ok := errors.AsType[*sqlite.Error](err); ok {
+				kind = "sqlite_error"
+				attributes = append(attributes, slog.Int("sqlite_code", sqliteError.Code()))
+				errorType = "*sqlite.Error"
+			}
+		}
+		attributes = append(attributes, slog.String("error_kind", kind), slog.String("error_type", errorType))
+		slog.LogAttrs(ctx, slog.LevelError, "http.operation.failed", attributes...)
+	}
+	return failure
 }
 
 func mapIndexError(err error) *apiError {

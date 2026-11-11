@@ -155,10 +155,10 @@ func trackingStorage[Value any](ctx context.Context, pool *executor.Pool, work f
 	}
 	observed, err := executor.Run(ctx, pool, func() (result, error) { value, err := work(); return result{value, err}, nil })
 	if err != nil {
-		return observed.value, mapExecutorError(err)
+		return observed.value, requestFailure(ctx, err, mapExecutorError)
 	}
 	if observed.err != nil {
-		return observed.value, internalError()
+		return observed.value, requestFailure(ctx, observed.err, func(error) *apiError { return internalError() })
 	}
 	return observed.value, nil
 }

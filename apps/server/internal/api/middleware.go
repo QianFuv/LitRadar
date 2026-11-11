@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -75,8 +77,12 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	}
 	response.finish()
 	duration := time.Since(started)
-	handler.telemetry.HTTP(label, methodLabel(request.Method), response.status, duration)
-	logRequest(request, id, label, response.status, duration)
+	status := response.status
+	if errors.Is(request.Context().Err(), context.Canceled) {
+		status = statusClientClosedRequest
+	}
+	handler.telemetry.HTTP(label, methodLabel(request.Method), status, duration)
+	logRequest(request, id, label, status, duration)
 }
 
 type policyResponse struct {
@@ -174,7 +180,11 @@ func logRequest(request *http.Request, id, route string, status int, duration ti
 	}
 	method := methodLabel(request.Method)
 	level, outcome := slog.LevelInfo, "success"
+	var attributes []any
 	switch {
+	case status == statusClientClosedRequest:
+		outcome = "client_closed"
+		attributes = append(attributes, "error_kind", "context_canceled")
 	case status >= 500:
 		level, outcome = slog.LevelError, "server_error"
 	case status >= 400:
@@ -182,7 +192,8 @@ func logRequest(request *http.Request, id, route string, status int, duration ti
 	case status >= 300:
 		outcome = "redirect"
 	}
-	slog.Log(request.Context(), level, "http.request.completed", "event", "http.request.completed", "component", "http", "request_id", id, "method", method, "route", route, "status", status, "outcome", outcome, "duration_ms", duration.Milliseconds())
+	attributes = append(attributes, "event", "http.request.completed", "component", "http", "request_id", id, "method", method, "route", route, "status", status, "outcome", outcome, "duration_ms", duration.Milliseconds())
+	slog.Log(request.Context(), level, "http.request.completed", attributes...)
 }
 
 func methodLabel(method string) string {

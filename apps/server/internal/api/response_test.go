@@ -80,7 +80,7 @@ func TestStorageAndWorkerFailuresDoNotExposePrivateDetails(t *testing.T) {
 			t.Fatalf("mapped error: %+v", failure)
 		}
 	}
-	if mapExecutorError(admission.ErrClosed).status != 503 || mapExecutorError(context.DeadlineExceeded).status != 503 || mapExecutorError(executor.ErrWorkerFailed).status != 500 {
+	if mapExecutorError(admission.ErrClosed).status != 503 || mapExecutorError(context.DeadlineExceeded).status != 503 || mapExecutorError(executor.ErrWorkerFailed).status != 500 || mapExecutorError(context.Canceled).status != 499 {
 		t.Fatal("executor classification changed")
 	}
 }

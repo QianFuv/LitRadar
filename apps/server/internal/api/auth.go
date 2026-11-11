@@ -83,11 +83,11 @@ func runAuth[Value any](request *http.Request, pool *executor.Pool, work func() 
 	result, err := executor.Run(request.Context(), pool, func() (outcome, error) { value, err := work(); return outcome{value, err}, nil })
 	if err != nil {
 		var zero Value
-		return zero, mapExecutorError(err)
+		return zero, requestFailure(request.Context(), err, mapExecutorError)
 	}
 	if result.err != nil {
 		var zero Value
-		return zero, mapAuthError(result.err)
+		return zero, requestFailure(request.Context(), result.err, mapAuthError)
 	}
 	return result.value, nil
 }
