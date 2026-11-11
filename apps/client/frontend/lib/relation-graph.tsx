@@ -1093,9 +1093,6 @@ export function normalizeRelationGraph(value: unknown): RelationGraph | null {
  * @returns Stored graph, or null when absent or unreadable.
  */
 export function readStoredRelationGraph(): StoredRelationGraph | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
   let raw: string | null = null;
   try {
     raw = window.sessionStorage.getItem(RELATION_GRAPH_STORAGE_KEY);

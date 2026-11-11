@@ -11,9 +11,6 @@ import type { z } from 'zod';
  * @returns Stored value or null.
  */
 export function readLocalStorageValue(key: string): string | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
   try {
     return window.localStorage.getItem(key);
   } catch {
@@ -28,9 +25,6 @@ export function readLocalStorageValue(key: string): string | null {
  * @param value - Value to store.
  */
 export function writeLocalStorageValue(key: string, value: string): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
   try {
     window.localStorage.setItem(key, value);
   } catch {}
@@ -42,9 +36,6 @@ export function writeLocalStorageValue(key: string, value: string): void {
  * @param key - Storage key.
  */
 export function removeLocalStorageValue(key: string): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
   try {
     window.localStorage.removeItem(key);
   } catch {}
@@ -56,9 +47,6 @@ export function removeLocalStorageValue(key: string): void {
  * @param key - Storage key.
  */
 export function removeSessionStorageValue(key: string): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
   try {
     window.sessionStorage.removeItem(key);
   } catch {}

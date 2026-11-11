@@ -93,7 +93,7 @@ export function useFavoritesPage(userId: number) {
   const editInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (editingId === null || typeof window === 'undefined') {
+    if (editingId === null) {
       return;
     }
     if (window.matchMedia('(pointer: fine)').matches) {

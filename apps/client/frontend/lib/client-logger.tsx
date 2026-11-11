@@ -141,9 +141,6 @@ function normalizeRoutePathname(value: string): string {
  * @returns Current safe route pathname.
  */
 function currentRoutePathname(): string {
-  if (typeof window === 'undefined') {
-    return '/';
-  }
   return normalizeRoutePathname(window.location.pathname);
 }
 

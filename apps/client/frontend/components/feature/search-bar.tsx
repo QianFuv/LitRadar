@@ -66,7 +66,6 @@ function parseSearchHistory(value: string): string[] | null {
  * @returns Stored search history or an empty list.
  */
 function getSearchHistory(): string[] {
-  if (typeof window === 'undefined') return [];
   const history = readLocalStorageValue(SEARCH_HISTORY_KEY);
   if (history) {
     const parsedHistory = parseSearchHistory(history);
@@ -114,7 +113,7 @@ function removeSearchHistory(): void {
  * @param query - Query text.
  */
 function saveSearchHistory(query: string): void {
-  if (typeof window === 'undefined' || !query.trim()) return;
+  if (!query.trim()) return;
 
   const history = getSearchHistory();
   const trimmedQuery = query.trim();
@@ -128,7 +127,6 @@ function saveSearchHistory(query: string): void {
  * Clear stored search history.
  */
 function clearSearchHistory(): void {
-  if (typeof window === 'undefined') return;
   removeSearchHistory();
 }
 

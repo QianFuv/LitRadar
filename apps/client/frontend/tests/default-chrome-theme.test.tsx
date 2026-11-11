@@ -222,7 +222,7 @@ function sharesSectionedDialogChrome(): void {
   const settingsSource = readProjectFile('components/settings/settings-center-dialog.tsx');
 
   expect(frameSource).toContain('placement="takeover"');
-  expect(frameSource).toContain("aria-current={isActive ? 'page' : undefined}");
+  expect(frameSource).toContain('<Tabs.List');
   expect(frameSource).toMatch(/overflowX: \{\s*default: 'auto',/);
   expect(settingsSource).toContain('<SectionedDialogFrame');
   expect(settingsSource).not.toContain('<DialogContent');

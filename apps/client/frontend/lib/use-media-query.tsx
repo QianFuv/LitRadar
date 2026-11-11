@@ -1,5 +1,5 @@
 /**
- * Hydration-safe media-query subscription for responsive composition decisions.
+ * Media-query subscription for responsive composition decisions.
  */
 
 import { useCallback, useSyncExternalStore } from 'react';
@@ -8,7 +8,7 @@ import { useCallback, useSyncExternalStore } from 'react';
 export const READER_DOCK_MEDIA_QUERY = '(min-width: 1280px)';
 
 /**
- * Report whether a media query currently matches, defaulting to false before hydration.
+ * Report whether a media query currently matches.
  *
  * @param query - CSS media query.
  * @returns Whether the query matches in the current browser.
@@ -24,5 +24,5 @@ export function useMediaQuery(query: string): boolean {
   );
   const getSnapshot = useCallback(() => window.matchMedia(query).matches, [query]);
 
-  return useSyncExternalStore(subscribe, getSnapshot, () => false);
+  return useSyncExternalStore(subscribe, getSnapshot);
 }

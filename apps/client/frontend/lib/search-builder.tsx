@@ -280,7 +280,6 @@ export type StoredSearchBuilder = z.output<typeof STORED_SEARCH_BUILDER_SCHEMA>;
  * @returns Stored snapshot, or null when absent or invalid.
  */
 export function readStoredSearchBuilder(): StoredSearchBuilder | null {
-  if (typeof window === 'undefined') return null;
   try {
     const raw = window.sessionStorage.getItem(SEARCH_BUILDER_STORAGE_KEY);
     if (!raw) return null;
@@ -296,7 +295,6 @@ export function readStoredSearchBuilder(): StoredSearchBuilder | null {
  * @param snapshot - Query and rows.
  */
 export function writeStoredSearchBuilder(snapshot: StoredSearchBuilder): void {
-  if (typeof window === 'undefined') return;
   try {
     window.sessionStorage.setItem(SEARCH_BUILDER_STORAGE_KEY, JSON.stringify(snapshot));
   } catch {}

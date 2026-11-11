@@ -50,10 +50,10 @@ function openBrowserExternal(url: string): void {
 /**
  * Resolve the page origin, which serves the API behind the single-origin reverse proxy.
  *
- * @returns Page origin, or a loopback placeholder outside a browsing context.
+ * @returns Page origin, or a loopback placeholder for an opaque origin.
  */
 function resolveBrowserServerOrigin(): string {
-  if (typeof window !== 'undefined' && window.location.origin !== 'null') {
+  if (window.location.origin !== 'null') {
     return window.location.origin;
   }
   return 'http://localhost';

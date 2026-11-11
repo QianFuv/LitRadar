@@ -4,7 +4,7 @@
 
 import { Check, SunMoon } from '@/components/ui/animated-icons';
 import { useTheme } from 'next-themes';
-import { useRef, useSyncExternalStore, type PointerEvent } from 'react';
+import { useRef, type PointerEvent } from 'react';
 
 import {
   SettingsSection,
@@ -13,12 +13,10 @@ import {
   SettingsSectionHeader,
   SettingsSectionTitle,
 } from '@/components/settings/settings-section';
-import { RevealItem } from '@/components/ui/reveal';
 import { RadioGroup, RadioGroupIndicator, RadioGroupItem } from '@/components/ui/radio-group';
 import { getFocusedOrigin, revealThemeChange, type ScreenPoint } from '@/lib/theme-transition';
-import { LoadingText } from '@/components/ui/loading-text';
 import * as stylex from '@stylexjs/stylex';
-import { colors, lineHeights } from '@/lib/theme.stylex';
+import { colors } from '@/lib/theme.stylex';
 
 type ThemePreference = 'system' | 'light' | 'dark';
 
@@ -33,33 +31,6 @@ const THEME_OPTIONS: readonly ThemeOption[] = [
   { description: '始终使用浅色界面', label: '浅色', value: 'light' },
   { description: '始终使用深色界面', label: '深色', value: 'dark' },
 ];
-
-/**
- * Subscribe to the immutable client-environment signal.
- *
- * @returns No-op unsubscribe callback.
- */
-function subscribeToClientEnvironment(): () => void {
-  return () => undefined;
-}
-
-/**
- * Return the browser snapshot for hydration-safe client detection.
- *
- * @returns Always true in the browser.
- */
-function getClientEnvironmentSnapshot(): boolean {
-  return true;
-}
-
-/**
- * Return the server snapshot for hydration-safe client detection.
- *
- * @returns Always false during server rendering and hydration.
- */
-function getServerEnvironmentSnapshot(): boolean {
-  return false;
-}
 
 /**
  * Render the system, light, and dark theme preferences. A new theme is revealed as a circle
@@ -90,12 +61,7 @@ export function GeneralSettingsSection() {
     pointerOriginRef.current = null;
     revealThemeChange(() => setTheme(value), origin);
   }
-  const isMounted = useSyncExternalStore(
-    subscribeToClientEnvironment,
-    getClientEnvironmentSnapshot,
-    getServerEnvironmentSnapshot,
-  );
-  const selectedTheme = isMounted ? (theme ?? 'system') : 'system';
+  const selectedTheme = theme ?? 'system';
 
   return (
     <SettingsSection>
@@ -106,71 +72,62 @@ export function GeneralSettingsSection() {
         </SettingsSectionDescription>
       </SettingsSectionHeader>
       <SettingsSectionContent>
-        <RevealItem
-          isReady={isMounted}
-          placeholder={
-            <output {...stylex.props(styles.statusOutput, styles.generalSettingsSectionP)}>
-              <LoadingText text="正在读取主题偏好…" />
-            </output>
-          }
+        <RadioGroup
+          xstyle={styles.generalSettingsSectionRadioGroup}
+          aria-label="外观主题"
+          value={selectedTheme}
+          onValueChange={handleThemeChange}
+          onPointerDown={handleThemePointerDown}
         >
-          <RadioGroup
-            xstyle={styles.generalSettingsSectionRadioGroup}
-            aria-label="外观主题"
-            value={selectedTheme}
-            onValueChange={handleThemeChange}
-            onPointerDown={handleThemePointerDown}
-          >
-            {THEME_OPTIONS.map((option) => {
-              const isSelected = selectedTheme === option.value;
-              return (
-                <RadioGroupItem
-                  key={option.value}
-                  value={option.value}
-                  aria-label={option.label}
+          {THEME_OPTIONS.map((option) => {
+            const isSelected = selectedTheme === option.value;
+            return (
+              <RadioGroupItem
+                key={option.value}
+                value={option.value}
+                aria-label={option.label}
+                {...stylex.props(
+                  styles.generalSettingsSectionRadioGroupItem,
+                  stylex.defaultMarker(),
+                )}
+              >
+                <span
                   {...stylex.props(
-                    styles.generalSettingsSectionRadioGroupItem,
-                    stylex.defaultMarker(),
+                    styles.generalSettingsSectionSpan,
+                    isSelected
+                      ? styles.generalSettingsSectionSpanSelected
+                      : styles.generalSettingsSectionSpanNotSelected,
                   )}
                 >
+                  <ThemeThumbnail preference={option.value} />
+                </span>
+                <span {...stylex.props(styles.generalSettingsSectionSpan2)}>
                   <span
+                    aria-hidden="true"
                     {...stylex.props(
-                      styles.generalSettingsSectionSpan,
-                      isSelected
-                        ? styles.generalSettingsSectionSpanSelected
-                        : styles.generalSettingsSectionSpanNotSelected,
+                      styles.generalSettingsSectionSpan3,
+                      isSelected && styles.generalSettingsSectionSpanSelected2,
                     )}
                   >
-                    <ThemeThumbnail preference={option.value} />
-                  </span>
-                  <span {...stylex.props(styles.generalSettingsSectionSpan2)}>
-                    <span
-                      aria-hidden="true"
-                      {...stylex.props(
-                        styles.generalSettingsSectionSpan3,
-                        isSelected && styles.generalSettingsSectionSpanSelected2,
-                      )}
+                    <RadioGroupIndicator
+                      {...stylex.props(styles.generalSettingsSectionRadioGroupIndicator)}
                     >
-                      <RadioGroupIndicator
-                        {...stylex.props(styles.generalSettingsSectionRadioGroupIndicator)}
-                      >
-                        <Check xstyle={styles.generalSettingsSectionCheck} strokeWidth={3} />
-                      </RadioGroupIndicator>
+                      <Check xstyle={styles.generalSettingsSectionCheck} strokeWidth={3} />
+                    </RadioGroupIndicator>
+                  </span>
+                  <span {...stylex.props(styles.generalSettingsSectionSpan4)}>
+                    <span {...stylex.props(styles.generalSettingsSectionSpan5)}>
+                      {option.label}
                     </span>
-                    <span {...stylex.props(styles.generalSettingsSectionSpan4)}>
-                      <span {...stylex.props(styles.generalSettingsSectionSpan5)}>
-                        {option.label}
-                      </span>
-                      <span {...stylex.props(styles.generalSettingsSectionSpan6)}>
-                        {option.description}
-                      </span>
+                    <span {...stylex.props(styles.generalSettingsSectionSpan6)}>
+                      {option.description}
                     </span>
                   </span>
-                </RadioGroupItem>
-              );
-            })}
-          </RadioGroup>
-        </RevealItem>
+                </span>
+              </RadioGroupItem>
+            );
+          })}
+        </RadioGroup>
       </SettingsSectionContent>
     </SettingsSection>
   );
@@ -270,14 +227,6 @@ function ThemeThumbnail({ preference }: { preference: ThemePreference }) {
 }
 
 const styles = stylex.create({
-  statusOutput: {
-    display: 'block',
-  },
-  generalSettingsSectionP: {
-    fontSize: '0.875rem',
-    lineHeight: lineHeights.textSm,
-    color: colors.mutedForeground,
-  },
   generalSettingsSectionRadioGroup: {
     display: 'grid',
     gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',

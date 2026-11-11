@@ -9,7 +9,7 @@ import { Component, type ComponentType, type ReactNode } from 'react';
 /** Properties passed to an error boundary fallback. */
 export type ErrorFallbackProps = {
   /** Error captured from the failed subtree. */
-  error: Error & { digest?: string };
+  error: Error;
   /** Clear the captured error and render the subtree again. */
   reset: () => void;
 };
@@ -22,7 +22,7 @@ type ErrorBoundaryProps = {
 };
 
 type ErrorBoundaryState = {
-  error: (Error & { digest?: string }) | null;
+  error: Error | null;
 };
 
 /**

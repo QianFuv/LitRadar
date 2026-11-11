@@ -67,7 +67,7 @@ export default function GlobalError({ error, reset }: ErrorFallbackProps) {
      * Emit the global-boundary terminal event once for this error object.
      */
     function reportGlobalError(): void {
-      reportClientError('global_boundary', error, { digest: error.digest });
+      reportClientError('global_boundary', error);
     },
     [error],
   );

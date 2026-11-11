@@ -19,7 +19,7 @@ import {
 } from '@/components/ui/animated-icons';
 import { useTheme } from 'next-themes';
 import { Link, useSearch } from '@tanstack/react-router';
-import { useRef, useSyncExternalStore, type ComponentProps, type MouseEvent } from 'react';
+import { useRef, type ComponentProps, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 
 import { SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE } from '@/components/feature/sectioned-dialog';
@@ -53,33 +53,6 @@ const THEME_ITEMS: readonly ThemeItem[] = [
   { icon: Sun, label: '浅色', value: 'light' },
   { icon: Moon, label: '深色', value: 'dark' },
 ];
-
-/**
- * Subscribe to the immutable client-environment signal.
- *
- * @returns No-op unsubscribe callback.
- */
-function subscribeToClientEnvironment(): () => void {
-  return () => undefined;
-}
-
-/**
- * Return the browser snapshot for hydration-safe client detection.
- *
- * @returns Always true in the browser.
- */
-function getClientEnvironmentSnapshot(): boolean {
-  return true;
-}
-
-/**
- * Return the server snapshot for hydration-safe client detection.
- *
- * @returns Always false during server rendering and hydration.
- */
-function getServerEnvironmentSnapshot(): boolean {
-  return false;
-}
 
 /**
  * Render durable warning metadata when server-side logout was not confirmed.
@@ -132,22 +105,16 @@ function LogoutRevocationNotice({ warning }: { warning: LogoutRevocationWarning 
 /**
  * Render the logout recovery notice in a fixed layer that stays visible on every breakpoint.
  *
- * @param props - Persisted warning metadata and hydration state.
- * @returns Portaled notice once mounted in the browser.
+ * @param props - Persisted warning metadata.
+ * @returns Notice portaled into the document body.
  */
-function FixedLogoutRevocationNotice({
-  isMounted,
-  warning,
-}: {
-  isMounted: boolean;
-  warning: LogoutRevocationWarning;
-}) {
+function FixedLogoutRevocationNotice({ warning }: { warning: LogoutRevocationWarning }) {
   const notice = (
     <div data-slot="user-menu-position" {...stylex.props(styles.userMenuPosition)}>
       <LogoutRevocationNotice warning={warning} />
     </div>
   );
-  return isMounted ? createPortal(notice, document.body) : notice;
+  return createPortal(notice, document.body);
 }
 
 /**
@@ -196,11 +163,6 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
   const search = useSearch({ from: WORKSPACE_ROUTE_ID });
   const { setTheme, theme } = useTheme();
   const accountTriggerRef = useRef<HTMLButtonElement>(null);
-  const isMounted = useSyncExternalStore(
-    subscribeToClientEnvironment,
-    getClientEnvironmentSnapshot,
-    getServerEnvironmentSnapshot,
-  );
 
   if (loading) {
     return null;
@@ -208,11 +170,11 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
 
   if (!user) {
     return logoutWarning && placement === 'rail' ? (
-      <FixedLogoutRevocationNotice isMounted={isMounted} warning={logoutWarning} />
+      <FixedLogoutRevocationNotice warning={logoutWarning} />
     ) : null;
   }
 
-  const selectedTheme = getUserMenuTheme(isMounted, theme);
+  const selectedTheme = theme ?? 'system';
   const settingsSearch = withSettingsSection(search, 'general');
   const adminSearch = withAdminSection(search, 'overview');
   const isAdminOpen = parseAdminSection(search.admin) !== null;
@@ -246,14 +208,13 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
   }
 
   const state = {
-    isMounted,
     selectedTheme,
     handleThemeChange,
   };
   return (
     <>
       {placement === 'rail' && logoutWarning && (
-        <FixedLogoutRevocationNotice isMounted={isMounted} warning={logoutWarning} />
+        <FixedLogoutRevocationNotice warning={logoutWarning} />
       )}
       <DropdownMenuPrimitive.Root>
         <DropdownMenuPrimitive.Trigger
@@ -366,11 +327,11 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
  * Render the hydration-gated theme choices. Radio items keep the menu open after a choice, so the
  * user can compare themes or switch back.
  *
- * @param state - Mount state, selected theme, and theme change handler.
+ * @param state - Selected theme and theme change handler.
  * @returns Theme choice row.
  */
 function renderUserThemeControls(state: UserMenuViewState) {
-  const { isMounted, selectedTheme, handleThemeChange } = state;
+  const { selectedTheme, handleThemeChange } = state;
 
   return (
     <div data-slot="user-menu-theme-label" {...stylex.props(styles.userMenuThemeLabel)}>
@@ -378,45 +339,37 @@ function renderUserThemeControls(state: UserMenuViewState) {
         <SunMoon xstyle={styles.renderUserThemeControlsSunMoon} aria-hidden="true" />
         <span>外观主题</span>
       </span>
-      {isMounted && (
-        <Menu.RadioGroup
-          aria-label="外观主题"
-          value={selectedTheme}
-          onValueChange={handleThemeChange}
-          {...stylex.props(styles.themeRadioGroup)}
-        >
-          {THEME_ITEMS.map((item) => {
-            const Icon = item.icon;
+      <Menu.RadioGroup
+        aria-label="外观主题"
+        value={selectedTheme}
+        onValueChange={handleThemeChange}
+        {...stylex.props(styles.themeRadioGroup)}
+      >
+        {THEME_ITEMS.map((item) => {
+          const Icon = item.icon;
 
-            return (
-              <ThemeRadioItem
-                key={item.value}
-                value={item.value}
-                label={item.label}
-                aria-label={item.label}
-                title={item.label}
-                {...stylex.props(styles.renderUserThemeControlsThemeRadioItem)}
-              >
-                <Icon xstyle={styles.renderUserThemeControlsIcon} aria-hidden="true" />
-              </ThemeRadioItem>
-            );
-          })}
-        </Menu.RadioGroup>
-      )}
+          return (
+            <ThemeRadioItem
+              key={item.value}
+              value={item.value}
+              label={item.label}
+              aria-label={item.label}
+              title={item.label}
+              {...stylex.props(styles.renderUserThemeControlsThemeRadioItem)}
+            >
+              <Icon xstyle={styles.renderUserThemeControlsIcon} aria-hidden="true" />
+            </ThemeRadioItem>
+          );
+        })}
+      </Menu.RadioGroup>
     </div>
   );
 }
 
 type UserMenuViewState = {
-  isMounted: boolean;
   selectedTheme: string;
   handleThemeChange: (value: string) => void;
 };
-
-/** Resolve the theme only after the client environment is mounted. */
-function getUserMenuTheme(isMounted: boolean, theme: string | undefined): string {
-  return isMounted ? (theme ?? 'system') : 'system';
-}
 
 const styles = stylex.create({
   logoutRevocationNoticeDiv: {
