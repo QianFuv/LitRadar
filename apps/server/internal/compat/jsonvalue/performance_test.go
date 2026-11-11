@@ -15,7 +15,7 @@ func BenchmarkValidJson(b *testing.B) {
 			b.ReportAllocs()
 			b.SetBytes(int64(len(scenario.value)))
 			for b.Loop() {
-				if !ValidJson(scenario.value) {
+				if !ValidJSON(scenario.value) {
 					b.Fatal("valid fixture rejected")
 				}
 			}
@@ -34,7 +34,7 @@ func BenchmarkEncodeJson(b *testing.B) {
 			b.ReportAllocs()
 			b.SetBytes(int64(len(scenario.value)))
 			for b.Loop() {
-				if _, err := EncodeJson(scenario.value); err != nil {
+				if _, err := EncodeJSON(scenario.value); err != nil {
 					b.Fatal(err)
 				}
 			}

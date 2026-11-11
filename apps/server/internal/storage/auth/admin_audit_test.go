@@ -14,8 +14,8 @@ import (
 func TestAdministratorCountsExactlyFlagOneInLegacyRows(t *testing.T) {
 	repository := testRepository(t)
 	owner := testAdmin(t, repository)
-	runSql(t, repository, `INSERT INTO users(id,username,password_hash,salt,is_admin,created_at,updated_at) VALUES(2,'legacy','hash','salt',2,1,1)`)
-	if err := repository.SetAdministrator(context.Background(), owner.User.Id, owner.User.Id, false, nil); !errors.Is(err, ErrLastAdministrator) {
+	runSQL(t, repository, `INSERT INTO users(id,username,password_hash,salt,is_admin,created_at,updated_at) VALUES(2,'legacy','hash','salt',2,1,1)`)
+	if err := repository.SetAdministrator(context.Background(), owner.User.ID, owner.User.ID, false, nil); !errors.Is(err, ErrLastAdministrator) {
 		t.Fatal("noncanonical legacy flag counted as replacement administrator")
 	}
 }
@@ -27,11 +27,11 @@ func TestAdministratorInvitePolicyAuthorityAndPublicProjections(t *testing.T) {
 	ctx := context.Background()
 	quota := int64(3)
 	audit := testAudit("invite_create")
-	invite, err := repository.CreateAdministratorInvite(ctx, &owner.User.Id, nil, &quota, &audit)
+	invite, err := repository.CreateAdministratorInvite(ctx, &owner.User.ID, nil, &quota, &audit)
 	if err != nil || invite.CreatedBy != nil || invite.MaxUses != 3 || invite.Status != "active" {
 		t.Fatalf("%v %v", invite, err)
 	}
-	if _, err := repository.CreateAdministratorInvite(ctx, &owner.User.Id, nil, nil, nil); err != nil {
+	if _, err := repository.CreateAdministratorInvite(ctx, &owner.User.ID, nil, nil, nil); err != nil {
 		t.Fatal("ownerless invitations incorrectly share creator quota")
 	}
 	member, err := repository.Register(ctx, "member", "hash", "salt", &invite.Code, invite.CreatedAt+1, nil, nil)
@@ -47,14 +47,14 @@ func TestAdministratorInvitePolicyAuthorityAndPublicProjections(t *testing.T) {
 func TestAuditRetentionDrainsBoundedBatchesBeforeAdvancingWindow(t *testing.T) {
 	repository := testRepository(t)
 	ctx := context.Background()
-	runSql(t, repository, `WITH RECURSIVE sequence(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM sequence WHERE value<10005) INSERT INTO security_audit_events(action,outcome,occurred_at) SELECT 'login','completed',1 FROM sequence`)
+	runSQL(t, repository, `WITH RECURSIVE sequence(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM sequence WHERE value<10005) INSERT INTO security_audit_events(action,outcome,occurred_at) SELECT 'login','completed',1 FROM sequence`)
 	assertFirstAuditRetentionBatch(t, repository, ctx)
 	assertAuditRetentionDrainAndWindow(t, repository, ctx)
 	if _, err := repository.AppendAudit(ctx, testAudit("login")); err != nil {
 		t.Fatal(err)
 	}
 	events, err := repository.ListAudit(ctx)
-	if err != nil || len(events) != 1 || events[0].Id != 10006 || events[0].Action != "login" {
+	if err != nil || len(events) != 1 || events[0].ID != 10006 || events[0].Action != "login" {
 		t.Fatalf("%+v %v", events, err)
 	}
 }
@@ -65,7 +65,7 @@ func TestAuditRetentionFailureRollsBackDeletionAndCountsOnce(t *testing.T) {
 	if _, err := repository.AppendAudit(ctx, testAudit("login")); err != nil {
 		t.Fatal(err)
 	}
-	runSql(t, repository, `CREATE TRIGGER fail_retention BEFORE UPDATE ON security_audit_maintenance BEGIN SELECT RAISE(ABORT,'synthetic failure'); END`)
+	runSQL(t, repository, `CREATE TRIGGER fail_retention BEFORE UPDATE ON security_audit_maintenance BEGIN SELECT RAISE(ABORT,'synthetic failure'); END`)
 	before := AuditFailureCount()
 	if _, err := repository.CleanupAudit(ctx, 1, 100000); err == nil {
 		t.Fatal("retention ignored marker failure")
@@ -106,9 +106,9 @@ func TestAuditTransactionBoundaryErrorsAreSafeAndAtomic(t *testing.T) {
 			repository := testRepository(t)
 			repository.database.SetMaxOpenConns(1)
 			if stage == "begin" {
-				runSql(t, repository, "PRAGMA query_only=ON")
+				runSQL(t, repository, "PRAGMA query_only=ON")
 			} else {
-				runSql(t, repository, `CREATE TABLE audit_fault_parent(id INTEGER PRIMARY KEY);
+				runSQL(t, repository, `CREATE TABLE audit_fault_parent(id INTEGER PRIMARY KEY);
 CREATE TABLE audit_fault_child(parent_id INTEGER REFERENCES audit_fault_parent(id) DEFERRABLE INITIALLY DEFERRED);
 CREATE TRIGGER audit_commit_fault AFTER INSERT ON security_audit_events BEGIN INSERT INTO audit_fault_child VALUES(1); END;
 CREATE TRIGGER retention_commit_fault AFTER UPDATE ON security_audit_maintenance BEGIN INSERT INTO audit_fault_child VALUES(1); END;`)
@@ -143,16 +143,16 @@ CREATE TRIGGER retention_commit_fault AFTER UPDATE ON security_audit_maintenance
 func assertAdministratorInviteAuthority(t *testing.T, repository *Repository, ctx context.Context, owner domain.Authorization, member domain.User, invite AdminInviteInfo) {
 	t.Helper()
 	expired := float64(0)
-	if _, err := repository.CreateAdministratorInvite(ctx, &member.Id, &expired, nil, nil); !errors.Is(err, domain.ErrAdminForbidden) {
+	if _, err := repository.CreateAdministratorInvite(ctx, &member.ID, &expired, nil, nil); !errors.Is(err, domain.ErrAdminForbidden) {
 		t.Fatal("invalid policy preempted actor recheck")
 	}
-	if _, err := repository.CreateAdministratorInvite(ctx, &owner.User.Id, &expired, nil, nil); !errors.Is(err, ErrAdminInvitePolicy) {
+	if _, err := repository.CreateAdministratorInvite(ctx, &owner.User.ID, &expired, nil, nil); !errors.Is(err, ErrAdminInvitePolicy) {
 		t.Fatal(err)
 	}
-	if revoked, err := repository.RevokeAdministratorInvite(ctx, &member.Id, invite.Id, nil); err == nil || revoked {
+	if revoked, err := repository.RevokeAdministratorInvite(ctx, &member.ID, invite.ID, nil); err == nil || revoked {
 		t.Fatal("non-administrator revoked invite")
 	}
-	if revoked, err := repository.RevokeAdministratorInvite(ctx, &owner.User.Id, invite.Id, nil); err != nil || !revoked {
+	if revoked, err := repository.RevokeAdministratorInvite(ctx, &owner.User.ID, invite.ID, nil); err != nil || !revoked {
 		t.Fatal(err)
 	}
 }
@@ -166,7 +166,7 @@ func assertAdministratorInviteHistory(t *testing.T, repository *Repository, ctx 
 	}
 	var found bool
 	for _, item := range items {
-		if item.Id == invite.Id {
+		if item.ID == invite.ID {
 			found = true
 			assertRevokedAdministratorInviteHistory(t, item, member)
 		}
@@ -179,7 +179,7 @@ func assertAdministratorInviteHistory(t *testing.T, repository *Repository, ctx 
 // assertRevokedAdministratorInviteHistory checks the matching issuance retains redeemed identity.
 func assertRevokedAdministratorInviteHistory(t *testing.T, item AdminInviteInfo, member domain.User) {
 	t.Helper()
-	if item.Status != "revoked" || item.UsedBy == nil || *item.UsedBy != member.Id || item.UsedByName == nil || *item.UsedByName != "member" {
+	if item.Status != "revoked" || item.UsedBy == nil || *item.UsedBy != member.ID || item.UsedByName == nil || *item.UsedByName != "member" {
 		t.Fatal("administrator invite history lost")
 	}
 }
@@ -188,7 +188,7 @@ func assertRevokedAdministratorInviteHistory(t *testing.T, item AdminInviteInfo,
 func assertAdministratorUserProjection(t *testing.T, repository *Repository, ctx context.Context) {
 	t.Helper()
 	users, err := repository.ListUsers(ctx)
-	if err != nil || len(users) != 2 || users[0].Id != identity.Id(1) || users[1].FolderCount != 1 || users[1].FavoriteCount != 0 || users[1].NotifyEnabled {
+	if err != nil || len(users) != 2 || users[0].ID != identity.ID(1) || users[1].FolderCount != 1 || users[1].FavoriteCount != 0 || users[1].NotifyEnabled {
 		t.Fatalf("%+v %v", users, err)
 	}
 }

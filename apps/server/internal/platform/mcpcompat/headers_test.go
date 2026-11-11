@@ -22,7 +22,7 @@ func TestHostOriginGuardPrecedesMediaAndJson(t *testing.T) {
 			}
 			return Principal{}, false
 		}
-		return Principal{UserId: 1, ExpiresAt: time.Now().Add(time.Hour)}, true
+		return Principal{UserID: 1, ExpiresAt: time.Now().Add(time.Hour)}, true
 	}, policy)
 	listener := httptest.NewServer(handler)
 	defer listener.Close()

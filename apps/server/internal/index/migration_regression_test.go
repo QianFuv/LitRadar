@@ -60,7 +60,7 @@ func TestResumedInlineAndWorkerFetchPreserveFrozenModeAnchorAndCheckpoint(t *tes
 			assignment := request.Assignments[0]
 			oldWriter := WriterContext{"catalog", "cnki", "batch", "run", "epoch"}
 			writer := WriterContext{"catalog", "cnki", "next-batch", "run", "epoch"}
-			if err := storage.CompleteSyncRun(ctx, control.Conn, oldWriter.syncRun(assignment), testCheckpoint("anchor-old"), "epoch"); err != nil {
+			if err := storage.CompleteSyncRun(ctx, control.Conn, oldWriter.syncRun(assignment), new("anchor-old"), "epoch"); err != nil {
 				t.Fatal(err)
 			}
 			assignment.Mode = mode
@@ -82,9 +82,9 @@ func TestResumedInlineAndWorkerFetchPreserveFrozenModeAnchorAndCheckpoint(t *tes
 					*captured = append(*captured, fetch)
 					result := batch
 					if len(*captured) == 1 {
-						result.Progress = domain.ProviderProgress{State: domain.Continue, Checkpoint: testCheckpoint("cursor-next")}
+						result.Progress = domain.ProviderProgress{State: domain.Continue, Checkpoint: new("cursor-next")}
 					} else {
-						result.Progress = domain.ProviderProgress{State: domain.Complete, NextAnchor: testCheckpoint("anchor-new")}
+						result.Progress = domain.ProviderProgress{State: domain.Complete, NextAnchor: new("anchor-new")}
 					}
 					return result, nil
 				}
@@ -93,7 +93,7 @@ func TestResumedInlineAndWorkerFetchPreserveFrozenModeAnchorAndCheckpoint(t *tes
 				t.Fatal(err)
 			}
 			var input, output bytes.Buffer
-			for _, message := range []any{WorkerBootstrap{ProtocolVersion: WorkerProtocolVersion, WorkerId: 0}, ParentMessage{"committed", WorkerProtocolVersion, 0, 0, 0, 0, false}, ParentMessage{"committed", WorkerProtocolVersion, 0, 1, 0, 1, true}} {
+			for _, message := range []any{WorkerBootstrap{ProtocolVersion: WorkerProtocolVersion, WorkerID: 0}, ParentMessage{"committed", WorkerProtocolVersion, 0, 0, 0, 0, false}, ParentMessage{"committed", WorkerProtocolVersion, 0, 1, 0, 1, true}} {
 				if err := WriteProtocol(&input, message); err != nil {
 					t.Fatal(err)
 				}
@@ -103,7 +103,7 @@ func TestResumedInlineAndWorkerFetchPreserveFrozenModeAnchorAndCheckpoint(t *tes
 			}); err != nil {
 				t.Fatal(err)
 			}
-			expected := []domain.IndexFetchContext{{Mode: mode, CommittedAnchor: testCheckpoint("anchor-old"), TraversalCheckpoint: testCheckpoint("cursor-frozen")}, {Mode: mode, CommittedAnchor: testCheckpoint("anchor-old"), TraversalCheckpoint: testCheckpoint("cursor-next")}}
+			expected := []domain.IndexFetchContext{{Mode: mode, CommittedAnchor: new("anchor-old"), TraversalCheckpoint: new("cursor-frozen")}, {Mode: mode, CommittedAnchor: new("anchor-old"), TraversalCheckpoint: new("cursor-next")}}
 			if !reflect.DeepEqual(inlineContexts, expected) || !reflect.DeepEqual(workerContexts, expected) {
 				t.Fatalf("inline=%+v worker=%+v expected=%+v", inlineContexts, workerContexts, expected)
 			}
@@ -139,7 +139,7 @@ func TestBootstrapRetainsOldOutboxUntilResumedCatalogCompletes(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
-	var originalId int64
+	var originalID int64
 	run := liveRunner(t, func(ctx context.Context, entry domain.JournalCatalogEntry, fetch domain.IndexFetchContext) (domain.ProviderBatch, error) {
 		calls++
 		if fetch.Mode != domain.Bootstrap || fetch.CommittedAnchor != nil {
@@ -150,7 +150,7 @@ func TestBootstrapRetainsOldOutboxUntilResumedCatalogCompletes(t *testing.T) {
 		}
 		batch := liveBatch(entry)
 		if calls == 1 {
-			batch.Progress = domain.ProviderProgress{State: domain.Continue, Checkpoint: testCheckpoint("cursor-after-head")}
+			batch.Progress = domain.ProviderProgress{State: domain.Continue, Checkpoint: new("cursor-after-head")}
 		} else {
 			if fetch.TraversalCheckpoint == nil || *fetch.TraversalCheckpoint != "cursor-after-head" {
 				t.Fatalf("checkpoint=%+v", fetch)
@@ -163,19 +163,19 @@ func TestBootstrapRetainsOldOutboxUntilResumedCatalogCompletes(t *testing.T) {
 		t.Fatal("interruption was ignored")
 	}
 	assertLiveContent(t, config, "alpha", 1, 1)
-	originalId = assertRetainedBootstrapOutbox(t, ctx, filename)
+	originalID = assertRetainedBootstrapOutbox(t, ctx, filename)
 	result, err := runLiveIndex(ctx, config, run, rejectNotify(t))
 	if err != nil || result.Status != "succeeded" || calls != 3 || result.Csvs[0].ManifestPath != nil {
 		t.Fatalf("result=%+v calls=%d err=%v", result, calls, err)
 	}
 	assertLiveContent(t, config, "alpha", 1, 0)
-	assertResumedBootstrapIdentity(t, ctx, filename, originalId)
+	assertResumedBootstrapIdentity(t, ctx, filename, originalID)
 }
 
 // assertRetainedBootstrapOutbox checks interrupted bootstrap retains old events and canonical identity.
 func assertRetainedBootstrapOutbox(t *testing.T, ctx context.Context, filename string) int64 {
 	t.Helper()
-	var originalId int64
+	var originalID int64
 	connection, err := storage.OpenContent(ctx, filename)
 	if err != nil {
 		t.Fatal(err)
@@ -184,17 +184,17 @@ func assertRetainedBootstrapOutbox(t *testing.T, ctx context.Context, filename s
 	if err := connection.QueryRowContext(ctx, "SELECT content_revision FROM article_change_events").Scan(&revision); err != nil || revision != "old-revision" {
 		t.Fatal(revision, err)
 	}
-	if err := connection.QueryRowContext(ctx, "SELECT article_id FROM articles").Scan(&originalId); err != nil {
+	if err := connection.QueryRowContext(ctx, "SELECT article_id FROM articles").Scan(&originalID); err != nil {
 		t.Fatal(err)
 	}
 	if err := connection.Close(); err != nil {
 		t.Fatalf("connection.Close: %v", err)
 	}
-	return originalId
+	return originalID
 }
 
 // assertResumedBootstrapIdentity checks successful completion retains the original article identity.
-func assertResumedBootstrapIdentity(t *testing.T, ctx context.Context, filename string, originalId int64) {
+func assertResumedBootstrapIdentity(t *testing.T, ctx context.Context, filename string, originalID int64) {
 	t.Helper()
 	connection, err := storage.OpenContent(ctx, filename)
 	if err != nil {
@@ -205,8 +205,8 @@ func assertResumedBootstrapIdentity(t *testing.T, ctx context.Context, filename 
 			t.Errorf("connection.Close: %v", err)
 		}
 	}()
-	var resumedId int64
-	if err := connection.QueryRowContext(ctx, "SELECT article_id FROM articles").Scan(&resumedId); err != nil || resumedId != originalId {
-		t.Fatal(resumedId, originalId, err)
+	var resumedID int64
+	if err := connection.QueryRowContext(ctx, "SELECT article_id FROM articles").Scan(&resumedID); err != nil || resumedID != originalID {
+		t.Fatal(resumedID, originalID, err)
 	}
 }

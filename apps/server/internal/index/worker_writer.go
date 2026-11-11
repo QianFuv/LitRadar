@@ -42,10 +42,10 @@ func (metrics *RunMetrics) record(outcome storage.ContentWriteOutcome) {
 }
 
 // WriterContext freezes the shared catalog ownership and safe timestamp for all page commits.
-type WriterContext struct{ CatalogName, ProviderName, BatchId, RunId, Timestamp string }
+type WriterContext struct{ CatalogName, ProviderName, BatchID, RunID, Timestamp string }
 
 func (value WriterContext) syncRun(assignment WorkerAssignment) storage.SyncRun {
-	return storage.SyncRun{Scope: storage.SyncScope{CatalogName: value.CatalogName, ProviderName: value.ProviderName, CatalogId: assignment.Entry.CatalogId}, BatchId: value.BatchId, RunId: value.RunId, Mode: assignment.Mode, BaseAnchor: assignment.CommittedAnchor}
+	return storage.SyncRun{Scope: storage.SyncScope{CatalogName: value.CatalogName, ProviderName: value.ProviderName, CatalogID: assignment.Entry.CatalogID}, BatchID: value.BatchID, RunID: value.RunID, Mode: assignment.Mode, BaseAnchor: assignment.CommittedAnchor}
 }
 
 // PrepareWorkerRequests freezes all journal runs and partitions only unfinished work while retaining original ordinals.
@@ -74,7 +74,7 @@ func PrepareWorkerRequests(ctx context.Context, control *sql.Conn, writer Writer
 	count := max(uint64(1), min(concurrency.ProcessCount, uint64(len(assignments))))
 	requests := make([]WorkerRequest, int(count))
 	for ordinal := range requests {
-		requests[ordinal] = WorkerRequest{ProtocolVersion: WorkerProtocolVersion, CatalogName: writer.CatalogName, ProviderName: writer.ProviderName, RunId: writer.RunId, WorkerId: uint64(ordinal), ProcessCount: count, SourceWorkerCount: concurrency.WorkerCount, ScheduleEpochUnixMillis: epoch, TimeoutSeconds: timeout, Assignments: []WorkerAssignment{}}
+		requests[ordinal] = WorkerRequest{ProtocolVersion: WorkerProtocolVersion, CatalogName: writer.CatalogName, ProviderName: writer.ProviderName, RunID: writer.RunID, WorkerID: uint64(ordinal), ProcessCount: count, SourceWorkerCount: concurrency.WorkerCount, ScheduleEpochUnixMillis: epoch, TimeoutSeconds: timeout, Assignments: []WorkerAssignment{}}
 	}
 	for ordinal, assignment := range assignments {
 		partition := ordinal % len(requests)
@@ -120,7 +120,7 @@ func NewParentWriter(content, control *sql.Conn, context WriterContext, shouldRe
 
 // invalidParentWorkerRequest binds a nonempty assignment list to its parent pipe and catalog.
 func invalidParentWorkerRequest(request WorkerRequest, worker, count uint64, context WriterContext) bool {
-	return request.ProtocolVersion != WorkerProtocolVersion || request.WorkerId != worker || request.ProcessCount != count || request.CatalogName != context.CatalogName || request.ProviderName != context.ProviderName || request.RunId != context.RunId || len(request.Assignments) == 0
+	return request.ProtocolVersion != WorkerProtocolVersion || request.WorkerID != worker || request.ProcessCount != count || request.CatalogName != context.CatalogName || request.ProviderName != context.ProviderName || request.RunID != context.RunID || len(request.Assignments) == 0
 }
 func parentProtocolFailure(worker uint64) error {
 	return parentFailure(worker, WorkerFailure{Class: "worker", Operation: "worker_protocol"})
@@ -159,7 +159,7 @@ func (writer *ParentWriter) Handle(ctx context.Context, pipeWorker uint64, messa
 
 // invalidWorkerFrame rejects frames after terminal success or with mismatched pipe correlation.
 func invalidWorkerFrame(progress *writerProgress, pipeWorker uint64, message WorkerMessage) bool {
-	return progress.hasTerminal || message.ProtocolVersion != WorkerProtocolVersion || message.WorkerId != pipeWorker || message.Sequence != progress.nextSequence
+	return progress.hasTerminal || message.ProtocolVersion != WorkerProtocolVersion || message.WorkerID != pipeWorker || message.Sequence != progress.nextSequence
 }
 
 // commitWorkerPage commits content and checkpoint before acknowledging or advancing memory.
@@ -170,10 +170,10 @@ func (writer *ParentWriter) commitWorkerPage(ctx context.Context, pipeWorker uin
 	}
 	assignment := progress.assignments[progress.position]
 	batch := *message.Batch
-	if message.JournalOrdinal != assignment.JournalOrdinal || batch.CatalogId != assignment.Entry.CatalogId {
+	if message.JournalOrdinal != assignment.JournalOrdinal || batch.CatalogID != assignment.Entry.CatalogID {
 		return parentProtocolFailure(pipeWorker)
 	}
-	revision := fmt.Sprintf("%s:%s:%d", writer.context.RunId, assignment.Entry.CatalogId, message.PageIndex)
+	revision := fmt.Sprintf("%s:%s:%d", writer.context.RunID, assignment.Entry.CatalogID, message.PageIndex)
 	outcome, err := storage.CommitContentThenProgress(ctx, writer.control, writer.context.syncRun(assignment), batch.Progress, writer.context.Timestamp, func() (storage.ContentWriteOutcome, error) {
 		return storage.WriteContentBatchWithEvents(ctx, writer.content, assignment.Entry, batch, revision, writer.context.Timestamp, writer.shouldRecordEvents)
 	})

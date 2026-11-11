@@ -56,8 +56,8 @@ func NormalizeDoi(value string) *string {
 	}
 	value = Lowercase(*normalized)
 	for _, prefix := range []string{"https://doi.org/", "http://doi.org/", "doi:"} {
-		if strings.HasPrefix(value, prefix) {
-			value = strings.TrimSpace(strings.TrimPrefix(value, prefix))
+		if after, ok := strings.CutPrefix(value, prefix); ok {
+			value = strings.TrimSpace(after)
 			break
 		}
 	}
@@ -102,7 +102,7 @@ func NormalizeIssn(value string) *string {
 		return nil
 	}
 	sum := 0
-	for index := 0; index < 7; index++ {
+	for index := range 7 {
 		if value[index] < '0' || value[index] > '9' {
 			return nil
 		}

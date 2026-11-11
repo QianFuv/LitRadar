@@ -4,9 +4,9 @@ import "github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 
 // WeeklyArticle is the fixed public subset of canonical article metadata.
 type WeeklyArticle struct {
-	ArticleId       identity.Id `json:"article_id" nullable:"false"`
-	JournalId       identity.Id `json:"journal_id" nullable:"false"`
-	IssueId         *int64      `json:"issue_id" required:"false" nullable:"true" format:"int64"`
+	ArticleID       identity.ID `json:"article_id" nullable:"false"`
+	JournalID       identity.ID `json:"journal_id" nullable:"false"`
+	IssueID         *int64      `json:"issue_id" required:"false" nullable:"true" format:"int64"`
 	Title           string      `json:"title" nullable:"false"`
 	PublicationYear *int64      `json:"publication_year" required:"false" nullable:"true" format:"int64"`
 	Date            *string     `json:"date" required:"false" nullable:"true"`
@@ -23,7 +23,7 @@ type WeeklyArticle struct {
 
 // WeeklyJournalSummary supports bounded navigation without loading article bodies.
 type WeeklyJournalSummary struct {
-	JournalId       identity.Id `json:"journal_id" nullable:"false"`
+	JournalID       identity.ID `json:"journal_id" nullable:"false"`
 	JournalTitle    *string     `json:"journal_title" required:"false" nullable:"true"`
 	NewArticleCount int         `json:"new_article_count" nullable:"false" minimum:"0" format:"int64"`
 }
@@ -36,8 +36,8 @@ type WeeklyJournalUpdate struct {
 
 // WeeklyDatabase keeps the original newest publication identity after combining membership.
 type WeeklyDatabase[Journal any] struct {
-	DbName          string    `json:"db_name" nullable:"false"`
-	RunId           *string   `json:"run_id" required:"false" nullable:"true"`
+	DBName          string    `json:"db_name" nullable:"false"`
+	RunID           *string   `json:"run_id" required:"false" nullable:"true"`
 	GeneratedAt     string    `json:"generated_at" nullable:"false"`
 	NewArticleCount int       `json:"new_article_count" nullable:"false" minimum:"0" format:"int64"`
 	Journals        []Journal `json:"journals" nullable:"false"`

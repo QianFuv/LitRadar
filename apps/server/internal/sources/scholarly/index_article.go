@@ -156,7 +156,7 @@ func crossrefArticle(catalog domain.JournalCatalogEntry, work, openAlex, semanti
 	}
 	object, _ := work.(map[string]any)
 	_, hasIssue := object["issue"]
-	return domain.CanonicalArticle(domain.ArticleDraft{CatalogId: catalog.CatalogId, Title: *title, PublicationYear: yearFromDate(date), Date: date, Volume: jsonText(field(work, "volume")), IssueNumber: jsonText(field(work, "issue")), Authors: crossrefAuthors(field(work, "author")), StartPage: start, EndPage: end, AbstractText: abstract, Doi: doi, Pmid: textPmid(field(work, "PMID")), OpenAccess: openAccess, InPress: new(!hasIssue), RetractionDois: retractionDois(field(work, "updated-by"))})
+	return domain.CanonicalArticle(domain.ArticleDraft{CatalogID: catalog.CatalogID, Title: *title, PublicationYear: yearFromDate(date), Date: date, Volume: jsonText(field(work, "volume")), IssueNumber: jsonText(field(work, "issue")), Authors: crossrefAuthors(field(work, "author")), StartPage: start, EndPage: end, AbstractText: abstract, Doi: doi, Pmid: textPmid(field(work, "PMID")), OpenAccess: openAccess, InPress: new(!hasIssue), RetractionDois: retractionDois(field(work, "updated-by"))})
 }
 
 func openAlexArticle(catalog domain.JournalCatalogEntry, work any) *domain.ArticleDraft {
@@ -179,7 +179,7 @@ func openAlexArticle(catalog domain.JournalCatalogEntry, work any) *domain.Artic
 			authors = append(authors, domain.ArticleAuthorDraft{DisplayName: *name})
 		}
 	}
-	article := domain.ArticleDraft{CatalogId: catalog.CatalogId, Title: *title, PublicationYear: year, Date: date, Volume: jsonText(field(biblio, "volume")), IssueNumber: jsonText(field(biblio, "issue")), StartPage: jsonText(field(biblio, "first_page")), EndPage: jsonText(field(biblio, "last_page")), Authors: authors, AbstractText: openAlexAbstract(work), Doi: textDoi(field(work, "doi")), OpenAccess: strictBool(field(field(work, "open_access"), "is_oa")), InPress: new(false), RetractionDois: []string{}}
+	article := domain.ArticleDraft{CatalogID: catalog.CatalogID, Title: *title, PublicationYear: year, Date: date, Volume: jsonText(field(biblio, "volume")), IssueNumber: jsonText(field(biblio, "issue")), StartPage: jsonText(field(biblio, "first_page")), EndPage: jsonText(field(biblio, "last_page")), Authors: authors, AbstractText: openAlexAbstract(work), Doi: textDoi(field(work, "doi")), OpenAccess: strictBool(field(field(work, "open_access"), "is_oa")), InPress: new(false), RetractionDois: []string{}}
 	correctOpenAlexChapterVolume(&article)
 	return domain.CanonicalArticle(article)
 }
@@ -189,7 +189,7 @@ func openAlexArticle(catalog domain.JournalCatalogEntry, work any) *domain.Artic
 // https://www.emerald.com/books/edited-volume/15860/chapter-abstract/87508795/From-Agents-to-Principles-The-Changing
 // Matching the observed DOI, year and pages avoids inferring equivalence between distinct DOI identities.
 func correctOpenAlexChapterVolume(article *domain.ArticleDraft) {
-	hasChapterIdentity := article.CatalogId == "issn-0733-558x" && article.Doi != nil && *article.Doi == "10.1108/s0733-558x(2013)0039a011"
+	hasChapterIdentity := article.CatalogID == "issn-0733-558x" && article.Doi != nil && *article.Doi == "10.1108/s0733-558x(2013)0039a011"
 	hasTruncatedVolume := article.PublicationYear != nil && *article.PublicationYear == 2013 && article.Volume != nil && *article.Volume == "39" && article.IssueNumber == nil
 	hasVerifiedPages := article.StartPage != nil && *article.StartPage == "203" && article.EndPage != nil && *article.EndPage == "241"
 	if hasChapterIdentity && hasTruncatedVolume && hasVerifiedPages {

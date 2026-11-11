@@ -33,7 +33,7 @@ func bodyHandler(t *testing.T) *Handler {
 			writer.WriteHeader(401)
 			return Principal{}, false
 		}
-		return Principal{UserId: 1, ExpiresAt: time.Now().Add(time.Hour)}, true
+		return Principal{UserID: 1, ExpiresAt: time.Now().Add(time.Hour)}, true
 	}, HostOriginPolicy{AllowedHosts: []string{"localhost", "127.0.0.1"}, AllowedOrigins: []string{"http://localhost"}})
 	t.Cleanup(func() {
 		if err := handler.Close(); err != nil {

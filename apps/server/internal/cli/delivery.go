@@ -124,14 +124,14 @@ func parseDeliveryIdentity(args *arguments, invocation *deliveryInvocation) erro
 	for _, option := range []struct {
 		name  string
 		value **string
-	}{{"--secret-key-file", &invocation.keyOption}, {"--index-db", &invocation.indexPath}, {"--db", &invocation.database}, {"--changes-file", &invocation.options.ChangesFile}, {"--attempt-id", &invocation.options.AttemptId}} {
+	}{{"--secret-key-file", &invocation.keyOption}, {"--index-db", &invocation.indexPath}, {"--db", &invocation.database}, {"--changes-file", &invocation.options.ChangesFile}, {"--attempt-id", &invocation.options.AttemptID}} {
 		value, err := args.take(option.name)
 		if err != nil {
 			return err
 		}
 		*option.value = value
 	}
-	attempt := invocation.options.AttemptId
+	attempt := invocation.options.AttemptID
 	if invocation.isHandoff {
 		if attempt == nil {
 			return errors.New("--internal-handoff-json requires --attempt-id")
@@ -185,7 +185,7 @@ func executeDeliveryInvocation(ctx context.Context, invocation deliveryInvocatio
 	if err := runtime.PreflightStorage(ctx, configuration); err != nil {
 		return err
 	}
-	codec, err := loadVerifiedKey(ctx, configuration.AuthDbPath, key)
+	codec, err := loadVerifiedKey(ctx, configuration.AuthDBPath, key)
 	if err != nil {
 		return err
 	}
@@ -196,14 +196,14 @@ func executeDeliveryInvocation(ctx context.Context, invocation deliveryInvocatio
 		}
 	}
 	options := invocation.options
-	options.AuthDbPath, options.SecretCodec = configuration.AuthDbPath, codec
+	options.AuthDBPath, options.SecretCodec = configuration.AuthDBPath, codec
 	outcomes, status, err := runDeliveryTargets(ctx, options, targets)
 	if err != nil {
 		return err
 	}
 	payload := map[string]any{"workflow": options.Workflow, "mode": options.Mode, "status": status, "databases": outcomes}
 	if invocation.isHandoff {
-		payload = map[string]any{"protocol_version": 1, "attempt_id": *options.AttemptId, "workflow": options.Workflow, "mode": options.Mode, "status": status, "db_name": outcomes[0].DbName}
+		payload = map[string]any{"protocol_version": 1, "attempt_id": *options.AttemptID, "workflow": options.Workflow, "mode": options.Mode, "status": status, "db_name": outcomes[0].DBName}
 	}
 	if err := writeResult(output, payload); err != nil {
 		return err
@@ -220,7 +220,7 @@ func runDeliveryTargets(ctx context.Context, options delivery.RunConfig, targets
 	status := "idle"
 	priority := []string{"idle", "skipped", "completed", "running", "cancelled", "timed_out", "failed", "unknown"}
 	for _, target := range targets {
-		options.IndexDbPath, options.DbName = target.path, target.name
+		options.IndexDBPath, options.DBName = target.path, target.name
 		result, err := delivery.RunRecommendationDelivery(ctx, options)
 		if err != nil {
 			return nil, "", err
@@ -238,7 +238,7 @@ func isDeliveryAttempt(value string) bool {
 		return false
 	}
 	for _, character := range []byte(value) {
-		if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f' || character >= 'A' && character <= 'F') {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') && (character < 'A' || character > 'F') {
 			return false
 		}
 	}
@@ -303,7 +303,7 @@ func deliveryManifestDatabase(filename string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !jsonvalue.ValidJson(string(data)) {
+	if !jsonvalue.ValidJSON(string(data)) {
 		return "", errors.New("invalid change manifest JSON")
 	}
 	var payload map[string]json.RawMessage
@@ -312,7 +312,7 @@ func deliveryManifestDatabase(filename string) (string, error) {
 	}
 	var value string
 	if json.Unmarshal(payload["db_name"], &value) != nil || strings.TrimSpace(value) == "" {
-		return "", errors.New("Change manifest missing db_name; specify --db explicitly")
+		return "", errors.New("change manifest missing db_name; specify --db explicitly")
 	}
 	value = strings.TrimSpace(value)
 	return value, nil

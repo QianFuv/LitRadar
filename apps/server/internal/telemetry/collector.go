@@ -82,8 +82,8 @@ func (collector *Collector) Record(at time.Time, dimensions Dimensions, duration
 	collector.pending[key] = value
 }
 
-// Http records a normalized method, matched route template and status class.
-func (collector *Collector) Http(route, method string, status int, duration time.Duration) {
+// HTTP records a normalized method, matched route template and status class.
+func (collector *Collector) HTTP(route, method string, status int, duration time.Duration) {
 	if collector == nil {
 		return
 	}

@@ -12,8 +12,7 @@ import (
 
 // transportFailureKind identifies actionable failures without retaining URLs or certificate details.
 func transportFailureKind(failure error) string {
-	var request *url.Error
-	if errors.As(failure, &request) {
+	if request, ok := errors.AsType[*url.Error](failure); ok {
 		return transportFailureKind(request.Err)
 	}
 	var hostname x509.HostnameError

@@ -16,11 +16,11 @@ import (
 	"time"
 )
 
-func publicFixture(t *testing.T, handler http.HandlerFunc) (*HttpTransport, SourceConfig) {
+func publicFixture(t *testing.T, handler http.HandlerFunc) (*HTTPTransport, SourceConfig) {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	transport := NewHttpTransport()
+	transport := NewHTTPTransport()
 	transport.lookup = func(string) ([]netip.Addr, error) { return []netip.Addr{netip.MustParseAddr("8.8.8.8")}, nil }
 	transport.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
 		if address != "8.8.8.8:80" {
@@ -29,7 +29,7 @@ func publicFixture(t *testing.T, handler http.HandlerFunc) (*HttpTransport, Sour
 		return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
 	}
 	t.Cleanup(transport.Close)
-	return transport, SourceConfig{DiscoveryUrl: "http://publisher.example/cfp", AllowedUrls: []UrlRule{{Host: "publisher.example", PathPrefix: "/cfp"}}}
+	return transport, SourceConfig{DiscoveryURL: "http://publisher.example/cfp", AllowedUrls: []URLRule{{Host: "publisher.example", PathPrefix: "/cfp"}}}
 }
 
 func TestHttpRedirectBoundariesAndWireBehavior(t *testing.T) {
@@ -42,9 +42,9 @@ func TestHttpRedirectBoundariesAndWireBehavior(t *testing.T) {
 		{"nonstandard-3xx", "/cfp/final", 399, 1, SourceError{Kind: "http_status", Status: 399}},
 		{"invalid-percent-fails-acquisition", "/cfp/%", 302, 2, ErrRequest},
 		{"empty-location", "", 302, 1, SourceError{Kind: "http_status", Status: 302}},
-		{"sibling-prefix", "/cfps", 302, 1, ErrDisallowedUrl},
-		{"private-literal", "http://127.0.0.1/cfp", 302, 1, ErrDisallowedUrl},
-		{"credentials", "http://user:pass@publisher.example/cfp", 302, 1, ErrDisallowedUrl},
+		{"sibling-prefix", "/cfps", 302, 1, ErrDisallowedURL},
+		{"private-literal", "http://127.0.0.1/cfp", 302, 1, ErrDisallowedURL},
+		{"credentials", "http://user:pass@publisher.example/cfp", 302, 1, ErrDisallowedURL},
 		{"status-no-retry", "", 503, 1, SourceError{Kind: "http_status", Status: 503}},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
@@ -69,7 +69,7 @@ func TestHttpRedirectBoundariesAndWireBehavior(t *testing.T) {
 					t.Errorf("compressed.Close: %v", err)
 				}
 			})
-			document, err := transport.FetchBytes(context.Background(), config, config.DiscoveryUrl, time.Now().Add(3*time.Second))
+			document, err := transport.FetchBytes(context.Background(), config, config.DiscoveryURL, time.Now().Add(3*time.Second))
 			if !errors.Is(err, scenario.expected) || int(calls.Load()) != scenario.calls {
 				t.Fatalf("error=%v calls=%d", err, calls.Load())
 			}
@@ -109,7 +109,7 @@ func TestHttpBodyBoundsAndNoPartialRetry(t *testing.T) {
 					}
 				}
 			})
-			document, err := transport.FetchBytes(context.Background(), config, config.DiscoveryUrl, time.Now().Add(5*time.Second))
+			document, err := transport.FetchBytes(context.Background(), config, config.DiscoveryURL, time.Now().Add(5*time.Second))
 			expected := error(ErrTooLarge)
 			if scenario == "partial" {
 				expected = ErrRequest
@@ -128,11 +128,11 @@ func TestHttpBodyBoundsAndNoPartialRetry(t *testing.T) {
 }
 
 func TestHttpPublicDnsAndLifetime(t *testing.T) {
-	transport := NewHttpTransport()
+	transport := NewHTTPTransport()
 	defer transport.Close()
 	for _, addresses := range [][]netip.Addr{nil, {netip.MustParseAddr("8.8.8.8"), netip.MustParseAddr("127.0.0.1")}, {netip.MustParseAddr("::ffff:127.0.0.1")}} {
 		transport.lookup = func(string) ([]netip.Addr, error) { return addresses, nil }
-		if _, err := transport.resolve(context.Background(), "publisher.example"); !errors.Is(err, ErrDisallowedUrl) {
+		if _, err := transport.resolve(context.Background(), "publisher.example"); !errors.Is(err, ErrDisallowedURL) {
 			t.Fatal(err)
 		}
 	}
@@ -143,7 +143,7 @@ func TestHttpPublicDnsAndLifetime(t *testing.T) {
 		<-release
 		return nil, fmt.Errorf("fixture")
 	}
-	for index := 0; index < dnsLookupLimit; index++ {
+	for range dnsLookupLimit {
 		ctx, cancel := context.WithCancel(context.Background())
 		finished := make(chan error, 1)
 		go func() { _, err := transport.resolve(ctx, "publisher.example"); finished <- err }()
@@ -161,7 +161,7 @@ func TestHttpPublicDnsAndLifetime(t *testing.T) {
 }
 
 func TestHttpConnectionCancellationAndDualStack(t *testing.T) {
-	transport := NewHttpTransport()
+	transport := NewHTTPTransport()
 	defer transport.Close()
 	transport.lookup = func(string) ([]netip.Addr, error) {
 		return []netip.Addr{netip.MustParseAddr("2001:4860:4860::8888"), netip.MustParseAddr("8.8.8.8")}, nil

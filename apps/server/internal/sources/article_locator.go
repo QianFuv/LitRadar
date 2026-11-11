@@ -16,8 +16,8 @@ import (
 )
 
 // GetArticleLocator reads only canonical access metadata in one consistent joined query.
-func GetArticleLocator(ctx context.Context, configuration config.Config, name *string, id identity.Id) (resultValue1 domain.ArticleLocator, resultError error) {
-	filename, err := configuration.ResolveIndexDbPath(name)
+func GetArticleLocator(ctx context.Context, configuration config.Config, name *string, id identity.ID) (resultValue1 domain.ArticleLocator, resultError error) {
+	filename, err := configuration.ResolveIndexDBPath(name)
 	if err != nil {
 		return domain.ArticleLocator{}, err
 	}
@@ -46,5 +46,5 @@ func GetArticleLocator(ctx context.Context, configuration config.Config, name *s
 	if err != nil {
 		return domain.ArticleLocator{}, err
 	}
-	return domain.ArticleLocator{ArticleId: identity.Id(row.ArticleID), CatalogId: string(row.CatalogID), JournalTitle: string(row.JournalTitle), JournalIssns: issns, Title: string(row.Title), PublicationYear: (*int64)(row.PublicationYear), Date: (*string)(row.Date), Authors: authors, Volume: (*string)(row.Volume), IssueNumber: (*string)(row.IssueNumber), StartPage: (*string)(row.StartPage), EndPage: (*string)(row.EndPage), Doi: (*string)(row.DOI), Pmid: (*string)(row.PMID)}, nil
+	return domain.ArticleLocator{ArticleID: identity.ID(row.ArticleID), CatalogID: string(row.CatalogID), JournalTitle: string(row.JournalTitle), JournalIssns: issns, Title: string(row.Title), PublicationYear: (*int64)(row.PublicationYear), Date: (*string)(row.Date), Authors: authors, Volume: (*string)(row.Volume), IssueNumber: (*string)(row.IssueNumber), StartPage: (*string)(row.StartPage), EndPage: (*string)(row.EndPage), Doi: (*string)(row.DOI), Pmid: (*string)(row.PMID)}, nil
 }

@@ -18,7 +18,7 @@ func NormalizeDoi(value any) *string {
 	}
 	text, isString := value.(string)
 	if !isString {
-		encoded, err := domain.Json(value)
+		encoded, err := domain.JSON(value)
 		if err != nil {
 			return nil
 		}
@@ -64,8 +64,8 @@ func ValuePool(value string) []string {
 	return result
 }
 
-// RedactUrl removes sensitive query values without reparsing opaque fixture URLs.
-func RedactUrl(value string) string {
+// RedactURL removes sensitive query values without reparsing opaque fixture URLs.
+func RedactURL(value string) string {
 	base, query, hasQuery := strings.Cut(value, "?")
 	if !hasQuery {
 		return value
@@ -104,7 +104,7 @@ func OpenAlexDoiQuery(dois []string, apiKey *string) []QueryPair {
 	return pairs
 }
 
-const openAlexUrlBudget = 1900
+const openAlexURLBudget = 1900
 
 // PartitionOpenAlexDois enforces upstream limits using incremental encoded byte counts.
 func PartitionOpenAlexDois(dois []string, batchSize int, apiKey *string) ([][]string, error) {
@@ -118,7 +118,7 @@ func PartitionOpenAlexDois(dois []string, batchSize int, apiKey *string) ([][]st
 	urlLength := baseLength
 	for _, doi := range dois {
 		encodedLength := encodedDoiLength(doi)
-		if baseLength+encodedLength > openAlexUrlBudget {
+		if baseLength+encodedLength > openAlexURLBudget {
 			return nil, &Error{Kind: "Configuration", Message: "One OpenAlex DOI enrichment value exceeds the request URL budget."}
 		}
 		candidateLength := urlLength + encodedLength
@@ -128,7 +128,7 @@ func PartitionOpenAlexDois(dois []string, batchSize int, apiKey *string) ([][]st
 				candidateLength++
 			}
 		}
-		if len(batch) == batchSize || candidateLength > openAlexUrlBudget {
+		if len(batch) == batchSize || candidateLength > openAlexURLBudget {
 			batches = append(batches, batch)
 			batch = make([]string, 0, batchSize)
 			candidateLength = baseLength + encodedLength
@@ -144,10 +144,10 @@ func PartitionOpenAlexDois(dois []string, batchSize int, apiKey *string) ([][]st
 
 // encodedDoiLength counts form-encoded bytes, saturating once a DOI cannot fit any request.
 func encodedDoiLength(value string) int {
-	if len(value) > openAlexUrlBudget {
-		return openAlexUrlBudget + 1
+	if len(value) > openAlexURLBudget {
+		return openAlexURLBudget + 1
 	}
-	return min(openAlexUrlBudget+1, len(url.QueryEscape(value)))
+	return min(openAlexURLBudget+1, len(url.QueryEscape(value)))
 }
 
 // CrossrefParameters validates frozen date bounds and builds the canonical query.
@@ -198,11 +198,12 @@ func crossrefTimestamp(value int64) (string, error) {
 	date := time.Unix(value, 0).UTC()
 	year := date.Year()
 	prefix := strconv.Itoa(year)
-	if year >= 0 && year <= 9999 {
+	switch {
+	case year >= 0 && year <= 9999:
 		prefix = strings.Repeat("0", 4-len(prefix)) + prefix
-	} else if year > 9999 {
+	case year > 9999:
 		prefix = "+" + prefix
-	} else if year > -1000 {
+	case year > -1000:
 		digits := strconv.Itoa(-year)
 		prefix = "-" + strings.Repeat("0", 4-len(digits)) + digits
 	}

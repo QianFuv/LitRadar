@@ -145,7 +145,7 @@ func saturatingAdd(first, second uint64) uint64 {
 }
 func newCrossrefSchedule(config LiveConfig) crossrefSchedule {
 	count := max(config.SemanticScholarProcessCount, 1)
-	worker := min(config.SemanticScholarWorkerId, count-1)
+	worker := min(config.SemanticScholarWorkerID, count-1)
 	return crossrefSchedule{Next: saturatingAdd(config.ScheduleEpochUnixMillis, saturatingMultiply(110, worker)), Period: saturatingMultiply(110, count)}
 }
 func (schedule *crossrefSchedule) reserve(now uint64) uint64 {

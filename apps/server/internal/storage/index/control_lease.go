@@ -27,7 +27,7 @@ func AcquireLease(ctx context.Context, connection *sql.Conn, catalog, provider, 
 			return err
 		}
 		if err == nil && string(owner) != run && int64(expires) > now {
-			return &ControlError{Kind: "active_lease", RunId: string(owner), ExpiresAt: int64(expires)}
+			return &ControlError{Kind: "active_lease", RunID: string(owner), ExpiresAt: int64(expires)}
 		}
 		_, err = controlQueries.AcquireLease(ctx, connection, controldb.AcquireLeaseParams{CatalogName: sqlite.Text(catalog), ProviderName: sqlite.Text(provider), RunID: sqlite.Text(run), HeartbeatAt: sqlite.Integer(now), ExpiresAt: sqlite.Integer(now + 300)})
 		return err
@@ -55,7 +55,7 @@ func requireLeaseChange(result sql.Result, err error, run string) error {
 		return err
 	}
 	if count == 0 {
-		return &ControlError{Kind: "ownership_lost", RunId: run}
+		return &ControlError{Kind: "ownership_lost", RunID: run}
 	}
 	return nil
 }

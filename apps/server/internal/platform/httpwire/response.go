@@ -12,7 +12,7 @@ import (
 
 // JSON encodes before sending headers so serialization failure cannot emit partial success.
 func JSON(writer http.ResponseWriter, status int, value any) error {
-	encoded, err := jsonvalue.EncodeJson(value)
+	encoded, err := jsonvalue.EncodeJSON(value)
 	if err != nil {
 		return err
 	}

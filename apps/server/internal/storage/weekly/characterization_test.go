@@ -32,7 +32,7 @@ func TestManifestAdmissionPreservesSourceValues(t *testing.T) {
 	}
 	for _, item := range cases {
 		manifest, err := ParseManifest([]byte(item.body))
-		if errors.Is(err, ErrManifestJson) != item.invalid {
+		if errors.Is(err, ErrManifestJSON) != item.invalid {
 			t.Fatalf("admission: %s %v", item.body, err)
 		}
 		assertManifestSource(t, manifest, item.ids, item.run)
@@ -48,7 +48,7 @@ func assertManifestSource(t *testing.T, manifest *Manifest, ids []int64, run str
 		}
 		return
 	}
-	if manifest == nil || !reflect.DeepEqual(manifest.ArticleIds, ids) || manifest.RunId == nil || *manifest.RunId != run {
+	if manifest == nil || !reflect.DeepEqual(manifest.ArticleIds, ids) || manifest.RunID == nil || *manifest.RunID != run {
 		t.Fatalf("source values: %+v", manifest)
 	}
 }
@@ -105,7 +105,7 @@ func TestAvailableRunIdentityPrecedesPruningAndSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertAvailablePublication(t, second, []int64{7, 8, 999})
-	if *first[0].RunId != *second[0].RunId {
+	if *first[0].RunID != *second[0].RunID {
 		t.Fatal("availability changed immutable run ID")
 	}
 	if err := os.WriteFile(filepath.Join(directory, "unrelated.changes.json"), []byte("{broken"), 0600); err != nil {
@@ -119,7 +119,7 @@ func TestAvailableRunIdentityPrecedesPruningAndSelection(t *testing.T) {
 // assertAvailablePublication checks ordered pruning and synthesized source identity.
 func assertAvailablePublication(t *testing.T, manifests []Manifest, ids []int64) {
 	t.Helper()
-	if len(manifests) != 1 || !reflect.DeepEqual(manifests[0].ArticleIds, ids) || manifests[0].RunId == nil || !strings.HasPrefix(*manifests[0].RunId, "weekly-") {
+	if len(manifests) != 1 || !reflect.DeepEqual(manifests[0].ArticleIds, ids) || manifests[0].RunID == nil || !strings.HasPrefix(*manifests[0].RunID, "weekly-") {
 		t.Fatalf("available: %+v", manifests)
 	}
 }

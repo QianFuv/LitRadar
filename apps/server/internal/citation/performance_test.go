@@ -13,7 +13,7 @@ func TestExportMalformedUtf8AndByteLimits(t *testing.T) {
 	for _, format := range []struct {
 		name   string
 		export func([]domain.FavoriteCitation, int) (string, error)
-	}{{"Bibtex", Bibtex}, {"Ris", Ris}, {"Xml", EndnoteXml}} {
+	}{{"Bibtex", Bibtex}, {"Ris", Ris}, {"Xml", EndnoteXML}} {
 		t.Run(format.name, func(t *testing.T) {
 			for _, title := range []string{"safe text", "文献\ufffdtext", "before\xff\xc3after", "\xff<&{}\\\n\xff", "\xf0\x9f"} {
 				clean := string([]rune(title))
@@ -44,7 +44,7 @@ func BenchmarkExportText(b *testing.B) {
 		for _, format := range []struct {
 			name   string
 			export func([]domain.FavoriteCitation, int) (string, error)
-		}{{"Bibtex", Bibtex}, {"Ris", Ris}, {"Xml", EndnoteXml}} {
+		}{{"Bibtex", Bibtex}, {"Ris", Ris}, {"Xml", EndnoteXML}} {
 			b.Run(workload.name+"/"+format.name, func(b *testing.B) {
 				articles := []domain.FavoriteCitation{{Title: &workload.text}}
 				b.ReportAllocs()

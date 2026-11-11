@@ -30,18 +30,18 @@ func TestRealPackagedHelpers(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	config := SourceConfig{AllowedUrls: []UrlRule{{Host: "127.0.0.1", PathPrefix: "/"}}}
+	config := SourceConfig{AllowedUrls: []URLRule{{Host: "127.0.0.1", PathPrefix: "/"}}}
 	output := filepath.Join(directory, "page.json")
 	args := []string{"fetch", server.URL + "/", "--stealth", "--timeout", "30", "--wait-until", "domcontentloaded", "--wait", "0", "--eval", obscuraEval, "--quiet", "--output", output}
 	data, err := runHelper(context.Background(), process.Config{Path: "/usr/local/bin/obscura", Args: args, Environment: append(os.Environ(), "OBSCURA_ALLOW_PRIVATE_NETWORK=1")}, time.Now().Add(45*time.Second), output)
 	if err != nil {
 		t.Fatal("real rendered helper protocol failed", err)
 	}
-	var page struct{ Html string }
+	var page struct{ HTML string }
 	if err := json.Unmarshal(data, &page); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(page.Html, ">original rendered 4<") {
+	if !strings.Contains(page.HTML, ">original rendered 4<") {
 		t.Fatal("JavaScript or original HTML lost")
 	}
 	t.Setenv("OBSCURA_ALLOW_PRIVATE_NETWORK", "1")
@@ -105,7 +105,7 @@ func assertPackagedPdfExtraction(t *testing.T, transport *LiveTransport) {
 	})
 	transport.http.Close()
 	transport.http = httpTransport
-	document, err := transport.httpDocument(context.Background(), publicConfig, publicConfig.DiscoveryUrl, time.Now().Add(15*time.Second))
+	document, err := transport.httpDocument(context.Background(), publicConfig, publicConfig.DiscoveryURL, time.Now().Add(15*time.Second))
 	if err != nil || document.Format != "pdf_text" || strings.Join(strings.Fields(document.Text), " ") != "LitRadar 征稿原文" {
 		t.Fatal("real Poppler UTF-8 extraction failed", document, err)
 	}

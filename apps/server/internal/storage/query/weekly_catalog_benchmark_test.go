@@ -59,13 +59,13 @@ func weeklyCatalogFixture(b *testing.B, isUneven bool) (config.Config, weekly.Ti
 			b.Errorf("tx.Rollback: %v", err)
 		}
 	}()
-	articleId := 0
+	articleID := 0
 	for index, record := range records[1:] {
-		journalId := index + 1
-		if journalId <= 8 {
-			_, err = tx.Exec("UPDATE journals SET title=? WHERE journal_id=?", record[titleColumn], journalId)
+		journalID := index + 1
+		if journalID <= 8 {
+			_, err = tx.Exec("UPDATE journals SET title=? WHERE journal_id=?", record[titleColumn], journalID)
 		} else {
-			_, err = tx.Exec("INSERT INTO journals(journal_id,catalog_id,title,title_aliases_json,issns_json) VALUES(?,?,?,'[]','[]')", journalId, record[0], record[titleColumn])
+			_, err = tx.Exec("INSERT INTO journals(journal_id,catalog_id,title,title_aliases_json,issns_json) VALUES(?,?,?,'[]','[]')", journalID, record[0], record[titleColumn])
 		}
 		if err != nil {
 			b.Fatal(err)
@@ -75,9 +75,9 @@ func weeklyCatalogFixture(b *testing.B, isUneven bool) (config.Config, weekly.Ti
 			journalCount += index % 5
 		}
 		for range journalCount {
-			articleId++
+			articleID++
 			for _, table := range []string{"articles", "article_listing"} {
-				if _, err := tx.Exec("UPDATE "+table+" SET journal_id=?,issue_id=NULL WHERE article_id=?", journalId, articleId); err != nil {
+				if _, err := tx.Exec("UPDATE "+table+" SET journal_id=?,issue_id=NULL WHERE article_id=?", journalID, articleID); err != nil {
 					b.Fatal(err)
 				}
 			}

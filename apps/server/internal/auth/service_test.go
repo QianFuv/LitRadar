@@ -135,12 +135,12 @@ func TestLostLegacyUpgradeReverifiesWinningCredentials(t *testing.T) {
 			if _, err := service.repository.Bootstrap(ctx, "legacy", cryptography.LegacyHash(password, "synthetic salt"), "synthetic salt", 100, nil); err != nil {
 				t.Fatal(err)
 			}
-			observed, err := service.repository.CredentialsById(ctx, 1)
+			observed, err := service.repository.CredentialsByID(ctx, 1)
 			if err != nil || observed == nil {
 				t.Fatal(err)
 			}
 			if isReset {
-				if _, err := service.ResetPassword(ctx, nil, observed.User.Id, "ConcurrentReset!2026", nil); err != nil {
+				if _, err := service.ResetPassword(ctx, nil, observed.User.ID, "ConcurrentReset!2026", nil); err != nil {
 					t.Fatal(err)
 				}
 			} else {
@@ -179,7 +179,7 @@ func TestPasswordChangeAndResetRevokeOldSessions(t *testing.T) {
 	if _, err := service.Login(ctx, "admin", "Replacement!2026", nil); err != nil {
 		t.Fatal(err)
 	}
-	if changed, err := service.ResetPassword(ctx, &user.Id, user.Id, "Administrative!2026", nil); err != nil || !changed {
+	if changed, err := service.ResetPassword(ctx, &user.ID, user.ID, "Administrative!2026", nil); err != nil || !changed {
 		t.Fatalf("%t %v", changed, err)
 	}
 	if _, err := service.Login(ctx, "admin", "Administrative!2026", nil); err != nil {
@@ -195,7 +195,7 @@ func TestInviteLifecycleProjectionAndOneTimeRegistration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	invite, err := service.IssueInvite(ctx, user.Id, false, nil)
+	invite, err := service.IssueInvite(ctx, user.ID, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestInviteLifecycleProjectionAndOneTimeRegistration(t *testing.T) {
 // TestPrivateJsonAndAllLoggingPathsRedactSecrets checks private projections and authorized public disclosures.
 func TestPrivateJsonAndAllLoggingPathsRedactSecrets(t *testing.T) {
 	secret := "DO_NOT_LOG_SYNTHETIC_SECRET"
-	values := []any{domain.User{Id: identity.Id(9007199254740993), Username: secret}, domain.Credentials{PasswordHash: secret, Salt: secret}, domain.Authorization{TokenHash: &secret}, domain.IssuedToken{Token: secret, Name: secret}, domain.LoginSession{Token: secret}, domain.InviteRow{Code: secret}, domain.InviteResponse{Code: secret}}
+	values := []any{domain.User{ID: identity.ID(9007199254740993), Username: secret}, domain.Credentials{PasswordHash: secret, Salt: secret}, domain.Authorization{TokenHash: &secret}, domain.IssuedToken{Token: secret, Name: secret}, domain.LoginSession{Token: secret}, domain.InviteRow{Code: secret}, domain.InviteResponse{Code: secret}}
 	for _, value := range values {
 		assertSecretFormattingAndLogging(t, value, secret)
 	}
@@ -224,7 +224,7 @@ func TestPrivateJsonAndAllLoggingPathsRedactSecrets(t *testing.T) {
 	if err != nil || !strings.Contains(string(encoded), secret) {
 		t.Fatal("authorized one-time response lost token")
 	}
-	encoded, err = json.Marshal(domain.User{Id: identity.Id(9007199254740993)})
+	encoded, err = json.Marshal(domain.User{ID: identity.ID(9007199254740993)})
 	if err != nil || !strings.Contains(string(encoded), `"id":"9007199254740993"`) {
 		t.Fatal("identifier precision lost")
 	}
@@ -239,7 +239,7 @@ func assertTokenRequestValidationPriority(t *testing.T) {
 	if _, err := ValidateTokenRequest(" login ", 0); !errors.Is(err, domain.ErrTokenReservedName) {
 		t.Fatal(err)
 	}
-	if _, err := ValidateTokenRequest("valid", 3599); !errors.Is(err, domain.ErrTokenTtl) {
+	if _, err := ValidateTokenRequest("valid", 3599); !errors.Is(err, domain.ErrTokenTTL) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"", "  ", "LOGIN", strings.Repeat("😀", 100)} {
@@ -297,7 +297,7 @@ func assertGlobalTokenRevocation(t *testing.T, service *Service, ctx context.Con
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.RevokeAll(ctx, user.Id, service.event("logout_all", nil)); err != nil {
+	if _, err := service.RevokeAll(ctx, user.ID, service.event("logout_all", nil)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := service.createLogin(ctx, *observed, service.event("login", nil)); !errors.Is(err, domain.ErrCredentials) {
@@ -311,10 +311,10 @@ func assertGlobalTokenRevocation(t *testing.T, service *Service, ctx context.Con
 // assertPasswordChangeRevokesSession checks wrong-password rejection and successful session revocation.
 func assertPasswordChangeRevokesSession(t *testing.T, service *Service, ctx context.Context, user domain.User, password string, session domain.LoginSession) {
 	t.Helper()
-	if changed, err := service.ChangePassword(ctx, user.Id, "wrong", "Replacement!2026", nil); err != nil || changed {
+	if changed, err := service.ChangePassword(ctx, user.ID, "wrong", "Replacement!2026", nil); err != nil || changed {
 		t.Fatalf("%t %v", changed, err)
 	}
-	if changed, err := service.ChangePassword(ctx, user.Id, password, "Replacement!2026", nil); err != nil || !changed {
+	if changed, err := service.ChangePassword(ctx, user.ID, password, "Replacement!2026", nil); err != nil || !changed {
 		t.Fatalf("%t %v", changed, err)
 	}
 	if found, err := service.VerifyToken(ctx, session.Token); err != nil || found != nil {
@@ -331,11 +331,11 @@ func assertInviteRedemptionAndExhaustion(t *testing.T, service *Service, ctx con
 	if _, err := service.Register(ctx, "member", "StrongPassword!2026", &invite.Code, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	used, err := service.Invite(ctx, user.Id)
+	used, err := service.Invite(ctx, user.ID)
 	if err != nil || used.Status != "exhausted" || !used.Used {
 		t.Fatalf("%v %v", used, err)
 	}
-	if _, err := service.IssueInvite(ctx, user.Id, false, nil); !errors.Is(err, domain.ErrActiveInvite) {
+	if _, err := service.IssueInvite(ctx, user.ID, false, nil); !errors.Is(err, domain.ErrActiveInvite) {
 		t.Fatal(err)
 	}
 }
@@ -343,14 +343,14 @@ func assertInviteRedemptionAndExhaustion(t *testing.T, service *Service, ctx con
 // assertInviteRotationAndRevocation checks explicit rotation and the latest revoked projection.
 func assertInviteRotationAndRevocation(t *testing.T, service *Service, ctx context.Context, user domain.User, invite domain.InviteResponse) {
 	t.Helper()
-	replacement, err := service.IssueInvite(ctx, user.Id, true, nil)
+	replacement, err := service.IssueInvite(ctx, user.ID, true, nil)
 	if err != nil || replacement.Code == invite.Code {
 		t.Fatal(err)
 	}
-	if revoked, err := service.RevokeInvite(ctx, user.Id, nil); err != nil || !revoked {
+	if revoked, err := service.RevokeInvite(ctx, user.ID, nil); err != nil || !revoked {
 		t.Fatalf("%t %v", revoked, err)
 	}
-	latest, err := service.Invite(ctx, user.Id)
+	latest, err := service.Invite(ctx, user.ID)
 	if err != nil || latest.Status != "revoked" {
 		t.Fatalf("%v %v", latest, err)
 	}
@@ -362,15 +362,15 @@ func assertSecretFormattingAndLogging(t *testing.T, value any, secret string) {
 	if formatted := fmt.Sprintf("%v %+v %#v", value, value, value); strings.Contains(formatted, secret) {
 		t.Fatalf("format leaked %T", value)
 	}
-	for _, isJson := range []bool{false, true} {
+	for _, isJSON := range []bool{false, true} {
 		var buffer bytes.Buffer
 		var handler slog.Handler = slog.NewTextHandler(&buffer, nil)
-		if isJson {
+		if isJSON {
 			handler = slog.NewJSONHandler(&buffer, nil)
 		}
 		slog.New(handler).Info("synthetic", slog.Any("value", value))
 		if strings.Contains(buffer.String(), secret) {
-			t.Fatalf("log leaked %T json=%t", value, isJson)
+			t.Fatalf("log leaked %T json=%t", value, isJSON)
 		}
 	}
 }

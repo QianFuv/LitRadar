@@ -18,9 +18,9 @@ import (
 
 // Batch provides one independently authored page for transaction and worker tests.
 func Batch() (domain.JournalCatalogEntry, domain.ProviderBatch) {
-	catalog := domain.JournalCatalogEntry{CatalogId: "example", Title: "Synthetic Journal", CatalogAliases: []string{}, AllIssns: []string{}, TitleAliases: []string{}}
+	catalog := domain.JournalCatalogEntry{CatalogID: "example", Title: "Synthetic Journal", CatalogAliases: []string{}, AllIssns: []string{}, TitleAliases: []string{}}
 	doi := "10.1234/synthetic"
-	batch := domain.ProviderBatch{CatalogId: catalog.CatalogId, Journal: domain.JournalDraft{CatalogId: catalog.CatalogId}, Issues: []domain.IssueDraft{}, Articles: []domain.ArticleDraft{{CatalogId: catalog.CatalogId, Title: "Synthetic Article", Doi: &doi, Authors: []domain.ArticleAuthorDraft{{DisplayName: "Synthetic Author"}}}}, Progress: domain.ProviderProgress{State: domain.Complete}}
+	batch := domain.ProviderBatch{CatalogID: catalog.CatalogID, Journal: domain.JournalDraft{CatalogID: catalog.CatalogID}, Issues: []domain.IssueDraft{}, Articles: []domain.ArticleDraft{{CatalogID: catalog.CatalogID, Title: "Synthetic Article", Doi: &doi, Authors: []domain.ArticleAuthorDraft{{DisplayName: "Synthetic Author"}}}}, Progress: domain.ProviderProgress{State: domain.Complete}}
 	return catalog, batch
 }
 

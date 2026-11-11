@@ -30,7 +30,7 @@ func TestMetadataBackupRejectsLinksAndSpecialFiles(t *testing.T) {
 				}
 				switch kind {
 				case "symlink":
-					if err := os.Symlink(configuration.AuthDbPath, target); err != nil {
+					if err := os.Symlink(configuration.AuthDBPath, target); err != nil {
 						t.Fatal(err)
 					}
 				case "socket":

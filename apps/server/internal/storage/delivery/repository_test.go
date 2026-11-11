@@ -33,42 +33,40 @@ func testRepository(t testing.TB) *Repository {
 	return repository
 }
 
-func pointer[T any](value T) *T { return &value }
-
 func scheduledRun(id string) RunCreate {
-	return RunCreate{ExternalId: id, Workflow: WorkflowNotify, ScopeKey: "fixture.sqlite", DbName: pointer("fixture.sqlite"), TriggerKind: TriggerKindScheduled, Mode: RunModeExecute, CreatedAt: 10}
+	return RunCreate{ExternalID: id, Workflow: WorkflowNotify, ScopeKey: "fixture.sqlite", DBName: new("fixture.sqlite"), TriggerKind: TriggerKindScheduled, Mode: RunModeExecute, CreatedAt: 10}
 }
 
 func TestCheckpointCasHasOneWinnerAndPreservesRawJson(t *testing.T) {
 	repository := testRepository(t)
 	ctx := context.Background()
-	update := CheckpointUpdate{Status: CheckpointStatusCompleted, SnapshotJson: "  [1, true]  ", UpdatedAt: 10.25}
+	update := CheckpointUpdate{Status: CheckpointStatusCompleted, SnapshotJSON: "  [1, true]  ", UpdatedAt: 10.25}
 	initial, err := repository.CompareAndSwapCheckpoint(ctx, WorkflowNotify, "fixture.sqlite", nil, update)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if initial.Revision != 0 || initial.SnapshotJson != update.SnapshotJson {
+	if initial.Revision != 0 || initial.SnapshotJSON != update.SnapshotJSON {
 		t.Fatalf("initial: %+v", initial)
 	}
 	var group sync.WaitGroup
 	outcomes := make(chan error, 2)
 	for range 2 {
-		group.Add(1)
-		go func() {
-			defer group.Done()
-			_, err := repository.CompareAndSwapCheckpoint(ctx, WorkflowNotify, "fixture.sqlite", pointer(int64(0)), update)
+		group.Go(func() {
+			_, err := repository.CompareAndSwapCheckpoint(ctx, WorkflowNotify, "fixture.sqlite", new(int64(0)), update)
 			outcomes <- err
-		}()
+		})
 	}
 	group.Wait()
 	close(outcomes)
 	winners, conflicts := 0, 0
 	for err := range outcomes {
-		if err == nil {
+		switch {
+		case err == nil:
 			winners++
-		} else if errors.Is(err, ErrConflict) {
+		case errors.Is(err, ErrConflict):
 			conflicts++
-		} else {
+		default:
+
 			t.Fatal(err)
 		}
 	}
@@ -88,16 +86,16 @@ func TestRunLeaseExpirationAndCompetingScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := repository.ClaimRun(ctx, first.Id, "owner", 0, 10.5, 0.25)
+	claimed, err := repository.ClaimRun(ctx, first.ID, "owner", 0, 10.5, 0.25)
 	if err != nil || claimed.Kind != "claimed" {
 		t.Fatalf("claim: %+v %v", claimed, err)
 	}
 	assertRunLeaseExpiryAndCompetition(t, repository, ctx, first, second, claimed)
-	finished, err := repository.FinalizeRun(ctx, first.Id, "owner", claimed.Run.Revision, RunStatusCompleted, nil, nil, 12)
-	if err != nil || finished.OwnerId != nil || finished.Revision != 2 {
+	finished, err := repository.FinalizeRun(ctx, first.ID, "owner", claimed.Run.Revision, RunStatusCompleted, nil, nil, 12)
+	if err != nil || finished.OwnerID != nil || finished.Revision != 2 {
 		t.Fatalf("expired untouched owner may finalize: %+v %v", finished, err)
 	}
-	claimed, err = repository.ClaimRun(ctx, second.Id, "other", 0, 12, 1)
+	claimed, err = repository.ClaimRun(ctx, second.ID, "other", 0, 12, 1)
 	if err != nil || claimed.Kind != "claimed" {
 		t.Fatalf("released competitor: %+v %v", claimed, err)
 	}
@@ -110,15 +108,15 @@ func TestWorkflowLeaseRetainsMonotonicRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	acquired, err := repository.AcquireLease(ctx, WorkflowNotify, "fixture.sqlite", run.Id, "owner", 10, 1)
+	acquired, err := repository.AcquireLease(ctx, WorkflowNotify, "fixture.sqlite", run.ID, "owner", 10, 1)
 	if err != nil || acquired.Kind != "acquired" {
 		t.Fatalf("acquire: %+v %v", acquired, err)
 	}
-	busy, err := repository.AcquireLease(ctx, WorkflowNotify, "fixture.sqlite", run.Id, "owner", 10.5, 1)
+	busy, err := repository.AcquireLease(ctx, WorkflowNotify, "fixture.sqlite", run.ID, "owner", 10.5, 1)
 	if err != nil || busy.Kind != "busy" {
 		t.Fatalf("same owner busy: %+v %v", busy, err)
 	}
-	taken, err := repository.AcquireLease(ctx, WorkflowNotify, "fixture.sqlite", run.Id, "new", 11, 1)
+	taken, err := repository.AcquireLease(ctx, WorkflowNotify, "fixture.sqlite", run.ID, "new", 11, 1)
 	if err != nil || taken.Lease.Revision != 1 {
 		t.Fatalf("takeover: %+v %v", taken, err)
 	}
@@ -131,20 +129,20 @@ func TestUnknownManualAcknowledgmentRequiresAtomicAudit(t *testing.T) {
 	ctx := context.Background()
 	create := scheduledRun("manual-old")
 	create.TriggerKind = TriggerKindManual
-	create.UserId = pointer(int64(1))
+	create.UserID = new(int64(1))
 	admitted, err := repository.AdmitManualRun(ctx, create)
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := repository.ClaimRun(ctx, admitted.Run.Id, "owner", 0, 10, 1)
+	claimed, err := repository.ClaimRun(ctx, admitted.Run.ID, "owner", 0, 10, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	old, err := repository.FinalizeRun(ctx, claimed.Run.Id, "owner", claimed.Run.Revision, RunStatusUnknown, nil, nil, 12)
+	old, err := repository.FinalizeRun(ctx, claimed.Run.ID, "owner", claimed.Run.Revision, RunStatusUnknown, nil, nil, 12)
 	if err != nil {
 		t.Fatal(err)
 	}
-	create.ExternalId = "manual-new"
+	create.ExternalID = "manual-new"
 	blocked, err := repository.AdmitManualRun(ctx, create)
 	if err != nil || blocked.Kind != "blocked_unknown" {
 		t.Fatalf("quarantine: %+v %v", blocked, err)
@@ -166,23 +164,23 @@ func TestTakeoverQuarantinesSendingAndResetsSafeClaims(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	items, err := repository.InsertRunItems(ctx, run.Id, []RunItemCreate{{ItemKind: ItemKindSubscriber, ItemKey: "1", UserId: pointer(int64(1))}, {ItemKind: ItemKindArticle, ItemKey: "2", ArticleId: pointer(int64(2))}}, 10)
+	items, err := repository.InsertRunItems(ctx, run.ID, []RunItemCreate{{ItemKind: ItemKindSubscriber, ItemKey: "1", UserID: new(int64(1))}, {ItemKind: ItemKindArticle, ItemKey: "2", ArticleID: new(int64(2))}}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := repository.ClaimRun(ctx, run.Id, "old", 0, 10, 1)
+	claimed, err := repository.ClaimRun(ctx, run.ID, "old", 0, 10, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sending, reserved := prepareAmbiguousTakeoverItems(t, repository, ctx, run, items, claimed)
-	replacement, err := repository.ClaimRun(ctx, run.Id, "new", claimed.Run.Revision, 11, 5)
+	replacement, err := repository.ClaimRun(ctx, run.ID, "new", claimed.Run.Revision, 11, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.ClaimItem(ctx, run.Id, "new", replacement.Run.Revision, sending.Id, "new-item", 11, 1); !errors.Is(err, ErrConflict) {
+	if _, err := repository.ClaimItem(ctx, run.ID, "new", replacement.Run.Revision, sending.ID, "new-item", 11, 1); !errors.Is(err, ErrConflict) {
 		t.Fatalf("must not reclaim sending: %v", err)
 	}
-	recovered, err := repository.ReconcileAfterTakeover(ctx, run.Id, "new", replacement.Run.Revision, 11)
+	recovered, err := repository.ReconcileAfterTakeover(ctx, run.ID, "new", replacement.Run.Revision, 11)
 	if err != nil || recovered != (RecoveryResult{ResetItemCount: 1, UnknownItemCount: 1, ReleasedDedupeCount: 1, UnknownDedupeCount: 1}) {
 		t.Fatalf("recovery: %+v %v", recovered, err)
 	}
@@ -199,13 +197,13 @@ func TestFinalizationRollsBackEarlierCrossTableMutations(t *testing.T) {
 	}
 	claimed, lease, item, reservations := prepareAtomicFinalizationRows(t, repository, ctx, run)
 	assertAttemptFinalizationRollbackThenSuccess(t, repository, ctx, run, item, reservations)
-	update := CheckpointUpdate{Status: CheckpointStatusCompleted, SnapshotJson: "{}", UpdatedAt: 21}
-	if _, err := repository.FinalizeRunWithCheckpoint(ctx, run.Id, "owner", claimed.Run.Revision, RunStatusCompleted, nil, nil, WorkflowNotify, "fixture.sqlite", nil, update, lease.Lease.Revision+1); !errors.Is(err, ErrConflict) {
+	update := CheckpointUpdate{Status: CheckpointStatusCompleted, SnapshotJSON: "{}", UpdatedAt: 21}
+	if _, err := repository.FinalizeRunWithCheckpoint(ctx, run.ID, "owner", claimed.Run.Revision, RunStatusCompleted, nil, nil, WorkflowNotify, "fixture.sqlite", nil, update, lease.Lease.Revision+1); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale lease should abort checkpoint and run: %v", err)
 	}
 	assertRunCheckpointRollback(t, repository, ctx, run, claimed)
-	completed, err := repository.FinalizeRunWithCheckpoint(ctx, run.Id, "owner", claimed.Run.Revision, RunStatusCompleted, nil, nil, WorkflowNotify, "fixture.sqlite", nil, update, lease.Lease.Revision)
-	if err != nil || completed.Lease.OwnerId != nil || completed.Run.Status != RunStatusCompleted || completed.Checkpoint.Revision != 0 {
+	completed, err := repository.FinalizeRunWithCheckpoint(ctx, run.ID, "owner", claimed.Run.Revision, RunStatusCompleted, nil, nil, WorkflowNotify, "fixture.sqlite", nil, update, lease.Lease.Revision)
+	if err != nil || completed.Lease.OwnerID != nil || completed.Run.Status != RunStatusCompleted || completed.Checkpoint.Revision != 0 {
 		t.Fatalf("atomic completion: %+v %v", completed, err)
 	}
 }
@@ -219,27 +217,27 @@ func TestPostWriteReadFailureRollsBackTheTransaction(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			items, err := repository.InsertRunItems(ctx, run.Id, []RunItemCreate{{ItemKind: ItemKindSubscriber, ItemKey: "1", UserId: pointer(int64(1))}}, 10)
+			items, err := repository.InsertRunItems(ctx, run.ID, []RunItemCreate{{ItemKind: ItemKindSubscriber, ItemKey: "1", UserID: new(int64(1))}}, 10)
 			if err != nil {
 				t.Fatal(err)
 			}
-			claimed, err := repository.ClaimRun(ctx, run.Id, "owner", 0, 10, 10)
+			claimed, err := repository.ClaimRun(ctx, run.ID, "owner", 0, 10, 10)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if target == "item" {
-				item, err := repository.ClaimItem(ctx, run.Id, "owner", claimed.Run.Revision, items[0].Id, "owner", 10, 10)
+				item, err := repository.ClaimItem(ctx, run.ID, "owner", claimed.Run.Revision, items[0].ID, "owner", 10, 10)
 				if err != nil {
 					t.Fatal(err)
 				}
-				reserved, err := repository.ReserveDedupe(ctx, WorkflowNotify, "fixture.sqlite", 1, 11, run.Id, "owner", 10)
+				reserved, err := repository.ReserveDedupe(ctx, WorkflowNotify, "fixture.sqlite", 1, 11, run.ID, "owner", 10)
 				if err != nil {
 					t.Fatal(err)
 				}
 				if _, err := repository.database.Exec(`CREATE TRIGGER remove_final_item AFTER UPDATE ON delivery_run_items WHEN NEW.status='succeeded' BEGIN DELETE FROM delivery_run_items WHERE id=NEW.id; END`); err != nil {
 					t.Fatal(err)
 				}
-				_, err = repository.FinalizeAttempt(ctx, item.Id, "owner", item.Revision, ItemStatusSucceeded, nil, nil, run.Id, []DedupeResolution{{Id: reserved.Record.Id, ExpectedRevision: 0}}, DedupeStatusConfirmed, nil, 11)
+				_, err = repository.FinalizeAttempt(ctx, item.ID, "owner", item.Revision, ItemStatusSucceeded, nil, nil, run.ID, []DedupeResolution{{ID: reserved.Record.ID, ExpectedRevision: 0}}, DedupeStatusConfirmed, nil, 11)
 				if !errors.Is(err, ErrNotFound) {
 					t.Fatalf("missing final item must abort: %v", err)
 				}
@@ -248,18 +246,18 @@ func TestPostWriteReadFailureRollsBackTheTransaction(t *testing.T) {
 					t.Fatalf("rollback: %+v %v", dedupe, err)
 				}
 			} else {
-				lease, err := repository.AcquireLease(ctx, WorkflowNotify, "fixture.sqlite", run.Id, "owner", 10, 10)
+				lease, err := repository.AcquireLease(ctx, WorkflowNotify, "fixture.sqlite", run.ID, "owner", 10, 10)
 				if err != nil {
 					t.Fatal(err)
 				}
 				if _, err := repository.database.Exec(`CREATE TRIGGER remove_final_checkpoint AFTER UPDATE ON delivery_runs WHEN NEW.status='completed' BEGIN DELETE FROM delivery_checkpoints; END`); err != nil {
 					t.Fatal(err)
 				}
-				_, err = repository.FinalizeRunWithCheckpoint(ctx, run.Id, "owner", claimed.Run.Revision, RunStatusCompleted, nil, nil, WorkflowNotify, "fixture.sqlite", nil, CheckpointUpdate{Status: CheckpointStatusCompleted, SnapshotJson: "{}", UpdatedAt: 11}, lease.Lease.Revision)
+				_, err = repository.FinalizeRunWithCheckpoint(ctx, run.ID, "owner", claimed.Run.Revision, RunStatusCompleted, nil, nil, WorkflowNotify, "fixture.sqlite", nil, CheckpointUpdate{Status: CheckpointStatusCompleted, SnapshotJSON: "{}", UpdatedAt: 11}, lease.Lease.Revision)
 				if !errors.Is(err, ErrNotFound) {
 					t.Fatalf("missing final checkpoint must abort: %v", err)
 				}
-				current, err := repository.LoadRun(ctx, run.Id)
+				current, err := repository.LoadRun(ctx, run.ID)
 				if err != nil || current.Status != RunStatusClaimed {
 					t.Fatalf("rollback: %+v %v", current, err)
 				}
@@ -275,19 +273,19 @@ func TestCorruptEnumRemainsRedactedAndNextClaimOverwritesOldOwner(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := repository.ClaimRun(ctx, run.Id, "owner", 0, 10, 10)
+	claimed, err := repository.ClaimRun(ctx, run.ID, "owner", 0, 10, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	items, err := repository.InsertRunItems(ctx, run.Id, []RunItemCreate{{ItemKind: ItemKindArticle, ItemKey: "1", ArticleId: pointer(int64(1))}}, 10)
+	items, err := repository.InsertRunItems(ctx, run.ID, []RunItemCreate{{ItemKind: ItemKindArticle, ItemKey: "1", ArticleID: new(int64(1))}}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.database.Exec(`UPDATE delivery_run_items SET status='claimed',owner_id=x'aa',lease_expires_at=10 WHERE id=?`, items[0].Id); err != nil {
+	if _, err := repository.database.Exec(`UPDATE delivery_run_items SET status='claimed',owner_id=x'aa',lease_expires_at=10 WHERE id=?`, items[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	item, err := repository.ClaimNextItem(ctx, run.Id, "owner", claimed.Run.Revision, "replacement", 11, 1)
-	if err != nil || item == nil || item.OwnerId == nil || *item.OwnerId != "replacement" {
+	item, err := repository.ClaimNextItem(ctx, run.ID, "owner", claimed.Run.Revision, "replacement", 11, 1)
+	if err != nil || item == nil || item.OwnerID == nil || *item.OwnerID != "replacement" {
 		t.Fatalf("next claim must replace old owner before reading: %+v %v", item, err)
 	}
 	assertStoredRunEnumIsRedacted(t, repository, ctx, run)
@@ -296,29 +294,29 @@ func TestCorruptEnumRemainsRedactedAndNextClaimOverwritesOldOwner(t *testing.T) 
 
 func assertRunLeaseExpiryAndCompetition(t *testing.T, repository *Repository, ctx context.Context, first, second *RunRecord, claimed RunOutcome) {
 	t.Helper()
-	busy, err := repository.ClaimRun(ctx, second.Id, "other", 0, 11, 5)
-	if err != nil || busy.Kind != "busy" || busy.Run.Id != first.Id {
+	busy, err := repository.ClaimRun(ctx, second.ID, "other", 0, 11, 5)
+	if err != nil || busy.Kind != "busy" || busy.Run.ID != first.ID {
 		t.Fatalf("expired competitor remains busy: %+v %v", busy, err)
 	}
-	if _, err := repository.StartRun(ctx, first.Id, "owner", claimed.Run.Revision, 10.75); !errors.Is(err, ErrConflict) {
+	if _, err := repository.StartRun(ctx, first.ID, "owner", claimed.Run.Revision, 10.75); !errors.Is(err, ErrConflict) {
 		t.Fatalf("start at expiry: %v", err)
 	}
-	if _, err := repository.RenewRun(ctx, first.Id, "owner", claimed.Run.Revision, 10.75, 1); !errors.Is(err, ErrConflict) {
+	if _, err := repository.RenewRun(ctx, first.ID, "owner", claimed.Run.Revision, 10.75, 1); !errors.Is(err, ErrConflict) {
 		t.Fatalf("renew at expiry: %v", err)
 	}
 }
 
 func assertWorkflowLeaseReleaseAndReuse(t *testing.T, repository *Repository, ctx context.Context, run *RunRecord) {
 	t.Helper()
-	if _, err := repository.ReleaseLease(ctx, WorkflowNotify, "fixture.sqlite", run.Id, "owner", 0, 11); !errors.Is(err, ErrConflict) {
+	if _, err := repository.ReleaseLease(ctx, WorkflowNotify, "fixture.sqlite", run.ID, "owner", 0, 11); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale release: %v", err)
 	}
-	released, err := repository.ReleaseLease(ctx, WorkflowNotify, "fixture.sqlite", run.Id, "new", 1, 15)
-	if err != nil || released.Revision != 2 || released.OwnerId != nil {
+	released, err := repository.ReleaseLease(ctx, WorkflowNotify, "fixture.sqlite", run.ID, "new", 1, 15)
+	if err != nil || released.Revision != 2 || released.OwnerID != nil {
 		t.Fatalf("expired release: %+v %v", released, err)
 	}
-	again, err := repository.AcquireLease(ctx, WorkflowNotify, "fixture.sqlite", run.Id, "next", 15, 1)
-	if err != nil || again.Lease.Revision != 3 || again.Lease.Id != released.Id {
+	again, err := repository.AcquireLease(ctx, WorkflowNotify, "fixture.sqlite", run.ID, "next", 15, 1)
+	if err != nil || again.Lease.Revision != 3 || again.Lease.ID != released.ID {
 		t.Fatalf("monotonic reuse: %+v %v", again, err)
 	}
 }
@@ -336,11 +334,11 @@ func assertMissingAcknowledgmentAuditRollsBack(t *testing.T, repository *Reposit
 
 func assertAcknowledgmentPreservesUnknownAndRejectsReplay(t *testing.T, repository *Repository, ctx context.Context, old *RunRecord, create RunCreate, audit domain.AuditEvent) {
 	t.Helper()
-	preserved, err := repository.LoadRun(ctx, old.Id)
+	preserved, err := repository.LoadRun(ctx, old.ID)
 	if err != nil || preserved.Status != RunStatusUnknown || preserved.Revision != old.Revision {
 		t.Fatalf("old ambiguity must survive: %+v %v", preserved, err)
 	}
-	create.ExternalId = "manual-third"
+	create.ExternalID = "manual-third"
 	if _, err := repository.AcknowledgeUnknownManualRun(ctx, 1, "manual-old", create, &audit); !errors.Is(err, ErrConflict) {
 		t.Fatalf("ack replay: %v", err)
 	}
@@ -348,24 +346,24 @@ func assertAcknowledgmentPreservesUnknownAndRejectsReplay(t *testing.T, reposito
 
 func prepareAmbiguousTakeoverItems(t *testing.T, repository *Repository, ctx context.Context, run *RunRecord, items []RunItemRecord, claimed RunOutcome) (*RunItemRecord, DedupeOutcome) {
 	t.Helper()
-	sending, err := repository.ClaimItem(ctx, run.Id, "old", claimed.Run.Revision, items[0].Id, "item", 10, 1)
+	sending, err := repository.ClaimItem(ctx, run.ID, "old", claimed.Run.Revision, items[0].ID, "item", 10, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.ClaimItem(ctx, run.Id, "old", claimed.Run.Revision, items[1].Id, "item", 10, 1); err != nil {
+	if _, err := repository.ClaimItem(ctx, run.ID, "old", claimed.Run.Revision, items[1].ID, "item", 10, 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.MarkItemSending(ctx, sending.Id, "item", sending.Revision, 10); err != nil {
+	if _, err := repository.MarkItemSending(ctx, sending.ID, "item", sending.Revision, 10); err != nil {
 		t.Fatal(err)
 	}
-	reserved, err := repository.ReserveDedupe(ctx, WorkflowNotify, "fixture.sqlite", 1, 11, run.Id, "item", 10)
+	reserved, err := repository.ReserveDedupe(ctx, WorkflowNotify, "fixture.sqlite", 1, 11, run.ID, "item", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repository.database.Exec(`INSERT INTO users(id,username,password_hash,salt,created_at,updated_at) VALUES(2,'second','hash','salt',1,1)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.ReserveDedupe(ctx, WorkflowNotify, "fixture.sqlite", 2, 12, run.Id, "item", 10); err != nil {
+	if _, err := repository.ReserveDedupe(ctx, WorkflowNotify, "fixture.sqlite", 2, 12, run.ID, "item", 10); err != nil {
 		t.Fatal(err)
 	}
 	return sending, reserved
@@ -374,12 +372,12 @@ func prepareAmbiguousTakeoverItems(t *testing.T, repository *Repository, ctx con
 func assertTakeoverQuarantineAndSafeRetry(t *testing.T, repository *Repository, ctx context.Context, run *RunRecord, items []RunItemRecord, replacement RunOutcome, reserved DedupeOutcome) {
 	t.Helper()
 	unknown, err := repository.LoadDedupe(ctx, WorkflowNotify, "fixture.sqlite", 1, 11)
-	if err != nil || unknown.Status != DedupeStatusUnknown || unknown.Id != reserved.Record.Id {
+	if err != nil || unknown.Status != DedupeStatusUnknown || unknown.ID != reserved.Record.ID {
 		t.Fatalf("ambiguous dedupe: %+v %v", unknown, err)
 	}
 	assertUnknownDedupeSurvivesRetention(t, repository, ctx)
-	retry, err := repository.ClaimNextItem(ctx, run.Id, "new", replacement.Run.Revision, "new-item", 11, 1)
-	if err != nil || retry.Id != items[1].Id || retry.AttemptCount != 2 {
+	retry, err := repository.ClaimNextItem(ctx, run.ID, "new", replacement.Run.Revision, "new-item", 11, 1)
+	if err != nil || retry.ID != items[1].ID || retry.AttemptCount != 2 {
 		t.Fatalf("safe retry: %+v %v", retry, err)
 	}
 }
@@ -393,40 +391,40 @@ func assertUnknownDedupeSurvivesRetention(t *testing.T, repository *Repository, 
 
 func prepareAtomicFinalizationRows(t *testing.T, repository *Repository, ctx context.Context, run *RunRecord) (RunOutcome, LeaseOutcome, *RunItemRecord, []DedupeResolution) {
 	t.Helper()
-	items, err := repository.EnsureRunItems(ctx, run.Id, []RunItemCreate{{ItemKind: ItemKindSubscriber, ItemKey: "1", UserId: pointer(int64(1))}}, 10)
+	items, err := repository.EnsureRunItems(ctx, run.ID, []RunItemCreate{{ItemKind: ItemKindSubscriber, ItemKey: "1", UserID: new(int64(1))}}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := repository.ClaimRun(ctx, run.Id, "owner", 0, 10, 10)
+	claimed, err := repository.ClaimRun(ctx, run.ID, "owner", 0, 10, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := repository.AcquireLease(ctx, WorkflowNotify, "fixture.sqlite", run.Id, "owner", 10, 10)
+	lease, err := repository.AcquireLease(ctx, WorkflowNotify, "fixture.sqlite", run.ID, "owner", 10, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := repository.ClaimItem(ctx, run.Id, "owner", claimed.Run.Revision, items[0].Id, "item-owner", 10, 1)
+	item, err := repository.ClaimItem(ctx, run.ID, "owner", claimed.Run.Revision, items[0].ID, "item-owner", 10, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	dedupe, err := repository.ReserveDedupe(ctx, WorkflowNotify, "fixture.sqlite", 1, 11, run.Id, "item-owner", 10)
+	dedupe, err := repository.ReserveDedupe(ctx, WorkflowNotify, "fixture.sqlite", 1, 11, run.ID, "item-owner", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reservations := []DedupeResolution{{Id: dedupe.Record.Id, ExpectedRevision: 0}}
+	reservations := []DedupeResolution{{ID: dedupe.Record.ID, ExpectedRevision: 0}}
 	return claimed, lease, item, reservations
 }
 
 func assertAttemptFinalizationRollbackThenSuccess(t *testing.T, repository *Repository, ctx context.Context, run *RunRecord, item *RunItemRecord, reservations []DedupeResolution) {
 	t.Helper()
-	if _, err := repository.FinalizeAttempt(ctx, item.Id, "item-owner", item.Revision+1, ItemStatusSucceeded, nil, nil, run.Id, reservations, DedupeStatusConfirmed, pointer("message"), 12); !errors.Is(err, ErrConflict) {
+	if _, err := repository.FinalizeAttempt(ctx, item.ID, "item-owner", item.Revision+1, ItemStatusSucceeded, nil, nil, run.ID, reservations, DedupeStatusConfirmed, new("message"), 12); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale item should abort dedupe: %v", err)
 	}
 	preserved, err := repository.LoadDedupe(ctx, WorkflowNotify, "fixture.sqlite", 1, 11)
 	if err != nil || preserved.Status != DedupeStatusReserved || preserved.Revision != 0 {
 		t.Fatalf("dedupe rollback: %+v %v", preserved, err)
 	}
-	if _, err := repository.FinalizeAttempt(ctx, item.Id, "item-owner", item.Revision, ItemStatusSucceeded, nil, nil, run.Id, reservations, DedupeStatusConfirmed, pointer("message"), 12); err != nil {
+	if _, err := repository.FinalizeAttempt(ctx, item.ID, "item-owner", item.Revision, ItemStatusSucceeded, nil, nil, run.ID, reservations, DedupeStatusConfirmed, new("message"), 12); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -437,7 +435,7 @@ func assertRunCheckpointRollback(t *testing.T, repository *Repository, ctx conte
 	if err != nil || checkpoint != nil {
 		t.Fatalf("checkpoint rollback: %+v %v", checkpoint, err)
 	}
-	current, err := repository.LoadRun(ctx, run.Id)
+	current, err := repository.LoadRun(ctx, run.ID)
 	if err != nil || current.Status != RunStatusClaimed || current.Revision != claimed.Run.Revision {
 		t.Fatalf("run rollback: %+v %v", current, err)
 	}
@@ -457,10 +455,10 @@ func assertStoredRunEnumIsRedacted(t *testing.T, repository *Repository, ctx con
 	if _, err := connection.ExecContext(ctx, `PRAGMA ignore_check_constraints=ON`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := connection.ExecContext(ctx, `UPDATE delivery_runs SET status='corrupt-sentinel' WHERE id=?`, run.Id); err != nil {
+	if _, err := connection.ExecContext(ctx, `UPDATE delivery_runs SET status='corrupt-sentinel' WHERE id=?`, run.ID); err != nil {
 		t.Fatal(err)
 	}
-	_, err = loadRunRecord(ctx, connection, run.Id)
+	_, err = loadRunRecord(ctx, connection, run.ID)
 	if err == nil || err.Error() != "Delivery storage operation failed" {
 		t.Fatalf("enum diagnostic: %v", err)
 	}

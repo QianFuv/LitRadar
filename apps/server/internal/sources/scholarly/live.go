@@ -41,8 +41,8 @@ func NewLiveTransport(config LiveConfig, workerCount int, proxy transport.Proxy)
 	}
 	config = cloneConfig(config)
 	epoch := milliseconds(config.ScheduleEpochUnixMillis)
-	state := newOpenAlexScheduler(len(config.OpenAlexApiKeys), config.SemanticScholarWorkerId, config.SemanticScholarProcessCount, epoch, saturatingMultiply(uint64(workerCount), max(config.SemanticScholarProcessCount, 1)))
-	return &LiveTransport{mutex: &sync.Mutex{}, client: &http.Client{Transport: wire, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, config: config, attempts: []Attempt{}, crossref: newCrossrefSchedule(config), semantic: newSemanticScheduler(len(config.SemanticScholarApiKeys), config.SemanticScholarWorkerId, config.SemanticScholarProcessCount, epoch, milliseconds(max(config.SemanticScholarBaseIntervalMs, 1100))), openAlex: &sharedOpenAlex{state: state, changed: make(chan struct{})}, workerCount: workerCount, crossrefBase: "https://api.crossref.org/v1", openAlexBase: "https://api.openalex.org", semanticBase: "https://api.semanticscholar.org/graph/v1"}, nil
+	state := newOpenAlexScheduler(len(config.OpenAlexAPIKeys), config.SemanticScholarWorkerID, config.SemanticScholarProcessCount, epoch, saturatingMultiply(uint64(workerCount), max(config.SemanticScholarProcessCount, 1)))
+	return &LiveTransport{mutex: &sync.Mutex{}, client: &http.Client{Transport: wire, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, config: config, attempts: []Attempt{}, crossref: newCrossrefSchedule(config), semantic: newSemanticScheduler(len(config.SemanticScholarAPIKeys), config.SemanticScholarWorkerID, config.SemanticScholarProcessCount, epoch, milliseconds(max(config.SemanticScholarBaseIntervalMs, 1100))), openAlex: &sharedOpenAlex{state: state, changed: make(chan struct{})}, workerCount: workerCount, crossrefBase: "https://api.crossref.org/v1", openAlexBase: "https://api.openalex.org", semanticBase: "https://api.semanticscholar.org/graph/v1"}, nil
 }
 
 // Clone copies request histories and per-transport schedules while sharing OpenAlex quotas.
@@ -111,7 +111,7 @@ func (live *LiveTransport) PrepareOpenAlexDoiBatches(dois []string, batchSize in
 	live.mutex.Lock()
 	defer live.mutex.Unlock()
 	var longest *string
-	for _, key := range live.config.OpenAlexApiKeys {
+	for _, key := range live.config.OpenAlexAPIKeys {
 		if longest == nil || len(key) >= len(*longest) {
 			longest = &key
 		}
@@ -237,7 +237,7 @@ func newAttempt(service, endpoint, method, url string, number, keySlot int, stat
 	if !isSuccess {
 		message = &errorKind
 	}
-	return executionAttempt{attempt: Attempt{Service: service, Endpoint: endpoint, Method: method, Url: RedactUrl(url), StatusCode: status, DidSucceed: isSuccess, DidRetry: number > 1, Error: message}, Number: number, KeySlot: keySlot, WillRetry: willRetry, ErrorKind: errorKind, DurationMillis: uint64(max(time.Since(started).Milliseconds(), 0))}
+	return executionAttempt{attempt: Attempt{Service: service, Endpoint: endpoint, Method: method, URL: RedactURL(url), StatusCode: status, DidSucceed: isSuccess, DidRetry: number > 1, Error: message}, Number: number, KeySlot: keySlot, WillRetry: willRetry, ErrorKind: errorKind, DurationMillis: uint64(max(time.Since(started).Milliseconds(), 0))}
 }
 func (live *LiveTransport) openAlexRequest(ctx context.Context, endpoint, url string, query []QueryPair) (any, error) {
 	execution := live.executeOpenAlex(ctx, endpoint, url, query)
@@ -247,14 +247,14 @@ func (live *LiveTransport) openAlexRequest(ctx context.Context, endpoint, url st
 
 // requestOpenAlexSourceWorks preserves source normalization, explicit cursor and short-page termination under the caller lock.
 func (live *LiveTransport) requestOpenAlexSourceWorks(ctx context.Context, request Request) (any, error) {
-	sourceId := strings.TrimRight(strings.TrimSpace(request.SourceId), "/")
-	if position := strings.LastIndex(sourceId, "/"); position >= 0 {
-		sourceId = sourceId[position+1:]
+	sourceID := strings.TrimRight(strings.TrimSpace(request.SourceID), "/")
+	if position := strings.LastIndex(sourceID, "/"); position >= 0 {
+		sourceID = sourceID[position+1:]
 	}
-	if sourceId == "" {
+	if sourceID == "" {
 		return map[string]any{"results": []any{}}, nil
 	}
-	filter := "primary_location.source.id:" + sourceId + ",type:article|book-chapter"
+	filter := "primary_location.source.id:" + sourceID + ",type:article|book-chapter"
 	if request.FromSyncDate != nil && strings.TrimSpace(*request.FromSyncDate) != "" {
 		filter += ",from_created_date:" + *request.FromSyncDate
 	}

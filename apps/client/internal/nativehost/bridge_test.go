@@ -66,8 +66,7 @@ func newTestBridge(t *testing.T, server *httptest.Server, secrets SecretStore) (
 }
 
 func errorCode(err error) string {
-	var bridgeError *BridgeError
-	if errors.As(err, &bridgeError) {
+	if bridgeError, ok := errors.AsType[*BridgeError](err); ok {
 		return bridgeError.Code
 	}
 	return ""

@@ -10,8 +10,8 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
-func latestManual(ctx context.Context, connection *sql.Conn, userId int64) (*RunRecord, error) {
-	return decodeRunRecord(queries.LatestManualRun(ctx, connection, deliverydb.LatestManualRunParams{UserID: new(sqlite.Integer(userId))}))
+func latestManual(ctx context.Context, connection *sql.Conn, userID int64) (*RunRecord, error) {
+	return decodeRunRecord(queries.LatestManualRun(ctx, connection, deliverydb.LatestManualRunParams{UserID: new(sqlite.Integer(userID))}))
 }
 
 // AdmitManualRun checks unknown quarantine and normal admission in the same write transaction.
@@ -24,7 +24,7 @@ func (repository *Repository) AdmitManualRun(ctx context.Context, run RunCreate)
 	}
 	var outcome RunOutcome
 	err := repository.immediate(ctx, func(connection *sql.Conn) error {
-		latest, err := latestManual(ctx, connection, *run.UserId)
+		latest, err := latestManual(ctx, connection, *run.UserID)
 		if err != nil {
 			return err
 		}
@@ -39,36 +39,36 @@ func (repository *Repository) AdmitManualRun(ctx context.Context, run RunCreate)
 }
 
 // AcknowledgeUnknownManualRun preserves the old ambiguous run and atomically admits and audits one matching replacement.
-func (repository *Repository) AcknowledgeUnknownManualRun(ctx context.Context, userId int64, unknownExternalId string, replacement RunCreate, audit *domain.AuditEvent) (*RunRecord, error) {
-	if err := validatePositiveId(userId, "Manual delivery user id is invalid"); err != nil {
+func (repository *Repository) AcknowledgeUnknownManualRun(ctx context.Context, userID int64, unknownExternalID string, replacement RunCreate, audit *domain.AuditEvent) (*RunRecord, error) {
+	if err := validatePositiveID(userID, "Manual delivery user id is invalid"); err != nil {
 		return nil, err
 	}
-	if err := validateIdentifier(unknownExternalId, "Manual delivery acknowledgement job id is invalid"); err != nil {
+	if err := validateIdentifier(unknownExternalID, "Manual delivery acknowledgement job id is invalid"); err != nil {
 		return nil, err
 	}
 	if err := validateRunCreate(replacement); err != nil {
 		return nil, err
 	}
-	if replacement.TriggerKind != TriggerKindManual || replacement.UserId == nil || *replacement.UserId != userId {
+	if replacement.TriggerKind != TriggerKindManual || replacement.UserID == nil || *replacement.UserID != userID {
 		return nil, invalid("Manual delivery acknowledgement requires a replacement for the same user")
 	}
 	var record *RunRecord
 	err := repository.immediate(ctx, func(connection *sql.Conn) error {
-		unknown, err := decodeRunRecord(queries.ManualRun(ctx, connection, deliverydb.ManualRunParams{UserID: new(sqlite.Integer(userId)), ExternalID: sqlite.Text(unknownExternalId)}))
+		unknown, err := decodeRunRecord(queries.ManualRun(ctx, connection, deliverydb.ManualRunParams{UserID: new(sqlite.Integer(userID)), ExternalID: sqlite.Text(unknownExternalID)}))
 		if err != nil {
 			return err
 		}
 		if unknown == nil {
 			return ErrNotFound
 		}
-		latest, err := latestManual(ctx, connection, userId)
+		latest, err := latestManual(ctx, connection, userID)
 		if err != nil {
 			return err
 		}
 		if latest == nil {
 			return ErrNotFound
 		}
-		if latest.Id != unknown.Id || unknown.Status != RunStatusUnknown || replacement.Workflow != unknown.Workflow || replacement.ScopeKey != unknown.ScopeKey || !sameOptionalString(replacement.DbName, unknown.DbName) || replacement.Mode != unknown.Mode {
+		if latest.ID != unknown.ID || unknown.Status != RunStatusUnknown || replacement.Workflow != unknown.Workflow || replacement.ScopeKey != unknown.ScopeKey || !sameOptionalString(replacement.DBName, unknown.DBName) || replacement.Mode != unknown.Mode {
 			return ErrConflict
 		}
 		outcome, err := admitRun(ctx, connection, replacement)
@@ -82,8 +82,8 @@ func (repository *Repository) AcknowledgeUnknownManualRun(ctx context.Context, u
 			return &Error{Kind: "audit"}
 		}
 		event := *audit
-		event.ActorId = &userId
-		event.TargetId = &unknown.Id
+		event.ActorID = &userID
+		event.TargetID = &unknown.ID
 		if err := auth.InsertAudit(ctx, connection, &event); err != nil {
 			return &Error{Kind: "audit", cause: err}
 		}
@@ -98,30 +98,30 @@ func sameOptionalString(left, right *string) bool {
 }
 
 // LoadLatestManualRun selects by row identifier, not timestamp or terminal status.
-func (repository *Repository) LoadLatestManualRun(ctx context.Context, userId int64) (*RunRecord, error) {
-	if err := validatePositiveId(userId, "Manual delivery user id is invalid"); err != nil {
+func (repository *Repository) LoadLatestManualRun(ctx context.Context, userID int64) (*RunRecord, error) {
+	if err := validatePositiveID(userID, "Manual delivery user id is invalid"); err != nil {
 		return nil, err
 	}
-	return decodeRunRecord(queries.LatestManualRun(ctx, repository.database, deliverydb.LatestManualRunParams{UserID: new(sqlite.Integer(userId))}))
+	return decodeRunRecord(queries.LatestManualRun(ctx, repository.database, deliverydb.LatestManualRunParams{UserID: new(sqlite.Integer(userID))}))
 }
 
 // LoadManualRun restricts the opaque external identifier to its authenticated user.
-func (repository *Repository) LoadManualRun(ctx context.Context, userId int64, externalId string) (*RunRecord, error) {
-	if err := validatePositiveId(userId, "Manual delivery user id is invalid"); err != nil {
+func (repository *Repository) LoadManualRun(ctx context.Context, userID int64, externalID string) (*RunRecord, error) {
+	if err := validatePositiveID(userID, "Manual delivery user id is invalid"); err != nil {
 		return nil, err
 	}
-	if err := validateIdentifier(externalId, "Manual delivery job id is invalid"); err != nil {
+	if err := validateIdentifier(externalID, "Manual delivery job id is invalid"); err != nil {
 		return nil, err
 	}
-	return decodeRunRecord(queries.ManualRun(ctx, repository.database, deliverydb.ManualRunParams{UserID: new(sqlite.Integer(userId)), ExternalID: sqlite.Text(externalId)}))
+	return decodeRunRecord(queries.ManualRun(ctx, repository.database, deliverydb.ManualRunParams{UserID: new(sqlite.Integer(userID)), ExternalID: sqlite.Text(externalID)}))
 }
 
 // LoadManualRunForAdmin reads an opaque job after the caller has established administrator authority.
-func (repository *Repository) LoadManualRunForAdmin(ctx context.Context, externalId string) (*RunRecord, error) {
-	if err := validateIdentifier(externalId, "Manual delivery job id is invalid"); err != nil {
+func (repository *Repository) LoadManualRunForAdmin(ctx context.Context, externalID string) (*RunRecord, error) {
+	if err := validateIdentifier(externalID, "Manual delivery job id is invalid"); err != nil {
 		return nil, err
 	}
-	return decodeRunRecord(queries.AdminManualRun(ctx, repository.database, deliverydb.AdminManualRunParams{ExternalID: sqlite.Text(externalId)}))
+	return decodeRunRecord(queries.AdminManualRun(ctx, repository.database, deliverydb.AdminManualRunParams{ExternalID: sqlite.Text(externalID)}))
 }
 
 // ListDispatchableManualRuns bounds pending and expired active work in stable creation/id order.

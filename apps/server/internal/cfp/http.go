@@ -20,11 +20,11 @@ import (
 	whatwg "github.com/nlnwa/whatwg-url/url"
 )
 
-type HttpDocument struct {
-	FinalUrl, ContentType string
+type HTTPDocument struct {
+	FinalURL, ContentType string
 	Bytes                 []byte
 }
-type HttpTransport struct {
+type HTTPTransport struct {
 	client *http.Client
 	lookup func(string) ([]netip.Addr, error)
 	dial   func(context.Context, string, string) (net.Conn, error)
@@ -35,9 +35,9 @@ const dnsLookupLimit = 8
 
 var dnsSlots = semaphore.NewWeighted(dnsLookupLimit)
 
-// NewHttpTransport bypasses environment proxies and binds each connection to checked public addresses.
-func NewHttpTransport() *HttpTransport {
-	result := &HttpTransport{dial: (&net.Dialer{}).DialContext, lookup: func(host string) ([]netip.Addr, error) {
+// NewHTTPTransport bypasses environment proxies and binds each connection to checked public addresses.
+func NewHTTPTransport() *HTTPTransport {
+	result := &HTTPTransport{dial: (&net.Dialer{}).DialContext, lookup: func(host string) ([]netip.Addr, error) {
 		return net.DefaultResolver.LookupNetIP(context.Background(), "ip", host)
 	}}
 	transport := &http.Transport{Proxy: nil, ForceAttemptHTTP2: true, MaxIdleConns: 32, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 8 * time.Second, DisableCompression: false}
@@ -50,13 +50,13 @@ func NewHttpTransport() *HttpTransport {
 	result.client = &http.Client{Transport: &wire.ClientTransport{Transport: transport}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return result
 }
-func (transport *HttpTransport) Close() { transport.client.CloseIdleConnections() }
+func (transport *HTTPTransport) Close() { transport.client.CloseIdleConnections() }
 
 // resolve preserves bounded lookup ownership and cancellation before public address admission.
-func (transport *HttpTransport) resolve(ctx context.Context, host string) ([]netip.Addr, error) {
+func (transport *HTTPTransport) resolve(ctx context.Context, host string) ([]netip.Addr, error) {
 	if address, err := netip.ParseAddr(host); err == nil {
 		if !outbound.IsPublicAddress(address) {
-			return nil, ErrDisallowedUrl
+			return nil, ErrDisallowedURL
 		}
 		return []netip.Addr{address}, nil
 	}
@@ -80,7 +80,7 @@ func (transport *HttpTransport) resolve(ctx context.Context, host string) ([]net
 		return publicResolvedAddresses(result.addresses, result.err)
 	}
 }
-func (transport *HttpTransport) connect(ctx context.Context, network, address string, isTls bool) (net.Conn, error) {
+func (transport *HTTPTransport) connect(ctx context.Context, network, address string, isTLS bool) (net.Conn, error) {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	if requestCtx, ok := ctx.Value(requestContextKey{}).(context.Context); ok {
@@ -99,7 +99,7 @@ func (transport *HttpTransport) connect(ctx context.Context, network, address st
 	if err != nil {
 		return nil, err
 	}
-	if !isTls {
+	if !isTLS {
 		return connection, nil
 	}
 	secured := tls.Client(connection, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12, NextProtos: []string{"h2", "http/1.1"}})
@@ -112,36 +112,36 @@ func (transport *HttpTransport) connect(ctx context.Context, network, address st
 	return secured, nil
 }
 
-func validateUrl(config SourceConfig, location *whatwg.Url) error {
-	if !config.PermitsUrl(location) {
-		return ErrDisallowedUrl
+func validateURL(config SourceConfig, location *whatwg.Url) error {
+	if !config.PermitsURL(location) {
+		return ErrDisallowedURL
 	}
 	if address, err := netip.ParseAddr(strings.Trim(location.Hostname(), "[]")); err == nil && !outbound.IsPublicAddress(address) {
-		return ErrDisallowedUrl
+		return ErrDisallowedURL
 	}
 	return nil
 }
 
 // FetchBytes checks every hop and bounds the decompressed body without retrying partial reads.
-func (transport *HttpTransport) FetchBytes(ctx context.Context, config SourceConfig, value string, deadline time.Time) (HttpDocument, error) {
+func (transport *HTTPTransport) FetchBytes(ctx context.Context, config SourceConfig, value string, deadline time.Time) (HTTPDocument, error) {
 	location, err := whatwg.NewParser().Parse(value)
 	if err != nil {
-		return HttpDocument{}, ErrDisallowedUrl
+		return HTTPDocument{}, ErrDisallowedURL
 	}
-	if err := validateUrl(config, location); err != nil {
-		return HttpDocument{}, err
+	if err := validateURL(config, location); err != nil {
+		return HTTPDocument{}, err
 	}
 	response, release, err := transport.fetchResponse(ctx, config, location, deadline)
 	if err != nil {
-		return HttpDocument{}, err
+		return HTTPDocument{}, err
 	}
 	closeResponse := func() { _ = response.Body.Close(); release() }
 	final, err := whatwg.NewParser().Parse(response.Request.URL.String())
 	if err != nil {
 		closeResponse()
-		return HttpDocument{}, ErrDisallowedUrl
+		return HTTPDocument{}, ErrDisallowedURL
 	}
-	return readHttpDocument(response, final, deadline, closeResponse)
+	return readHTTPDocument(response, final, deadline, closeResponse)
 }
 
 func isHeaderText(value string) bool {
@@ -157,7 +157,7 @@ func DecodeBody(body []byte, contentType string) (string, error) {
 	if len(body) > MaxPageBytes {
 		return "", ErrTooLarge
 	}
-	text, err := textdecode.Html(body, contentType)
+	text, err := textdecode.HTML(body, contentType)
 	if err != nil {
 		return "", ErrEncoding
 	}
@@ -165,7 +165,7 @@ func DecodeBody(body []byte, contentType string) (string, error) {
 }
 
 // Fetch supplies HTML/text only; the live worker owns PDF conversion and rendered fallback.
-func (transport *HttpTransport) Fetch(ctx context.Context, config SourceConfig, value string, deadline time.Time) (Document, error) {
+func (transport *HTTPTransport) Fetch(ctx context.Context, config SourceConfig, value string, deadline time.Time) (Document, error) {
 	response, err := transport.FetchBytes(ctx, config, value, deadline)
 	if err != nil {
 		return Document{}, err
@@ -177,7 +177,7 @@ func (transport *HttpTransport) Fetch(ctx context.Context, config SourceConfig, 
 	if err != nil {
 		return Document{}, err
 	}
-	return Document{FinalUrl: response.FinalUrl, Text: text, Format: "html"}, nil
+	return Document{FinalURL: response.FinalURL, Text: text, Format: "html"}, nil
 }
 
 // publicResolvedAddresses requires a successful nonempty entirely public lookup result.
@@ -186,22 +186,22 @@ func publicResolvedAddresses(addresses []netip.Addr, err error) ([]netip.Addr, e
 		return nil, err
 	}
 	if len(addresses) == 0 {
-		return nil, ErrDisallowedUrl
+		return nil, ErrDisallowedURL
 	}
 	for _, address := range addresses {
 		if !outbound.IsPublicAddress(address) {
-			return nil, ErrDisallowedUrl
+			return nil, ErrDisallowedURL
 		}
 	}
 	return addresses, nil
 }
 
 // fetchResponse retries only request acquisition and returns cancellation ownership with a response.
-func (transport *HttpTransport) fetchResponse(ctx context.Context, config SourceConfig, location *whatwg.Url, deadline time.Time) (*http.Response, context.CancelFunc, error) {
+func (transport *HTTPTransport) fetchResponse(ctx context.Context, config SourceConfig, location *whatwg.Url, deadline time.Time) (*http.Response, context.CancelFunc, error) {
 	var err error
 	var response *http.Response
 	var release context.CancelFunc
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
 			return nil, nil, ErrDeadline
@@ -211,21 +211,21 @@ func (transport *HttpTransport) fetchResponse(ctx context.Context, config Source
 		headers := http.Header{"User-Agent": {"LitRadar/CFP (+original publisher announcements)"}, "Accept": {"text/html,application/pdf,text/plain;q=0.8"}}
 		response, err = wire.RedirectSequence(dialCtx, transport.client.Transport, nil, http.MethodGet, location.Href(false), "", headers, func(next string, hops int) error {
 			if hops > 5 {
-				return ErrDisallowedUrl
+				return ErrDisallowedURL
 			}
 			location, err := whatwg.NewParser().Parse(next)
 			if err != nil {
-				return ErrDisallowedUrl
+				return ErrDisallowedURL
 			}
-			return validateUrl(config, location)
+			return validateURL(config, location)
 		})
 		if err == nil {
 			release = cancel
 			break
 		}
 		cancel()
-		if errors.Is(err, ErrDisallowedUrl) {
-			return nil, nil, ErrDisallowedUrl
+		if errors.Is(err, ErrDisallowedURL) {
+			return nil, nil, ErrDisallowedURL
 		}
 		if !time.Now().Before(deadline) {
 			return nil, nil, ErrDeadline
@@ -240,15 +240,15 @@ func (transport *HttpTransport) fetchResponse(ctx context.Context, config Source
 	return response, release, nil
 }
 
-// readHttpDocument preserves status, declared length, bounded read, cleanup and deadline error priority.
-func readHttpDocument(response *http.Response, location *whatwg.Url, deadline time.Time, closeResponse func()) (HttpDocument, error) {
+// readHTTPDocument preserves status, declared length, bounded read, cleanup and deadline error priority.
+func readHTTPDocument(response *http.Response, location *whatwg.Url, deadline time.Time, closeResponse func()) (HTTPDocument, error) {
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		closeResponse()
-		return HttpDocument{}, SourceError{Kind: "http_status", Status: response.StatusCode}
+		return HTTPDocument{}, SourceError{Kind: "http_status", Status: response.StatusCode}
 	}
 	if response.ContentLength > MaxPageBytes {
 		closeResponse()
-		return HttpDocument{}, ErrTooLarge
+		return HTTPDocument{}, ErrTooLarge
 	}
 	contentType := response.Header.Get("Content-Type")
 	if !isHeaderText(contentType) {
@@ -258,15 +258,15 @@ func readHttpDocument(response *http.Response, location *whatwg.Url, deadline ti
 	closeResponse()
 	if readErr != nil {
 		if !time.Now().Before(deadline) {
-			return HttpDocument{}, ErrDeadline
+			return HTTPDocument{}, ErrDeadline
 		}
-		return HttpDocument{}, ErrRequest
+		return HTTPDocument{}, ErrRequest
 	}
 	if len(body) > MaxPageBytes {
-		return HttpDocument{}, ErrTooLarge
+		return HTTPDocument{}, ErrTooLarge
 	}
 	if !time.Now().Before(deadline) {
-		return HttpDocument{}, ErrDeadline
+		return HTTPDocument{}, ErrDeadline
 	}
-	return HttpDocument{FinalUrl: location.Href(false), ContentType: contentType, Bytes: body}, nil
+	return HTTPDocument{FinalURL: location.Href(false), ContentType: contentType, Bytes: body}, nil
 }

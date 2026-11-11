@@ -62,7 +62,7 @@ func (handlers *favoriteHandlers) exportFolder(ctx context.Context, input *Expor
 		return nil, failure.problem()
 	}
 	value, err := admitted(ctx, handlers.pool, func() (favoriteExport, error) {
-		return handlers.export(context.WithoutCancel(ctx), current.authorization.User.Id, input.FolderID, input.Format)
+		return handlers.export(context.WithoutCancel(ctx), current.authorization.User.ID, input.FolderID, input.Format)
 	}, mapBusinessError)
 	if err != nil {
 		return nil, err
@@ -70,18 +70,17 @@ func (handlers *favoriteHandlers) exportFolder(ctx context.Context, input *Expor
 	return &exportOutput{Body: []byte(value.Body.content), ContentType: value.Body.media, ContentDisposition: "attachment; filename=\"" + value.Body.filename + "\""}, nil
 }
 func mapBusinessError(err error) *apiError {
-	var failure *apiError
-	if errors.As(err, &failure) {
+	if failure, ok := errors.AsType[*apiError](err); ok {
 		return failure
 	}
 	var invalid favorites.InvalidInput
 	switch {
 	case errors.As(err, &invalid), errors.Is(err, favorites.ErrSameFolders), errors.Is(err, favorites.ErrCursor):
-		return badRequest(err.Error())
+		return badRequest(publicErrorDetail(err))
 	case errors.Is(err, favorites.ErrDuplicateFolder):
-		return &apiError{status: 409, detail: err.Error()}
+		return &apiError{status: 409, detail: publicErrorDetail(err)}
 	case errors.Is(err, favorites.ErrFolderNotFound), errors.Is(err, favorites.ErrSourceFolderNotFound), errors.Is(err, favorites.ErrTargetFolderNotFound):
-		return &apiError{status: 404, detail: err.Error()}
+		return &apiError{status: 404, detail: publicErrorDetail(err)}
 	default:
 		return internalError()
 	}
@@ -94,7 +93,7 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() ([]favorites.Folder, error) { return handlers.repository.ListFolders(workContext, owner) }, mapBusinessError)
 		}),
@@ -106,7 +105,7 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure := validateFolderName(input.Body.Name); failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (favorites.Folder, error) {
 				return handlers.repository.CreateFolder(workContext, owner, input.Body.Name, input.Body.IsTracking)
@@ -120,7 +119,7 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure := validateFolderName(input.Body.Name); failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (okResponse, error) {
 				changed, err := handlers.repository.RenameFolder(workContext, owner, input.FolderID, input.Body.Name)
@@ -132,7 +131,7 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (okResponse, error) {
 				changed, err := handlers.repository.DeleteFolder(workContext, owner, input.FolderID)
@@ -144,7 +143,7 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (trackingFolderResponse, error) {
 				selected, err := handlers.repository.TrackingFolder(workContext, owner)
@@ -153,7 +152,7 @@ func (handlers *favoriteHandlers) routes() []route {
 				}
 				result := trackingFolderResponse{}
 				if selected != nil {
-					result.FolderID = &selected.Id
+					result.FolderID = &selected.ID
 					result.FolderName = &selected.Name
 				}
 				return result, nil
@@ -164,7 +163,7 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (okResponse, error) {
 				changed, err := handlers.repository.SetTrackingFolder(workContext, owner, input.Body.FolderID)
@@ -176,7 +175,7 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (countResponse, error) {
 				count, err := handlers.repository.CountFavorites(workContext, owner, &input.FolderID)
@@ -188,7 +187,7 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() ([]favorites.Article, error) {
 				rows, err := handlers.repository.ListFavorites(workContext, owner, &input.FolderID, input.Limit, input.Offset)
@@ -203,7 +202,7 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (domain.Page[favorites.Article], error) {
 				return handlers.repository.ArticlePage(workContext, handlers.storage, owner, input.FolderID, input.Limit, cleanText(input.Cursor.Pointer()))
@@ -214,10 +213,10 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (favorites.Favorite, error) {
-				return handlers.repository.AddFavorite(workContext, owner, input.FolderID, favorites.Add{Reference: favorites.Reference{ArticleId: input.Body.ArticleID, DbName: input.Body.DBName}, Note: input.Body.Note})
+				return handlers.repository.AddFavorite(workContext, owner, input.FolderID, favorites.Add{Reference: favorites.Reference{ArticleID: input.Body.ArticleID, DBName: input.Body.DBName}, Note: input.Body.Note})
 			}, mapBusinessError)
 		}),
 		typedRoute(openapi.Operation{Method: "DELETE", Path: "/api/favorites/folders/{folder_id}/articles/{article_id}", ID: "remove_favorite"}, func(ctx context.Context, input *RemoveFavoriteInput) (*output[okResponse], error) {
@@ -225,10 +224,10 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (okResponse, error) {
-				changed, err := handlers.repository.RemoveFavorite(workContext, owner, input.FolderID, favorites.Reference{ArticleId: identity.Id(input.ArticleID), DbName: textOr(input.DBName.Pointer(), "")})
+				changed, err := handlers.repository.RemoveFavorite(workContext, owner, input.FolderID, favorites.Reference{ArticleID: identity.ID(input.ArticleID), DBName: textOr(input.DBName.Pointer(), "")})
 				return changedResponse(changed, err, "Favorite not found")
 			}, mapBusinessError)
 		}),
@@ -237,10 +236,10 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() ([]favorites.Membership, error) {
-				return handlers.repository.IsFavorited(workContext, owner, favorites.Reference{ArticleId: identity.Id(input.ArticleID), DbName: textOr(input.DBName.Pointer(), "")})
+				return handlers.repository.IsFavorited(workContext, owner, favorites.Reference{ArticleID: identity.ID(input.ArticleID), DBName: textOr(input.DBName.Pointer(), "")})
 			}, mapBusinessError)
 		}),
 		typedRoute(openapi.Operation{Method: "POST", Path: "/api/favorites/check/batch", ID: "check_favorites_batch"}, func(ctx context.Context, input *CheckFavoritesBatchInput) (*output[[]favorites.BatchMembership], error) {
@@ -248,7 +247,7 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() ([]favorites.BatchMembership, error) {
 				ids := make([]int64, len(input.Body.ArticleIDs))
@@ -263,12 +262,12 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (addedResponse, error) {
 				items := make([]favorites.Add, len(input.Body.Articles))
 				for index, item := range input.Body.Articles {
-					items[index] = favorites.Add{Reference: favorites.Reference{ArticleId: item.ArticleID, DbName: item.DBName}, Note: item.Note}
+					items[index] = favorites.Add{Reference: favorites.Reference{ArticleID: item.ArticleID, DBName: item.DBName}, Note: item.Note}
 				}
 				count, err := handlers.repository.BulkAdd(workContext, owner, input.FolderID, items)
 				return addedResponse{Added: count}, err
@@ -279,12 +278,12 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (countResponse, error) {
 				items := make([]favorites.Reference, len(input.Body.Articles))
 				for index, item := range input.Body.Articles {
-					items[index] = favorites.Reference{ArticleId: item.ArticleID, DbName: item.DBName}
+					items[index] = favorites.Reference{ArticleID: item.ArticleID, DBName: item.DBName}
 				}
 				count, err := handlers.repository.BulkRemove(workContext, owner, input.FolderID, items)
 				return countResponse{Count: count}, err
@@ -295,12 +294,12 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (countResponse, error) {
 				items := make([]favorites.Reference, len(input.Body.Articles))
 				for index, item := range input.Body.Articles {
-					items[index] = favorites.Reference{ArticleId: item.ArticleID, DbName: item.DBName}
+					items[index] = favorites.Reference{ArticleID: item.ArticleID, DBName: item.DBName}
 				}
 				count, err := handlers.repository.BulkMove(workContext, owner, input.FolderID, input.Body.TargetFolderID, items)
 				return countResponse{Count: count}, err
@@ -313,7 +312,7 @@ func (handlers *favoriteHandlers) routes() []route {
 type favoriteExport struct{ content, filename, media string }
 
 // export preserves snapshot limits, metadata batches and output-limit projection.
-func (handlers *favoriteHandlers) export(ctx context.Context, owner identity.Id, folder int64, format string) (favoriteExport, error) {
+func (handlers *favoriteHandlers) export(ctx context.Context, owner identity.ID, folder int64, format string) (favoriteExport, error) {
 	selected, failure := selectFavoriteCitationFormat(format)
 	if failure != nil {
 		return favoriteExport{}, failure
@@ -371,7 +370,7 @@ func selectFavoriteCitationFormat(format string) (favoriteCitationFormat, *apiEr
 	case "ris":
 		serialize, extension, media = citation.Ris, "ris", "application/x-research-info-systems"
 	case "endnote":
-		serialize, extension, media = citation.EndnoteXml, "xml", "application/xml"
+		serialize, extension, media = citation.EndnoteXML, "xml", "application/xml"
 	default:
 		return favoriteCitationFormat{}, badRequest("Invalid export format")
 	}

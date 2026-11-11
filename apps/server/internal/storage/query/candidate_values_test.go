@@ -60,7 +60,7 @@ func TestCandidateFlattenedValues(t *testing.T) {
 						t.Fatal("candidate membership changed", items, err)
 					}
 					item := items[0]
-					if item.ArticleId != 1 || item.Abstract != scenario.abstract || item.OpenAccess != scenario.isOpenAccess || item.InPress != scenario.isInPress || item.IssueId == nil || *item.IssueId != 7 || item.Date == nil || *item.Date != "2026-10-01" || item.Doi != nil {
+					if item.ArticleID != 1 || item.Abstract != scenario.abstract || item.OpenAccess != scenario.isOpenAccess || item.InPress != scenario.isInPress || item.IssueID == nil || *item.IssueID != 7 || item.Date == nil || *item.Date != "2026-10-01" || item.Doi != nil {
 						t.Fatal("flattened or retained nullable fields changed", item)
 					}
 				})

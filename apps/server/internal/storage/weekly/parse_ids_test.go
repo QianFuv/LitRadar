@@ -17,7 +17,7 @@ func manifestIdsReference(value json.RawMessage) ([]int64, error) {
 	if bytes.HasPrefix(bytes.TrimSpace(value), []byte("[")) {
 		var values []json.RawMessage
 		if json.Unmarshal(value, &values) != nil {
-			return nil, ErrManifestJson
+			return nil, ErrManifestJSON
 		}
 		for _, value := range values {
 			raw := strings.TrimSpace(string(value))
@@ -37,7 +37,7 @@ func manifestIdsReference(value json.RawMessage) ([]int64, error) {
 
 // TestManifestIdDecoderClearsReusedElements prevents ignored values from inheriting an earlier admitted integer.
 func TestManifestIdDecoderClearsReusedElements(t *testing.T) {
-	var values []manifestArticleId
+	var values []manifestArticleID
 	for _, ignored := range []string{"null", "-0", "9223372036854775808", "3.0", `"8"`, "{}", "[]"} {
 		if err := json.Unmarshal([]byte("[7]"), &values); err != nil || len(values) != 1 || !values[0].isInteger || values[0].value != 7 {
 			t.Fatal("integer was not admitted", values, err)

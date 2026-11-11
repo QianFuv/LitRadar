@@ -91,7 +91,7 @@ func TestFavoriteQueryDefaults(t *testing.T) {
 		{"articles/page", "?limit="},
 		{"export", "?format="},
 	} {
-		path := fmt.Sprintf("/api/favorites/folders/%d/%s", folder.Id, scenario.suffix)
+		path := fmt.Sprintf("/api/favorites/folders/%d/%s", folder.ID, scenario.suffix)
 		omitted := authRequest(router, "GET", path, "", token)
 		empty := authRequest(router, "GET", path+scenario.query, "", token)
 		if omitted.Code != 200 || empty.Code != 200 || omitted.Body.String() != empty.Body.String() || omitted.Header().Get("Content-Type") != empty.Header().Get("Content-Type") {

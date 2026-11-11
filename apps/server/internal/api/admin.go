@@ -30,7 +30,7 @@ type adminUserResponse struct {
 	AuthKind string `json:"auth_kind" nullable:"false" enum:"local,oidc"`
 	// IsOIDCLinked reports whether the account has a linked OIDC identity.
 	IsOIDCLinked  bool    `json:"is_oidc_linked" nullable:"false"`
-	Id            int64   `json:"id" nullable:"false" format:"int64"`
+	ID            int64   `json:"id" nullable:"false" format:"int64"`
 	Username      string  `json:"username" nullable:"false"`
 	IsAdmin       bool    `json:"is_admin" nullable:"false"`
 	CreatedAt     float64 `json:"created_at" nullable:"false" format:"double"`
@@ -40,7 +40,7 @@ type adminUserResponse struct {
 	NotifyEnabled bool    `json:"notify_enabled" nullable:"false"`
 }
 type adminInviteResponse struct {
-	Id            int64    `json:"id" nullable:"false" format:"int64"`
+	ID            int64    `json:"id" nullable:"false" format:"int64"`
 	Code          string   `json:"code" nullable:"false"`
 	CreatedBy     *int64   `json:"created_by" required:"false" nullable:"true" format:"int64"`
 	CreatedByName *string  `json:"created_by_name" required:"false" nullable:"true"`
@@ -65,7 +65,7 @@ func adminInvite(value storage.AdminInviteInfo) adminInviteResponse {
 		number := int64(*value.UsedBy)
 		used = &number
 	}
-	return adminInviteResponse{value.Id, value.Code, created, value.CreatedByName, used, value.UsedByName, value.UsedAt, value.Status, value.ExpiresAt, value.RevokedAt, value.MaxUses, value.UseCount, value.CreatedAt}
+	return adminInviteResponse{value.ID, value.Code, created, value.CreatedByName, used, value.UsedByName, value.UsedAt, value.Status, value.ExpiresAt, value.RevokedAt, value.MaxUses, value.UseCount, value.CreatedAt}
 }
 
 func mapAdminError(err error) *apiError {
@@ -74,15 +74,15 @@ func mapAdminError(err error) *apiError {
 	var setting settings.Error
 	switch {
 	case errors.As(err, &timing), errors.As(err, &setting):
-		return badRequest(err.Error())
+		return badRequest(publicErrorDetail(err))
 	case errors.As(err, &invalid):
-		return badRequest(err.Error())
+		return badRequest(publicErrorDetail(err))
 	case errors.Is(err, storage.ErrUserNotFound):
-		return &apiError{status: 404, detail: err.Error()}
+		return &apiError{status: 404, detail: publicErrorDetail(err)}
 	case errors.Is(err, storage.ErrLastAdministrator):
-		return &apiError{status: 409, detail: err.Error()}
+		return &apiError{status: 409, detail: publicErrorDetail(err)}
 	case errors.Is(err, storage.ErrAdminInvitePolicy):
-		return badRequest(err.Error())
+		return badRequest(publicErrorDetail(err))
 	default:
 		return mapAuthError(err)
 	}

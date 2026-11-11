@@ -23,7 +23,7 @@ func TestLegacyVersionsCurrentIdentityAndTextResults(t *testing.T) {
 		if !ok {
 			return nil, &jsonrpc.Error{Code: -32603, Message: "missing trusted identity"}
 		}
-		payload, _ := json.Marshal(map[string]any{"user_id": principal.UserId, "internal_version": request.Session.InitializeParams().ProtocolVersion, "metadata": request.Params.Meta})
+		payload, _ := json.Marshal(map[string]any{"user_id": principal.UserID, "internal_version": request.Session.InitializeParams().ProtocolVersion, "metadata": request.Params.Meta})
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(payload)}}}, nil
 	})
 	server.AddTool(&mcp.Tool{Name: "failure", InputSchema: map[string]any{"type": "object"}}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -34,9 +34,9 @@ func TestLegacyVersionsCurrentIdentityAndTextResults(t *testing.T) {
 		principal := Principal{}
 		switch request.Header.Get("Authorization") {
 		case "Bearer alice":
-			principal.UserId = 9007199254740993
+			principal.UserID = 9007199254740993
 		case "Bearer bob":
-			principal.UserId = 99
+			principal.UserID = 99
 		default:
 			writer.WriteHeader(401)
 			return Principal{}, false
@@ -113,14 +113,14 @@ func TestLegacyVersionsCurrentIdentityAndTextResults(t *testing.T) {
 				t.Fatalf("text wrapping %s", wire)
 			}
 			var payload struct {
-				UserId          string `json:"user_id"`
+				UserID          string `json:"user_id"`
 				InternalVersion string `json:"internal_version"`
 				Metadata        map[string]any
 			}
 			if err := json.Unmarshal([]byte(result.Result.Content[0].Text), &payload); err != nil {
 				t.Fatal(err)
 			}
-			if payload.UserId != "99" || payload.InternalVersion != internalVersion || payload.Metadata["retained"] != "yes" {
+			if payload.UserID != "99" || payload.InternalVersion != internalVersion || payload.Metadata["retained"] != "yes" {
 				t.Fatalf("identity/state/metadata %s", result.Result.Content[0].Text)
 			}
 			status, _, wire = post("alice", session, want, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"failure","arguments":{}}}`)
@@ -155,7 +155,7 @@ func TestLegacyVersionsCurrentIdentityAndTextResults(t *testing.T) {
 
 func decodeLastData(t *testing.T, wire string, target any) {
 	t.Helper()
-	for _, line := range strings.Split(wire, "\n") {
+	for line := range strings.SplitSeq(wire, "\n") {
 		if strings.HasPrefix(line, "data: {") {
 			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), target); err != nil {
 				t.Fatal(err)

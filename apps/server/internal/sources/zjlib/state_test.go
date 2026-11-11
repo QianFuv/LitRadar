@@ -6,7 +6,7 @@ func TestStateRoundTripRetainsExpiryAndCredentials(t *testing.T) {
 	expires := int64(100)
 	cookie := NewCookie("vpn358_sid", "secret", "proxy.test")
 	cookie.Expires = &expires
-	restoredCookie := CookieFromJson(cookie.Json())
+	restoredCookie := CookieFromJSON(cookie.JSON())
 	if restoredCookie.Expires == nil || *restoredCookie.Expires != expires {
 		t.Error("cookie expiry lost in direct JSON value round trip")
 	}
@@ -24,7 +24,7 @@ func TestStateRoundTripRetainsExpiryAndCredentials(t *testing.T) {
 	if restored.HasFreshFulltextSession(&now) {
 		t.Error("expired cookie became unexpired after state restoration")
 	}
-	exported := cookie.Json()
+	exported := cookie.JSON()
 	exported["expires"] = int64(999)
 	if *cookie.Expires != 100 {
 		t.Error("exported cookie aliases source")

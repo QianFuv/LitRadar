@@ -41,7 +41,7 @@ func PreflightStorage(ctx context.Context, configuration config.Config) error {
 	if err := maintenance.CheckInterrupted(configuration); err != nil {
 		return err
 	}
-	if _, err := authmigration.Migrate(ctx, configuration.AuthDbPath); err != nil {
+	if _, err := authmigration.Migrate(ctx, configuration.AuthDBPath); err != nil {
 		return err
 	}
 	if _, err := delivery.ImportLegacyFiles(ctx, configuration, float64(time.Now().UnixNano())/1e9); err != nil {
@@ -88,16 +88,16 @@ func prepareResources(ctx context.Context, configuration Config) (_ *Prepared, e
 	if err != nil {
 		return nil, err
 	}
-	prepared.services.Delivery, err = delivery.Open(configuration.Storage.AuthDbPath)
+	prepared.services.Delivery, err = delivery.Open(configuration.Storage.AuthDBPath)
 	if err != nil {
 		return nil, err
 	}
-	prepared.services.Scheduler, err = scheduler.Open(configuration.Storage.AuthDbPath)
+	prepared.services.Scheduler, err = scheduler.Open(configuration.Storage.AuthDBPath)
 	if err != nil {
 		return nil, err
 	}
 	if configuration.IsTelemetryEnabled {
-		prepared.services.Telemetry, err = telemetry.Open(ctx, configuration.Storage.TelemetryDbPath(), configuration.TelemetryRetentionDays)
+		prepared.services.Telemetry, err = telemetry.Open(ctx, configuration.Storage.TelemetryDBPath(), configuration.TelemetryRetentionDays)
 		if err != nil {
 			slog.WarnContext(ctx, "telemetry.open.failed", "component", "telemetry")
 			err = nil
@@ -106,7 +106,7 @@ func prepareResources(ctx context.Context, configuration Config) (_ *Prepared, e
 	prepared.services.StoragePool = executor.New(8, 30*time.Second)
 	prepared.services.UpstreamPool = executor.New(4, 30*time.Second)
 	prepared.services.KdfPool = executor.New(2, 30*time.Second)
-	prepared.handler, err = api.New(prepared.services, configuration.ApiOptions)
+	prepared.handler, err = api.New(prepared.services, configuration.APIOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -194,17 +194,17 @@ func (prepared *Prepared) prepareRuntimeCatalogs(ctx context.Context, configurat
 	if err != nil {
 		return err
 	}
-	if _, err = secrets.Verify(ctx, configuration.Storage.AuthDbPath, prepared.services.Codec); err != nil {
+	if _, err = secrets.Verify(ctx, configuration.Storage.AuthDBPath, prepared.services.Codec); err != nil {
 		return err
 	}
-	prepared.services.Cfp, err = cfpstorage.Open(configuration.Storage.AuthDbPath)
+	prepared.services.Cfp, err = cfpstorage.Open(configuration.Storage.AuthDBPath)
 	if err != nil {
 		return err
 	}
 	if _, err = cfp.EnsureSeed(ctx, prepared.services.Cfp); err != nil {
 		return err
 	}
-	prepared.services.Auth, err = auth.Open(configuration.Storage.AuthDbPath)
+	prepared.services.Auth, err = auth.Open(configuration.Storage.AuthDBPath)
 	if err != nil {
 		return err
 	}
@@ -220,11 +220,11 @@ func (prepared *Prepared) runtimePolicy(ctx context.Context, configuration Confi
 	if err = configuration.ApplyRuntimeSettings(values); err != nil {
 		return configuration, err
 	}
-	configuration.ApiOptions.ProviderProxy, err = sources.ProxySelectionFromRuntime(values)
+	configuration.APIOptions.ProviderProxy, err = sources.ProxySelectionFromRuntime(values)
 	if err != nil {
 		return configuration, err
 	}
-	configuration.ApiOptions.ContentSecurityPolicy = serverContentSecurityPolicy
-	configuration.ApiOptions.IsHstsEnabled = !configuration.IsDevelopment && configuration.AreSecureCookiesRequired
+	configuration.APIOptions.ContentSecurityPolicy = serverContentSecurityPolicy
+	configuration.APIOptions.IsHstsEnabled = !configuration.IsDevelopment && configuration.AreSecureCookiesRequired
 	return configuration, nil
 }

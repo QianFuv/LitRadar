@@ -1,6 +1,6 @@
 package index
 
-const versionFiveSql = `
+const versionFiveSQL = `
     CREATE TABLE journal_identity_keys (
         identity_kind TEXT NOT NULL CHECK (identity_kind IN ('catalog_id', 'issn')),
         identity_value TEXT NOT NULL,
@@ -11,7 +11,7 @@ const versionFiveSql = `
         ON journal_identity_keys(canonical_catalog_id);
 `
 
-const versionSixSql = `
+const versionSixSQL = `
     CREATE TABLE articles_v6 (
         article_id INTEGER PRIMARY KEY,
         journal_id INTEGER NOT NULL,

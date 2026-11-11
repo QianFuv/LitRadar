@@ -77,7 +77,7 @@ func availableCountReference(ctx context.Context, configuration config.Config, e
 	unique := map[reference]bool{}
 	for _, manifest := range manifests {
 		for _, id := range manifest.ArticleIds {
-			unique[reference{manifest.DbName, id}] = true
+			unique[reference{manifest.DBName, id}] = true
 		}
 	}
 	return len(unique), nil

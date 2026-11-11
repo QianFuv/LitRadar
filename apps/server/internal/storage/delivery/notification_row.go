@@ -59,12 +59,12 @@ func (row *notificationRow) strings(index int) []string {
 	return values
 }
 
-func (row *notificationRow) secret(index int, codec *secrets.Codec, userId int64, field string) string {
+func (row *notificationRow) secret(index int, codec *secrets.Codec, userID int64, field string) string {
 	value := row.text(index)
 	if row.err != nil {
 		return ""
 	}
 	var decoded string
-	decoded, row.err = codec.Decrypt(value, secrets.NotificationContext(userId, field))
+	decoded, row.err = codec.Decrypt(value, secrets.NotificationContext(userID, field))
 	return decoded
 }

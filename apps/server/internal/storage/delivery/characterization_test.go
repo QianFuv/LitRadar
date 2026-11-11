@@ -40,7 +40,7 @@ func TestLegacyMalformedLaterFilePreventsDestinationCreation(t *testing.T) {
 	filename := writeLegacyCharacterizationSource(t, root, "a.json", `{"db_name":"a.sqlite"}`)
 	writeLegacyCharacterizationSource(t, root, "z.json", "{")
 	destination := filepath.Join(root, "missing", "auth.sqlite")
-	config := storageconfig.FromProjectRoot(root).WithAuthDbPath(destination)
+	config := storageconfig.FromProjectRoot(root).WithAuthDBPath(destination)
 	if _, err := ImportLegacyFiles(context.Background(), config, 100); err == nil {
 		t.Fatal("malformed later source accepted")
 	}
@@ -68,15 +68,15 @@ func assertLegacyImportTablesEmpty(t *testing.T, repository *Repository) {
 
 func TestLegacyLateCollisionRollsBackEarlierFilesAndCounters(t *testing.T) {
 	states := []legacyState{
-		{DbName: "second.sqlite", Run: &legacyRun{RunId: "legacy", PendingIssueKeys: []string{"1:2"}, DoneIssueKeys: []string{"1:2"}}},
-		{DbName: "second.sqlite", DeliveryDedupe: map[string]string{"+1:7": "one", "1:07": "two"}},
+		{DBName: "second.sqlite", Run: &legacyRun{RunID: "legacy", PendingIssueKeys: []string{"1:2"}, DoneIssueKeys: []string{"1:2"}}},
+		{DBName: "second.sqlite", DeliveryDedupe: map[string]string{"+1:7": "one", "1:07": "two"}},
 	}
 	for _, state := range states {
 		repository := testRepository(t)
 		if err := validateLegacy("second.json", state); err != nil {
 			t.Fatal("fixture rejected before intended late collision", err)
 		}
-		inputs := []legacyInput{{workflow: WorkflowNotify, sourceName: "first.json", sourceHash: "first", state: legacyState{DbName: "first.sqlite"}}, {workflow: WorkflowNotify, sourceName: "second.json", sourceHash: "second", state: state}}
+		inputs := []legacyInput{{workflow: WorkflowNotify, sourceName: "first.json", sourceHash: "first", state: legacyState{DBName: "first.sqlite"}}, {workflow: WorkflowNotify, sourceName: "second.json", sourceHash: "second", state: state}}
 		result, err := repository.importLegacy(context.Background(), inputs, 100)
 		if err == nil || result != (LegacyImportResult{}) {
 			t.Fatal("failed scan exposed partial import counters", err)

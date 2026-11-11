@@ -53,7 +53,7 @@ func TestArticlePagingKeepsNullCursorAndCountPolicy(t *testing.T) {
 	params.Cursor = first.Page.NextCursor
 	params.Offset = 99
 	second, err := ListArticles(context.Background(), configuration, nil, params)
-	if err != nil || len(second.Items) != 1 || second.Items[0].ArticleId != 1001 {
+	if err != nil || len(second.Items) != 1 || second.Items[0].ArticleID != 1001 {
 		t.Fatalf("null page: %#v %v", second, err)
 	}
 	if second.Page.Total != nil || second.Page.Offset != 99 || second.Page.HasMore == nil || *second.Page.HasMore {
@@ -64,7 +64,7 @@ func TestArticlePagingKeepsNullCursorAndCountPolicy(t *testing.T) {
 // assertFirstArticlePage checks the counted first page before admitting its cursor.
 func assertFirstArticlePage(t *testing.T, first domain.Page[domain.Article], err error) {
 	t.Helper()
-	if err != nil || len(first.Items) != 1 || first.Items[0].ArticleId != 1012 {
+	if err != nil || len(first.Items) != 1 || first.Items[0].ArticleID != 1012 {
 		t.Fatalf("first page: %#v %v", first, err)
 	}
 	if first.Page.Total == nil || *first.Page.Total != 2 || first.Page.NextCursor == nil {
@@ -109,7 +109,7 @@ func assertEmptyArticlePage(t *testing.T, page domain.Page[domain.Article], err 
 func TestArticleEnrichmentPreservesFirstRequestedOccurrenceAndRetractionOrder(t *testing.T) {
 	_, database := queryFixture(t)
 	items, err := fetchArticles(context.Background(), database, []int64{1012, 1001, 1012, 9999})
-	if err != nil || len(items) != 2 || items[0].ArticleId != 1012 || items[1].ArticleId != 1001 {
+	if err != nil || len(items) != 2 || items[0].ArticleID != 1012 || items[1].ArticleID != 1001 {
 		t.Fatalf("requested order: %#v %v", items, err)
 	}
 	if !reflect.DeepEqual(items[0].RetractionDois, []string{"a", "z"}) || items[1].RetractionDois == nil {
@@ -167,12 +167,12 @@ func TestWeeklyJournalAdmissionPrecedesMalformedManifest(t *testing.T) {
 	if err := os.WriteFile(filename, []byte("{broken"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	params := WeeklyArticlePageParams{DbName: "catalog.sqlite", JournalId: 9999, WindowEnd: "2026-10-04T00:00:00Z", Limit: 1}
+	params := WeeklyArticlePageParams{DBName: "catalog.sqlite", JournalID: 9999, WindowEnd: "2026-10-04T00:00:00Z", Limit: 1}
 	if _, err := WeeklyArticles(context.Background(), configuration, params, nil); err == nil || err.Error() != "Journal not found" {
 		t.Fatalf("journal precedence: %v", err)
 	}
-	params.JournalId = 1
-	if _, err := WeeklyArticles(context.Background(), configuration, params, nil); !errors.Is(err, weekly.ErrManifestJson) {
+	params.JournalID = 1
+	if _, err := WeeklyArticles(context.Background(), configuration, params, nil); !errors.Is(err, weekly.ErrManifestJSON) {
 		t.Fatalf("manifest rejection: %v", err)
 	}
 }
@@ -181,9 +181,9 @@ func TestWeeklyJournalAdmissionPrecedesMalformedManifest(t *testing.T) {
 func TestWeeklyMembershipKeepsNullDateAndLegacyCeiling(t *testing.T) {
 	configuration, _ := queryFixture(t)
 	writeQueryManifest(t, configuration, "catalog.sqlite", []int64{1001, 1012, 1001, 9999})
-	params := WeeklyArticlePageParams{DbName: "catalog.sqlite", JournalId: 1, WindowEnd: "2026-10-04T00:00:00Z", Limit: 1}
+	params := WeeklyArticlePageParams{DBName: "catalog.sqlite", JournalID: 1, WindowEnd: "2026-10-04T00:00:00Z", Limit: 1}
 	page, err := WeeklyArticles(context.Background(), configuration, params, nil)
-	if err != nil || len(page.Items) != 1 || page.Items[0].ArticleId != 1001 {
+	if err != nil || len(page.Items) != 1 || page.Items[0].ArticleID != 1001 {
 		t.Fatalf("weekly null item: %#v %v", page, err)
 	}
 	if page.Page.HasMore == nil || *page.Page.HasMore || page.Page.Total != nil {

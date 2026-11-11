@@ -54,7 +54,7 @@ type Source struct {
 	Requirements string   `json:"requirements" default:"true"`
 	TypeText     string   `json:"typeText"`
 	DateText     string   `json:"dateText"`
-	SourceUrl    string   `json:"sourceUrl"`
+	SourceURL    string   `json:"sourceUrl"`
 	CheckedOn    string   `json:"checkedOn"`
 	EntryStage   *Stage   `json:"entryStage"`
 	TimeZone     *string  `json:"timeZone"`
@@ -73,12 +73,12 @@ type Date struct {
 
 // Notice stores normalized source content; State evaluates availability at read time.
 type Notice struct {
-	Id           string  `json:"id" nullable:"false"`
+	ID           string  `json:"id" nullable:"false"`
 	Title        string  `json:"title" nullable:"false"`
 	Scope        string  `json:"scope" nullable:"false"`
 	Requirements string  `json:"requirements" nullable:"false"`
 	Kind         Kind    `json:"kind" nullable:"false" enum:"special_issue,general,proposal,conference_linked"`
-	SourceUrl    string  `json:"sourceUrl" nullable:"false"`
+	SourceURL    string  `json:"sourceUrl" nullable:"false"`
 	CheckedOn    string  `json:"checkedOn" nullable:"false"`
 	Dates        []Date  `json:"dates" nullable:"false"`
 	EntryStage   Stage   `json:"entryStage" nullable:"false" enum:"paper,abstract,proposal,opens,revision,decision,publication,event,registration"`
@@ -93,7 +93,7 @@ type EmptyJournal struct {
 	CatalogIds      []string `json:"catalogIds"`
 	JournalTitle    string   `json:"journalTitle"`
 	CheckedOn       string   `json:"checkedOn"`
-	SourceUrl       string   `json:"sourceUrl"`
+	SourceURL       string   `json:"sourceUrl"`
 	SourceStatement string   `json:"sourceStatement"`
 	Notices         []Notice `json:"notices" default:"true"`
 }

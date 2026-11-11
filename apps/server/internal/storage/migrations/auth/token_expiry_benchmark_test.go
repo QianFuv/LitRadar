@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 	"testing"
 )
@@ -59,7 +58,7 @@ SELECT 1,printf('synthetic-%d',id),'personal',CASE WHEN id<=? THEN 100 ELSE 200 
 					if err := transaction.Rollback(); err != nil {
 						benchmark.Errorf("transaction.Rollback: %v", err)
 					}
-					benchmark.Fatal(fmt.Sprintf("deleted %d rows, expected %d: %v", count, scenario.expired, err))
+					benchmark.Fatalf("deleted %d rows, expected %d: %v", count, scenario.expired, err)
 				}
 				if err := transaction.Rollback(); err != nil {
 					benchmark.Fatal(err)

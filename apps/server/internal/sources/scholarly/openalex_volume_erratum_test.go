@@ -14,7 +14,7 @@ import (
 
 // openAlexVolumeFixture reproduces the observed chapter's truncated OpenAlex volume.
 func openAlexVolumeFixture() (domain.JournalCatalogEntry, map[string]any) {
-	catalog := domain.JournalCatalogEntry{CatalogId: "issn-0733-558x", Title: "Research in the Sociology of Organizations", Issn: new("0733-558X"), AllIssns: []string{"0733-558X"}}
+	catalog := domain.JournalCatalogEntry{CatalogID: "issn-0733-558x", Title: "Research in the Sociology of Organizations", Issn: new("0733-558X"), AllIssns: []string{"0733-558X"}}
 	work := map[string]any{
 		"display_name": "From Agents to Principles: The Changing Relationship between Hospitalist Identity and Logics of Health care",
 		"doi":          "https://doi.org/10.1108/S0733-558X(2013)0039A011", "publication_year": int64(2013), "publication_date": "2013-09-05",
@@ -45,22 +45,22 @@ func TestOpenAlexVolumeErratumPreservesExistingIdentities(t *testing.T) {
 	if _, err := storage.WriteContentBatch(ctx, connection.Conn, catalog, seed, "seed", "epoch"); err != nil {
 		t.Fatal(err)
 	}
-	const firstId int64 = 2796358338862224948
-	const secondId int64 = 6800538005797110105
-	before := snapshotErratumOwner(t, connection.Conn, secondId)
+	const firstID int64 = 2796358338862224948
+	const secondID int64 = 6800538005797110105
+	before := snapshotErratumOwner(t, connection.Conn, secondID)
 	batch := domain.BatchFromArticles(catalog, []domain.ArticleDraft{*article}, domain.ProviderProgress{State: domain.Complete})
 	outcome, err := storage.WriteContentBatch(ctx, connection.Conn, catalog, batch, "corrected", "epoch")
 	if err != nil || outcome.ArticlesChanged != 1 || outcome.IdentityAliasesAdded != 1 {
 		t.Fatalf("corrected volume did not reuse its DOI owner: %#v %v", outcome, err)
 	}
-	if !reflect.DeepEqual(before, snapshotErratumOwner(t, connection.Conn, secondId)) {
+	if !reflect.DeepEqual(before, snapshotErratumOwner(t, connection.Conn, secondID)) {
 		t.Fatal("correction changed the other immutable identity")
 	}
 	var count, owner int64
 	for _, original := range []struct {
 		article domain.ArticleDraft
 		owner   int64
-	}{{first, firstId}, {second, secondId}} {
+	}{{first, firstID}, {second, secondID}} {
 		for _, key := range storage.ArticleIdentityKeys(original.article) {
 			if err := connection.QueryRowContext(ctx, "SELECT article_id FROM article_identity_keys WHERE identity_kind=? AND identity_value=?", key.Kind, key.Value).Scan(&owner); err != nil || owner != original.owner {
 				t.Fatal("correction reassigned a legacy alias", owner, err)
@@ -71,7 +71,7 @@ func TestOpenAlexVolumeErratumPreservesExistingIdentities(t *testing.T) {
 		t.Fatal("correction changed article identities", count, err)
 	}
 	for _, key := range storage.ArticleIdentityKeys(*article) {
-		if err := connection.QueryRowContext(ctx, "SELECT article_id FROM article_identity_keys WHERE identity_kind=? AND identity_value=?", key.Kind, key.Value).Scan(&owner); err != nil || owner != firstId {
+		if err := connection.QueryRowContext(ctx, "SELECT article_id FROM article_identity_keys WHERE identity_kind=? AND identity_value=?", key.Kind, key.Value).Scan(&owner); err != nil || owner != firstID {
 			t.Fatal("corrected alias lost its DOI owner", owner, err)
 		}
 	}
@@ -100,7 +100,7 @@ func TestOpenAlexVolumeErratumIsRestricted(t *testing.T) {
 		{"other-doi", func(_ *domain.JournalCatalogEntry, work map[string]any) {
 			work["doi"] = "10.1108/s0733-558x(2013)0039ab011"
 		}, "39"},
-		{"other-catalog", func(catalog *domain.JournalCatalogEntry, _ map[string]any) { catalog.CatalogId = "other" }, "39"},
+		{"other-catalog", func(catalog *domain.JournalCatalogEntry, _ map[string]any) { catalog.CatalogID = "other" }, "39"},
 		{"other-year", func(_ *domain.JournalCatalogEntry, work map[string]any) { work["publication_year"] = int64(2014) }, "39"},
 		{"other-volume", func(_ *domain.JournalCatalogEntry, work map[string]any) {
 			work["biblio"].(map[string]any)["volume"] = "40"

@@ -60,10 +60,10 @@ func CatalogIssns(catalog JournalCatalogEntry) []string {
 
 // IssueFromArticle extracts only an issue with a sufficient canonical boundary.
 func IssueFromArticle(article ArticleDraft) *IssueDraft {
-	if !(article.PublicationYear != nil && (article.Volume != nil || article.IssueNumber != nil) || article.Date != nil || article.IssueTitle != nil) {
+	if (article.PublicationYear == nil || article.Volume == nil && article.IssueNumber == nil) && article.Date == nil && article.IssueTitle == nil {
 		return nil
 	}
-	return &IssueDraft{CatalogId: article.CatalogId, PublicationYear: copyCanonicalField(article.PublicationYear), Title: copyCanonicalField(article.IssueTitle), Volume: copyCanonicalField(article.Volume), Number: copyCanonicalField(article.IssueNumber), Date: copyCanonicalField(article.Date)}
+	return &IssueDraft{CatalogID: article.CatalogID, PublicationYear: copyCanonicalField(article.PublicationYear), Title: copyCanonicalField(article.IssueTitle), Volume: copyCanonicalField(article.Volume), Number: copyCanonicalField(article.IssueNumber), Date: copyCanonicalField(article.Date)}
 }
 
 func copyCanonicalField[T any](value *T) *T {
@@ -90,7 +90,7 @@ func BatchFromArticles(catalog JournalCatalogEntry, articles []ArticleDraft, pro
 	if articles == nil {
 		articles = []ArticleDraft{}
 	}
-	return ProviderBatch{CatalogId: catalog.CatalogId, Journal: JournalDraft{CatalogId: catalog.CatalogId, ObservedTitle: &catalog.Title, ObservedIssns: CatalogIssns(catalog), ObservedTitleAliases: []string{}}, Issues: issues, Articles: articles, Progress: progress}
+	return ProviderBatch{CatalogID: catalog.CatalogID, Journal: JournalDraft{CatalogID: catalog.CatalogID, ObservedTitle: &catalog.Title, ObservedIssns: CatalogIssns(catalog), ObservedTitleAliases: []string{}}, Issues: issues, Articles: articles, Progress: progress}
 }
 
 // canonicalArticleTitle accepts normalized text or an already canonical DOI fallback.
@@ -147,5 +147,5 @@ func canonicalArticleRetractions(values []string) []string {
 
 // hasCanonicalArticleIdentity requires external identity or a bibliographic boundary.
 func hasCanonicalArticleIdentity(article ArticleDraft) bool {
-	return !(article.Doi == nil && article.Pmid == nil && !(article.PublicationYear != nil && (article.Volume != nil || article.IssueNumber != nil || article.StartPage != nil)))
+	return article.Doi != nil || article.Pmid != nil || article.PublicationYear != nil && (article.Volume != nil || article.IssueNumber != nil || article.StartPage != nil)
 }

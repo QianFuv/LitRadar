@@ -23,7 +23,7 @@ func TestDecodedNoticesMatchUncachedSnapshots(t *testing.T) {
 	source.Title, source.TypeText = "2026年度选题", "General"
 	source.TimeZone, source.StatusText = new("UTC"), new("Invitation only")
 	source.DateText = "Submission deadline: 31 December 2026"
-	seed := domain.Seed{FormatVersion: 1, Sources: []domain.Source{source}, EmptyJournals: []domain.EmptyJournal{{CatalogIds: []string{"z"}, JournalTitle: "Empty Journal", CheckedOn: "2026-09-15", SourceUrl: source.SourceUrl, SourceStatement: "No open calls"}}}
+	seed := domain.Seed{FormatVersion: 1, Sources: []domain.Source{source}, EmptyJournals: []domain.EmptyJournal{{CatalogIds: []string{"z"}, JournalTitle: "Empty Journal", CheckedOn: "2026-09-15", SourceURL: source.SourceURL, SourceStatement: "No open calls"}}}
 	encoded, err := json.Marshal(seed)
 	if err != nil {
 		t.Fatal(err)
@@ -48,8 +48,8 @@ func TestDecodedNoticesMatchUncachedSnapshots(t *testing.T) {
 		actual[0].Sources[0].Revision = 100
 		for index := range actual {
 			journal := &actual[index]
-			if journal.SourceUrl != nil {
-				*journal.SourceUrl = "changed url"
+			if journal.SourceURL != nil {
+				*journal.SourceURL = "changed url"
 			}
 			if journal.SourceStatement != nil {
 				*journal.SourceStatement = "changed statement"
@@ -180,7 +180,7 @@ func TestDecodedNoticesObserveIndependentWriters(t *testing.T) {
 	}
 	assertFresh()
 	source.Scope, source.CheckedOn = "updated original", "2026-10-20"
-	publication := Publication{Capture: "updated capture", CaptureFormat: "html", SourceUrl: source.SourceUrl, Sources: []domain.Source{source}, ConfigVersion: 1}
+	publication := Publication{Capture: "updated capture", CaptureFormat: "html", SourceURL: source.SourceURL, Sources: []domain.Source{source}, ConfigVersion: 1}
 	if err := writer.PublishFullText(ctx, lease, publication, 135, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestDecodedNoticesObserveIndependentWriters(t *testing.T) {
 		t.Fatal(err)
 	}
 	publication.Sources = nil
-	publication.EmptyJournals = []domain.EmptyJournal{{CatalogIds: source.CatalogIds, JournalTitle: source.JournalTitle, CheckedOn: source.CheckedOn, SourceUrl: source.SourceUrl, SourceStatement: "No open calls"}}
+	publication.EmptyJournals = []domain.EmptyJournal{{CatalogIds: source.CatalogIds, JournalTitle: source.JournalTitle, CheckedOn: source.CheckedOn, SourceURL: source.SourceURL, SourceStatement: "No open calls"}}
 	if err := writer.PublishRefresh(ctx, lease, publication, 165); err != nil {
 		t.Fatal(err)
 	}
@@ -251,8 +251,7 @@ func TestDecodedNoticesValidateChangedPayloads(t *testing.T) {
 		func() ([]JournalSnapshot, error) { return repository.LoadJournalsForCatalogIds(ctx, []string{"a"}) },
 	} {
 		_, err := load()
-		var payloadError *PayloadError
-		if !errors.As(err, &payloadError) {
+		if _, ok := errors.AsType[*PayloadError](err); !ok {
 			t.Fatal("changed payload bypassed validation", err)
 		}
 	}

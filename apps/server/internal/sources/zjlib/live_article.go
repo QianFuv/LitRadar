@@ -48,20 +48,20 @@ func (live *LiveTransport) Search(ctx context.Context, keyword string, limit uin
 	}
 	defer live.leave()
 	base := live.state.allowed.bases[proxyFamily]
-	resultUrl := appendEndpoint(base, "/kns55/brief/result.aspx")
-	handlerUrl := appendEndpoint(base, "/kns55/request/SearchHandler.ashx")
-	briefUrl := appendEndpoint(base, "/kns55/brief/brief.aspx")
+	resultURL := appendEndpoint(base, "/kns55/brief/result.aspx")
+	handlerURL := appendEndpoint(base, "/kns55/request/SearchHandler.ashx")
+	briefURL := appendEndpoint(base, "/kns55/brief/brief.aspx")
 	headers := formHeaders(appendEndpoint(base, "/kns55/"), origin(base))
-	if _, err := live.postFormText(ctx, resultUrl, searchResultFields(keyword), headers, "post CNKI result.aspx"); err != nil {
+	if _, err := live.postFormText(ctx, resultURL, searchResultFields(keyword), headers, "post CNKI result.aspx"); err != nil {
 		return nil, err
 	}
-	headers.Set("Referer", resultUrl)
+	headers.Set("Referer", resultURL)
 	headers.Set("X-Requested-With", "XMLHttpRequest")
-	if _, err := live.postFormText(ctx, handlerUrl, searchHandlerFields(keyword, time.Now().UnixMilli()), headers, "post CNKI SearchHandler"); err != nil {
+	if _, err := live.postFormText(ctx, handlerURL, searchHandlerFields(keyword, time.Now().UnixMilli()), headers, "post CNKI SearchHandler"); err != nil {
 		return nil, err
 	}
-	location := briefUrl + "?" + encodePairs(pair("pagename", "ASP.brief_result_aspx"), pair("dbPrefix", "SCDB"), pair("dbCatalog", "中国学术文献网络出版总库"), pair("ConfigFile", "SCDB.xml"), pair("research", "off"), pair("t", strconv.FormatInt(time.Now().UnixMilli(), 10)))
-	response, finish, err := live.send(ctx, http.MethodGet, location, "", htmlHeaders(resultUrl), true)
+	location := briefURL + "?" + encodePairs(pair("pagename", "ASP.brief_result_aspx"), pair("dbPrefix", "SCDB"), pair("dbCatalog", "中国学术文献网络出版总库"), pair("ConfigFile", "SCDB.xml"), pair("research", "off"), pair("t", strconv.FormatInt(time.Now().UnixMilli(), 10)))
+	response, finish, err := live.send(ctx, http.MethodGet, location, "", htmlHeaders(resultURL), true)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +74,7 @@ func (live *LiveTransport) Search(ctx context.Context, keyword string, limit uin
 	if err != nil {
 		return nil, err
 	}
-	live.state.lastBriefUrl = &final
+	live.state.lastBriefURL = &final
 	results, err := parseSearchResults(text, final, live.state.allowed)
 	if err != nil {
 		return nil, err
@@ -92,10 +92,10 @@ func (live *LiveTransport) InspectResultMetadata(ctx context.Context, result Sea
 	}
 	defer live.leave()
 	referer := appendEndpoint(live.state.allowed.bases[proxyFamily], "/kns55/")
-	if live.state.lastBriefUrl != nil {
-		referer = *live.state.lastBriefUrl
+	if live.state.lastBriefURL != nil {
+		referer = *live.state.lastBriefURL
 	}
-	location, err := live.state.allowed.parse(result.DetailUrl, proxyFamily)
+	location, err := live.state.allowed.parse(result.DetailURL, proxyFamily)
 	if err != nil {
 		return ArticleCandidate{}, err
 	}
@@ -113,20 +113,20 @@ func (live *LiveTransport) InspectResultMetadata(ctx context.Context, result Sea
 		return ArticleCandidate{}, err
 	}
 	identity := ExtractArticleIdentity(text, result.Title)
-	pdf, err := extractDownloadUrl(text, final, live.state.allowed, true)
+	pdf, err := extractDownloadURL(text, final, live.state.allowed, true)
 	if err != nil {
 		return ArticleCandidate{}, err
 	}
-	return ArticleCandidate{Result: cloneResult(result), Identity: identity, DetailUrl: final, PdfUrl: pdf}, nil
+	return ArticleCandidate{Result: cloneResult(result), Identity: identity, DetailURL: final, PdfURL: pdf}, nil
 }
 
 // DownloadPdf enforces the decoded size limit and retains content-type-or-magic PDF recognition.
-func (live *LiveTransport) DownloadPdf(ctx context.Context, pdfUrl string, title, referer *string) (DownloadedPdf, error) {
+func (live *LiveTransport) DownloadPdf(ctx context.Context, pdfURL string, title, referer *string) (DownloadedPdf, error) {
 	if err := live.enter(ctx); err != nil {
 		return DownloadedPdf{}, err
 	}
 	defer live.leave()
-	location, err := live.state.allowed.parse(pdfUrl, proxyFamily)
+	location, err := live.state.allowed.parse(pdfURL, proxyFamily)
 	if err != nil {
 		return DownloadedPdf{}, err
 	}
@@ -148,7 +148,7 @@ func (live *LiveTransport) DownloadPdf(ctx context.Context, pdfUrl string, title
 		return DownloadedPdf{}, err
 	}
 	filename := downloadedPdfFilename(title, final)
-	return DownloadedPdf{Filename: filename, FinalUrl: final, ContentType: contentType, ByteCount: uint64(len(content)), Content: content}, nil
+	return DownloadedPdf{Filename: filename, FinalURL: final, ContentType: contentType, ByteCount: uint64(len(content)), Content: content}, nil
 }
 
 var _ Transport = (*LiveTransport)(nil)
@@ -167,7 +167,7 @@ func readPdfContent(response *http.Response, maximumBytes int64, final string) (
 		return nil, "", &Error{Kind: "Request", Message: "request or response body error"}
 	}
 	if !strings.Contains(asciiLower(contentType), "pdf") && !bytes.HasPrefix(content, []byte("%PDF")) {
-		return nil, "", &Error{Kind: "Request", Message: fmt.Sprintf("Download endpoint did not return PDF (content-type=%q, url=%s).", contentType, redactUrl(final))}
+		return nil, "", &Error{Kind: "Request", Message: fmt.Sprintf("Download endpoint did not return PDF (content-type=%q, url=%s).", contentType, redactURL(final))}
 	}
 	return content, contentType, nil
 }
@@ -176,10 +176,10 @@ func readPdfContent(response *http.Response, maximumBytes int64, final string) (
 func downloadedPdfFilename(title *string, final string) string {
 	resolved := title
 	if resolved == nil || strings.TrimSpace(*resolved) == "" {
-		resolved = titleFromPdfUrl(final)
+		resolved = titleFromPdfURL(final)
 	}
 	if resolved == nil {
-		resolved = pointer("cnki")
+		resolved = new("cnki")
 	}
 	return SafeFilename(*resolved) + ".pdf"
 }

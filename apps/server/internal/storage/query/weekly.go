@@ -24,11 +24,11 @@ import (
 )
 
 // ErrLegacyWeeklyLimit directs oversized legacy responses to the paginated endpoints.
-var ErrLegacyWeeklyLimit = errors.New("Weekly updates exceed 2000 articles; use /api/weekly-updates/summary and /api/weekly-updates/articles")
+var ErrLegacyWeeklyLimit = errors.New("weekly updates exceed 2000 articles; use /api/weekly-updates/summary and /api/weekly-updates/articles")
 
 type weeklyBucket struct {
 	generated weekly.Timestamp
-	runId     *string
+	runID     *string
 	ids       []int64
 	seen      map[int64]bool
 }
@@ -41,9 +41,9 @@ func loadWeeklyBuckets(configuration config.Config, end weekly.Timestamp, cache 
 	}
 	result := map[string]*weeklyBucket{}
 	for _, manifest := range manifests {
-		bucket := result[manifest.DbName]
+		bucket := result[manifest.DBName]
 		if bucket == nil {
-			result[manifest.DbName] = &weeklyBucket{manifest.GeneratedAt, manifest.RunId, manifest.ArticleIds, nil}
+			result[manifest.DBName] = &weeklyBucket{manifest.GeneratedAt, manifest.RunID, manifest.ArticleIds, nil}
 			continue
 		}
 		if bucket.seen == nil {
@@ -77,11 +77,11 @@ func installWeeklyMembership(ctx context.Context, connection *sql.Conn, ids []in
 	}()
 	const insertPrefix = "INSERT OR IGNORE INTO temp.weekly_membership(article_id) VALUES"
 	width := min(500, max(1, len(ids)))
-	insertSql := insertPrefix + "(?)"
+	insertSQL := insertPrefix + "(?)"
 	if width > 1 {
-		insertSql = insertPrefix + strings.TrimSuffix(strings.Repeat("(?),", width), ",")
+		insertSQL = insertPrefix + strings.TrimSuffix(strings.Repeat("(?),", width), ",")
 	}
-	statement, err := connection.PrepareContext(ctx, insertSql)
+	statement, err := connection.PrepareContext(ctx, insertSQL)
 	if err != nil {
 		return err
 	}
@@ -137,10 +137,10 @@ func weeklyJournalSorter() func(domain.WeeklyJournalSummary, domain.WeeklyJourna
 		if order := strings.Compare(firstTitle, secondTitle); order != 0 {
 			return order
 		}
-		if first.JournalId < second.JournalId {
+		if first.JournalID < second.JournalID {
 			return -1
 		}
-		if first.JournalId > second.JournalId {
+		if first.JournalID > second.JournalID {
 			return 1
 		}
 		return 0
@@ -152,7 +152,7 @@ func sortWeeklyDatabases[Journal any](databases []domain.WeeklyDatabase[Journal]
 		if order := strings.Compare(second.GeneratedAt, first.GeneratedAt); order != 0 {
 			return order
 		}
-		return strings.Compare(second.DbName, first.DbName)
+		return strings.Compare(second.DBName, first.DBName)
 	})
 }
 
@@ -179,7 +179,7 @@ func WeeklySummary(ctx context.Context, configuration config.Config, end weekly.
 		for _, journal := range journals {
 			count += journal.NewArticleCount
 		}
-		result.Databases = append(result.Databases, domain.WeeklyDatabase[domain.WeeklyJournalSummary]{DbName: name, RunId: bucket.runId, GeneratedAt: bucket.generated.Format(false), NewArticleCount: count, Journals: journals})
+		result.Databases = append(result.Databases, domain.WeeklyDatabase[domain.WeeklyJournalSummary]{DBName: name, RunID: bucket.runID, GeneratedAt: bucket.generated.Format(false), NewArticleCount: count, Journals: journals})
 	}
 	sortWeeklyDatabases(result.Databases)
 	return result, nil
@@ -214,7 +214,7 @@ func weeklyJournalCounts(ctx context.Context, filename string, ids []int64) (res
 			return domain.WeeklyJournalSummary{}, err
 		}
 		name := string(title)
-		return domain.WeeklyJournalSummary{JournalId: identity.Id(journal), JournalTitle: &name, NewArticleCount: int(count)}, nil
+		return domain.WeeklyJournalSummary{JournalID: identity.ID(journal), JournalTitle: &name, NewArticleCount: int(count)}, nil
 	})
 	if err != nil {
 		return nil, err
@@ -225,8 +225,8 @@ func weeklyJournalCounts(ctx context.Context, filename string, ids []int64) (res
 
 // WeeklyArticlePageParams fixes membership at one RFC3339 window end across cursor requests.
 type WeeklyArticlePageParams struct {
-	DbName    string
-	JournalId int64
+	DBName    string
+	JournalID int64
 	WindowEnd string
 	Query     *string
 	Limit     int64
@@ -288,7 +288,7 @@ func WeeklyArticles(ctx context.Context, configuration config.Config, params Wee
 }
 
 func weeklyArticle(article domain.Article) domain.WeeklyArticle {
-	return domain.WeeklyArticle{ArticleId: article.ArticleId, JournalId: article.JournalId, IssueId: article.IssueId, Title: article.Title, PublicationYear: article.PublicationYear, Date: article.Date, DatePrecision: article.DatePrecision, Authors: article.Authors, Abstract: article.Abstract, Doi: article.Doi, JournalTitle: article.JournalTitle, OpenAccess: article.OpenAccess, InPress: article.InPress, Volume: article.Volume, Number: article.Number}
+	return domain.WeeklyArticle{ArticleID: article.ArticleID, JournalID: article.JournalID, IssueID: article.IssueID, Title: article.Title, PublicationYear: article.PublicationYear, Date: article.Date, DatePrecision: article.DatePrecision, Authors: article.Authors, Abstract: article.Abstract, Doi: article.Doi, JournalTitle: article.JournalTitle, OpenAccess: article.OpenAccess, InPress: article.InPress, Volume: article.Volume, Number: article.Number}
 }
 
 // WeeklyUpdates retains the legacy 2,000-reference ceiling before pruning unavailable databases or articles.
@@ -329,7 +329,7 @@ func fetchLegacyWeeklyArticles(ctx context.Context, filename string, ids []int64
 			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
 		}
 	}()
-	byId := map[int64]domain.WeeklyArticle{}
+	byID := map[int64]domain.WeeklyArticle{}
 	for start := 0; start < len(ids); start += 500 {
 		chunk := ids[start:min(start+500, len(ids))]
 		items, err := collect(ctx, database, `SELECT a.article_id,a.journal_id,a.issue_id,a.title,a.publication_year,a.date,a.authors_json,a.abstract_text,a.doi,a.open_access,a.in_press,j.title,i.volume,i.number FROM articles a LEFT JOIN issues i ON i.issue_id=a.issue_id JOIN journals j ON j.journal_id=a.journal_id WHERE a.article_id IN (`+placeholders(len(chunk))+")", arguments(chunk), func(row scanner) (domain.WeeklyArticle, error) {
@@ -344,7 +344,7 @@ func fetchLegacyWeeklyArticles(ctx context.Context, filename string, ids []int64
 			if err != nil {
 				return domain.WeeklyArticle{}, err
 			}
-			result := domain.WeeklyArticle{ArticleId: identity.Id(id), JournalId: identity.Id(journal), IssueId: issue.Value, Title: string(title), PublicationYear: year.Value, Date: date.Value, Authors: names, Abstract: abstract.Value, Doi: doi.Value, OpenAccess: optionalBoolean(openAccess.Value), InPress: optionalBoolean(inPress.Value), JournalTitle: string(journalTitle), Volume: volume.Value, Number: number.Value}
+			result := domain.WeeklyArticle{ArticleID: identity.ID(id), JournalID: identity.ID(journal), IssueID: issue.Value, Title: string(title), PublicationYear: year.Value, Date: date.Value, Authors: names, Abstract: abstract.Value, Doi: doi.Value, OpenAccess: optionalBoolean(openAccess.Value), InPress: optionalBoolean(inPress.Value), JournalTitle: string(journalTitle), Volume: volume.Value, Number: number.Value}
 			if result.Date != nil {
 				result.DatePrecision = domain.DatePrecision(*result.Date)
 			}
@@ -354,14 +354,14 @@ func fetchLegacyWeeklyArticles(ctx context.Context, filename string, ids []int64
 			return nil, err
 		}
 		for _, item := range items {
-			byId[int64(item.ArticleId)] = item
+			byID[int64(item.ArticleID)] = item
 		}
 	}
 	result := make([]domain.WeeklyArticle, 0, len(ids))
 	for _, id := range ids {
-		if item, exists := byId[id]; exists {
+		if item, exists := byID[id]; exists {
 			result = append(result, item)
-			delete(byId, id)
+			delete(byID, id)
 		}
 	}
 	return result, nil
@@ -372,7 +372,7 @@ func validateWeeklyArticleLengths(params WeeklyArticlePageParams) error {
 	for _, field := range []struct {
 		name, value string
 		limit       int
-	}{{"db", params.DbName, 255}, {"window_end", params.WindowEnd, 2048}} {
+	}{{"db", params.DBName, 255}, {"window_end", params.WindowEnd, 2048}} {
 		if err := validateCharacters(field.name, field.value, field.limit); err != nil {
 			return err
 		}
@@ -395,7 +395,7 @@ func validateWeeklyArticleParams(params WeeklyArticlePageParams) (weekly.Timesta
 	if err := validateWeeklyArticleLengths(params); err != nil {
 		return weekly.Timestamp{}, "", err
 	}
-	if params.JournalId <= 0 {
+	if params.JournalID <= 0 {
 		return weekly.Timestamp{}, "", InvalidInput{"journal_id must be greater than 0"}
 	}
 	if err := validatePagination(params.Limit, 0); err != nil {
@@ -405,7 +405,7 @@ func validateWeeklyArticleParams(params WeeklyArticlePageParams) (weekly.Timesta
 	if !ok {
 		return weekly.Timestamp{}, "", InvalidInput{"window_end must be a valid RFC3339 timestamp"}
 	}
-	name := config.NormalizeDatabaseName(params.DbName)
+	name := config.NormalizeDatabaseName(params.DBName)
 	if name == "" {
 		return weekly.Timestamp{}, "", InvalidInput{"db must select a database"}
 	}
@@ -417,7 +417,7 @@ func validateWeeklyArticleParams(params WeeklyArticlePageParams) (weekly.Timesta
 func weeklyArticleFilters(ctx context.Context, configuration config.Config, params WeeklyArticlePageParams, cache *weekly.Cache, connection *sql.Conn, end weekly.Timestamp, name string) (filter, error) {
 	var exists bool
 	if err := func() error {
-		queryResult, err := queries.HasJournal(ctx, connection, querydb.HasJournalParams{JournalID: storage.Integer(params.JournalId)})
+		queryResult, err := queries.HasJournal(ctx, connection, querydb.HasJournalParams{JournalID: storage.Integer(params.JournalID)})
 		if err != nil {
 			return err
 		}
@@ -441,7 +441,7 @@ func weeklyArticleFilters(ctx context.Context, configuration config.Config, para
 		return filter{}, err
 	}
 	filters := filter{}
-	filters.add("l.journal_id=?", params.JournalId)
+	filters.add("l.journal_id=?", params.JournalID)
 	if match := preparedMatch(ArticleListParams{Query: params.Query}); match != "" {
 		filters.add("l.article_id IN (SELECT rowid FROM article_search WHERE article_search MATCH ?)", match)
 	} else if len(ids) == 0 {
@@ -497,18 +497,18 @@ func validateLegacyWeeklyCount(buckets map[string]*weeklyBucket) error {
 
 // legacyWeeklyDatabase preserves per-journal item order and summary sorting for one publication.
 func legacyWeeklyDatabase(name string, bucket *weeklyBucket, articles []domain.WeeklyArticle) domain.WeeklyDatabase[domain.WeeklyJournalUpdate] {
-	groups := map[identity.Id][]domain.WeeklyArticle{}
+	groups := map[identity.ID][]domain.WeeklyArticle{}
 	for _, article := range articles {
-		groups[article.JournalId] = append(groups[article.JournalId], article)
+		groups[article.JournalID] = append(groups[article.JournalID], article)
 	}
 	journals := make([]domain.WeeklyJournalUpdate, 0, len(groups))
 	for id, items := range groups {
 		title := items[0].JournalTitle
-		journals = append(journals, domain.WeeklyJournalUpdate{WeeklyJournalSummary: domain.WeeklyJournalSummary{JournalId: id, JournalTitle: &title, NewArticleCount: len(items)}, Articles: items})
+		journals = append(journals, domain.WeeklyJournalUpdate{WeeklyJournalSummary: domain.WeeklyJournalSummary{JournalID: id, JournalTitle: &title, NewArticleCount: len(items)}, Articles: items})
 	}
 	compare := weeklyJournalSorter()
 	slices.SortFunc(journals, func(first, second domain.WeeklyJournalUpdate) int {
 		return compare(first.WeeklyJournalSummary, second.WeeklyJournalSummary)
 	})
-	return domain.WeeklyDatabase[domain.WeeklyJournalUpdate]{DbName: name, RunId: bucket.runId, GeneratedAt: bucket.generated.Format(false), NewArticleCount: len(articles), Journals: journals}
+	return domain.WeeklyDatabase[domain.WeeklyJournalUpdate]{DBName: name, RunID: bucket.runID, GeneratedAt: bucket.generated.Format(false), NewArticleCount: len(articles), Journals: journals}
 }

@@ -50,7 +50,7 @@ func executeSettings(t *testing.T, repository *Repository, statement string, arg
 		t.Fatal(err)
 	}
 }
-func textValue(value string) *string { return &value }
+
 func settingInfo(t *testing.T, items []Info, field string) Info {
 	t.Helper()
 	for _, item := range items {
@@ -66,14 +66,14 @@ func TestSecretSettingsPreserveClearAndAuthenticatedPoolRemoval(t *testing.T) {
 	repository, _ := testSettings(t)
 	ctx := context.Background()
 	field := "openalex_api_key_pool"
-	initial, err := repository.Update(ctx, nil, map[string]*string{field: textValue(" first-secret;second-secret\nfirst-secret ")}, nil, nil)
+	initial, err := repository.Update(ctx, nil, map[string]*string{field: new(" first-secret;second-secret\nfirst-secret ")}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	info := settingInfo(t, initial, field)
 	assertInitialSecretProjection(t, info)
 	originalReference := info.SecretItems[0].Reference
-	updated, err := repository.Update(ctx, nil, map[string]*string{field: textValue("  ")}, map[string]PoolUpdate{field: {Remove: []string{originalReference, originalReference}, Add: []string{"third-secret;second-secret"}}}, nil)
+	updated, err := repository.Update(ctx, nil, map[string]*string{field: new("  ")}, map[string]PoolUpdate{field: {Remove: []string{originalReference, originalReference}, Add: []string{"third-secret;second-secret"}}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestSecretSettingsPreserveClearAndAuthenticatedPoolRemoval(t *testing.T) {
 		}
 	}
 	reference := settingInfo(t, updated, field).SecretItems[0].Reference
-	if _, err := repository.Update(ctx, nil, map[string]*string{"semantic_scholar_api_key_pool": textValue("second-secret")}, map[string]PoolUpdate{"semantic_scholar_api_key_pool": {Remove: []string{reference}}}, nil); err == nil {
+	if _, err := repository.Update(ctx, nil, map[string]*string{"semantic_scholar_api_key_pool": new("second-secret")}, map[string]PoolUpdate{"semantic_scholar_api_key_pool": {Remove: []string{reference}}}, nil); err == nil {
 		t.Fatal("cross-field authenticated reference accepted")
 	}
 	cleared, err := repository.Update(ctx, nil, map[string]*string{field: nil}, nil, nil)
@@ -115,22 +115,22 @@ func TestSettingsRollbackAuthorityProxyAndAuditTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 	audit := domain.AuditEvent{Action: "runtime_settings_update", Outcome: "completed", OccurredAt: 2}
-	if _, err := repository.Update(ctx, &admin.Id, map[string]*string{"provider_proxy_policy": textValue(`{"cnki":true}`)}, nil, &audit); err == nil {
+	if _, err := repository.Update(ctx, &admin.ID, map[string]*string{"provider_proxy_policy": new(`{"cnki":true}`)}, nil, &audit); err == nil {
 		t.Fatal("enabled proxy without endpoint accepted")
 	}
-	if _, err := repository.Update(ctx, &admin.Id, map[string]*string{"provider_proxy_policy": textValue(`{"cnki":true}`), "provider_proxy_url": textValue("https://Proxy.Example:443")}, nil, &audit); err != nil {
+	if _, err := repository.Update(ctx, &admin.ID, map[string]*string{"provider_proxy_policy": new(`{"cnki":true}`), "provider_proxy_url": new("https://Proxy.Example:443")}, nil, &audit); err != nil {
 		t.Fatal(err)
 	}
 	executeSettings(t, repository, `CREATE TRIGGER settings_audit_fault BEFORE INSERT ON security_audit_events BEGIN SELECT RAISE(ABORT,'sensitive fault'); END`)
-	if _, err := repository.Update(ctx, &admin.Id, map[string]*string{"secure_cookies": textValue("true")}, nil, &audit); !errors.Is(err, domain.ErrAudit) {
+	if _, err := repository.Update(ctx, &admin.ID, map[string]*string{"secure_cookies": new("true")}, nil, &audit); !errors.Is(err, domain.ErrAudit) {
 		t.Fatalf("required audit did not fail closed: %v", err)
 	}
 	value, err := repository.LoadField(ctx, "secure_cookies")
 	if err != nil || value.Value != "false" || value.Source != "default" {
 		t.Fatal("failed audit retained setting")
 	}
-	executeSettings(t, repository, "UPDATE users SET is_admin=0 WHERE id=?", admin.Id)
-	if _, err := repository.Update(ctx, &admin.Id, map[string]*string{"unknown": textValue("x")}, nil, nil); !errors.Is(err, domain.ErrAdminForbidden) {
+	executeSettings(t, repository, "UPDATE users SET is_admin=0 WHERE id=?", admin.ID)
+	if _, err := repository.Update(ctx, &admin.ID, map[string]*string{"unknown": new("x")}, nil, nil); !errors.Is(err, domain.ErrAdminForbidden) {
 		t.Fatal("validation preempted locked administrator check")
 	}
 }
@@ -142,7 +142,7 @@ func TestSettingsErrorsRetainCategoriesAndCorruptSecretsCannotBeOverwritten(t *t
 		field string
 		value *string
 		kind  ErrorKind
-	}{{"missing", textValue("x"), UnknownSetting}, {"secure_cookies", nil, CannotClearNonSecret}, {"secure_cookies", textValue("bad"), InvalidSetting}} {
+	}{{"missing", new("x"), UnknownSetting}, {"secure_cookies", nil, CannotClearNonSecret}, {"secure_cookies", new("bad"), InvalidSetting}} {
 		_, err := repository.Update(ctx, nil, map[string]*string{scenario.field: scenario.value}, nil, nil)
 		var typed Error
 		if !errors.As(err, &typed) || typed.Kind != scenario.kind {
@@ -150,7 +150,7 @@ func TestSettingsErrorsRetainCategoriesAndCorruptSecretsCannotBeOverwritten(t *t
 		}
 	}
 	executeSettings(t, repository, "INSERT INTO runtime_settings VALUES('openalex_api_key_pool','litradarenc:v1:invalid',1)")
-	if _, err := repository.Update(ctx, nil, map[string]*string{"openalex_api_key_pool": textValue("replacement")}, nil, nil); !errors.Is(err, secrets.ErrAuthentication) {
+	if _, err := repository.Update(ctx, nil, map[string]*string{"openalex_api_key_pool": new("replacement")}, nil, nil); !errors.Is(err, secrets.ErrAuthentication) {
 		t.Fatal("corrupt prior secret was overwritten")
 	}
 	if value, err := repository.LoadField(ctx, "audit_retention_days"); err != nil || value.Value != "180" {
@@ -209,7 +209,7 @@ func assertMissingLoggingDefaults(t *testing.T, ctx context.Context) {
 
 func TestSecretReferencesRemainPublicOnlyInExplicitJson(t *testing.T) {
 	repository, _ := testSettings(t)
-	items, err := repository.Update(context.Background(), nil, map[string]*string{"openalex_api_key_pool": textValue("secret-token")}, nil, nil)
+	items, err := repository.Update(context.Background(), nil, map[string]*string{"openalex_api_key_pool": new("secret-token")}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

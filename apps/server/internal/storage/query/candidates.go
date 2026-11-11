@@ -178,5 +178,5 @@ func candidateFromRow(row scanner) (domain.ArticleCandidate, error) {
 	if err := row.Scan(&id, &journal, &issue, &title, &abstract, &date, &openAccess, &inPress, &doi, &journalTitle); err != nil {
 		return domain.ArticleCandidate{}, err
 	}
-	return domain.ArticleCandidate{ArticleId: int64(id), JournalId: int64(journal), IssueId: issue.Value, Title: string(title), Abstract: string(abstract.V), Date: date.Value, JournalTitle: string(journalTitle), Doi: doi.Value, OpenAccess: openAccess.V != 0, InPress: inPress.V != 0}, nil
+	return domain.ArticleCandidate{ArticleID: int64(id), JournalID: int64(journal), IssueID: issue.Value, Title: string(title), Abstract: string(abstract.V), Date: date.Value, JournalTitle: string(journalTitle), Doi: doi.Value, OpenAccess: openAccess.V != 0, InPress: inPress.V != 0}, nil
 }

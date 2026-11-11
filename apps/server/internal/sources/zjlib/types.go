@@ -27,7 +27,7 @@ func (failure *Error) IsTimeout() bool { return failure.Kind == "Timeout" }
 
 // QrLogin describes the newly created QR challenge.
 type QrLogin struct {
-	Uuid   string `json:"uuid"`
+	UUID   string `json:"uuid"`
 	Status string `json:"status"`
 	QrCode string `json:"qr_code"`
 }
@@ -43,25 +43,25 @@ type ArticleIdentity struct {
 type SearchResult struct {
 	Index       uint64  `json:"index"`
 	Title       string  `json:"title"`
-	DetailUrl   string  `json:"detail_url"`
+	DetailURL   string  `json:"detail_url"`
 	FileName    *string `json:"file_name"`
-	DbName      *string `json:"db_name"`
-	DbCode      *string `json:"db_code"`
-	DownloadUrl *string `json:"download_url"`
+	DBName      *string `json:"db_name"`
+	DBCode      *string `json:"db_code"`
+	DownloadURL *string `json:"download_url"`
 }
 
 // ArticleCandidate associates inspected metadata and a PDF link with its original result.
 type ArticleCandidate struct {
 	Result    SearchResult    `json:"result"`
 	Identity  ArticleIdentity `json:"identity"`
-	DetailUrl string          `json:"detail_url"`
-	PdfUrl    *string         `json:"pdf_url"`
+	DetailURL string          `json:"detail_url"`
+	PdfURL    *string         `json:"pdf_url"`
 }
 
 // DownloadedPdf owns a bounded document and its response metadata.
 type DownloadedPdf struct {
 	Filename    string `json:"filename"`
-	FinalUrl    string `json:"final_url"`
+	FinalURL    string `json:"final_url"`
 	ContentType string `json:"content_type"`
 	ByteCount   uint64 `json:"byte_count"`
 	Content     []byte `json:"content"`
@@ -86,8 +86,8 @@ func NewCookie(name, value, domain string) Cookie {
 	return Cookie{Name: name, Value: value, Domain: domain, Path: "/", Secure: true}
 }
 
-// CookieFromJson ignores malformed entries and preserves original field defaulting.
-func CookieFromJson(value any) *Cookie {
+// CookieFromJSON ignores malformed entries and preserves original field defaulting.
+func CookieFromJSON(value any) *Cookie {
 	name, ok := field(value, "name").(string)
 	if !ok {
 		return nil
@@ -112,8 +112,8 @@ func CookieFromJson(value any) *Cookie {
 	return &cookie
 }
 
-// Json explicitly exports private state for encrypted server-side persistence.
-func (cookie Cookie) Json() map[string]any {
+// JSON explicitly exports private state for encrypted server-side persistence.
+func (cookie Cookie) JSON() map[string]any {
 	return map[string]any{"name": cookie.Name, "value": cookie.Value, "domain": cookie.Domain, "path": cookie.Path, "secure": cookie.Secure, "expires": optionalValue(cookie.Expires), "discard": cookie.Discard, "rest": map[string]any{}}
 }
 
@@ -182,18 +182,18 @@ func int64Field(value any) *int64 {
 	}
 	return nil
 }
-func pointer(value string) *string { return &value }
+
 func cloneString(value *string) *string {
 	if value == nil {
 		return nil
 	}
-	return pointer(*value)
+	return new(*value)
 }
 func cloneResult(value SearchResult) SearchResult {
 	value.FileName = cloneString(value.FileName)
-	value.DbName = cloneString(value.DbName)
-	value.DbCode = cloneString(value.DbCode)
-	value.DownloadUrl = cloneString(value.DownloadUrl)
+	value.DBName = cloneString(value.DBName)
+	value.DBCode = cloneString(value.DBCode)
+	value.DownloadURL = cloneString(value.DownloadURL)
 	return value
 }
 

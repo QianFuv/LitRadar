@@ -50,7 +50,7 @@ func newRegistry() *registry {
 		}
 		return name
 	})
-	inner.RegisterTypeAlias(reflect.TypeFor[identity.Id](), reflect.TypeFor[string]())
+	inner.RegisterTypeAlias(reflect.TypeFor[identity.ID](), reflect.TypeFor[string]())
 	inner.RegisterTypeAlias(reflect.TypeFor[json.RawMessage](), reflect.TypeFor[map[string]any]())
 	inner.RegisterTypeAlias(reflect.TypeFor[delivery.SecretUpdate](), reflect.TypeFor[*string]())
 	inner.RegisterTypeAlias(reflect.TypeFor[scheduler.Job](), reflect.TypeFor[jobSchema]())
@@ -79,8 +79,7 @@ func (r *registry) Schema(value reflect.Type, allowRef bool, hint string) *huma.
 }
 
 func (r *registry) normalizeFields(value reflect.Type, schema *huma.Schema) {
-	for index := 0; index < value.NumField(); index++ {
-		field := value.Field(index)
+	for field := range value.Fields() {
 		if field.Anonymous {
 			typeOf := field.Type
 			if typeOf.Kind() == reflect.Pointer {

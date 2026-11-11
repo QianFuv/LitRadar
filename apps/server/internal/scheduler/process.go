@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -19,7 +20,7 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/transport"
 )
 
-const ParentRunIdArgument = "--litradar-parent-run-id"
+const ParentRunIDArgument = "--litradar-parent-run-id"
 const processHeartbeatInterval = 5 * time.Second
 const processPollInterval = 25 * time.Millisecond
 const processTerminationGrace = 250 * time.Millisecond
@@ -70,9 +71,9 @@ func (config ProcessConfig) run(ctx context.Context, task domain.Task, claim sto
 		return processResult{domain.Error, "Legacy task requires a typed job"}
 	}
 	started := time.Now()
-	ctx = observability.StartSpan(ctx, "litradar_worker::scheduler", "scheduler.run", map[string]any{"component": "scheduler", "worker_id": claim.WorkerId, "task_id": task.Id, "run_id": fmt.Sprint(claim.RunId), "job_id": jobId(task.Id), "job_kind": task.Job.Kind})
-	fields := []any{"worker_id", claim.WorkerId, "task_id", task.Id, "run_id", fmt.Sprint(claim.RunId), "job_id", jobId(task.Id), "job_kind", task.Job.Kind}
-	slog.InfoContext(ctx, "scheduler.run.started", append(fields, "event", "scheduler.run.started", "component", "scheduler", "outcome", "started")...)
+	ctx = observability.StartSpan(ctx, "litradar_worker::scheduler", "scheduler.run", map[string]any{"component": "scheduler", "worker_id": claim.WorkerID, "task_id": task.ID, "run_id": fmt.Sprint(claim.RunID), "job_id": jobID(task.ID), "job_kind": task.Job.Kind})
+	fields := []any{"worker_id", claim.WorkerID, "task_id", task.ID, "run_id", fmt.Sprint(claim.RunID), "job_id", jobID(task.ID), "job_kind", task.Job.Kind}
+	slog.InfoContext(ctx, "scheduler.run.started", append(slices.Clone(fields), "event", "scheduler.run.started", "component", "scheduler", "outcome", "started")...)
 	execution := config.runProcesses(ctx, task, claim, heartbeat)
 	emitTerminal(ctx, "scheduler.run", execution.status, started, fields)
 	return execution
@@ -108,10 +109,10 @@ func (config ProcessConfig) runProcessesWith(ctx context.Context, task domain.Ta
 }
 
 func executeProcess(ctx context.Context, command scheduledProcess, claim store.Claim, ordinal int, deadline time.Time, heartbeatInterval time.Duration, heartbeat func() bool) (result processResult) {
-	ctx = observability.StartSpan(ctx, "litradar_worker::scheduler", "scheduler.child", map[string]any{"component": "scheduler", "worker_id": claim.WorkerId, "task_id": claim.Task.Id, "run_id": fmt.Sprint(claim.RunId), "job_id": jobId(claim.Task.Id), "command": command.command, "process_number": ordinal})
+	ctx = observability.StartSpan(ctx, "litradar_worker::scheduler", "scheduler.child", map[string]any{"component": "scheduler", "worker_id": claim.WorkerID, "task_id": claim.Task.ID, "run_id": fmt.Sprint(claim.RunID), "job_id": jobID(claim.Task.ID), "command": command.command, "process_number": ordinal})
 	started := time.Now()
-	fields := []any{"component", "scheduler", "worker_id", claim.WorkerId, "task_id", claim.Task.Id, "run_id", fmt.Sprint(claim.RunId), "job_id", jobId(claim.Task.Id), "command", command.command, "process_number", ordinal}
-	slog.InfoContext(ctx, "scheduler.child.started", append(fields, "event", "scheduler.child.started", "outcome", "started")...)
+	fields := []any{"component", "scheduler", "worker_id", claim.WorkerID, "task_id", claim.Task.ID, "run_id", fmt.Sprint(claim.RunID), "job_id", jobID(claim.Task.ID), "command", command.command, "process_number", ordinal}
+	slog.InfoContext(ctx, "scheduler.child.started", append(slices.Clone(fields), "event", "scheduler.child.started", "outcome", "started")...)
 	errorKind := "none"
 	var exitCode *int
 	defer func() { logScheduledProcessTerminal(ctx, result, started, fields, errorKind, exitCode) }()
@@ -119,7 +120,7 @@ func executeProcess(ctx context.Context, command scheduledProcess, claim store.C
 		errorKind = "cancelled"
 		return processResult{domain.Cancelled, command.command + ": cancelled"}
 	}
-	args := append(append([]string{}, command.arguments...), ParentRunIdArgument, strconv.FormatInt(claim.RunId, 10))
+	args := append(append([]string{}, command.arguments...), ParentRunIDArgument, strconv.FormatInt(claim.RunID, 10))
 	child, err := process.Start(context.Background(), process.Config{Path: command.path, Args: args, OutputLimit: 2048, InheritStderr: true, InheritStdin: true})
 	if err != nil {
 		errorKind = "spawn_or_assign_failed"
@@ -158,7 +159,7 @@ func logScheduledProcessTerminal(ctx context.Context, result processResult, star
 	if result.status != domain.Success {
 		event, outcome, level = "scheduler.child.failed", "failure", slog.LevelWarn
 	}
-	terminalFields := append(fields, "event", event, "outcome", outcome, "status", result.status, "duration_ms", time.Since(started).Milliseconds())
+	terminalFields := append(slices.Clone(fields), "event", event, "outcome", outcome, "status", result.status, "duration_ms", time.Since(started).Milliseconds())
 	if errorKind != "none" {
 		terminalFields = append(terminalFields, "error_kind", errorKind)
 	}
@@ -212,8 +213,7 @@ func classifyScheduledProcessExit(commandName string, waitError error) (result p
 	result.status = domain.Success
 	errorKind = "none"
 	if waitError != nil {
-		var failure *exec.ExitError
-		if errors.As(waitError, &failure) {
+		if failure, ok := errors.AsType[*exec.ExitError](waitError); ok {
 			result.status = domain.Failed
 			errorKind = "nonzero_exit"
 			code := failure.ExitCode()

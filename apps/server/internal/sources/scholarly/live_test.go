@@ -24,8 +24,8 @@ func loopbackLive(t *testing.T, handler http.HandlerFunc, keys int, workers int)
 	t.Cleanup(server.Close)
 	config := ConfigFromValuePools(3, "", "", "fixture@example.test").WithScheduleEpoch(saturatedUint64(unixScheduleTime().millis()))
 	for index := range keys {
-		config.OpenAlexApiKeys = append(config.OpenAlexApiKeys, fmt.Sprintf("oa-secret-%d", index))
-		config.SemanticScholarApiKeys = append(config.SemanticScholarApiKeys, fmt.Sprintf("s2-secret-%d", index))
+		config.OpenAlexAPIKeys = append(config.OpenAlexAPIKeys, fmt.Sprintf("oa-secret-%d", index))
+		config.SemanticScholarAPIKeys = append(config.SemanticScholarAPIKeys, fmt.Sprintf("s2-secret-%d", index))
 	}
 	live, err := NewLiveTransport(config, workers, transport.Proxy{})
 	if err != nil {

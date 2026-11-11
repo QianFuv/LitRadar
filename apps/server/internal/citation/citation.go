@@ -186,7 +186,7 @@ func (output *boundedText) xml(value string) {
 		case '\'':
 			output.write("&apos;")
 		default:
-			if isXmlCharacter(character) {
+			if isXMLCharacter(character) {
 				output.write(string(character))
 			} else {
 				output.write(" ")
@@ -195,8 +195,8 @@ func (output *boundedText) xml(value string) {
 	}
 }
 
-// EndnoteXml preserves the existing field layout and replaces characters forbidden by XML 1.0.
-func EndnoteXml(articles []domain.FavoriteCitation, maximumBytes int) (string, error) {
+// EndnoteXML preserves the existing field layout and replaces characters forbidden by XML 1.0.
+func EndnoteXML(articles []domain.FavoriteCitation, maximumBytes int) (string, error) {
 	output := boundedText{maximum: maximumBytes}
 	output.write(`<?xml version="1.0" encoding="UTF-8"?><xml><records>`)
 	for _, article := range articles {
@@ -264,6 +264,6 @@ func isBibtexKeyCharacter(character rune) bool {
 	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9'
 }
 
-func isXmlCharacter(character rune) bool {
+func isXMLCharacter(character rune) bool {
 	return character == 9 || character == 10 || character == 13 || character >= 0x20 && character <= 0xd7ff || character >= 0xe000 && character <= 0xfffd || character >= 0x10000 && character <= 0x10ffff
 }

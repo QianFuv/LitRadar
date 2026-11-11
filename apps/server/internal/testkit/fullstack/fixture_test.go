@@ -50,7 +50,7 @@ func TestFixtureSeedsRealStorageAndRefreshesOriginalOverHttp(t *testing.T) {
 		t.Fatal(output.String())
 	}
 	configuration := config.FromProjectRoot(root)
-	accounts, err := authstorage.Open(configuration.AuthDbPath)
+	accounts, err := authstorage.Open(configuration.AuthDBPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,9 +69,9 @@ func TestFixtureSeedsRealStorageAndRefreshesOriginalOverHttp(t *testing.T) {
 			t.Errorf("content.Close: %v", err)
 		}
 	}()
-	articleId := fixtureArticleIdentity(t, ctx, content)
-	assertFixtureWeeklyManifest(t, root, articleId)
-	repository, err := cfpstorage.Open(configuration.AuthDbPath)
+	articleID := fixtureArticleIdentity(t, ctx, content)
+	assertFixtureWeeklyManifest(t, root, articleID)
+	repository, err := cfpstorage.Open(configuration.AuthDBPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,15 +122,15 @@ func fixtureArticleIdentity(t *testing.T, ctx context.Context, content *indexsto
 		t.Fatal(count, err)
 	}
 	var authors string
-	var articleId int64
-	if err := content.QueryRowContext(ctx, "SELECT article_id,authors_json FROM articles WHERE doi=?", articleDoi).Scan(&articleId, &authors); err != nil || authors != `["Ada Lovelace","Grace Hopper"]` {
+	var articleID int64
+	if err := content.QueryRowContext(ctx, "SELECT article_id,authors_json FROM articles WHERE doi=?", articleDoi).Scan(&articleID, &authors); err != nil || authors != `["Ada Lovelace","Grace Hopper"]` {
 		t.Fatal("legacy author format not retained", authors, err)
 	}
-	return articleId
+	return articleID
 }
 
 // assertFixtureWeeklyManifest checks one matching ID and an RFC3339Nano generation timestamp.
-func assertFixtureWeeklyManifest(t *testing.T, root string, articleId int64) {
+func assertFixtureWeeklyManifest(t *testing.T, root string, articleID int64) {
 	t.Helper()
 	manifest, err := os.ReadFile(filepath.Join(root, "data", "push_state", "full-stack.changes.json"))
 	if err != nil {
@@ -140,7 +140,7 @@ func assertFixtureWeeklyManifest(t *testing.T, root string, articleId int64) {
 		Ids         []int64 `json:"notifiable_article_ids"`
 		GeneratedAt string  `json:"generated_at"`
 	}
-	if err := json.Unmarshal(manifest, &weekly); err != nil || len(weekly.Ids) != 1 || weekly.Ids[0] != articleId || weekly.GeneratedAt == "" {
+	if err := json.Unmarshal(manifest, &weekly); err != nil || len(weekly.Ids) != 1 || weekly.Ids[0] != articleID || weekly.GeneratedAt == "" {
 		t.Fatal("weekly fixture changed", weekly, err)
 	}
 	if _, err := time.Parse(time.RFC3339Nano, weekly.GeneratedAt); err != nil {

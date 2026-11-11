@@ -54,7 +54,7 @@ func TestDrainHttpForcesNetworkWhileHandlerCloseIsBlocked(t *testing.T) {
 	closed := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		done <- drainHttp(ctx, server, func() error { <-handlerDone; close(closed); return nil }, handlers)
+		done <- drainHTTP(ctx, server, func() error { <-handlerDone; close(closed); return nil }, handlers)
 	}()
 	select {
 	case err := <-done:
@@ -93,7 +93,7 @@ func TestHttpShutdownForcesUnfinishedPostWithinNetworkBudget(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- prepared.runHttp(ctx) }()
+	go func() { done <- prepared.runHTTP(ctx) }()
 	connection, err := net.Dial("tcp", prepared.listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)

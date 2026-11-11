@@ -122,7 +122,7 @@ func migrateLegacyAnchors(ctx context.Context, connection *sql.Conn) error {
 }
 
 func isLegacyComplete(value string) bool {
-	if !jsonvalue.ValidJson(value) {
+	if !jsonvalue.ValidJSON(value) {
 		return false
 	}
 	decoder := json.NewDecoder(bytes.NewBufferString(value))
@@ -134,7 +134,7 @@ func isLegacyComplete(value string) bool {
 }
 
 func isCompleteLegacyAnchor(value [5]sqlite.Text) bool {
-	return !(value[0] == "" || value[1] == "" || value[2] == "" || value[4] == "" || !isLegacyComplete(string(value[3])))
+	return value[0] != "" && value[1] != "" && value[2] != "" && value[4] != "" && isLegacyComplete(string(value[3]))
 }
 
 func readLegacyCompleteState(decoder *json.Decoder) bool {

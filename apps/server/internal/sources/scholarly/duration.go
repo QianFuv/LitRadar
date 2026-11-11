@@ -111,10 +111,10 @@ func phaseAtOrAfter(next, now, period scheduleTime) scheduleTime {
 	aligned.Add(aligned, nextMillis)
 	return milliseconds(saturatedUint64(aligned))
 }
-func processContext(processId, processCount uint64) (uint32, uint32) {
+func processContext(processID, processCount uint64) (uint32, uint32) {
 	processCount = max(processCount, 1)
-	processId = min(processId, processCount-1)
-	return uint32(min(processId, math.MaxUint32)), uint32(min(processCount, math.MaxUint32))
+	processID = min(processID, processCount-1)
+	return uint32(min(processID, math.MaxUint32)), uint32(min(processCount, math.MaxUint32))
 }
 func saturatingMultiply(first, second uint64) uint64 {
 	high, low := bits.Mul64(first, second)

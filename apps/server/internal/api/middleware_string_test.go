@@ -224,11 +224,11 @@ func TestPolicyOversizedDeclaredString(t *testing.T) {
 func TestFavoriteExportResponse(t *testing.T) {
 	_, _, router, token := favoriteFixture(t)
 	created := authRequest(router, "POST", "/api/favorites/folders", `{"name":"string-write"}`, token)
-	var folder struct{ Id int64 }
+	var folder struct{ ID int64 }
 	if created.Code != 200 || json.Unmarshal(created.Body.Bytes(), &folder) != nil {
 		t.Fatal("folder creation failed", created)
 	}
-	path := fmt.Sprintf("/api/favorites/folders/%d", folder.Id)
+	path := fmt.Sprintf("/api/favorites/folders/%d", folder.ID)
 	added := authRequest(router, "POST", path+"/articles", `{"article_id":"1","db_name":"unavailable"}`, token)
 	if added.Code != 200 {
 		t.Fatal("favorite creation failed", added)
@@ -257,7 +257,7 @@ func BenchmarkPolicyHttpStringResponses(b *testing.B) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	defer slog.SetDefault(previous)
 	payload := map[string]any{"abstract": strings.Repeat("A", 256<<10)}
-	encoded, err := jsonvalue.EncodeJson(payload)
+	encoded, err := jsonvalue.EncodeJSON(payload)
 	if err != nil {
 		b.Fatal(err)
 	}

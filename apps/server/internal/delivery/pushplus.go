@@ -34,7 +34,7 @@ func (message PushplusMessage) LogValue() slog.Value { return slog.StringValue(m
 type PushplusError struct {
 	Kind              string
 	StatusCode        int
-	RequestId         *string
+	RequestID         *string
 	RetryAfterSeconds *uint64
 	Code              *int64
 	message           string
@@ -49,8 +49,8 @@ func (err *PushplusError) Error() string {
 		return "PushPlus request timed out"
 	case "http_status":
 		message := fmt.Sprintf("PushPlus request failed with HTTP %d", err.StatusCode)
-		if err.RequestId != nil {
-			message += " (request ID: " + *err.RequestId + ")"
+		if err.RequestID != nil {
+			message += " (request ID: " + *err.RequestID + ")"
 		}
 		return message
 	case "api_error":
@@ -68,7 +68,7 @@ func (err *PushplusError) Unwrap() error { return err.control }
 
 // PushplusClient retries only connection establishment failures to avoid duplicate sends.
 type PushplusClient struct {
-	transport     outbound.JsonTransport
+	transport     outbound.JSONTransport
 	retryAttempts int
 	timeout       time.Duration
 	control       *domain.ExecutionControl
@@ -82,7 +82,7 @@ func NewPushplusClient(retryAttempts int, timeout time.Duration, control *domain
 }
 
 // Send preserves success message IDs and stops after any potentially delivered attempt.
-func (client *PushplusClient) Send(ctx context.Context, message PushplusMessage) (messageId string, resultError error) {
+func (client *PushplusClient) Send(ctx context.Context, message PushplusMessage) (messageID string, resultError error) {
 	ctx = observability.StartSpan(ctx, "litradar_worker::pushplus", "pushplus.delivery", map[string]any{"component": "delivery", "provider": "pushplus", "endpoint": "send"})
 	started := time.Now()
 	logger := slog.Default().With("component", "delivery", "provider", "pushplus", "endpoint", "send")
@@ -111,7 +111,7 @@ func pushplusBody(message PushplusMessage) any {
 
 func pushplusResponse(response outbound.Response) (string, *PushplusError) {
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return "", &PushplusError{Kind: "http_status", StatusCode: response.StatusCode, RequestId: response.RequestId, RetryAfterSeconds: response.RetryAfterSeconds}
+		return "", &PushplusError{Kind: "http_status", StatusCode: response.StatusCode, RequestID: response.RequestID, RetryAfterSeconds: response.RetryAfterSeconds}
 	}
 	object, ok := response.Body.(map[string]any)
 	if !ok {
@@ -128,7 +128,7 @@ func pushplusResponse(response outbound.Response) (string, *PushplusError) {
 	if text, ok := data.(string); ok {
 		return text, nil
 	}
-	encoded, err := sources.Json(data)
+	encoded, err := sources.JSON(data)
 	if err != nil {
 		return "", &PushplusError{Kind: "invalid_response", message: "PushPlus response is not a JSON object"}
 	}
@@ -156,13 +156,12 @@ func (client *PushplusClient) pushplusAttemptTimeout() (time.Duration, error) {
 }
 
 func (client *PushplusClient) sendPushplusAttempt(ctx context.Context, message PushplusMessage, timeout time.Duration) (string, outbound.Response, *PushplusError) {
-	response, err := client.transport.PostJson(ctx, PushplusEndpoint, nil, pushplusBody(message), timeout)
+	response, err := client.transport.PostJSON(ctx, PushplusEndpoint, nil, pushplusBody(message), timeout)
 	var failure *PushplusError
-	var messageId string
+	var messageID string
 	if err != nil {
 		kind, message := "transport", string(outbound.RequestFailed)
-		var transportError outbound.Error
-		if errors.As(err, &transportError) {
+		if transportError, ok := errors.AsType[outbound.Error](err); ok {
 			message = transportError.Error()
 		}
 		if errors.Is(err, outbound.ConnectFailed) {
@@ -172,9 +171,9 @@ func (client *PushplusClient) sendPushplusAttempt(ctx context.Context, message P
 		}
 		failure = &PushplusError{Kind: kind, message: message}
 	} else {
-		messageId, failure = pushplusResponse(response)
+		messageID, failure = pushplusResponse(response)
 	}
-	return messageId, response, failure
+	return messageID, response, failure
 }
 
 func logPushplusAttemptFailure(ctx context.Context, logger *slog.Logger, failure *PushplusError, attempt int, willRetry bool, attemptStarted time.Time) {
@@ -200,10 +199,10 @@ func (client *PushplusClient) sendAttempts(ctx context.Context, logger *slog.Log
 			return "", controlPushplusError(err)
 		}
 		attemptStarted := time.Now()
-		messageId, response, failure := client.sendPushplusAttempt(ctx, message, timeout)
+		messageID, response, failure := client.sendPushplusAttempt(ctx, message, timeout)
 		if failure == nil {
 			logger.InfoContext(ctx, "pushplus.request.completed", "event", "pushplus.request.completed", "outcome", "success", "attempt", attempt+1, "http_status", response.StatusCode, "duration_ms", time.Since(attemptStarted).Milliseconds())
-			return messageId, nil
+			return messageID, nil
 		}
 		willRetry := attempt < client.retryAttempts && failure.Kind == "connect_failed"
 		logPushplusAttemptFailure(ctx, logger, failure, attempt, willRetry, attemptStarted)

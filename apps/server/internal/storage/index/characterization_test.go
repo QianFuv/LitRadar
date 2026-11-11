@@ -25,8 +25,8 @@ func TestCanonicalAuthorDecodingRejectsInvalidFormats(t *testing.T) {
 }
 
 func TestResolvedDraftPublicationFallbackAndOwnership(t *testing.T) {
-	left := domain.ArticleDraft{CatalogId: "catalog", Title: "left", PublicationYear: ptr(int64(2025)), Date: ptr("2025-12-01"), Authors: []domain.ArticleAuthorDraft{{DisplayName: "A"}}, RetractionDois: []string{"x"}}
-	right := domain.ArticleDraft{CatalogId: "catalog", Title: "right", PublicationYear: ptr(int64(2026))}
+	left := domain.ArticleDraft{CatalogID: "catalog", Title: "left", PublicationYear: new(int64(2025)), Date: new("2025-12-01"), Authors: []domain.ArticleAuthorDraft{{DisplayName: "A"}}, RetractionDois: []string{"x"}}
+	right := domain.ArticleDraft{CatalogID: "catalog", Title: "right", PublicationYear: new(int64(2026))}
 	merged, err := MergeResolvedArticleDrafts(left, right)
 	if err != nil || merged.Date != nil || merged.PublicationYear == nil || *merged.PublicationYear != 2026 {
 		t.Fatalf("incompatible fallback admitted: %+v %v", merged, err)

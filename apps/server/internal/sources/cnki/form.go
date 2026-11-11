@@ -16,7 +16,7 @@ func JournalSearchForm(keyword, fieldName string) map[string]string {
 			}}}},
 		},
 	}
-	encoded, err := domain.Json(state)
+	encoded, err := domain.JSON(state)
 	if err != nil {
 		encoded = []byte("{}")
 	}

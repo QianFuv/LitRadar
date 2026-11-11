@@ -14,12 +14,12 @@ import (
 
 // ContentChangeEvent describes one durable membership change independently of its source provider.
 type ContentChangeEvent struct {
-	EventId         int64  `json:"event_id"`
+	EventID         int64  `json:"event_id"`
 	ContentRevision string `json:"content_revision"`
-	ArticleId       int64  `json:"article_id"`
+	ArticleID       int64  `json:"article_id"`
 	ChangeKind      string `json:"change_kind"`
-	JournalId       int64  `json:"journal_id"`
-	IssueId         *int64 `json:"issue_id"`
+	JournalID       int64  `json:"journal_id"`
+	IssueID         *int64 `json:"issue_id"`
 	InPress         bool   `json:"in_press"`
 	CreatedAt       string `json:"created_at"`
 }
@@ -27,19 +27,19 @@ type ContentChangeEvent struct {
 // PreparedContentChangeManifest retains exact publication bytes and their inclusive outbox cursor.
 type PreparedContentChangeManifest struct {
 	Payload        []byte
-	ThroughEventId *int64
+	ThroughEventID *int64
 	EventCount     uint64
 }
 
 // Format excludes publication payload bytes from diagnostic output.
 func (value PreparedContentChangeManifest) Format(state fmt.State, verb rune) {
-	_, _ = fmt.Fprintf(state, "PreparedContentChangeManifest{payload_bytes:%d through_event_id:%v event_count:%d}", len(value.Payload), value.ThroughEventId, value.EventCount)
+	_, _ = fmt.Fprintf(state, "PreparedContentChangeManifest{payload_bytes:%d through_event_id:%v event_count:%d}", len(value.Payload), value.ThroughEventID, value.EventCount)
 }
 
 // ListContentChangeEvents reads at most 10,000 typed outbox events in identifier order.
 func ListContentChangeEvents(ctx context.Context, connection *sql.Conn, after int64, limit uint64) ([]ContentChangeEvent, error) {
 	if limit == 0 || limit > 10000 {
-		return nil, fmt.Errorf("Invalid parameter name: content change limit must be between 1 and 10000")
+		return nil, fmt.Errorf("invalid parameter name: content change limit must be between 1 and 10000")
 	}
 	rows, err := contentQueries.ContentChanges(ctx, connection, contentdb.ContentChangesParams{EventID: sqlite.Integer(after), Limit: int64(limit)})
 	if err != nil {
@@ -87,7 +87,7 @@ func PrepareContentChangeManifest(ctx context.Context, connection *sql.Conn, dat
 		if len(page) == 0 {
 			break
 		}
-		cursor = page[len(page)-1].EventId
+		cursor = page[len(page)-1].EventID
 		events = append(events, page...)
 		if len(page) < 1000 {
 			break
@@ -99,7 +99,7 @@ func PrepareContentChangeManifest(ctx context.Context, connection *sql.Conn, dat
 	}
 	var through *int64
 	if len(events) > 0 {
-		through = ptr(events[len(events)-1].EventId)
+		through = new(events[len(events)-1].EventID)
 	}
 	return PreparedContentChangeManifest{append(payload, '\n'), through, uint64(len(events))}, nil
 }
@@ -109,15 +109,16 @@ func manifestPayload(database, run, generatedAt string, events []ContentChangeEv
 	inPress, notifiable, added, removed := map[int64]bool{}, map[int64]bool{}, map[int64]bool{}, map[int64]bool{}
 	for _, event := range events {
 		if event.InPress {
-			inPress[event.JournalId] = true
-		} else if event.IssueId != nil {
-			issues[strconv.FormatInt(event.JournalId, 10)+":"+strconv.FormatInt(*event.IssueId, 10)] = true
+			inPress[event.JournalID] = true
+		} else if event.IssueID != nil {
+			issues[strconv.FormatInt(event.JournalID, 10)+":"+strconv.FormatInt(*event.IssueID, 10)] = true
 		}
-		if event.ChangeKind == "upsert" {
-			added[event.ArticleId] = true
-			notifiable[event.ArticleId] = true
-		} else if event.ChangeKind == "remove" {
-			removed[event.ArticleId] = true
+		switch event.ChangeKind {
+		case "upsert":
+			added[event.ArticleID] = true
+			notifiable[event.ArticleID] = true
+		case "remove":
+			removed[event.ArticleID] = true
 		}
 	}
 	issueKeys := make([]string, 0, len(issues))
@@ -146,8 +147,8 @@ func WriteContentChangeManifest(ctx context.Context, connection *sql.Conn, datab
 	if err := PublishContentChangeManifest(path, prepared.Payload); err != nil {
 		return 0, err
 	}
-	if prepared.ThroughEventId != nil {
-		if _, err := AcknowledgeContentChangeEvents(ctx, connection, *prepared.ThroughEventId); err != nil {
+	if prepared.ThroughEventID != nil {
+		if _, err := AcknowledgeContentChangeEvents(ctx, connection, *prepared.ThroughEventID); err != nil {
 			return 0, err
 		}
 	}

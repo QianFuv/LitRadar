@@ -1,3 +1,4 @@
+// Package logfilter parses and evaluates runtime slog filtering directives.
 package logfilter
 
 import (
@@ -49,7 +50,7 @@ func Parse(value string) (*Filter, error) {
 		return nil, errors.New("invalid LitRadar log filter")
 	}
 	filter := &Filter{}
-	for _, text := range strings.Split(value, ",") {
+	for text := range strings.SplitSeq(value, ",") {
 		if text == "" {
 			continue
 		}
@@ -177,23 +178,25 @@ func (parser *directiveParser) consume(position int, character rune) error {
 
 // consumeTarget records an explicit target before a level or span selector.
 func (parser *directiveParser) consumeTarget(position int, character rune) {
-	if character == '=' {
-		parser.result.target = textPointer(parser.input[parser.offset:position])
+	switch character {
+	case '=':
+		parser.result.target = new(parser.input[parser.offset:position])
 		parser.state, parser.offset = directiveLevel, position+1
-	} else if character == '[' {
-		parser.result.target = textPointer(parser.input[parser.offset:position])
+	case '[':
+		parser.result.target = new(parser.input[parser.offset:position])
 		parser.state, parser.offset = directiveSpan, position+1
 	}
 }
 
 // consumeSpan records a span name and enters its optional field selector.
 func (parser *directiveParser) consumeSpan(position int, character rune) {
-	if character == ']' {
-		parser.result.span = textPointer(parser.input[parser.offset:position])
+	switch character {
+	case ']':
+		parser.result.span = new(parser.input[parser.offset:position])
 		parser.state = directiveTarget
-	} else if character == '{' {
+	case '{':
 		if position > parser.offset {
-			parser.result.span = textPointer(parser.input[parser.offset:position])
+			parser.result.span = new(parser.input[parser.offset:position])
 		}
 		parser.state, parser.offset = directiveField, position+1
 	}
@@ -222,15 +225,12 @@ func (parser *directiveParser) finish() {
 		if parsed, exists := parseLevel(value); exists {
 			parser.result.level = parsed
 		} else {
-			parser.result.target = textPointer(value)
+			parser.result.target = new(value)
 		}
 	} else if parser.state == directiveLevel && value != "" {
 		parser.result.level, _ = parseLevel(value)
 	}
 }
-
-// textPointer retains an independent directive text value.
-func textPointer(text string) *string { return &text }
 
 var floatSyntax = regexp.MustCompile(`^[+-]?(?:(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|(?i:inf(?:inity)?|nan))$`)
 

@@ -11,8 +11,8 @@ import (
 	whatwg "github.com/nlnwa/whatwg-url/url"
 )
 
-// ErrProxyUrl contains no upstream authority or credentials.
-var ErrProxyUrl = errors.New("Invalid Provider proxy URL")
+// ErrProxyURL contains no upstream authority or credentials.
+var ErrProxyURL = errors.New("invalid Provider proxy URL")
 
 // Proxy selects direct or explicit networking without ambient proxy discovery.
 // Its zero value is direct and all implicit formatting redacts the configured URL.
@@ -22,18 +22,18 @@ type Proxy struct{ raw, canonical string }
 func ExplicitProxy(value string) (Proxy, error) {
 	location, err := whatwg.NewParser().Parse(value)
 	if err != nil {
-		return Proxy{}, ErrProxyUrl
+		return Proxy{}, ErrProxyURL
 	}
 	hasCompleteUserinfo, hasValidUserinfo := proxyUserinfo(location)
 	if !hasValidUserinfo || !validProxyEndpoint(location) {
-		return Proxy{}, ErrProxyUrl
+		return Proxy{}, ErrProxyURL
 	}
 	canonical := location.Href(false)
 	if hasCompleteUserinfo {
 		username, userError := url.PathUnescape(location.Username())
 		password, passwordError := url.PathUnescape(location.Password())
 		if userError != nil || passwordError != nil {
-			return Proxy{}, ErrProxyUrl
+			return Proxy{}, ErrProxyURL
 		}
 		credentials := url.UserPassword(LossyUtf8([]byte(username)), LossyUtf8([]byte(password))).String()
 		_, authority, _ := strings.Cut(canonical, "://")
@@ -42,7 +42,7 @@ func ExplicitProxy(value string) (Proxy, error) {
 	}
 	wire, err := platform.New(canonical)
 	if err != nil {
-		return Proxy{}, ErrProxyUrl
+		return Proxy{}, ErrProxyURL
 	}
 	wire.CloseIdleConnections()
 	return Proxy{raw: value, canonical: canonical}, nil
@@ -51,14 +51,14 @@ func ExplicitProxy(value string) (Proxy, error) {
 // IsExplicit reports whether the decision has an explicit managed proxy.
 func (proxy Proxy) IsExplicit() bool { return proxy.canonical != "" }
 
-// Url returns the credential-bearing URL only for explicit bootstrap propagation.
-func (proxy Proxy) Url() (string, bool) { return proxy.raw, proxy.IsExplicit() }
+// URL returns the credential-bearing URL only for explicit bootstrap propagation.
+func (proxy Proxy) URL() (string, bool) { return proxy.raw, proxy.IsExplicit() }
 
 // Transport constructs a dedicated direct-or-explicit transport with no fallback.
 func (proxy Proxy) Transport() (*http.Transport, error) {
 	wire, err := platform.New(proxy.canonical)
 	if err != nil {
-		return nil, ErrProxyUrl
+		return nil, ErrProxyURL
 	}
 	return wire, nil
 }

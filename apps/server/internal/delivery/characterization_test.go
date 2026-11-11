@@ -10,8 +10,8 @@ import (
 
 func TestManualAggregationCountsDuplicatesAndEmptyMessageIds(t *testing.T) {
 	outcomes := []RunOutcome{
-		{DbName: "same.sqlite", Status: "failed", CandidateArticleIds: []int64{7, 7}, Subscribers: []SubscriberPlan{{SelectedArticleIds: []int64{7, 7}, FolderSyncedCount: 2, MessageId: pointer("")}}},
-		{DbName: "same.sqlite", Status: "unknown", CandidateArticleIds: []int64{7}, Subscribers: []SubscriberPlan{{SelectedArticleIds: []int64{7}, FolderSyncedCount: 1}}},
+		{DBName: "same.sqlite", Status: "failed", CandidateArticleIds: []int64{7, 7}, Subscribers: []SubscriberPlan{{SelectedArticleIds: []int64{7, 7}, FolderSyncedCount: 2, MessageID: new("")}}},
+		{DBName: "same.sqlite", Status: "unknown", CandidateArticleIds: []int64{7}, Subscribers: []SubscriberPlan{{SelectedArticleIds: []int64{7}, FolderSyncedCount: 1}}},
 	}
 	result := manualOutcomeFromDelivery("pushplus", nil, outcomes)
 	if result.Status != "unknown" || result.Selected != 3 || result.Pushed != 3 || result.TotalCandidates == nil || *result.TotalCandidates != 3 || result.Message != "same.sqlite delivery failed; same.sqlite delivery outcome is unknown" {
@@ -20,7 +20,7 @@ func TestManualAggregationCountsDuplicatesAndEmptyMessageIds(t *testing.T) {
 }
 
 func TestManualAggregationCountsEmptyNonNilMessageId(t *testing.T) {
-	result := manualOutcomeFromDelivery("pushplus", nil, []RunOutcome{{DbName: "same.sqlite", Status: "completed", Subscribers: []SubscriberPlan{{SelectedArticleIds: []int64{7}, MessageId: pointer("")}}}})
+	result := manualOutcomeFromDelivery("pushplus", nil, []RunOutcome{{DBName: "same.sqlite", Status: "completed", Subscribers: []SubscriberPlan{{SelectedArticleIds: []int64{7}, MessageID: new("")}}}})
 	if result.Message != "PushPlus sent successfully (1 message); selected 1 article across 1 database" {
 		t.Fatal("empty non-nil message id stopped counting as a message")
 	}
@@ -38,7 +38,7 @@ func TestDeliveryRenewRetainsUpdatedRunWhenLeaseRenewalFails(t *testing.T) {
 	if err := run.renew(ctx, repository, 101); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("lease conflict: %v", err)
 	}
-	current, err := repository.LoadRun(ctx, run.run.Id)
+	current, err := repository.LoadRun(ctx, run.run.ID)
 	if err != nil || run.run.Revision != revision+1 || current.Revision != run.run.Revision {
 		t.Fatal("successful run renewal was lost", err)
 	}
@@ -52,7 +52,7 @@ func TestDeliverySameExpiredAttemptDoesNotSetCompetingTakeoverFlag(t *testing.T)
 		t.Fatal(err)
 	}
 	next, _, err := admitDurableRun(ctx, repository, config, nil, "same-attempt", 3700)
-	if err != nil || next == nil || next.run.Id != first.run.Id || next.didTakeOverCompetingRun {
+	if err != nil || next == nil || next.run.ID != first.run.ID || next.didTakeOverCompetingRun {
 		t.Fatal("direct expired claim was classified as a competing takeover", err)
 	}
 }

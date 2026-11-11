@@ -73,7 +73,7 @@ type CNKILoginPollRequest struct {
 // FavoriteAdd describes favorite creation request payload.
 type FavoriteAdd struct {
 	// ArticleID describes article identifier.
-	ArticleID identity.Id `json:"article_id" nullable:"false" pattern:"^[1-9][0-9]*$" doc:"Article identifier."`
+	ArticleID identity.ID `json:"article_id" nullable:"false" pattern:"^[1-9][0-9]*$" doc:"Article identifier."`
 	// DBName describes source index database name.
 	DBName string `json:"db_name,omitempty" nullable:"false" maxLength:"255" doc:"Source index database name."`
 	// Note describes user note text.
@@ -83,7 +83,7 @@ type FavoriteAdd struct {
 // FavoriteArticleRef describes favorite article reference used by bulk operations.
 type FavoriteArticleRef struct {
 	// ArticleID describes article identifier.
-	ArticleID identity.Id `json:"article_id" nullable:"false" pattern:"^[1-9][0-9]*$" doc:"Article identifier."`
+	ArticleID identity.ID `json:"article_id" nullable:"false" pattern:"^[1-9][0-9]*$" doc:"Article identifier."`
 	// DBName describes source index database name.
 	DBName string `json:"db_name,omitempty" nullable:"false" maxLength:"255" doc:"Source index database name."`
 }
@@ -91,7 +91,7 @@ type FavoriteArticleRef struct {
 // FavoriteBatchCheckRequest describes batch favorite check request.
 type FavoriteBatchCheckRequest struct {
 	// ArticleIDs describes article identifiers to check.
-	ArticleIDs []identity.Id `json:"article_ids" nullable:"false" maxItems:"500" doc:"Article identifiers to check."`
+	ArticleIDs []identity.ID `json:"article_ids" nullable:"false" maxItems:"500" doc:"Article identifiers to check."`
 	// DBName describes source index database name.
 	DBName string `json:"db_name,omitempty" nullable:"false" maxLength:"255" doc:"Source index database name."`
 }
@@ -277,9 +277,9 @@ type EmailUpdateRequest struct {
 // NotificationSettingsUpdate describes notification settings update payload.
 type NotificationSettingsUpdate struct {
 	// AIAPIKey describes primary AI API key update: omitted preserves, null clears, and non-empty replaces.
-	AIAPIKey delivery.SecretUpdate `json:"ai_api_key,omitempty" nullable:"true" doc:"Primary AI API key update: omitted preserves, null clears, and non-empty replaces."`
+	AIAPIKey delivery.SecretUpdate `json:"ai_api_key" required:"false" nullable:"true" doc:"Primary AI API key update: omitted preserves, null clears, and non-empty replaces."`
 	// AIBackupAPIKey describes backup AI API key update: omitted preserves, null clears, and non-empty replaces.
-	AIBackupAPIKey delivery.SecretUpdate `json:"ai_backup_api_key,omitempty" nullable:"true" doc:"Backup AI API key update: omitted preserves, null clears, and non-empty replaces."`
+	AIBackupAPIKey delivery.SecretUpdate `json:"ai_backup_api_key" required:"false" nullable:"true" doc:"Backup AI API key update: omitted preserves, null clears, and non-empty replaces."`
 	// AIBackupBaseURL describes backup AI endpoint base URL.
 	AIBackupBaseURL string `json:"ai_backup_base_url,omitempty" nullable:"false" maxLength:"2048" doc:"Backup AI endpoint base URL."`
 	// AIBackupModel describes backup AI model.
@@ -307,7 +307,7 @@ type NotificationSettingsUpdate struct {
 	// PushplusTemplate describes pushPlus template.
 	PushplusTemplate string `json:"pushplus_template,omitempty" nullable:"false" maxLength:"64" doc:"PushPlus template." default:"markdown"`
 	// PushplusToken describes pushPlus token update: omitted preserves, null clears, and non-empty replaces.
-	PushplusToken delivery.SecretUpdate `json:"pushplus_token,omitempty" nullable:"true" doc:"PushPlus token update: omitted preserves, null clears, and non-empty replaces."`
+	PushplusToken delivery.SecretUpdate `json:"pushplus_token" required:"false" nullable:"true" doc:"PushPlus token update: omitted preserves, null clears, and non-empty replaces."`
 	// PushplusTopic describes pushPlus topic.
 	PushplusTopic string `json:"pushplus_topic,omitempty" nullable:"false" maxLength:"200" doc:"PushPlus topic."`
 	// SelectedDatabases describes selected index database names.

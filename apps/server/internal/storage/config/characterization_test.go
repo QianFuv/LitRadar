@@ -105,7 +105,7 @@ func TestCanonicalStemAdmissionFollowsOrdinarySelection(t *testing.T) {
 	configuration := FromProjectRoot(t.TempDir())
 	writeConfigEntry(t, configuration.IndexDir, "Unsafe.sqlite")
 	selection := "Unsafe"
-	actual, err := configuration.ResolveIndexDbPath(&selection)
+	actual, err := configuration.ResolveIndexDBPath(&selection)
 	if err != nil || actual != filepath.Join(configuration.IndexDir, "Unsafe.sqlite") {
 		t.Fatalf("%q %v", actual, err)
 	}

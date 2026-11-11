@@ -1,6 +1,7 @@
 package cnki
 
 import (
+	"slices"
 	"strings"
 	"unicode"
 
@@ -9,7 +10,7 @@ import (
 	"golang.org/x/net/html/atom"
 )
 
-func decodeHtml(value string) string {
+func decodeHTML(value string) string {
 	for _, pair := range [][2]string{{"&amp;", "&"}, {"&lt;", "<"}, {"&gt;", ">"}, {"&quot;", "\""}, {"&#39;", "'"}, {"&nbsp;", " "}} {
 		value = strings.ReplaceAll(value, pair[0], pair[1])
 	}
@@ -23,7 +24,7 @@ func nonEmpty(value string) *string {
 	return &value
 }
 func cleanText(value string) *string {
-	return nonEmpty(strings.ReplaceAll(decodeHtml(value), "\u00a0", " "))
+	return nonEmpty(strings.ReplaceAll(decodeHTML(value), "\u00a0", " "))
 }
 func stripTags(value string) string {
 	var output strings.Builder
@@ -40,7 +41,7 @@ func stripTags(value string) string {
 			}
 		}
 	}
-	return decodeHtml(output.String())
+	return decodeHTML(output.String())
 }
 func tagBlockAt(text, name string, start int) (string, int, bool) {
 	opening := strings.IndexByte(text[start:], '>')
@@ -121,12 +122,7 @@ func inputValue(text string, ids ...string) *string {
 	return nil
 }
 func hasClass(classes, want string) bool {
-	for _, value := range strings.Fields(classes) {
-		if value == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Fields(classes), want)
 }
 func firstBlockText(text, name, class string) *string {
 	for _, tag := range tags(text, name) {
@@ -161,11 +157,11 @@ func labelValue(text string, labels ...string) *string {
 	for _, label := range labels {
 		for _, separator := range []string{":", "："} {
 			marker := label + separator
-			index := strings.Index(text, marker)
-			if index < 0 {
+			_, tail, found := strings.Cut(text, marker)
+			if !found {
 				continue
 			}
-			rest := strings.TrimLeftFunc(text[index+len(marker):], unicode.IsSpace)
+			rest := strings.TrimLeftFunc(tail, unicode.IsSpace)
 			end := strings.IndexFunc(rest, func(character rune) bool { return unicode.IsSpace(character) || character == '；' })
 			if end >= 0 {
 				rest = rest[:end]
@@ -262,12 +258,7 @@ func htmlAttribute(node *html.Node, name string) string {
 	return ""
 }
 func htmlHasClass(node *html.Node, class string) bool {
-	for _, value := range strings.FieldsFunc(htmlAttribute(node, "class"), func(character rune) bool { return strings.ContainsRune(" \t\n\r\f", character) }) {
-		if value == class {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.FieldsFunc(htmlAttribute(node, "class"), func(character rune) bool { return strings.ContainsRune(" \t\n\r\f", character) }), class)
 }
 func authorElementText(node *html.Node) *string {
 	var output strings.Builder
@@ -276,7 +267,7 @@ func authorElementText(node *html.Node) *string {
 		for child := parent.FirstChild; child != nil; child = child.NextSibling {
 			if child.Type == html.TextNode {
 				output.WriteString(child.Data)
-			} else if child.Type == html.ElementNode && child.Data != "sup" && child.Data != "script" && child.Data != "style" && !(child.Data == "template" && child.Namespace == "") {
+			} else if child.Type == html.ElementNode && child.Data != "sup" && child.Data != "script" && child.Data != "style" && (child.Data != "template" || child.Namespace != "") {
 				appendText(child)
 			}
 		}
@@ -346,7 +337,7 @@ func scanQuotedAttributes(header string, quote byte, result map[string]string) {
 		}
 		valueEnd += valueStart
 		if key != "" {
-			result[key] = decodeHtml(header[valueStart:valueEnd])
+			result[key] = decodeHTML(header[valueStart:valueEnd])
 		}
 		cursor = valueEnd + 1
 	}

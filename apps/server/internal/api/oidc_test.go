@@ -75,7 +75,7 @@ func TestOidcCallbackRejectsStateAndProviderErrors(t *testing.T) {
 func TestOidcLinkCallbackRequiresLiveLocalSession(t *testing.T) {
 	_, router, _, codec := apiOidcFixture(t)
 	request := httptest.NewRequest("GET", "/api/auth/oidc/callback?state=expected&code=code", nil)
-	request.AddCookie(signedOidcCookie(t, codec, auth.OidcState{State: "expected", Nonce: "nonce", Verifier: "verifier", UserId: 1, ExpiresAt: time.Now().Add(time.Minute).Unix()}))
+	request.AddCookie(signedOidcCookie(t, codec, auth.OidcState{State: "expected", Nonce: "nonce", Verifier: "verifier", UserID: 1, ExpiresAt: time.Now().Add(time.Minute).Unix()}))
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	if recorder.Code != 302 || recorder.Header().Get("Location") != "/?oidc_link=expired_session" {
@@ -95,7 +95,7 @@ func TestOidcPublicEnablementAndRateLimit(t *testing.T) {
 		t.Fatal(response.Code, response.Header().Get("Location"))
 	}
 	policy := rateLimitTestPolicy()
-	policy.LoginIp.Capacity = 1
+	policy.LoginIP.Capacity = 1
 	handlers.limiter = newAuthRateLimiter(policy)
 	if response = authRequest(router, "GET", "/api/auth/oidc/login", "", ""); response.Code != 302 {
 		t.Fatal(response.Code)
@@ -185,7 +185,7 @@ func TestOidcStateSignerUsesDeploymentKey(t *testing.T) {
 func TestOidcOnlyHttpCredentialRefusals(t *testing.T) {
 	handlers, router, admin, user, member := adminFixture(t)
 	if err := handlers.repository.WithConnection(context.Background(), func(connection *sql.Conn) error {
-		_, err := connection.ExecContext(context.Background(), "UPDATE users SET auth_kind='oidc',password_hash='!oidc' WHERE id=?", user.Id)
+		_, err := connection.ExecContext(context.Background(), "UPDATE users SET auth_kind='oidc',password_hash='!oidc' WHERE id=?", user.ID)
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -193,7 +193,7 @@ func TestOidcOnlyHttpCredentialRefusals(t *testing.T) {
 	for _, test := range []struct{ method, path, body, token, detail string }{
 		{"PUT", "/api/auth/email", `{"email":"a@example.com"}`, member, "Email is managed by the identity provider"},
 		{"POST", "/api/auth/change-password", `{"old_password":"old","new_password":"Replacement!2026"}`, member, "Password login is not available for single sign-on accounts"},
-		{"POST", "/api/admin/users/" + strconv.FormatInt(int64(user.Id), 10) + "/reset-password", `{"new_password":"Replacement!2026"}`, admin, "Password login is not available for single sign-on accounts"},
+		{"POST", "/api/admin/users/" + strconv.FormatInt(int64(user.ID), 10) + "/reset-password", `{"new_password":"Replacement!2026"}`, admin, "Password login is not available for single sign-on accounts"},
 	} {
 		response := authRequest(router, test.method, test.path, test.body, test.token)
 		if response.Code != 400 || !strings.Contains(response.Body.String(), test.detail) {

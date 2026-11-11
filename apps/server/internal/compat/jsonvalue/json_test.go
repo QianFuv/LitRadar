@@ -8,14 +8,14 @@ import (
 )
 
 func TestStandardJsonEscapingAndInvalidNumbers(t *testing.T) {
-	encoded, err := jsonvalue.EncodeJson("<>&\u2028")
+	encoded, err := jsonvalue.EncodeJSON("<>&\u2028")
 	if err != nil || encoded != "\"<>&\u2028\"" {
 		t.Fatal(encoded, err)
 	}
-	if encoded, err := jsonvalue.EncodeJson(math.Inf(1)); err == nil || encoded != "" {
+	if encoded, err := jsonvalue.EncodeJSON(math.Inf(1)); err == nil || encoded != "" {
 		t.Fatal(encoded, err)
 	}
-	if jsonvalue.ValidJson(`{} {}`) {
+	if jsonvalue.ValidJSON(`{} {}`) {
 		t.Fatal("multiple values accepted")
 	}
 }
@@ -26,7 +26,7 @@ func TestPublicOptionalZeroValuesRemainPresent(t *testing.T) {
 		Count int     `json:"count,omitempty"`
 	}
 	value := ""
-	encoded, err := jsonvalue.EncodeJson(response{Value: &value})
+	encoded, err := jsonvalue.EncodeJSON(response{Value: &value})
 	if err != nil || encoded != `{"value":""}` {
 		t.Fatal(encoded, err)
 	}

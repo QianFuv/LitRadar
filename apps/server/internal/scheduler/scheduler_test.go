@@ -30,7 +30,7 @@ func schedulerFixture(t *testing.T) (*store.Repository, string) {
 	})
 	return repository, filename
 }
-func fixtureSql(t *testing.T, filename, statement string, args ...any) {
+func fixtureSQL(t *testing.T, filename, statement string, args ...any) {
 	t.Helper()
 	database, err := platform.Open(platform.Config{Filename: filename, Mode: "rw", MaxConnections: 1})
 	if err != nil {
@@ -58,14 +58,14 @@ func TestSchedulerTickCatchupCapacityAndClockRollback(t *testing.T) {
 	repository, filename := schedulerFixture(t)
 	ctx := context.Background()
 	task := createTask(t, repository)
-	fixtureSql(t, filename, "UPDATE scheduled_tasks SET created_at=0")
+	fixtureSQL(t, filename, "UPDATE scheduled_tasks SET created_at=0")
 	assertInitialSchedulerCatchup(t, ctx, repository)
 	claim := assertPendingSchedulerClaim(t, ctx, repository)
 	if _, err := repository.FinishRun(ctx, claim, domain.Success, "", 121); err != nil {
 		t.Fatal(err)
 	}
 	assertSchedulerClockRollback(t, ctx, repository)
-	assertNoncoalescedSchedulerCatchup(t, ctx, repository, filename, task.Id)
+	assertNoncoalescedSchedulerCatchup(t, ctx, repository, filename, task.ID)
 }
 
 func TestSchedulerLoadAndManualDryRunDoNotMutate(t *testing.T) {
@@ -74,14 +74,14 @@ func TestSchedulerLoadAndManualDryRunDoNotMutate(t *testing.T) {
 	first := createTask(t, repository)
 	second := createTask(t, repository)
 	legacySunday := createTask(t, repository)
-	fixtureSql(t, filename, "UPDATE scheduled_tasks SET cron='0 8 * * 7' WHERE id=?", legacySunday.Id)
-	fixtureSql(t, filename, "UPDATE scheduled_tasks SET cron='invalid',enabled=0 WHERE id=?", first.Id)
-	fixtureSql(t, filename, "UPDATE scheduled_tasks SET cron='invalid' WHERE id=?", second.Id)
+	fixtureSQL(t, filename, "UPDATE scheduled_tasks SET cron='0 8 * * 7' WHERE id=?", legacySunday.ID)
+	fixtureSQL(t, filename, "UPDATE scheduled_tasks SET cron='invalid',enabled=0 WHERE id=?", first.ID)
+	fixtureSQL(t, filename, "UPDATE scheduled_tasks SET cron='invalid' WHERE id=?", second.ID)
 	loaded, err := LoadJobs(ctx, repository)
 	if err != nil || len(loaded.Jobs) != 0 || len(loaded.Skipped) != 2 {
 		t.Fatalf("%#v %v", loaded, err)
 	}
-	if !slices.ContainsFunc(loaded.Skipped, func(task SkippedTask) bool { return task.Id == legacySunday.Id && task.Reason != "" }) {
+	if !slices.ContainsFunc(loaded.Skipped, func(task SkippedTask) bool { return task.ID == legacySunday.ID && task.Reason != "" }) {
 		t.Fatal("unsupported persisted cron must be skipped with a diagnostic", loaded.Skipped)
 	}
 	executed := false
@@ -89,7 +89,7 @@ func TestSchedulerLoadAndManualDryRunDoNotMutate(t *testing.T) {
 		executed = true
 		return processResult{domain.Success, ""}
 	}
-	assertManualSchedulerInspection(t, ctx, repository, first.Id, runner, &executed)
+	assertManualSchedulerInspection(t, ctx, repository, first.ID, runner, &executed)
 	status, err := repository.Status(ctx, 0, 90, 10)
 	if err != nil || len(status.RecentRuns) != 0 {
 		t.Fatal("inspection admitted a run")
@@ -103,13 +103,13 @@ func TestSchedulerClaimOwnershipAndHeartbeatFailures(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			task := createTask(t, repository)
-			admission, err := repository.ClaimManual(ctx, task.Id, "owner", currentTime(), 90)
+			admission, err := repository.ClaimManual(ctx, task.ID, "owner", currentTime(), 90)
 			if err != nil {
 				t.Fatal(err)
 			}
 			claim := *admission.Claim
 			if scenario == "unavailable" {
-				claim.WorkerId = "competitor"
+				claim.WorkerID = "competitor"
 			}
 			executions := 0
 			runner := func(ctx context.Context, task domain.Task, claim store.Claim, heartbeat func() bool) processResult {
@@ -120,9 +120,9 @@ func TestSchedulerClaimOwnershipAndHeartbeatFailures(t *testing.T) {
 				}
 				switch scenario {
 				case "heartbeat-lost", "finish-lost":
-					fixtureSql(t, filename, "UPDATE scheduled_task_runs SET worker_id='replacement'")
+					fixtureSQL(t, filename, "UPDATE scheduled_task_runs SET worker_id='replacement'")
 				case "heartbeat-error":
-					fixtureSql(t, filename, "CREATE TRIGGER heartbeat_failure BEFORE INSERT ON scheduler_workers BEGIN SELECT RAISE(ABORT,'synthetic error');END")
+					fixtureSQL(t, filename, "CREATE TRIGGER heartbeat_failure BEFORE INSERT ON scheduler_workers BEGIN SELECT RAISE(ABORT,'synthetic error');END")
 				case "cancelled":
 					cancel()
 					return processResult{domain.Cancelled, "cancelled"}
@@ -203,10 +203,10 @@ func assertSchedulerClockRollback(t *testing.T, ctx context.Context, repository 
 }
 
 // assertNoncoalescedSchedulerCatchup retains its complete ordered admission or recovery assertion phase.
-func assertNoncoalescedSchedulerCatchup(t *testing.T, ctx context.Context, repository *store.Repository, filename string, taskId int64) {
+func assertNoncoalescedSchedulerCatchup(t *testing.T, ctx context.Context, repository *store.Repository, filename string, taskID int64) {
 	t.Helper()
-	fixtureSql(t, filename, "UPDATE scheduled_tasks SET coalesce=0 WHERE id=?", taskId)
-	fixtureSql(t, filename, "UPDATE scheduler_state SET last_checked_at=0")
+	fixtureSQL(t, filename, "UPDATE scheduled_tasks SET coalesce=0 WHERE id=?", taskID)
+	fixtureSQL(t, filename, "UPDATE scheduler_state SET last_checked_at=0")
 	result, _, err := PrepareRunsAt(ctx, repository, "catchup", 0, 200000)
 	if err != nil || result.CheckedFrom != 113600 || result.Due != 1440 || result.Queued != 1440 {
 		t.Fatalf("catchup %#v %v", result, err)
@@ -214,9 +214,9 @@ func assertNoncoalescedSchedulerCatchup(t *testing.T, ctx context.Context, repos
 }
 
 // assertManualSchedulerInspection checks dry-run, missing-task and invalid execution without changing the shared runner flag.
-func assertManualSchedulerInspection(t *testing.T, ctx context.Context, repository *store.Repository, taskId int64, runner jobRunner, executed *bool) {
+func assertManualSchedulerInspection(t *testing.T, ctx context.Context, repository *store.Repository, taskID int64, runner jobRunner, executed *bool) {
 	t.Helper()
-	outcome, err := runTaskNow(ctx, repository, taskId, DryRun, runner)
+	outcome, err := runTaskNow(ctx, repository, taskID, DryRun, runner)
 	if err != nil || !outcome.Found || outcome.DidExecute || *executed {
 		t.Fatalf("%#v %v", outcome, err)
 	}
@@ -224,7 +224,7 @@ func assertManualSchedulerInspection(t *testing.T, ctx context.Context, reposito
 	if err != nil || outcome.Found || *executed {
 		t.Fatalf("%#v %v", outcome, err)
 	}
-	if _, err = runTaskNow(ctx, repository, taskId, Execute, runner); err == nil || *executed {
+	if _, err = runTaskNow(ctx, repository, taskID, Execute, runner); err == nil || *executed {
 		t.Fatal("manual execution skipped validation")
 	}
 }

@@ -29,7 +29,7 @@ func (handlers *publicHandlers) routes() []route {
 		typedRoute(openapi.Operation{Method: "GET", Path: "/health/ready", ID: "ready"}, handlers.ready),
 		typedRoute(openapi.Operation{Method: "GET", Path: "/api/announcements", ID: "get_announcements"}, func(ctx context.Context, input *GetAnnouncementsInput) (*output[[]announcements.Announcement], error) {
 			return admitted(ctx, handlers.pool, func() ([]announcements.Announcement, error) {
-				return announcements.ListActive(context.WithoutCancel(ctx), handlers.storage.AuthDbPath)
+				return announcements.ListActive(context.WithoutCancel(ctx), handlers.storage.AuthDBPath)
 			}, func(error) *apiError { return internalError() })
 		}),
 	}

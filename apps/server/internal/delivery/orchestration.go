@@ -46,16 +46,13 @@ func classified(kind string, err error) error {
 	return &workflowFailure{kind, err}
 }
 func deliveryErrorKind(err error) string {
-	var control domain.ControlError
-	if errors.As(err, &control) {
+	if control, ok := errors.AsType[domain.ControlError](err); ok {
 		return string(control)
 	}
-	var failure *workflowFailure
-	if errors.As(err, &failure) {
+	if failure, ok := errors.AsType[*workflowFailure](err); ok {
 		return failure.kind
 	}
-	var stored *store.Error
-	if errors.As(err, &stored) {
+	if _, ok := errors.AsType[*store.Error](err); ok {
 		return "delivery_storage"
 	}
 	if errors.Is(err, ErrBusy) {
@@ -69,21 +66,21 @@ func RunRecommendationDelivery(ctx context.Context, config RunConfig) (RunOutcom
 	return runRecommendationDelivery(ctx, config, nil, nil)
 }
 
-func runRecommendationDelivery(ctx context.Context, config RunConfig, userId *int64, manifest *recommend.ChangeManifest) (RunOutcome, error) {
-	return observeDelivery(ctx, config, userId, func(ctx context.Context) (RunOutcome, error) {
-		return openAndExecuteDelivery(ctx, config, userId, manifest)
+func runRecommendationDelivery(ctx context.Context, config RunConfig, userID *int64, manifest *recommend.ChangeManifest) (RunOutcome, error) {
+	return observeDelivery(ctx, config, userID, func(ctx context.Context) (RunOutcome, error) {
+		return openAndExecuteDelivery(ctx, config, userID, manifest)
 	})
 }
 
-func openAndExecuteDelivery(ctx context.Context, config RunConfig, userId *int64, manifest *recommend.ChangeManifest) (resultValue1 RunOutcome, resultError error) {
+func openAndExecuteDelivery(ctx context.Context, config RunConfig, userID *int64, manifest *recommend.ChangeManifest) (resultValue1 RunOutcome, resultError error) {
 	if manifest == nil && config.ChangesFile != nil {
-		loaded, err := recommend.LoadChangeManifest(*config.ChangesFile, config.DbName)
+		loaded, err := recommend.LoadChangeManifest(*config.ChangesFile, config.DBName)
 		if err != nil {
 			return RunOutcome{}, classified("recommendation", err)
 		}
 		manifest = &loaded
 	}
-	repository, err := store.Open(config.AuthDbPath)
+	repository, err := store.Open(config.AuthDBPath)
 	if err != nil {
 		return RunOutcome{}, classified("delivery_storage", err)
 	}
@@ -92,7 +89,7 @@ func openAndExecuteDelivery(ctx context.Context, config RunConfig, userId *int64
 			resultError = errors.Join(resultError, fmt.Errorf("close repository: %w", closeError))
 		}
 	}()
-	accounts, err := auth.Open(config.AuthDbPath)
+	accounts, err := auth.Open(config.AuthDBPath)
 	if err != nil {
 		return RunOutcome{}, classified("auth_storage", err)
 	}
@@ -109,19 +106,19 @@ func openAndExecuteDelivery(ctx context.Context, config RunConfig, userId *int64
 	engine := deliveryEngine{repository: repository, settings: policy, selectArticles: selector.SelectForSubscriber, send: sender.Send, writeFavorites: func(ctx context.Context, writes []FavoriteWritePlan) error {
 		return executeFavoriteWrites(ctx, folders, writes)
 	}}
-	return engine.executeInner(ctx, config, userId, manifest)
+	return engine.executeInner(ctx, config, userID, manifest)
 }
 
-func (engine *deliveryEngine) execute(ctx context.Context, config RunConfig, userId *int64, manifest *recommend.ChangeManifest) (RunOutcome, error) {
-	return observeDelivery(ctx, config, userId, func(ctx context.Context) (RunOutcome, error) {
-		return engine.executeInner(ctx, config, userId, manifest)
+func (engine *deliveryEngine) execute(ctx context.Context, config RunConfig, userID *int64, manifest *recommend.ChangeManifest) (RunOutcome, error) {
+	return observeDelivery(ctx, config, userID, func(ctx context.Context) (RunOutcome, error) {
+		return engine.executeInner(ctx, config, userID, manifest)
 	})
 }
 
-func observeDelivery(ctx context.Context, config RunConfig, userId *int64, execute func(context.Context) (RunOutcome, error)) (result RunOutcome, resultError error) {
+func observeDelivery(ctx context.Context, config RunConfig, userID *int64, execute func(context.Context) (RunOutcome, error)) (result RunOutcome, resultError error) {
 	fields := map[string]any{"component": "delivery", "workflow": string(config.Workflow), "mode": string(config.Mode), "user_id": nil}
-	if userId != nil {
-		fields["user_id"] = *userId
+	if userID != nil {
+		fields["user_id"] = *userID
 	}
 	ctx = observability.StartSpan(ctx, "litradar_worker::delivery::orchestration", "delivery.workflow", fields)
 	started := time.Now()
@@ -137,7 +134,7 @@ func observeDelivery(ctx context.Context, config RunConfig, userId *int64, execu
 		for _, subscriber := range result.Subscribers {
 			selected += len(subscriber.SelectedArticleIds)
 			synced += subscriber.FolderSyncedCount
-			if subscriber.MessageId != nil {
+			if subscriber.MessageID != nil {
 				messages++
 			}
 			if subscriber.Status == "error" {
@@ -154,17 +151,17 @@ func observeDelivery(ctx context.Context, config RunConfig, userId *int64, execu
 	return execute(ctx)
 }
 
-func (engine *deliveryEngine) executeInner(ctx context.Context, config RunConfig, userId *int64, manifest *recommend.ChangeManifest) (RunOutcome, error) {
+func (engine *deliveryEngine) executeInner(ctx context.Context, config RunConfig, userID *int64, manifest *recommend.ChangeManifest) (RunOutcome, error) {
 	if manifest == nil && config.ChangesFile != nil {
-		loaded, err := recommend.LoadChangeManifest(*config.ChangesFile, config.DbName)
+		loaded, err := recommend.LoadChangeManifest(*config.ChangesFile, config.DBName)
 		if err != nil {
 			return RunOutcome{}, classified("recommendation", err)
 		}
 		manifest = &loaded
 	}
 	source := ""
-	if manifest != nil && manifest.RunId != nil {
-		source = *manifest.RunId
+	if manifest != nil && manifest.RunID != nil {
+		source = *manifest.RunID
 	} else {
 		var random [16]byte
 		if _, err := rand.Read(random[:]); err != nil {
@@ -172,28 +169,28 @@ func (engine *deliveryEngine) executeInner(ctx context.Context, config RunConfig
 		}
 		source = "run-" + hex.EncodeToString(random[:])
 	}
-	run, terminal, err := admitDurableRun(ctx, engine.repository, config, userId, deliveryExternalId(source, userId, config.AttemptId), unixNow())
+	run, terminal, err := admitDurableRun(ctx, engine.repository, config, userID, deliveryExternalID(source, userID, config.AttemptID), unixNow())
 	if err != nil {
 		return RunOutcome{}, err
 	}
 	if terminal != nil {
-		return runOutcome(config, terminal.Id, string(terminal.Status), nil, nil), nil
+		return runOutcome(config, terminal.ID, string(terminal.Status), nil, nil), nil
 	}
-	result, err := engine.executeOwned(ctx, config, userId, manifest, run)
+	result, err := engine.executeOwned(ctx, config, userID, manifest, run)
 	if err != nil {
 		run.failBestEffort(context.WithoutCancel(ctx), engine.repository, deliveryErrorKind(err), unixNow())
 	}
 	return result, err
 }
 
-func deliveryExternalId(source string, userId *int64, attempt *string) string {
-	if userId == nil {
+func deliveryExternalID(source string, userID *int64, attempt *string) string {
+	if userID == nil {
 		if attempt == nil {
 			return source
 		}
 		return fmt.Sprintf("scheduled-run-%d", identity.Stable(source+":"+*attempt, "scheduled-delivery-attempt"))
 	}
-	value, namespace := fmt.Sprintf("%s:%d", source, *userId), "manual-delivery"
+	value, namespace := fmt.Sprintf("%s:%d", source, *userID), "manual-delivery"
 	if attempt != nil {
 		value += ":" + *attempt
 		namespace = "manual-delivery-attempt"
@@ -215,20 +212,20 @@ func runOutcome(config RunConfig, id int64, status string, candidates []int64, s
 	if subscribers == nil {
 		subscribers = []SubscriberPlan{}
 	}
-	return RunOutcome{config.DbName, config.Workflow, config.Mode, status, id, candidates, subscribers}
+	return RunOutcome{config.DBName, config.Workflow, config.Mode, status, id, candidates, subscribers}
 }
-func resultJson(value any) (string, error) {
-	data, err := jsonvalue.EncodeJson(value)
+func resultJSON(value any) (string, error) {
+	data, err := jsonvalue.EncodeJSON(value)
 	if err != nil {
-		return "", errors.New("Delivery result serialization failed")
+		return "", errors.New("delivery result serialization failed")
 	}
 	return string(data), nil
 }
-func runResultJson(candidates, subscribers, selected, messages int) string {
+func runResultJSON(candidates, subscribers, selected, messages int) string {
 	return fmt.Sprintf(`{"candidate_count":%d,"message_count":%d,"selected_count":%d,"subscriber_count":%d}`, candidates, messages, selected, subscribers)
 }
 
-func (engine *deliveryEngine) executeOwned(ctx context.Context, config RunConfig, userId *int64, manifest *recommend.ChangeManifest, run *durableRun) (RunOutcome, error) {
+func (engine *deliveryEngine) executeOwned(ctx context.Context, config RunConfig, userID *int64, manifest *recommend.ChangeManifest, run *durableRun) (RunOutcome, error) {
 	if err := checkExecution(config); err != nil {
 		return RunOutcome{}, err
 	}
@@ -242,49 +239,49 @@ func (engine *deliveryEngine) executeOwned(ctx context.Context, config RunConfig
 		return RunOutcome{}, err
 	}
 	if input.isEmpty() {
-		err = run.finalizeWithCheckpoint(ctx, engine.repository, store.RunStatusSkipped, store.CheckpointStatusIdle, current, completedAt, pointer(`{"candidate_count":0,"subscriber_count":0}`), nil, unixNow())
-		return runOutcome(config, run.run.Id, "idle", nil, nil), err
+		err = run.finalizeWithCheckpoint(ctx, engine.repository, store.RunStatusSkipped, store.CheckpointStatusIdle, current, completedAt, new(`{"candidate_count":0,"subscriber_count":0}`), nil, unixNow())
+		return runOutcome(config, run.run.ID, "idle", nil, nil), err
 	}
 	candidates, candidateIds, err := engine.prepareDeliveryCandidates(ctx, config, run, input)
 	if err != nil {
 		return RunOutcome{}, err
 	}
 	if len(candidates) == 0 {
-		err = run.finalizeWithCheckpoint(ctx, engine.repository, store.RunStatusCompleted, store.CheckpointStatusCompleted, current, pointer(utcNowIso()), pointer(`{"candidate_count":0,"subscriber_count":0}`), nil, unixNow())
-		return runOutcome(config, run.run.Id, "completed", nil, nil), err
+		err = run.finalizeWithCheckpoint(ctx, engine.repository, store.RunStatusCompleted, store.CheckpointStatusCompleted, current, new(utcNowIso()), new(`{"candidate_count":0,"subscriber_count":0}`), nil, unixNow())
+		return runOutcome(config, run.run.ID, "completed", nil, nil), err
 	}
-	subscribers, err := engine.filteredSubscribers(ctx, config, userId)
+	subscribers, err := engine.filteredSubscribers(ctx, config, userID)
 	if err != nil {
 		return RunOutcome{}, classified("business_storage", err)
 	}
 	if len(subscribers) == 0 {
-		err = run.finalizeWithCheckpoint(ctx, engine.repository, store.RunStatusSkipped, store.CheckpointStatusSkipped, previous, completedAt, pointer(runResultJson(len(candidates), 0, 0, 0)), nil, unixNow())
-		return runOutcome(config, run.run.Id, "skipped", candidateIds, nil), err
+		err = run.finalizeWithCheckpoint(ctx, engine.repository, store.RunStatusSkipped, store.CheckpointStatusSkipped, previous, completedAt, new(runResultJSON(len(candidates), 0, 0, 0)), nil, unixNow())
+		return runOutcome(config, run.run.ID, "skipped", candidateIds, nil), err
 	}
 	return engine.deliverToSubscribers(ctx, config, run, subscribers, candidates, candidateIds, snapshots)
 }
 
-func (engine *deliveryEngine) filteredSubscribers(ctx context.Context, config RunConfig, userId *int64) ([]domain.Subscriber, error) {
-	subscribers, err := engine.loadDeliverySubscribers(ctx, config, userId)
+func (engine *deliveryEngine) filteredSubscribers(ctx context.Context, config RunConfig, userID *int64) ([]domain.Subscriber, error) {
+	subscribers, err := engine.loadDeliverySubscribers(ctx, config, userID)
 	if err != nil {
 		return nil, err
 	}
 	result := []domain.Subscriber{}
 	for _, subscriber := range subscribers {
-		if !recommend.IsDatabaseSelected(subscriber.SelectedDatabases, config.DbName) {
+		if !recommend.IsDatabaseSelected(subscriber.SelectedDatabases, config.DBName) {
 			continue
 		}
-		if config.Workflow == store.WorkflowNotify && subscriber.DeliveryMethod == "pushplus" && strings.TrimSpace(subscriber.PushplusToken) != "" || config.Workflow == store.WorkflowPush && subscriber.DeliveryMethod == "folder" && subscriber.TrackingFolderId != nil {
+		if config.Workflow == store.WorkflowNotify && subscriber.DeliveryMethod == "pushplus" && strings.TrimSpace(subscriber.PushplusToken) != "" || config.Workflow == store.WorkflowPush && subscriber.DeliveryMethod == "folder" && subscriber.TrackingFolderID != nil {
 			result = append(result, subscriber)
 		}
 	}
 	return result, nil
 }
 
-func subscriberId(subscriber domain.Subscriber) (int64, error) {
-	id, err := strconv.ParseInt(subscriber.SubscriberId, 10, 64)
+func subscriberID(subscriber domain.Subscriber) (int64, error) {
+	id, err := strconv.ParseInt(subscriber.SubscriberID, 10, 64)
 	if err != nil {
-		return 0, errors.New("Subscriber identifier is not a positive integer")
+		return 0, errors.New("subscriber identifier is not a positive integer")
 	}
 	return id, nil
 }
@@ -298,18 +295,18 @@ func loadDeliverySnapshots(ctx context.Context, config RunConfig, run *durableRu
 	previous := recommend.Snapshot{IssueArticleCounts: map[string]int64{}, InpressArticleCounts: map[string]int64{}}
 	var completedAt *string
 	if run.checkpoint != nil {
-		parsed, err := recommend.ParseSnapshot([]byte(run.checkpoint.SnapshotJson))
+		parsed, err := recommend.ParseSnapshot([]byte(run.checkpoint.SnapshotJSON))
 		if err != nil {
 			return deliverySnapshots{}, err
 		}
 		previous = parsed
 		completedAt = run.checkpoint.LastCompletedRunAt
 	}
-	issues, err := query.CollectIssueArticleCounts(ctx, config.IndexDbPath)
+	issues, err := query.CollectIssueArticleCounts(ctx, config.IndexDBPath)
 	if err != nil {
 		return deliverySnapshots{}, classified("index_storage", err)
 	}
-	inpress, err := query.CollectInPressArticleCounts(ctx, config.IndexDbPath)
+	inpress, err := query.CollectInPressArticleCounts(ctx, config.IndexDBPath)
 	if err != nil {
 		return deliverySnapshots{}, classified("index_storage", err)
 	}
@@ -318,7 +315,7 @@ func loadDeliverySnapshots(ctx context.Context, config RunConfig, run *durableRu
 }
 
 func (engine *deliveryEngine) prepareDeliveryInput(ctx context.Context, run *durableRun, manifest *recommend.ChangeManifest, previous, current recommend.Snapshot) (deliveryInput, error) {
-	items, err := engine.repository.ListRunItems(ctx, run.run.Id)
+	items, err := engine.repository.ListRunItems(ctx, run.run.ID)
 	if err != nil {
 		return deliveryInput{}, err
 	}
@@ -330,12 +327,12 @@ func (engine *deliveryEngine) prepareDeliveryInput(ctx context.Context, run *dur
 		}
 	}
 	if run.didTakeOverCompetingRun && !hasInput {
-		return deliveryInput{}, errors.New("Recovered delivery run has no durable input items")
+		return deliveryInput{}, errors.New("recovered delivery run has no durable input items")
 	}
 	input := inputFromItems(items)
 	if !hasInput {
 		input = inputFromSource(manifest, previous, current)
-		if _, err = engine.repository.EnsureRunItems(ctx, run.run.Id, input.items(), unixNow()); err != nil {
+		if _, err = engine.repository.EnsureRunItems(ctx, run.run.ID, input.items(), unixNow()); err != nil {
 			return deliveryInput{}, err
 		}
 	}
@@ -343,16 +340,16 @@ func (engine *deliveryEngine) prepareDeliveryInput(ctx context.Context, run *dur
 }
 
 func (engine *deliveryEngine) prepareDeliveryCandidates(ctx context.Context, config RunConfig, run *durableRun, input deliveryInput) ([]article.ArticleCandidate, []int64, error) {
-	candidates, err := loadCandidates(ctx, config.IndexDbPath, input)
+	candidates, err := loadCandidates(ctx, config.IndexDBPath, input)
 	if err != nil {
 		return nil, nil, classified("index_storage", err)
 	}
 	candidates = recommend.DeduplicateCandidates(candidates)
 	candidateIds := make([]int64, 0, len(candidates))
 	for _, candidate := range candidates {
-		candidateIds = append(candidateIds, candidate.ArticleId)
+		candidateIds = append(candidateIds, candidate.ArticleID)
 	}
-	if _, err = engine.repository.EnsureRunItems(ctx, run.run.Id, (deliveryInput{articleIds: candidateIds}).items(), unixNow()); err != nil {
+	if _, err = engine.repository.EnsureRunItems(ctx, run.run.ID, (deliveryInput{articleIds: candidateIds}).items(), unixNow()); err != nil {
 		return nil, nil, err
 	}
 	if err = engine.finalizeProgress(ctx, run); err != nil {
@@ -364,13 +361,13 @@ func (engine *deliveryEngine) prepareDeliveryCandidates(ctx context.Context, con
 func (engine *deliveryEngine) prepareSubscriberItems(ctx context.Context, run *durableRun, subscribers []domain.Subscriber) (map[string]store.RunItemRecord, error) {
 	creates := make([]store.RunItemCreate, 0, len(subscribers))
 	for _, subscriber := range subscribers {
-		id, err := subscriberId(subscriber)
+		id, err := subscriberID(subscriber)
 		if err != nil {
 			return nil, err
 		}
-		creates = append(creates, store.RunItemCreate{ItemKind: store.ItemKindSubscriber, ItemKey: subscriber.SubscriberId, UserId: &id})
+		creates = append(creates, store.RunItemCreate{ItemKind: store.ItemKindSubscriber, ItemKey: subscriber.SubscriberID, UserID: &id})
 	}
-	items, err := engine.repository.EnsureRunItems(ctx, run.run.Id, creates, unixNow())
+	items, err := engine.repository.EnsureRunItems(ctx, run.run.ID, creates, unixNow())
 	if err != nil {
 		return nil, err
 	}
@@ -382,7 +379,7 @@ func (engine *deliveryEngine) prepareSubscriberItems(ctx context.Context, run *d
 }
 
 func (engine *deliveryEngine) deliverySelectionRequest(ctx context.Context, config RunConfig, candidates []article.ArticleCandidate) (recommend.SelectionRequest, error) {
-	base, err := settings.CanonicalizeBaseUrl(recommend.DefaultOpenaiBaseUrl)
+	base, err := settings.CanonicalizeBaseURL(recommend.DefaultOpenaiBaseURL)
 	if err != nil {
 		return recommend.SelectionRequest{}, classified("business_storage", err)
 	}
@@ -390,12 +387,12 @@ func (engine *deliveryEngine) deliverySelectionRequest(ctx context.Context, conf
 	if err != nil {
 		return recommend.SelectionRequest{}, classified("business_storage", err)
 	}
-	global := recommend.GlobalConfig{AiBaseUrl: base, AiAllowedBaseUrls: allowed, PushplusChannel: recommend.PushplusChannel, PushplusTemplate: "markdown"}
+	global := recommend.GlobalConfig{AiBaseURL: base, AiAllowedBaseUrls: allowed, PushplusChannel: recommend.PushplusChannel, PushplusTemplate: "markdown"}
 	defaults := recommend.Defaults{MaxCandidates: 120, AiModel: recommend.DefaultOpenaiModel, Temperature: 0.2}
 	if config.MaxCandidates != nil {
 		defaults.MaxCandidates = max(1, *config.MaxCandidates)
 	}
-	records, err := engine.repository.ListDedupe(ctx, config.Workflow, config.DbName)
+	records, err := engine.repository.ListDedupe(ctx, config.Workflow, config.DBName)
 	if err != nil {
 		return recommend.SelectionRequest{}, err
 	}
@@ -409,9 +406,9 @@ func (engine *deliveryEngine) deliverySelectionRequest(ctx context.Context, conf
 		if record.LegacyDeliveredAt != nil {
 			value = *record.LegacyDeliveredAt
 		}
-		dedupe[fmt.Sprintf("%d:%d", record.UserId, record.ArticleId)] = value
+		dedupe[fmt.Sprintf("%d:%d", record.UserID, record.ArticleID)] = value
 	}
-	request := recommend.SelectionRequest{Global: global, Defaults: defaults, OverrideModel: config.AiModel, CandidatesForModel: candidates[:min(len(candidates), defaults.MaxCandidates)], CandidatesById: recommend.CandidatesById(candidates), Dedupe: dedupe}
+	request := recommend.SelectionRequest{Global: global, Defaults: defaults, OverrideModel: config.AiModel, CandidatesForModel: candidates[:min(len(candidates), defaults.MaxCandidates)], CandidatesByID: recommend.CandidatesByID(candidates), Dedupe: dedupe}
 	return request, nil
 }
 
@@ -421,7 +418,7 @@ func (engine *deliveryEngine) executeSubscriberItem(ctx context.Context, config 
 	if item.Status.IsTerminal() {
 		plan, err = engine.terminalPlan(ctx, config, subscriber, item)
 	} else {
-		claimed, claimError := engine.repository.ClaimItem(ctx, run.run.Id, run.owner, run.run.Revision, item.Id, run.owner, unixNow(), deliveryLeaseSeconds)
+		claimed, claimError := engine.repository.ClaimItem(ctx, run.run.ID, run.owner, run.run.Revision, item.ID, run.owner, unixNow(), deliveryLeaseSeconds)
 		if claimError != nil {
 			return SubscriberPlan{}, claimError
 		}
@@ -440,9 +437,9 @@ func (engine *deliveryEngine) executeSubscriberPlans(ctx context.Context, config
 		if err := run.renew(ctx, engine.repository, unixNow()); err != nil {
 			return nil, err
 		}
-		item, exists := byKey[subscriber.SubscriberId]
+		item, exists := byKey[subscriber.SubscriberID]
 		if !exists {
-			return nil, errors.New("Subscriber item is unavailable")
+			return nil, errors.New("subscriber item is unavailable")
 		}
 		plan, err := engine.executeSubscriberItem(ctx, config, run, subscriber, item, request)
 		if err != nil {
@@ -460,7 +457,7 @@ func (engine *deliveryEngine) finalizeSubscriberPlans(ctx context.Context, confi
 	selected, messages := 0, 0
 	for _, plan := range plans {
 		selected += len(plan.SelectedArticleIds)
-		if plan.MessageId != nil {
+		if plan.MessageID != nil {
 			messages++
 		}
 		if plan.Status == "unknown" {
@@ -473,16 +470,16 @@ func (engine *deliveryEngine) finalizeSubscriberPlans(ctx context.Context, confi
 	case store.RunStatusUnknown:
 		checkpointStatus = store.CheckpointStatusUnknown
 		snapshot = previous
-		errorCode = pointer("ambiguous_delivery")
+		errorCode = new("ambiguous_delivery")
 	case store.RunStatusFailed:
 		checkpointStatus = store.CheckpointStatusFailed
 		snapshot = previous
-		errorCode = pointer("subscriber_failed")
+		errorCode = new("subscriber_failed")
 	default:
-		completedAt = pointer(utcNowIso())
+		completedAt = new(utcNowIso())
 	}
-	err := run.finalizeWithCheckpoint(ctx, engine.repository, status, checkpointStatus, snapshot, completedAt, pointer(runResultJson(len(candidateIds), len(plans), selected, messages)), errorCode, unixNow())
-	return runOutcome(config, run.run.Id, string(status), candidateIds, plans), err
+	err := run.finalizeWithCheckpoint(ctx, engine.repository, status, checkpointStatus, snapshot, completedAt, new(runResultJSON(len(candidateIds), len(plans), selected, messages)), errorCode, unixNow())
+	return runOutcome(config, run.run.ID, string(status), candidateIds, plans), err
 }
 
 func (engine *deliveryEngine) deliverToSubscribers(ctx context.Context, config RunConfig, run *durableRun, subscribers []domain.Subscriber, candidates []article.ArticleCandidate, candidateIds []int64, snapshots deliverySnapshots) (RunOutcome, error) {
@@ -501,10 +498,10 @@ func (engine *deliveryEngine) deliverToSubscribers(ctx context.Context, config R
 	return engine.finalizeSubscriberPlans(ctx, config, run, snapshots, candidateIds, plans)
 }
 
-func (engine *deliveryEngine) loadDeliverySubscribers(ctx context.Context, config RunConfig, userId *int64) ([]domain.Subscriber, error) {
+func (engine *deliveryEngine) loadDeliverySubscribers(ctx context.Context, config RunConfig, userID *int64) ([]domain.Subscriber, error) {
 	subscribers := []domain.Subscriber{}
-	if userId != nil {
-		subscriber, err := engine.repository.GetSubscriber(ctx, config.SecretCodec, *userId)
+	if userID != nil {
+		subscriber, err := engine.repository.GetSubscriber(ctx, config.SecretCodec, *userID)
 		if err != nil {
 			return nil, err
 		}

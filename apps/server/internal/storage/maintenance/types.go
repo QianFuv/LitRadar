@@ -89,8 +89,7 @@ func withRecovery(err error, paths RecoveryPaths) error {
 	if errors.As(err, &known) {
 		code = known.Code
 	} else {
-		var sqlite *native.Error
-		if errors.As(err, &sqlite) {
+		if _, ok := errors.AsType[*native.Error](err); ok {
 			code = "sqlite"
 		}
 	}

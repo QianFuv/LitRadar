@@ -33,8 +33,8 @@ type WorkerRequest struct {
 	ProtocolVersion         uint32             `json:"protocol_version"`
 	CatalogName             string             `json:"catalog_name"`
 	ProviderName            string             `json:"provider_name"`
-	RunId                   string             `json:"run_id"`
-	WorkerId                uint64             `json:"worker_id"`
+	RunID                   string             `json:"run_id"`
+	WorkerID                uint64             `json:"worker_id"`
 	ProcessCount            uint64             `json:"process_count"`
 	SourceWorkerCount       uint64             `json:"source_worker_count"`
 	ScheduleEpochUnixMillis uint64             `json:"schedule_epoch_unix_millis"`
@@ -44,22 +44,22 @@ type WorkerRequest struct {
 
 // Format reports scheduling and correlation metadata without provider state.
 func (value WorkerRequest) Format(state fmt.State, verb rune) {
-	_, _ = fmt.Fprintf(state, "WorkerRequest{version:%d catalog:%q provider:%q run:%q worker:%d processes:%d source_workers:%d epoch:%d timeout:%d assignments:%d credentials:[REDACTED]}", value.ProtocolVersion, value.CatalogName, value.ProviderName, value.RunId, value.WorkerId, value.ProcessCount, value.SourceWorkerCount, value.ScheduleEpochUnixMillis, value.TimeoutSeconds, len(value.Assignments))
+	_, _ = fmt.Fprintf(state, "WorkerRequest{version:%d catalog:%q provider:%q run:%q worker:%d processes:%d source_workers:%d epoch:%d timeout:%d assignments:%d credentials:[REDACTED]}", value.ProtocolVersion, value.CatalogName, value.ProviderName, value.RunID, value.WorkerID, value.ProcessCount, value.SourceWorkerCount, value.ScheduleEpochUnixMillis, value.TimeoutSeconds, len(value.Assignments))
 }
 
 // WorkerBootstrap carries one-shot secrets only over the owned child stdin pipe.
 type WorkerBootstrap struct {
 	ProtocolVersion     uint32                `json:"protocol_version"`
-	WorkerId            uint64                `json:"worker_id"`
+	WorkerID            uint64                `json:"worker_id"`
 	CnkiCaptchaToken    *string               `json:"cnki_captcha_token,omitempty"`
-	ProviderProxyUrl    *string               `json:"provider_proxy_url,omitempty"`
+	ProviderProxyURL    *string               `json:"provider_proxy_url,omitempty"`
 	ScholarlyConfig     *scholarly.LiveConfig `json:"scholarly_config,omitempty"`
 	ScholarlyWorksetDir *string               `json:"scholarly_workset_dir,omitempty"`
 }
 
 // Format never includes credentials, proxy URLs or workset paths.
 func (value WorkerBootstrap) Format(state fmt.State, verb rune) {
-	_, _ = fmt.Fprintf(state, "WorkerBootstrap{version:%d worker:%d credentials:[REDACTED]}", value.ProtocolVersion, value.WorkerId)
+	_, _ = fmt.Fprintf(state, "WorkerBootstrap{version:%d worker:%d credentials:[REDACTED]}", value.ProtocolVersion, value.WorkerID)
 }
 
 // WorkerFailureClass is a redacted error family crossing the private worker boundary.
@@ -81,7 +81,7 @@ type WorkerFailure struct {
 type WorkerMessage struct {
 	Type                                          string
 	ProtocolVersion                               uint32
-	WorkerId, Sequence, JournalOrdinal, PageIndex uint64
+	WorkerID, Sequence, JournalOrdinal, PageIndex uint64
 	Batch                                         *domain.ProviderBatch
 	Failure                                       *WorkerFailure
 }
@@ -90,7 +90,7 @@ type WorkerMessage struct {
 type ParentMessage struct {
 	Type            string `json:"type"`
 	ProtocolVersion uint32 `json:"protocol_version"`
-	WorkerId        uint64 `json:"worker_id"`
+	WorkerID        uint64 `json:"worker_id"`
 	Sequence        uint64 `json:"sequence"`
 	JournalOrdinal  uint64 `json:"journal_ordinal"`
 	PageIndex       uint64 `json:"page_index"`
@@ -163,11 +163,11 @@ func (value WorkerMessage) MarshalJSON() ([]byte, error) {
 	return value.marshalVariant()
 }
 func (value WorkerMessage) marshalVariant() ([]byte, error) {
-	fields := map[string]any{"type": value.Type, "protocol_version": value.ProtocolVersion, "worker_id": value.WorkerId, "sequence": value.Sequence}
+	fields := map[string]any{"type": value.Type, "protocol_version": value.ProtocolVersion, "worker_id": value.WorkerID, "sequence": value.Sequence}
 	switch value.Type {
 	case "batch":
 		if value.Batch == nil {
-			return nil, errWorkerJson
+			return nil, errWorkerJSON
 		}
 		fields["journal_ordinal"] = value.JournalOrdinal
 		fields["page_index"] = value.PageIndex
@@ -175,11 +175,11 @@ func (value WorkerMessage) marshalVariant() ([]byte, error) {
 	case "succeeded":
 	case "failed":
 		if value.Failure == nil {
-			return nil, errWorkerJson
+			return nil, errWorkerJSON
 		}
 		fields["failure"] = value.Failure
 	default:
-		return nil, errWorkerJson
+		return nil, errWorkerJSON
 	}
 	return json.Marshal(fields)
 }

@@ -57,7 +57,7 @@ func BenchmarkWeeklySparseWindow(b *testing.B) {
 							cache := &weekly.Cache{}
 							run := func() {
 								if isArticles {
-									params := WeeklyArticlePageParams{DbName: name, JournalId: 1, WindowEnd: end.Format(true), Limit: 50}
+									params := WeeklyArticlePageParams{DBName: name, JournalID: 1, WindowEnd: end.Format(true), Limit: 50}
 									result, err := WeeklyArticles(context.Background(), configuration, params, cache)
 									if err != nil || len(result.Items) != min((count+7)/8, 50) || result.Page.HasMore == nil || *result.Page.HasMore != (count > 400) {
 										b.Fatal("sparse weekly page changed", result, err)
@@ -115,7 +115,7 @@ func BenchmarkWeeklyArticles(b *testing.B) {
 		b.Run(fmt.Sprint(count), func(b *testing.B) {
 			configuration, name, end := weeklyQueryFixture(b, count)
 			cache := &weekly.Cache{}
-			params := WeeklyArticlePageParams{DbName: name, JournalId: 1, WindowEnd: end.Format(true), Limit: 50}
+			params := WeeklyArticlePageParams{DBName: name, JournalID: 1, WindowEnd: end.Format(true), Limit: 50}
 			expected := min((count+7)/8, 50)
 			if _, err := WeeklyArticles(context.Background(), configuration, params, cache); err != nil {
 				b.Fatal(err)

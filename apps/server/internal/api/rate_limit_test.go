@@ -17,12 +17,12 @@ import (
 
 func rateLimitTestPolicy() settings.RateLimitPolicy {
 	return settings.RateLimitPolicy{
-		LoginIp:        settings.TokenBucketPolicy{Capacity: 20, RefillTokens: 1, RefillSeconds: 10},
-		RegisterIp:     settings.TokenBucketPolicy{Capacity: 20, RefillTokens: 1, RefillSeconds: 10},
+		LoginIP:        settings.TokenBucketPolicy{Capacity: 20, RefillTokens: 1, RefillSeconds: 10},
+		RegisterIP:     settings.TokenBucketPolicy{Capacity: 20, RefillTokens: 1, RefillSeconds: 10},
 		Username:       settings.TokenBucketPolicy{Capacity: 2, RefillTokens: 1, RefillSeconds: 10},
 		GlobalLogin:    settings.TokenBucketPolicy{Capacity: 20, RefillTokens: 1, RefillSeconds: 10},
 		GlobalRegister: settings.TokenBucketPolicy{Capacity: 20, RefillTokens: 1, RefillSeconds: 10},
-		IpKeyLimit:     2, UsernameKeyLimit: 2,
+		IPKeyLimit:     2, UsernameKeyLimit: 2,
 	}
 }
 
@@ -83,7 +83,7 @@ func TestRateLimitRejectsBeforeTouchingLaterBuckets(t *testing.T) {
 	if failure := limiter.checkAt(loginAttempt, directSource("192.0.2.3"), "gamma", 10); failure == nil || failure.bucket != "global_breaker" {
 		t.Fatal("global not limited")
 	}
-	assertIpLimitStopsUsernameAdmission(t, policy)
+	assertIPLimitStopsUsernameAdmission(t, policy)
 
 }
 
@@ -110,11 +110,11 @@ func referenceRateLimitCheck(limiter *authRateLimiter, kind authAttempt, source 
 	limiter.mutex.Lock()
 	defer limiter.mutex.Unlock()
 	limiter.nextSequence = saturatingIncrement(limiter.nextSequence)
-	ipPolicy := limiter.policy.LoginIp
+	ipPolicy := limiter.policy.LoginIP
 	if kind == registerAttempt {
-		ipPolicy = limiter.policy.RegisterIp
+		ipPolicy = limiter.policy.RegisterIP
 	}
-	retry := referenceAcquireTracked(limiter.ipBuckets, bucketKey{kind: kind, address: source.address}, limiter.policy.IpKeyLimit, ipPolicy, now, limiter.nextSequence)
+	retry := referenceAcquireTracked(limiter.ipBuckets, bucketKey{kind: kind, address: source.address}, limiter.policy.IPKeyLimit, ipPolicy, now, limiter.nextSequence)
 	if retry != 0 {
 		return limiter.rejection(kind, "client_ip", source.class, retry, now)
 	}
@@ -158,7 +158,7 @@ func TestRateLimitRandomizedReferenceTrace(t *testing.T) {
 		for _, sequence := range []uint64{0, ^uint64(0) - 3} {
 			t.Run(fmt.Sprintf("limit=%d/sequence=%d", limit, sequence), func(t *testing.T) {
 				policy := rateLimitTestPolicy()
-				policy.IpKeyLimit, policy.UsernameKeyLimit = limit, limit
+				policy.IPKeyLimit, policy.UsernameKeyLimit = limit, limit
 				actual, reference := newAuthRateLimiter(policy), newAuthRateLimiter(policy)
 				actual.nextSequence, reference.nextSequence = sequence, sequence
 				random := rand.New(rand.NewPCG(17, 43))
@@ -228,10 +228,10 @@ func assertUsernameLimitRejection(t *testing.T, limiter *authRateLimiter, source
 	}
 }
 
-// assertIpLimitStopsUsernameAdmission checks that IP rejection leaves later username state untouched.
-func assertIpLimitStopsUsernameAdmission(t *testing.T, policy settings.RateLimitPolicy) {
+// assertIPLimitStopsUsernameAdmission checks that IP rejection leaves later username state untouched.
+func assertIPLimitStopsUsernameAdmission(t *testing.T, policy settings.RateLimitPolicy) {
 	t.Helper()
-	policy.LoginIp = settings.TokenBucketPolicy{Capacity: 1, RefillTokens: 1, RefillSeconds: 60}
+	policy.LoginIP = settings.TokenBucketPolicy{Capacity: 1, RefillTokens: 1, RefillSeconds: 60}
 	limiter := newAuthRateLimiter(policy)
 	if limiter.checkAt(loginAttempt, directSource("192.0.2.1"), "alpha", 20) != nil {
 		t.Fatal("first attempt")

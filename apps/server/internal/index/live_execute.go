@@ -19,12 +19,12 @@ import (
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/index"
 )
 
-func runLiveCatalog(ctx context.Context, config LiveConfig, input storage.CatalogInput, batchId string) (LiveCatalogOutcome, error) {
-	return runLiveCatalogWithFactory(ctx, config, input, batchId, LiveWorkerProvider)
+func runLiveCatalog(ctx context.Context, config LiveConfig, input storage.CatalogInput, batchID string) (LiveCatalogOutcome, error) {
+	return runLiveCatalogWithFactory(ctx, config, input, batchID, LiveWorkerProvider)
 }
 
 // runLiveCatalogWithFactory owns catalog connections and captures one lease and schedule epoch.
-func runLiveCatalogWithFactory(ctx context.Context, config LiveConfig, input storage.CatalogInput, batchId string, factory WorkerProviderFactory) (resultValue1 LiveCatalogOutcome, resultError error) {
+func runLiveCatalogWithFactory(ctx context.Context, config LiveConfig, input storage.CatalogInput, batchID string, factory WorkerProviderFactory) (resultValue1 LiveCatalogOutcome, resultError error) {
 	concurrency, err := catalogConcurrency(config, input.ProviderName)
 	if err != nil {
 		return LiveCatalogOutcome{}, err
@@ -49,13 +49,13 @@ func runLiveCatalogWithFactory(ctx context.Context, config LiveConfig, input sto
 	captured := time.Now()
 	seconds := max(captured.Unix(), 0)
 	epoch := uint64(max(captured.UnixMilli(), 0))
-	runId := input.CatalogName + "-" + strconv.FormatInt(max(captured.UnixNano(), 0), 10)
+	runID := input.CatalogName + "-" + strconv.FormatInt(max(captured.UnixNano(), 0), 10)
 	timestamp := strconv.FormatInt(seconds, 10)
-	if err := storage.AcquireLease(ctx, control.Conn, input.CatalogName, input.ProviderName, runId, seconds); err != nil {
+	if err := storage.AcquireLease(ctx, control.Conn, input.CatalogName, input.ProviderName, runID, seconds); err != nil {
 		return LiveCatalogOutcome{}, err
 	}
 	release := func() error {
-		return storage.ReleaseLease(context.Background(), control.Conn, input.CatalogName, input.ProviderName, runId)
+		return storage.ReleaseLease(context.Background(), control.Conn, input.CatalogName, input.ProviderName, runID)
 	}
 	content, err := storage.OpenContent(ctx, contentPath)
 	if err != nil {
@@ -69,17 +69,17 @@ func runLiveCatalogWithFactory(ctx context.Context, config LiveConfig, input sto
 			resultError = errors.Join(resultError, fmt.Errorf("close content: %w", closeError))
 		}
 	}()
-	execution := liveCatalogExecution{ctx: ctx, config: config, input: input, content: content.Conn, control: control.Conn, contentPath: contentPath, controlPath: controlPath, writer: WriterContext{input.CatalogName, input.ProviderName, batchId, runId, timestamp}, epoch: epoch, concurrency: concurrency, release: release}
+	execution := liveCatalogExecution{ctx: ctx, config: config, input: input, content: content.Conn, control: control.Conn, contentPath: contentPath, controlPath: controlPath, writer: WriterContext{input.CatalogName, input.ProviderName, batchID, runID, timestamp}, epoch: epoch, concurrency: concurrency, release: release}
 	return execution.run(factory)
 }
 
 func liveBootstrap(config LiveConfig, request WorkerRequest, workset string) WorkerBootstrap {
-	bootstrap := WorkerBootstrap{ProtocolVersion: 8, WorkerId: request.WorkerId}
+	bootstrap := WorkerBootstrap{ProtocolVersion: 8, WorkerID: request.WorkerID}
 	if request.ProviderName == "cnki" {
 		bootstrap.CnkiCaptchaToken = config.CnkiCaptchaToken
 	}
-	if value, hasProxy := config.ProviderProxySelection.ProxyUrlForProvider(request.ProviderName); hasProxy {
-		bootstrap.ProviderProxyUrl = &value
+	if value, hasProxy := config.ProviderProxySelection.ProxyURLForProvider(request.ProviderName); hasProxy {
+		bootstrap.ProviderProxyURL = &value
 	}
 	if request.ProviderName == "scholarly" {
 		copy := config.ScholarlyConfig
@@ -93,7 +93,7 @@ func liveBootstrap(config LiveConfig, request WorkerRequest, workset string) Wor
 func indexEntries(ctx context.Context, content, control *sql.Conn, writer WriterContext, entries []domain.JournalCatalogEntry, mode domain.IndexSyncMode, shouldResume bool, implementation provider.IndexContent) (RunMetrics, error) {
 	metrics := RunMetrics{JournalsTotal: uint64(len(entries))}
 	heartbeat := func() error {
-		return storage.HeartbeatLease(ctx, control, writer.CatalogName, writer.ProviderName, writer.RunId, time.Now().Unix())
+		return storage.HeartbeatLease(ctx, control, writer.CatalogName, writer.ProviderName, writer.RunID, time.Now().Unix())
 	}
 	for ordinal, entry := range entries {
 		if err := heartbeat(); err != nil {
@@ -118,7 +118,7 @@ func indexEntries(ctx context.Context, content, control *sql.Conn, writer Writer
 	return metrics, nil
 }
 func emitMetrics(ctx context.Context, writer WriterContext, metrics RunMetrics, outcome string) {
-	slog.InfoContext(ctx, "index.run.completed", "event", "index.run.completed", "component", "index", "run_id", writer.RunId, "catalog", writer.CatalogName, "provider", writer.ProviderName, "worker_id", "all", "outcome", outcome, "journals_total", metrics.JournalsTotal, "journals_succeeded", metrics.JournalsSucceeded, "journals_resumed", metrics.JournalsResumed, "journals_failed", metrics.JournalsFailed, "pages_committed", metrics.PagesCommitted, "articles_seen", metrics.ArticlesSeen, "articles_changed", metrics.ArticlesChanged, "identity_aliases_added", metrics.IdentityAliasesAdded, "change_events_emitted", metrics.ChangeEventsEmitted)
+	slog.InfoContext(ctx, "index.run.completed", "event", "index.run.completed", "component", "index", "run_id", writer.RunID, "catalog", writer.CatalogName, "provider", writer.ProviderName, "worker_id", "all", "outcome", outcome, "journals_total", metrics.JournalsTotal, "journals_succeeded", metrics.JournalsSucceeded, "journals_resumed", metrics.JournalsResumed, "journals_failed", metrics.JournalsFailed, "pages_committed", metrics.PagesCommitted, "articles_seen", metrics.ArticlesSeen, "articles_changed", metrics.ArticlesChanged, "identity_aliases_added", metrics.IdentityAliasesAdded, "change_events_emitted", metrics.ChangeEventsEmitted)
 }
 
 // liveCatalogExecution keeps lease release and connection ownership outside the execution strategy.
@@ -193,7 +193,7 @@ func (execution *liveCatalogExecution) run(factory WorkerProviderFactory) (LiveC
 		return LiveCatalogOutcome{}, err
 	}
 	emitMetrics(execution.ctx, execution.writer, metrics, "success")
-	return LiveCatalogOutcome{CsvPath: execution.input.Path, DbPath: execution.contentPath, RunId: execution.writer.RunId, Status: "succeeded", JournalCount: uint64(len(execution.input.Entries)), WrittenArticleCount: int64(min(metrics.ArticlesChanged, uint64(math.MaxInt64))), SourceAttemptCount: metrics.PagesCommitted, Concurrency: execution.concurrency}, nil
+	return LiveCatalogOutcome{CsvPath: execution.input.Path, DBPath: execution.contentPath, RunID: execution.writer.RunID, Status: "succeeded", JournalCount: uint64(len(execution.input.Entries)), WrittenArticleCount: int64(min(metrics.ArticlesChanged, uint64(math.MaxInt64))), SourceAttemptCount: metrics.PagesCommitted, Concurrency: execution.concurrency}, nil
 }
 
 // execute selects the existing worker strategy without changing the configured capacity.
@@ -238,14 +238,14 @@ func (execution *liveCatalogExecution) runInline(factory WorkerProviderFactory, 
 				resultError = errors.Join(resultError, fmt.Errorf("close separate: %w", closeError))
 			}
 		}()
-		return storage.HeartbeatLease(context.Background(), separate.Conn, execution.input.CatalogName, execution.input.ProviderName, execution.writer.RunId, time.Now().Unix())
+		return storage.HeartbeatLease(context.Background(), separate.Conn, execution.input.CatalogName, execution.input.ProviderName, execution.writer.RunID, time.Now().Unix())
 	}, "index heartbeat thread panicked", 30*time.Second)
 	defer func() {
 		if err := heartbeat.stopAndCheck(); err != nil {
 			slog.Warn("cleanup.failed", "operation", "heartbeat.stopAndCheck", "error", err)
 		}
 	}()
-	request := WorkerRequest{ProtocolVersion: 8, CatalogName: execution.input.CatalogName, ProviderName: execution.input.ProviderName, RunId: execution.writer.RunId, ProcessCount: 1, SourceWorkerCount: execution.concurrency.ConfiguredWorkers, ScheduleEpochUnixMillis: execution.epoch, TimeoutSeconds: execution.config.TimeoutSeconds}
+	request := WorkerRequest{ProtocolVersion: 8, CatalogName: execution.input.CatalogName, ProviderName: execution.input.ProviderName, RunID: execution.writer.RunID, ProcessCount: 1, SourceWorkerCount: execution.concurrency.ConfiguredWorkers, ScheduleEpochUnixMillis: execution.epoch, TimeoutSeconds: execution.config.TimeoutSeconds}
 	implementation, closeProvider, err := factory(request, liveBootstrap(execution.config, request, workset))
 	executionError = err
 	func() {
@@ -263,7 +263,7 @@ func (execution *liveCatalogExecution) runInline(factory WorkerProviderFactory, 
 
 // emitFailureMetrics reports same-batch durable coverage after releasing the catalog lease.
 func (execution *liveCatalogExecution) emitFailureMetrics() {
-	state, err := storage.ReadBatchJournalState(execution.ctx, execution.control, execution.input.CatalogName, execution.input.ProviderName, execution.writer.BatchId)
+	state, err := storage.ReadBatchJournalState(execution.ctx, execution.control, execution.input.CatalogName, execution.input.ProviderName, execution.writer.BatchID)
 	failed := RunMetrics{JournalsTotal: uint64(len(execution.input.Entries)), JournalsFailed: 1}
 	if err == nil {
 		failed = FailureMetrics(uint64(len(execution.input.Entries)), state.Completed, state.InFlight)
@@ -300,7 +300,7 @@ func indexEntryPages(ctx context.Context, content, control *sql.Conn, writer Wri
 	if checkpoint != nil {
 		seen[*checkpoint] = true
 	}
-	for page := uint64(0); page < maximumProviderPages; page++ {
+	for page := range maximumProviderPages {
 		if err := heartbeat(); err != nil {
 			return err
 		}
@@ -308,7 +308,7 @@ func indexEntryPages(ctx context.Context, content, control *sql.Conn, writer Wri
 		if err != nil {
 			return err
 		}
-		revision := fmt.Sprintf("%s:%s:%d", writer.RunId, entry.CatalogId, page)
+		revision := fmt.Sprintf("%s:%s:%d", writer.RunID, entry.CatalogID, page)
 		outcome, err := storage.CommitContentThenProgress(ctx, control, writer.syncRun(assignment), batch.Progress, writer.Timestamp, func() (storage.ContentWriteOutcome, error) {
 			return storage.WriteContentBatchWithEvents(ctx, content, entry, batch, revision, writer.Timestamp, assignment.Mode == domain.Incremental)
 		})
@@ -338,7 +338,7 @@ func validateInlineCheckpoint(entry domain.JournalCatalogEntry, checkpoint *stri
 	}
 	seen[*checkpoint] = true
 	if page+1 == maximumProviderPages {
-		return invalidWorker("provider page limit exceeded for catalog entry " + entry.CatalogId)
+		return invalidWorker("provider page limit exceeded for catalog entry " + entry.CatalogID)
 	}
 	return nil
 }

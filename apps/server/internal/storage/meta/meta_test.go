@@ -34,7 +34,7 @@ func writeFixture(t *testing.T, filename string, data []byte) {
 func newProject(t *testing.T) config.Config {
 	t.Helper()
 	configuration := config.FromProjectRoot(t.TempDir())
-	if _, err := authmigration.Migrate(context.Background(), configuration.AuthDbPath); err != nil {
+	if _, err := authmigration.Migrate(context.Background(), configuration.AuthDBPath); err != nil {
 		t.Fatal(err)
 	}
 	return configuration
@@ -70,7 +70,7 @@ func newBundle(t *testing.T, version int64, catalogs ...catalogFixture) string {
 
 func databaseForTest(t *testing.T, configuration config.Config) *sql.DB {
 	t.Helper()
-	database, err := storage.Open(configuration.AuthDbPath, false, 1)
+	database, err := storage.Open(configuration.AuthDBPath, false, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,8 +402,7 @@ func assertDowngradeDoesNotRecreate(t *testing.T, configuration config.Config, d
 	if _, err := Prepare(context.Background(), configuration, directory); err == nil {
 		t.Fatal("downgrade accepted")
 	} else {
-		var downgrade Downgrade
-		if !errors.As(err, &downgrade) {
+		if _, ok := errors.AsType[Downgrade](err); !ok {
 			t.Fatal(err)
 		}
 	}

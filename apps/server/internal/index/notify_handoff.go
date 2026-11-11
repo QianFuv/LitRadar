@@ -19,11 +19,11 @@ type NotifyObservation struct {
 }
 type notifyPayload struct {
 	ProtocolVersion uint32 `json:"protocol_version"`
-	AttemptId       string `json:"attempt_id"`
+	AttemptID       string `json:"attempt_id"`
 	Workflow        string `json:"workflow"`
 	Mode            string `json:"mode"`
 	Status          string `json:"status"`
-	DbName          string `json:"db_name"`
+	DBName          string `json:"db_name"`
 }
 
 // ClassifyNotifyOutput requires exact handoff identity, bounded complete JSON and exit/result consistency.
@@ -76,15 +76,15 @@ func readNotifyOutput(reader io.Reader) ([]byte, bool, error) {
 // NotifyProcessConfig contains local invocation paths; no secret contents are serialized.
 type NotifyProcessConfig struct {
 	Executable, SecretKeyFile, ProjectRoot string
-	AuthDbPath                             string
+	AuthDBPath                             string
 	IsDryRun                               bool
 }
 
 // RunNotifyProcess forwards the selected auth store, bounds retained output and closes native tree ownership.
 func RunNotifyProcess(ctx context.Context, config NotifyProcessConfig, database, manifest, attempt string) (resultValue1 NotifyObservation, resultError error) {
 	arguments := []string{"notify", "--secret-key-file", config.SecretKeyFile, "--db", database, "--changes-file", manifest, "--project-root", config.ProjectRoot, "--attempt-id", attempt, "--internal-handoff-json"}
-	if config.AuthDbPath != "" {
-		arguments = append(arguments, "--auth-db", config.AuthDbPath)
+	if config.AuthDBPath != "" {
+		arguments = append(arguments, "--auth-db", config.AuthDBPath)
 	}
 	if config.IsDryRun {
 		arguments = append(arguments, "--dry-run")
@@ -108,8 +108,7 @@ func RunNotifyProcess(ctx context.Context, config NotifyProcessConfig, database,
 		code := int32(0)
 		exit = &code
 	} else {
-		var processExit *exec.ExitError
-		if errors.As(waitError, &processExit) {
+		if processExit, ok := errors.AsType[*exec.ExitError](waitError); ok {
 			if code := processExit.ExitCode(); code >= 0 {
 				converted := int32(code)
 				exit = &converted
@@ -126,5 +125,5 @@ func RunNotifyProcess(ctx context.Context, config NotifyProcessConfig, database,
 
 // mismatchedNotifyIdentity rejects any mismatch in the exact trusted notification handoff identity.
 func mismatchedNotifyIdentity(payload notifyPayload, attempt, database, expectedMode string) bool {
-	return payload.ProtocolVersion != 1 || payload.AttemptId != attempt || payload.Workflow != "notify" || payload.Mode != expectedMode || payload.DbName != database
+	return payload.ProtocolVersion != 1 || payload.AttemptID != attempt || payload.Workflow != "notify" || payload.Mode != expectedMode || payload.DBName != database
 }

@@ -16,7 +16,7 @@ import (
 
 func enqueueManual(t *testing.T, repository *store.Repository, created, deadline float64) *store.RunRecord {
 	t.Helper()
-	run, err := repository.EnqueueRun(context.Background(), store.RunCreate{ExternalId: "manual-attempt", Workflow: store.WorkflowPush, ScopeKey: "manual:1", TriggerKind: store.TriggerKindManual, Mode: store.RunModeExecute, UserId: pointer(int64(1)), DeadlineAt: &deadline, CreatedAt: created})
+	run, err := repository.EnqueueRun(context.Background(), store.RunCreate{ExternalID: "manual-attempt", Workflow: store.WorkflowPush, ScopeKey: "manual:1", TriggerKind: store.TriggerKindManual, Mode: store.RunModeExecute, UserID: new(int64(1)), DeadlineAt: &deadline, CreatedAt: created})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,12 +27,12 @@ func TestManualJobCompletesDisabledSettingsAndReusesTerminalRecord(t *testing.T)
 	repository, database, config := durableFixture(t)
 	now := unixNow()
 	run := enqueueManual(t, repository, now, now+60)
-	storage := storageconfig.FromProjectRoot(t.TempDir()).WithAuthDbPath(config.AuthDbPath)
-	terminal, err := RunManualDeliveryJob(context.Background(), storage, nil, run.Id, "owner")
-	if err != nil || terminal.Status != store.RunStatusCompleted || terminal.OwnerId != nil || terminal.ResultJson == nil || !strings.Contains(*terminal.ResultJson, "Recommendation settings are not enabled; skipped push") {
+	storage := storageconfig.FromProjectRoot(t.TempDir()).WithAuthDBPath(config.AuthDBPath)
+	terminal, err := RunManualDeliveryJob(context.Background(), storage, nil, run.ID, "owner")
+	if err != nil || terminal.Status != store.RunStatusCompleted || terminal.OwnerID != nil || terminal.ResultJSON == nil || !strings.Contains(*terminal.ResultJSON, "Recommendation settings are not enabled; skipped push") {
 		t.Fatal("manual completion", err)
 	}
-	replay, err := RunManualDeliveryJob(context.Background(), storage, nil, run.Id, "")
+	replay, err := RunManualDeliveryJob(context.Background(), storage, nil, run.ID, "")
 	if err != nil || replay.Revision != terminal.Revision || countRows(t, database, "delivery_checkpoints") != 0 || countRows(t, database, "delivery_run_items") != 0 {
 		t.Fatal("top-level job touched child state", err)
 	}
@@ -49,20 +49,20 @@ func TestManualJobTimesOutQueuedAndReclaimsExpiredOwner(t *testing.T) {
 			}
 			run := enqueueManual(t, repository, now-10, deadline)
 			if !expired {
-				claim, err := repository.ClaimRun(context.Background(), run.Id, "crashed", run.Revision, now-10, 1)
+				claim, err := repository.ClaimRun(context.Background(), run.ID, "crashed", run.Revision, now-10, 1)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err = repository.StartRun(context.Background(), run.Id, "crashed", claim.Run.Revision, now-10); err != nil {
+				if _, err = repository.StartRun(context.Background(), run.ID, "crashed", claim.Run.Revision, now-10); err != nil {
 					t.Fatal(err)
 				}
 			}
-			terminal, err := RunManualDeliveryJob(context.Background(), storageconfig.FromProjectRoot(t.TempDir()).WithAuthDbPath(config.AuthDbPath), nil, run.Id, "replacement")
+			terminal, err := RunManualDeliveryJob(context.Background(), storageconfig.FromProjectRoot(t.TempDir()).WithAuthDBPath(config.AuthDBPath), nil, run.ID, "replacement")
 			want := store.RunStatusCompleted
 			if expired {
 				want = store.RunStatusTimedOut
 			}
-			if err != nil || terminal.Status != want || terminal.OwnerId != nil {
+			if err != nil || terminal.Status != want || terminal.OwnerID != nil {
 				t.Fatal("recovery", err)
 			}
 		})
@@ -76,15 +76,15 @@ func TestManualJobContextValidationPrecedesCancellationAndDeadline(t *testing.T)
 			now := unixNow()
 			run := enqueueManual(t, repository, now-10, now-1)
 			if invalid {
-				if _, err := database.Exec("UPDATE delivery_runs SET mode='dry_run',cancellation_requested=1 WHERE id=?", run.Id); err != nil {
+				if _, err := database.Exec("UPDATE delivery_runs SET mode='dry_run',cancellation_requested=1 WHERE id=?", run.ID); err != nil {
 					t.Fatal(err)
 				}
 			} else {
-				if _, err := database.Exec("UPDATE delivery_runs SET cancellation_requested=1 WHERE id=?", run.Id); err != nil {
+				if _, err := database.Exec("UPDATE delivery_runs SET cancellation_requested=1 WHERE id=?", run.ID); err != nil {
 					t.Fatal(err)
 				}
 			}
-			terminal, err := RunManualDeliveryJob(context.Background(), storageconfig.FromProjectRoot(t.TempDir()).WithAuthDbPath(config.AuthDbPath), nil, run.Id, "owner")
+			terminal, err := RunManualDeliveryJob(context.Background(), storageconfig.FromProjectRoot(t.TempDir()).WithAuthDBPath(config.AuthDBPath), nil, run.ID, "owner")
 			want, code := store.RunStatusCancelled, "cancelled"
 			if invalid {
 				want, code = store.RunStatusFailed, "invalid_job_context"
@@ -94,11 +94,11 @@ func TestManualJobContextValidationPrecedesCancellationAndDeadline(t *testing.T)
 			}
 		})
 	}
-	run := store.RunRecord{TriggerKind: store.TriggerKindManual, Mode: store.RunModeExecute, UserId: pointer(int64(1)), Workflow: store.WorkflowNotify, CreatedAt: 100, DeadlineAt: pointer(701.0)}
+	run := store.RunRecord{TriggerKind: store.TriggerKindManual, Mode: store.RunModeExecute, UserID: new(int64(1)), Workflow: store.WorkflowNotify, CreatedAt: 100, DeadlineAt: new(701.0)}
 	if !isValidManualJob(run) {
 		t.Fatal("valid 601-second context rejected")
 	}
-	run.DeadlineAt = pointer(math.Nextafter(701, math.Inf(1)))
+	run.DeadlineAt = new(math.Nextafter(701, math.Inf(1)))
 	if isValidManualJob(run) {
 		t.Fatal("oversized deadline accepted")
 	}
@@ -108,9 +108,9 @@ func TestManualJobSharesOriginalWindowBudgetAndLatestRevision(t *testing.T) {
 	repository, _, config := durableFixture(t)
 	now := unixNow()
 	run := enqueueManual(t, repository, now, now+60)
-	storage := storageconfig.FromProjectRoot(t.TempDir()).WithAuthDbPath(config.AuthDbPath)
-	terminal, err := runManualDeliveryJob(context.Background(), repository, storage, nil, run.Id, "owner", func(ctx context.Context, job ManualWeeklyPushConfig) (ManualWeeklyPushOutcome, error) {
-		if job.AttemptId != run.ExternalId || job.UserId != 1 || job.TimeoutSeconds != 120 || job.RetryAttempts != 3 || job.DedupeRetentionDays != 60 || job.ExecutionControl.Deadline() != *run.DeadlineAt {
+	storage := storageconfig.FromProjectRoot(t.TempDir()).WithAuthDBPath(config.AuthDBPath)
+	terminal, err := runManualDeliveryJob(context.Background(), repository, storage, nil, run.ID, "owner", func(ctx context.Context, job ManualWeeklyPushConfig) (ManualWeeklyPushOutcome, error) {
+		if job.AttemptID != run.ExternalID || job.UserID != 1 || job.TimeoutSeconds != 120 || job.RetryAttempts != 3 || job.DedupeRetentionDays != 60 || job.ExecutionControl.Deadline() != *run.DeadlineAt {
 			t.Fatal("manual context changed")
 		}
 		stamp, _ := manualCreationTime(run.CreatedAt)
@@ -125,11 +125,11 @@ func TestManualJobSharesOriginalWindowBudgetAndLatestRevision(t *testing.T) {
 		if _, err := job.ExecutionControl.BeginAiRequest(time.Second); !errors.Is(err, domain.ControlBudgetExhausted) {
 			t.Fatal("budget replenished", err)
 		}
-		current, err := repository.LoadRun(ctx, run.Id)
+		current, err := repository.LoadRun(ctx, run.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = repository.CancelRun(ctx, run.Id, current.Revision, unixNow()); err != nil {
+		if _, err = repository.CancelRun(ctx, run.ID, current.Revision, unixNow()); err != nil {
 			t.Fatal(err)
 		}
 		return ManualWeeklyPushOutcome{}, job.ExecutionControl.Check()
@@ -145,17 +145,17 @@ func TestManualJobRespectsConcurrentTerminalAndOwnershipChanges(t *testing.T) {
 			repository, database, config := durableFixture(t)
 			now := unixNow()
 			run := enqueueManual(t, repository, now, now+60)
-			terminal, err := runManualDeliveryJob(context.Background(), repository, storageconfig.FromProjectRoot(t.TempDir()).WithAuthDbPath(config.AuthDbPath), nil, run.Id, "owner", func(ctx context.Context, _ ManualWeeklyPushConfig) (ManualWeeklyPushOutcome, error) {
+			terminal, err := runManualDeliveryJob(context.Background(), repository, storageconfig.FromProjectRoot(t.TempDir()).WithAuthDBPath(config.AuthDBPath), nil, run.ID, "owner", func(ctx context.Context, _ ManualWeeklyPushConfig) (ManualWeeklyPushOutcome, error) {
 				if isTerminal {
-					current, err := repository.LoadRun(ctx, run.Id)
+					current, err := repository.LoadRun(ctx, run.ID)
 					if err != nil {
 						t.Fatal(err)
 					}
-					if _, err = repository.FinalizeRun(ctx, run.Id, "owner", current.Revision, store.RunStatusUnknown, nil, pointer("ambiguous_delivery"), unixNow()); err != nil {
+					if _, err = repository.FinalizeRun(ctx, run.ID, "owner", current.Revision, store.RunStatusUnknown, nil, new("ambiguous_delivery"), unixNow()); err != nil {
 						t.Fatal(err)
 					}
 				} else {
-					if _, err := database.Exec("UPDATE delivery_runs SET owner_id='replacement',revision=revision+1 WHERE id=?", run.Id); err != nil {
+					if _, err := database.Exec("UPDATE delivery_runs SET owner_id='replacement',revision=revision+1 WHERE id=?", run.ID); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -196,11 +196,11 @@ func TestManualJobPersistsCancellationAfterExecutionContextEnds(t *testing.T) {
 	run := enqueueManual(t, repository, now, now+60)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	terminal, err := runManualDeliveryJob(ctx, repository, storageconfig.FromProjectRoot(t.TempDir()).WithAuthDbPath(config.AuthDbPath), nil, run.Id, "owner", func(context.Context, ManualWeeklyPushConfig) (ManualWeeklyPushOutcome, error) {
+	terminal, err := runManualDeliveryJob(ctx, repository, storageconfig.FromProjectRoot(t.TempDir()).WithAuthDBPath(config.AuthDBPath), nil, run.ID, "owner", func(context.Context, ManualWeeklyPushConfig) (ManualWeeklyPushOutcome, error) {
 		cancel()
 		return ManualWeeklyPushOutcome{}, domain.ControlCancelled
 	})
-	if err != nil || terminal.Status != store.RunStatusCancelled || terminal.OwnerId != nil {
+	if err != nil || terminal.Status != store.RunStatusCancelled || terminal.OwnerID != nil {
 		t.Fatal("cancelled execution did not persist its terminal state", err)
 	}
 }

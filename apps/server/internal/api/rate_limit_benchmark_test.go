@@ -12,7 +12,7 @@ func BenchmarkRateLimit(b *testing.B) {
 	for _, limits := range []struct{ ip, username int }{{64, 64}, {8192, 4096}} {
 		b.Run(fmt.Sprintf("Churn%d_%d", limits.ip, limits.username), func(b *testing.B) {
 			policy := settings.TokenBucketPolicy{Capacity: 1, RefillTokens: 1, RefillSeconds: 1}
-			limiter := newAuthRateLimiter(settings.RateLimitPolicy{LoginIp: policy, RegisterIp: policy, Username: policy, GlobalLogin: policy, GlobalRegister: policy, IpKeyLimit: uint64(limits.ip), UsernameKeyLimit: uint64(limits.username)})
+			limiter := newAuthRateLimiter(settings.RateLimitPolicy{LoginIP: policy, RegisterIP: policy, Username: policy, GlobalLogin: policy, GlobalRegister: policy, IPKeyLimit: uint64(limits.ip), UsernameKeyLimit: uint64(limits.username)})
 			count := max(limits.ip, limits.username) + 1
 			sources := make([]authClientSource, count)
 			usernames := make([]string, count)

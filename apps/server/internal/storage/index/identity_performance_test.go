@@ -14,7 +14,7 @@ import (
 
 // TestArticleIdentityResolutionPreservesAliasPriority verifies exact ownership without fuzzy identity merging.
 func TestArticleIdentityResolutionPreservesAliasPriority(t *testing.T) {
-	article := domain.ArticleDraft{CatalogId: "fixture", Title: "Résearch — 期刊", Doi: new("10.1234/identity"), Pmid: new("42"), PublicationYear: new(int64(2026)), Volume: new("1"), IssueNumber: new("2"), StartPage: new("3")}
+	article := domain.ArticleDraft{CatalogID: "fixture", Title: "Résearch — 期刊", Doi: new("10.1234/identity"), Pmid: new("42"), PublicationYear: new(int64(2026)), Volume: new("1"), IssueNumber: new("2"), StartPage: new("3")}
 	keys := ArticleIdentityKeys(article)
 	if len(keys) != 3 {
 		t.Fatal("fixture lost its three identity bases", keys)

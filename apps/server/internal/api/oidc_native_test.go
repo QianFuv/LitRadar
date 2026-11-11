@@ -65,7 +65,7 @@ func (provider *nativeTestProvider) serve(writer http.ResponseWriter, request *h
 	}
 }
 
-func nativeApiFixture(t *testing.T) (*authHandlers, *http.ServeMux, *nativeTestProvider) {
+func nativeAPIFixture(t *testing.T) (*authHandlers, *http.ServeMux, *nativeTestProvider) {
 	t.Helper()
 	handlers, router, _, codec := apiOidcFixture(t)
 	provider := &nativeTestProvider{key: oidctest.NewKey(t)}
@@ -90,7 +90,7 @@ func nativeLoginQuery(redirect string) (string, string) {
 	return "/api/auth/oidc/native/login?" + url.Values{"redirect_uri": {redirect}, "code_challenge": {base64.RawURLEncoding.EncodeToString(digest[:])}, "state": {"client_state-0123456789"}}.Encode(), verifier
 }
 
-func completeApiOidc(t *testing.T, router http.Handler, provider *nativeTestProvider, startPath string) *httptest.ResponseRecorder {
+func completeAPIOidc(t *testing.T, router http.Handler, provider *nativeTestProvider, startPath string) *httptest.ResponseRecorder {
 	t.Helper()
 	response := authRequest(router, "GET", startPath, "", "")
 	if response.Code != 302 || len(response.Result().Cookies()) != 1 {
@@ -118,8 +118,8 @@ func completeApiOidc(t *testing.T, router http.Handler, provider *nativeTestProv
 func TestNativeOidcHttpFlow(t *testing.T) {
 	for _, redirect := range []string{"http://127.0.0.1:41923/oidc/callback", "litradar://oidc/callback"} {
 		t.Run(redirect, func(t *testing.T) {
-			_, router, provider := nativeApiFixture(t)
-			web := completeApiOidc(t, router, provider, "/api/auth/oidc/login?next=/favorites")
+			_, router, provider := nativeAPIFixture(t)
+			web := completeAPIOidc(t, router, provider, "/api/auth/oidc/login?next=/favorites")
 			if web.Header().Get("Location") != "/favorites" {
 				t.Fatal("web next changed", web.Header())
 			}
@@ -133,7 +133,7 @@ func TestNativeOidcHttpFlow(t *testing.T) {
 				t.Fatal("web OIDC did not issue session cookie")
 			}
 			start, verifier := nativeLoginQuery(redirect)
-			callback := completeApiOidc(t, router, provider, start)
+			callback := completeAPIOidc(t, router, provider, start)
 			if callback.Header().Get("Set-Cookie") != "" {
 				t.Fatal("native callback issued a cookie", callback.Header())
 			}
@@ -209,7 +209,7 @@ func TestNativeOidcHttpAdmission(t *testing.T) {
 	response := authRequest(router, "POST", "/api/auth/oidc/native/exchange", body, "")
 	requireProblem(t, response, 400, "invalid_grant")
 	policy := rateLimitTestPolicy()
-	policy.LoginIp.Capacity = 1
+	policy.LoginIP.Capacity = 1
 	handlers.limiter = newAuthRateLimiter(policy)
 	if response = authRequest(router, "POST", "/api/auth/oidc/native/exchange", body, ""); response.Code != 400 {
 		t.Fatal(response.Code)

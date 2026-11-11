@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/rootfile"
@@ -149,8 +150,8 @@ func (change *replacement) finish() error {
 
 func rollbackAfter(failure error, changes []*replacement) error {
 	failures := []string{}
-	for index := len(changes) - 1; index >= 0; index-- {
-		if err := changes[index].rollback(); err != nil {
+	for _, change := range slices.Backward(changes) {
+		if err := change.rollback(); err != nil {
 			failures = append(failures, err.Error())
 		}
 	}

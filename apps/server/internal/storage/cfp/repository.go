@@ -115,7 +115,7 @@ type JournalSnapshot struct {
 	CatalogIds      []string
 	JournalTitle    string
 	CheckedOn       string
-	SourceUrl       *string
+	SourceURL       *string
 	SourceStatement *string
 	Notices         []domain.Notice
 	Sources         []SourceStatus
@@ -128,7 +128,7 @@ type RefreshLease struct {
 type Publication struct {
 	Capture       string
 	CaptureFormat string
-	SourceUrl     string
+	SourceURL     string
 	ConfigVersion uint32
 	Sources       []domain.Source
 	EmptyJournals []domain.EmptyJournal

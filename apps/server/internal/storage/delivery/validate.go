@@ -9,7 +9,7 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/transport"
 )
 
-func validateDbName(value string) error {
+func validateDBName(value string) error {
 	if value == "" || len(value) > 255 || !utf8.ValidString(value) || !strings.HasSuffix(value, ".sqlite") || strings.Contains(value, "/") || hasWindowsDeliveryPath(value) || hasControl(value) {
 		return invalid("Delivery database name is invalid")
 	}
@@ -59,30 +59,30 @@ func validateSymbol(value *string, detail string) error {
 		return invalid(detail)
 	}
 	for _, character := range []byte(*value) {
-		if !(character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '_') {
+		if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '_' {
 			return invalid(detail)
 		}
 	}
 	return nil
 }
 
-func validateJson(value string) error {
+func validateJSON(value string) error {
 	if len(value) > 4*1024*1024 {
 		return invalid("Delivery JSON exceeds its size limit")
 	}
-	if _, err := transport.ParseJson([]byte(value)); err != nil {
+	if _, err := transport.ParseJSON([]byte(value)); err != nil {
 		return &Error{Kind: "json", cause: err}
 	}
 	return nil
 }
 
-func validateOptionalJson(value *string) error {
+func validateOptionalJSON(value *string) error {
 	if value != nil {
-		return validateJson(*value)
+		return validateJSON(*value)
 	}
 	return nil
 }
-func validatePositiveId(value int64, detail string) error {
+func validatePositiveID(value int64, detail string) error {
 	if value <= 0 {
 		return invalid(detail)
 	}
@@ -117,7 +117,7 @@ func validateRevisionLease(revision int64, now, seconds float64) error {
 }
 
 func validateRunCreate(run RunCreate) error {
-	if err := validateIdentifier(run.ExternalId, "Delivery external run id is invalid"); err != nil {
+	if err := validateIdentifier(run.ExternalID, "Delivery external run id is invalid"); err != nil {
 		return err
 	}
 	if err := validateText(run.ScopeKey, 255, "Delivery run scope is invalid"); err != nil {
@@ -142,13 +142,13 @@ func validateItemCreate(item RunItemCreate) error {
 	if err := validateText(item.ItemKey, 512, "Delivery item key is invalid"); err != nil {
 		return err
 	}
-	if item.UserId != nil {
-		if err := validatePositiveId(*item.UserId, "Delivery item user id is invalid"); err != nil {
+	if item.UserID != nil {
+		if err := validatePositiveID(*item.UserID, "Delivery item user id is invalid"); err != nil {
 			return err
 		}
 	}
-	if item.ArticleId != nil {
-		if err := validatePositiveId(*item.ArticleId, "Delivery item article id is invalid"); err != nil {
+	if item.ArticleID != nil {
+		if err := validatePositiveID(*item.ArticleID, "Delivery item article id is invalid"); err != nil {
 			return err
 		}
 	}
@@ -161,13 +161,13 @@ func validateItemCreate(item RunItemCreate) error {
 func validateResolutions(reservations []DedupeResolution) error {
 	seen := map[int64]bool{}
 	for _, reservation := range reservations {
-		if err := validatePositiveId(reservation.Id, "Delivery dedupe id is invalid"); err != nil {
+		if err := validatePositiveID(reservation.ID, "Delivery dedupe id is invalid"); err != nil {
 			return err
 		}
-		if reservation.ExpectedRevision < 0 || seen[reservation.Id] {
+		if reservation.ExpectedRevision < 0 || seen[reservation.ID] {
 			return invalid("Delivery dedupe resolutions are invalid")
 		}
-		seen[reservation.Id] = true
+		seen[reservation.ID] = true
 	}
 	return nil
 }
@@ -185,19 +185,19 @@ func isDeliveryIdentifierByte(character byte) bool {
 }
 
 func validateRunMembership(run RunCreate) error {
-	if run.DbName != nil {
-		if err := validateDbName(*run.DbName); err != nil {
+	if run.DBName != nil {
+		if err := validateDBName(*run.DBName); err != nil {
 			return err
 		}
 	}
-	if run.TriggerKind != TriggerKindManual && run.DbName == nil {
+	if run.TriggerKind != TriggerKindManual && run.DBName == nil {
 		return invalid("Non-manual delivery runs require a database")
 	}
-	if run.TriggerKind == TriggerKindManual && run.UserId == nil {
+	if run.TriggerKind == TriggerKindManual && run.UserID == nil {
 		return invalid("Manual delivery runs require a user")
 	}
-	if run.UserId != nil {
-		if err := validatePositiveId(*run.UserId, "Delivery run user id is invalid"); err != nil {
+	if run.UserID != nil {
+		if err := validatePositiveID(*run.UserID, "Delivery run user id is invalid"); err != nil {
 			return err
 		}
 	}

@@ -20,10 +20,10 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
-var ErrEndpointNotAllowed = errors.New("Outbound endpoint is not allowed")
+var ErrEndpointNotAllowed = errors.New("outbound endpoint is not allowed")
 
 // UpsertNotificationSettings authenticates existing secrets and checks endpoint and folder policy in the same write transaction.
-func (repository *Repository) UpsertNotificationSettings(ctx context.Context, codec *secrets.Codec, userId int64, update domain.NotificationSettingsUpdate) (resultValue1 *domain.NotificationSettings, resultError error) {
+func (repository *Repository) UpsertNotificationSettings(ctx context.Context, codec *secrets.Codec, userID int64, update domain.NotificationSettingsUpdate) (resultValue1 *domain.NotificationSettings, resultError error) {
 	if err := domain.ValidateNotificationSettings(update); err != nil {
 		return nil, err
 	}
@@ -51,16 +51,16 @@ func (repository *Repository) UpsertNotificationSettings(ctx context.Context, co
 			}
 		}
 	}()
-	prepared, err := prepareNotificationSettingsWrite(ctx, connection, codec, userId, update)
+	prepared, err := prepareNotificationSettingsWrite(ctx, connection, codec, userID, update)
 	if err != nil {
 		return nil, err
 	}
 	now := float64(time.Now().UnixNano()) / 1e9
-	_, err = queries.StoreNotificationSettings(ctx, connection, deliverydb.StoreNotificationSettingsParams{UserID: sqlite.Integer(userId), Keywords: sqlite.Text(encoded.keywords), Directions: sqlite.Text(encoded.directions), SelectedDatabases: sqlite.Text(encoded.databases), DeliveryMethod: sqlite.Text(update.DeliveryMethod), PushplusToken: sqlite.Text(prepared.push), PushplusTemplate: sqlite.Text(update.PushplusTemplate), PushplusTopic: sqlite.Text(update.PushplusTopic), PushplusChannel: sqlite.Text(update.PushplusChannel), SyncToTrackingFolder: sqlite.Integer(dbtypes.Boolean(update.SyncToTrackingFolder)), AIBaseURL: sqlite.Text(prepared.primaryBase), AIAPIKey: sqlite.Text(prepared.primary), AIModel: sqlite.Text(update.AiModel), AISystemPrompt: sqlite.Text(update.AiSystemPrompt), AIBackupBaseURL: sqlite.Text(prepared.backupBase), AIBackupAPIKey: sqlite.Text(prepared.backup), AIBackupModel: sqlite.Text(update.AiBackupModel), AIBackupSystemPrompt: sqlite.Text(update.AiBackupSystemPrompt), AIRetryAttempts: sqlite.Integer(update.AiRetryAttempts), Enabled: sqlite.Integer(dbtypes.Boolean(update.Enabled)), CreatedAt: sqlite.Number(now), UpdatedAt: sqlite.Number(now)})
+	_, err = queries.StoreNotificationSettings(ctx, connection, deliverydb.StoreNotificationSettingsParams{UserID: sqlite.Integer(userID), Keywords: sqlite.Text(encoded.keywords), Directions: sqlite.Text(encoded.directions), SelectedDatabases: sqlite.Text(encoded.databases), DeliveryMethod: sqlite.Text(update.DeliveryMethod), PushplusToken: sqlite.Text(prepared.push), PushplusTemplate: sqlite.Text(update.PushplusTemplate), PushplusTopic: sqlite.Text(update.PushplusTopic), PushplusChannel: sqlite.Text(update.PushplusChannel), SyncToTrackingFolder: sqlite.Integer(dbtypes.Boolean(update.SyncToTrackingFolder)), AIBaseURL: sqlite.Text(prepared.primaryBase), AIAPIKey: sqlite.Text(prepared.primary), AIModel: sqlite.Text(update.AiModel), AISystemPrompt: sqlite.Text(update.AiSystemPrompt), AIBackupBaseURL: sqlite.Text(prepared.backupBase), AIBackupAPIKey: sqlite.Text(prepared.backup), AIBackupModel: sqlite.Text(update.AiBackupModel), AIBackupSystemPrompt: sqlite.Text(update.AiBackupSystemPrompt), AIRetryAttempts: sqlite.Integer(update.AiRetryAttempts), Enabled: sqlite.Integer(dbtypes.Boolean(update.Enabled)), CreatedAt: sqlite.Number(now), UpdatedAt: sqlite.Number(now)})
 	if err != nil {
 		return nil, err
 	}
-	row, err := notificationQueries.NotificationSettings(ctx, connection, notificationdb.NotificationSettingsParams{UserID: sqlite.Integer(userId)})
+	row, err := notificationQueries.NotificationSettings(ctx, connection, notificationdb.NotificationSettingsParams{UserID: sqlite.Integer(userID)})
 	stored, err := decodeNotificationSettings(row, err, codec)
 	if err != nil {
 		return nil, err
@@ -79,7 +79,7 @@ func encodeNotificationStrings(values []string) (string, error) {
 	if values == nil {
 		values = []string{}
 	}
-	encoded, err := jsonvalue.EncodeJson(values)
+	encoded, err := jsonvalue.EncodeJSON(values)
 	return string(encoded), err
 }
 
@@ -87,14 +87,14 @@ func selectedEndpoint(value string, allowed []string) (string, error) {
 	if strings.TrimSpace(value) == "" {
 		return "", nil
 	}
-	canonical, err := settings.CanonicalizeBaseUrl(value)
+	canonical, err := settings.CanonicalizeBaseURL(value)
 	if err != nil || !slices.Contains(allowed, canonical) {
 		return "", ErrEndpointNotAllowed
 	}
 	return canonical, nil
 }
 
-func resolveNotificationSecret(codec *secrets.Codec, userId int64, field string, update domain.SecretUpdate, existing string) (string, error) {
+func resolveNotificationSecret(codec *secrets.Codec, userID int64, field string, update domain.SecretUpdate, existing string) (string, error) {
 	if !update.IsPresent {
 		return existing, nil
 	}
@@ -105,7 +105,7 @@ func resolveNotificationSecret(codec *secrets.Codec, userId int64, field string,
 	if value == "" {
 		return existing, nil
 	}
-	return codec.Encrypt(value, secrets.NotificationContext(userId, field))
+	return codec.Encrypt(value, secrets.NotificationContext(userID, field))
 }
 
 type notificationEncodedLists struct {
@@ -132,35 +132,35 @@ type notificationPreparedSettings struct {
 	primaryBase, backupBase, push, primary, backup string
 }
 
-func prepareNotificationSettingsWrite(ctx context.Context, connection *sql.Conn, codec *secrets.Codec, userId int64, update domain.NotificationSettingsUpdate) (notificationPreparedSettings, error) {
+func prepareNotificationSettingsWrite(ctx context.Context, connection *sql.Conn, codec *secrets.Codec, userID int64, update domain.NotificationSettingsUpdate) (notificationPreparedSettings, error) {
 	allowed, err := settings.AiBaseUrlsInConnection(ctx, connection)
 	if err != nil {
 		return notificationPreparedSettings{}, err
 	}
-	primaryBase, err := selectedEndpoint(update.AiBaseUrl, allowed)
+	primaryBase, err := selectedEndpoint(update.AiBaseURL, allowed)
 	if err != nil {
 		return notificationPreparedSettings{}, err
 	}
-	backupBase, err := selectedEndpoint(update.AiBackupBaseUrl, allowed)
+	backupBase, err := selectedEndpoint(update.AiBackupBaseURL, allowed)
 	if err != nil {
 		return notificationPreparedSettings{}, err
 	}
-	existing, err := loadAuthenticatedNotificationSecrets(ctx, connection, codec, userId)
+	existing, err := loadAuthenticatedNotificationSecrets(ctx, connection, codec, userID)
 	if err != nil {
 		return notificationPreparedSettings{}, err
 	}
-	push, err := resolveNotificationSecret(codec, userId, "pushplus_token", update.PushplusToken, string(existing.push))
+	push, err := resolveNotificationSecret(codec, userID, "pushplus_token", update.PushplusToken, string(existing.push))
 	if err != nil {
 		return notificationPreparedSettings{}, err
 	}
-	if err := validateNotificationWriteDependencies(ctx, connection, userId, update, push); err != nil {
+	if err := validateNotificationWriteDependencies(ctx, connection, userID, update, push); err != nil {
 		return notificationPreparedSettings{}, err
 	}
-	primary, err := resolveNotificationSecret(codec, userId, "ai_api_key", update.AiApiKey, string(existing.primary))
+	primary, err := resolveNotificationSecret(codec, userID, "ai_api_key", update.AiAPIKey, string(existing.primary))
 	if err != nil {
 		return notificationPreparedSettings{}, err
 	}
-	backup, err := resolveNotificationSecret(codec, userId, "ai_backup_api_key", update.AiBackupApiKey, string(existing.backup))
+	backup, err := resolveNotificationSecret(codec, userID, "ai_backup_api_key", update.AiBackupAPIKey, string(existing.backup))
 	if err != nil {
 		return notificationPreparedSettings{}, err
 	}
@@ -171,10 +171,10 @@ type notificationExistingSecrets struct {
 	push, primary, backup sqlite.Text
 }
 
-func loadAuthenticatedNotificationSecrets(ctx context.Context, connection *sql.Conn, codec *secrets.Codec, userId int64) (notificationExistingSecrets, error) {
+func loadAuthenticatedNotificationSecrets(ctx context.Context, connection *sql.Conn, codec *secrets.Codec, userID int64) (notificationExistingSecrets, error) {
 	var currentPush, currentPrimary, currentBackup sqlite.Text
 	err := func() error {
-		queryResult, err := queries.NotificationSecrets(ctx, connection, deliverydb.NotificationSecretsParams{UserID: sqlite.Integer(userId)})
+		queryResult, err := queries.NotificationSecrets(ctx, connection, deliverydb.NotificationSecretsParams{UserID: sqlite.Integer(userID)})
 		if err != nil {
 			return err
 		}
@@ -191,7 +191,7 @@ func loadAuthenticatedNotificationSecrets(ctx context.Context, connection *sql.C
 			field  string
 			stored sqlite.Text
 		}{{"pushplus_token", currentPush}, {"ai_api_key", currentPrimary}, {"ai_backup_api_key", currentBackup}} {
-			if _, err := codec.Decrypt(string(value.stored), secrets.NotificationContext(userId, value.field)); err != nil {
+			if _, err := codec.Decrypt(string(value.stored), secrets.NotificationContext(userID, value.field)); err != nil {
 				return notificationExistingSecrets{}, err
 			}
 		}
@@ -199,11 +199,11 @@ func loadAuthenticatedNotificationSecrets(ctx context.Context, connection *sql.C
 	return notificationExistingSecrets{currentPush, currentPrimary, currentBackup}, nil
 }
 
-func validateNotificationWriteDependencies(ctx context.Context, connection *sql.Conn, userId int64, update domain.NotificationSettingsUpdate, push string) error {
+func validateNotificationWriteDependencies(ctx context.Context, connection *sql.Conn, userID int64, update domain.NotificationSettingsUpdate, push string) error {
 	hasFolder := true
 	if strings.TrimSpace(update.DeliveryMethod) == "folder" || update.SyncToTrackingFolder {
 		if err := func() error {
-			queryResult, err := queries.HasTrackingFolder(ctx, connection, deliverydb.HasTrackingFolderParams{UserID: sqlite.Integer(userId)})
+			queryResult, err := queries.HasTrackingFolder(ctx, connection, deliverydb.HasTrackingFolderParams{UserID: sqlite.Integer(userID)})
 			if err != nil {
 				return err
 			}
@@ -218,7 +218,7 @@ func validateNotificationWriteDependencies(ctx context.Context, connection *sql.
 		value := int64(1)
 		folder = &value
 	}
-	if err := validateSubscriberDependencies(domain.Subscriber{DeliveryMethod: update.DeliveryMethod, PushplusToken: push, SyncToTrackingFolder: update.SyncToTrackingFolder, TrackingFolderId: folder}); err != nil {
+	if err := validateSubscriberDependencies(domain.Subscriber{DeliveryMethod: update.DeliveryMethod, PushplusToken: push, SyncToTrackingFolder: update.SyncToTrackingFolder, TrackingFolderID: folder}); err != nil {
 		return err
 	}
 	return nil

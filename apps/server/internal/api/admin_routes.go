@@ -28,16 +28,16 @@ type providerCatalogResponse struct {
 }
 
 // adminOperation retains typed results across authorization, audit and bounded execution.
-func adminOperation[Body any](handlers *adminHandlers, request *http.Request, action string, target int64, validate func(identity.Id) (string, *apiError), work func(context.Context, identity.Id, domain.AuditEvent) (Body, int64, error)) (*output[Body], error) {
+func adminOperation[Body any](handlers *adminHandlers, request *http.Request, action string, target int64, validate func(identity.ID) (string, *apiError), work func(context.Context, identity.ID, domain.AuditEvent) (Body, int64, error)) (*output[Body], error) {
 	current, failure := handlers.auth.authenticator.requireAdmin(request)
 	if failure != nil {
 		return nil, failure.problem()
 	}
-	actor := current.authorization.User.Id
+	actor := current.authorization.User.ID
 	actorNumber := int64(actor)
-	event := domain.AuditEvent{Action: action, Outcome: "completed", RequestId: requestId(request), OccurredAt: currentTimestamp(), ActorId: &actorNumber}
+	event := domain.AuditEvent{Action: action, Outcome: "completed", RequestID: requestID(request), OccurredAt: currentTimestamp(), ActorID: &actorNumber}
 	if target > 0 {
-		event.TargetId = &target
+		event.TargetID = &target
 	}
 	started := time.Now()
 	isCompleted := false
@@ -126,14 +126,14 @@ func (handlers *adminHandlers) routes() []route {
 
 // listUsers handles list_users with typed input and output.
 func (handlers *adminHandlers) listUsers(ctx context.Context, input *ListUsersInput) (*output[[]adminUserResponse], error) {
-	return adminOperation(handlers, input.request, "", 0, nil, func(ctx context.Context, actor identity.Id, event domain.AuditEvent) ([]adminUserResponse, int64, error) {
+	return adminOperation(handlers, input.request, "", 0, nil, func(ctx context.Context, actor identity.ID, event domain.AuditEvent) ([]adminUserResponse, int64, error) {
 		rows, err := handlers.auth.repository.ListUsers(ctx)
 		if err != nil {
 			return nil, 0, err
 		}
 		result := make([]adminUserResponse, len(rows))
 		for index, row := range rows {
-			result[index] = adminUserResponse{Email: row.Email, AuthKind: row.AuthKind, IsOIDCLinked: row.IsOidcLinked, Id: int64(row.Id), Username: row.Username, IsAdmin: row.IsAdmin, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, FolderCount: row.FolderCount, FavoriteCount: row.FavoriteCount, NotifyEnabled: row.NotifyEnabled}
+			result[index] = adminUserResponse{Email: row.Email, AuthKind: row.AuthKind, IsOIDCLinked: row.IsOidcLinked, ID: int64(row.ID), Username: row.Username, IsAdmin: row.IsAdmin, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, FolderCount: row.FolderCount, FavoriteCount: row.FavoriteCount, NotifyEnabled: row.NotifyEnabled}
 		}
 		return result, 0, nil
 	})
@@ -141,26 +141,26 @@ func (handlers *adminHandlers) listUsers(ctx context.Context, input *ListUsersIn
 
 // setAdministrator handles set_admin with typed input and output.
 func (handlers *adminHandlers) setAdministrator(ctx context.Context, input *SetAdminInput) (*output[okResponse], error) {
-	return adminOperation(handlers, input.request, "user_admin_update", input.UserID, func(actor identity.Id) (string, *apiError) {
+	return adminOperation(handlers, input.request, "user_admin_update", input.UserID, func(actor identity.ID) (string, *apiError) {
 		if input.UserID == int64(actor) && !input.Body.IsAdmin {
 			return "self_revocation_forbidden", badRequest("Cannot revoke own admin status")
 		}
 		return "", nil
-	}, func(ctx context.Context, actor identity.Id, event domain.AuditEvent) (okResponse, int64, error) {
-		err := handlers.auth.repository.SetAdministrator(ctx, actor, identity.Id(input.UserID), input.Body.IsAdmin, &event)
+	}, func(ctx context.Context, actor identity.ID, event domain.AuditEvent) (okResponse, int64, error) {
+		err := handlers.auth.repository.SetAdministrator(ctx, actor, identity.ID(input.UserID), input.Body.IsAdmin, &event)
 		return okResponse{OK: true}, input.UserID, err
 	})
 }
 
 // resetUserPassword handles reset_password with typed input and output.
 func (handlers *adminHandlers) resetUserPassword(ctx context.Context, input *ResetPasswordInput) (*output[okResponse], error) {
-	return adminOperation(handlers, input.request, "user_password_reset", input.UserID, func(identity.Id) (string, *apiError) {
+	return adminOperation(handlers, input.request, "user_password_reset", input.UserID, func(identity.ID) (string, *apiError) {
 		if !cryptography.ValidNewPassword(input.Body.NewPassword) {
 			return "password_policy_failed", mapAuthError(domain.ErrPasswordShort)
 		}
 		return "", nil
-	}, func(ctx context.Context, actor identity.Id, event domain.AuditEvent) (okResponse, int64, error) {
-		changed, err := handlers.auth.service.ResetPassword(ctx, &actor, identity.Id(input.UserID), input.Body.NewPassword, &event)
+	}, func(ctx context.Context, actor identity.ID, event domain.AuditEvent) (okResponse, int64, error) {
+		changed, err := handlers.auth.service.ResetPassword(ctx, &actor, identity.ID(input.UserID), input.Body.NewPassword, &event)
 		response, failure := changedResponse(changed, err, "User not found")
 		return response, input.UserID, failure
 	})
@@ -168,20 +168,20 @@ func (handlers *adminHandlers) resetUserPassword(ctx context.Context, input *Res
 
 // deleteUser handles delete_user with typed input and output.
 func (handlers *adminHandlers) deleteUser(ctx context.Context, input *DeleteUserInput) (*output[okResponse], error) {
-	return adminOperation(handlers, input.request, "user_delete", input.UserID, func(actor identity.Id) (string, *apiError) {
+	return adminOperation(handlers, input.request, "user_delete", input.UserID, func(actor identity.ID) (string, *apiError) {
 		if input.UserID == int64(actor) {
 			return "self_delete_forbidden", badRequest("Cannot delete yourself")
 		}
 		return "", nil
-	}, func(ctx context.Context, actor identity.Id, event domain.AuditEvent) (okResponse, int64, error) {
-		err := handlers.auth.repository.DeleteUser(ctx, actor, identity.Id(input.UserID), &event)
+	}, func(ctx context.Context, actor identity.ID, event domain.AuditEvent) (okResponse, int64, error) {
+		err := handlers.auth.repository.DeleteUser(ctx, actor, identity.ID(input.UserID), &event)
 		return okResponse{OK: true}, input.UserID, err
 	})
 }
 
 // listInviteCodes handles list_invite_codes with typed input and output.
 func (handlers *adminHandlers) listInviteCodes(ctx context.Context, input *ListInviteCodesInput) (*output[[]adminInviteResponse], error) {
-	return adminOperation(handlers, input.request, "", 0, nil, func(ctx context.Context, actor identity.Id, event domain.AuditEvent) ([]adminInviteResponse, int64, error) {
+	return adminOperation(handlers, input.request, "", 0, nil, func(ctx context.Context, actor identity.ID, event domain.AuditEvent) ([]adminInviteResponse, int64, error) {
 		rows, err := handlers.auth.repository.ListInvites(ctx, currentTimestamp())
 		if err != nil {
 			return nil, 0, err
@@ -196,19 +196,19 @@ func (handlers *adminHandlers) listInviteCodes(ctx context.Context, input *ListI
 
 // createInviteCode handles create_invite_code with typed input and output.
 func (handlers *adminHandlers) createInviteCode(ctx context.Context, input *CreateInviteCodeInput) (*output[adminInviteResponse], error) {
-	return adminOperation(handlers, input.request, "invite_create", 0, nil, func(ctx context.Context, actor identity.Id, event domain.AuditEvent) (adminInviteResponse, int64, error) {
+	return adminOperation(handlers, input.request, "invite_create", 0, nil, func(ctx context.Context, actor identity.ID, event domain.AuditEvent) (adminInviteResponse, int64, error) {
 		body := input.Body
 		if body == nil {
 			body = &AdminInviteCodeCreate{}
 		}
 		invite, err := handlers.auth.repository.CreateAdministratorInvite(ctx, &actor, body.ExpiresAt, body.MaxUses, &event)
-		return adminInvite(invite), invite.Id, err
+		return adminInvite(invite), invite.ID, err
 	})
 }
 
 // revokeInviteCode handles revoke_admin_invite_code with typed input and output.
 func (handlers *adminHandlers) revokeInviteCode(ctx context.Context, input *RevokeAdminInviteCodeInput) (*output[okResponse], error) {
-	return adminOperation(handlers, input.request, "invite_revoke", input.CodeID, nil, func(ctx context.Context, actor identity.Id, event domain.AuditEvent) (okResponse, int64, error) {
+	return adminOperation(handlers, input.request, "invite_revoke", input.CodeID, nil, func(ctx context.Context, actor identity.ID, event domain.AuditEvent) (okResponse, int64, error) {
 		changed, err := handlers.auth.repository.RevokeAdministratorInvite(ctx, &actor, input.CodeID, &event)
 		response, failure := changedResponse(changed, err, "Code not found or already revoked")
 		return response, input.CodeID, failure
@@ -217,7 +217,7 @@ func (handlers *adminHandlers) revokeInviteCode(ctx context.Context, input *Revo
 
 // stats handles stats with typed input and output.
 func (handlers *adminHandlers) stats(ctx context.Context, input *StatsInput) (*output[adminStats], error) {
-	return adminOperation(handlers, input.request, "", 0, nil, func(ctx context.Context, actor identity.Id, event domain.AuditEvent) (adminStats, int64, error) {
+	return adminOperation(handlers, input.request, "", 0, nil, func(ctx context.Context, actor identity.ID, event domain.AuditEvent) (adminStats, int64, error) {
 		result, err := readAdminStats(ctx, handlers.auth.repository, handlers.storage)
 		return result, 0, err
 	})
@@ -225,7 +225,7 @@ func (handlers *adminHandlers) stats(ctx context.Context, input *StatsInput) (*o
 
 // listAnnouncements handles list_announcements with typed input and output.
 func (handlers *adminHandlers) listAnnouncements(ctx context.Context, input *ListAnnouncementsInput) (*output[[]announcements.Announcement], error) {
-	return adminOperation(handlers, input.request, "", 0, nil, func(ctx context.Context, actor identity.Id, event domain.AuditEvent) ([]announcements.Announcement, int64, error) {
+	return adminOperation(handlers, input.request, "", 0, nil, func(ctx context.Context, actor identity.ID, event domain.AuditEvent) ([]announcements.Announcement, int64, error) {
 		rows, err := announcements.ListAll(ctx, handlers.auth.repository)
 		return rows, 0, err
 	})
@@ -233,16 +233,16 @@ func (handlers *adminHandlers) listAnnouncements(ctx context.Context, input *Lis
 
 // createAnnouncement handles create_announcement with typed input and output.
 func (handlers *adminHandlers) createAnnouncement(ctx context.Context, input *CreateAnnouncementInput) (*output[announcements.Announcement], error) {
-	return adminOperation(handlers, input.request, "announcement_create", 0, nil, func(ctx context.Context, actor identity.Id, event domain.AuditEvent) (announcements.Announcement, int64, error) {
+	return adminOperation(handlers, input.request, "announcement_create", 0, nil, func(ctx context.Context, actor identity.ID, event domain.AuditEvent) (announcements.Announcement, int64, error) {
 		body := input.Body
 		result, err := announcements.Create(ctx, handlers.auth.repository, &actor, body.Title, body.Message, body.Priority, *body.Enabled, &event)
-		return result, result.Id, err
+		return result, result.ID, err
 	})
 }
 
 // updateAnnouncement handles update_announcement with typed input and output.
 func (handlers *adminHandlers) updateAnnouncement(ctx context.Context, input *UpdateAnnouncementInput) (*output[*announcements.Announcement], error) {
-	return adminOperation(handlers, input.request, "announcement_update", input.AnnouncementID, nil, func(ctx context.Context, actor identity.Id, event domain.AuditEvent) (*announcements.Announcement, int64, error) {
+	return adminOperation(handlers, input.request, "announcement_update", input.AnnouncementID, nil, func(ctx context.Context, actor identity.ID, event domain.AuditEvent) (*announcements.Announcement, int64, error) {
 		body := input.Body
 		result, err := announcements.Modify(ctx, handlers.auth.repository, &actor, input.AnnouncementID, announcements.Update{Title: body.Title, Message: body.Message, Priority: body.Priority, Enabled: body.Enabled}, &event)
 		if err == nil && result == nil {
@@ -254,7 +254,7 @@ func (handlers *adminHandlers) updateAnnouncement(ctx context.Context, input *Up
 
 // deleteAnnouncement handles delete_announcement with typed input and output.
 func (handlers *adminHandlers) deleteAnnouncement(ctx context.Context, input *DeleteAnnouncementInput) (*output[okResponse], error) {
-	return adminOperation(handlers, input.request, "announcement_delete", input.AnnouncementID, nil, func(ctx context.Context, actor identity.Id, event domain.AuditEvent) (okResponse, int64, error) {
+	return adminOperation(handlers, input.request, "announcement_delete", input.AnnouncementID, nil, func(ctx context.Context, actor identity.ID, event domain.AuditEvent) (okResponse, int64, error) {
 		changed, err := announcements.Delete(ctx, handlers.auth.repository, &actor, input.AnnouncementID, &event)
 		response, failure := changedResponse(changed, err, "Announcement not found")
 		return response, input.AnnouncementID, failure
@@ -263,7 +263,7 @@ func (handlers *adminHandlers) deleteAnnouncement(ctx context.Context, input *De
 
 // listScheduledTasks handles list_scheduled_tasks with typed input and output.
 func (handlers *adminHandlers) listScheduledTasks(ctx context.Context, input *ListScheduledTasksInput) (*output[[]scheduled.Task], error) {
-	return adminOperation(handlers, input.request, "", 0, nil, func(ctx context.Context, actor identity.Id, event domain.AuditEvent) ([]scheduled.Task, int64, error) {
+	return adminOperation(handlers, input.request, "", 0, nil, func(ctx context.Context, actor identity.ID, event domain.AuditEvent) ([]scheduled.Task, int64, error) {
 		result, err := handlers.scheduler.List(ctx)
 		return result, 0, err
 	})
@@ -271,29 +271,29 @@ func (handlers *adminHandlers) listScheduledTasks(ctx context.Context, input *Li
 
 // createScheduledTask handles create_scheduled_task with typed input and output.
 func (handlers *adminHandlers) createScheduledTask(ctx context.Context, input *CreateScheduledTaskInput) (*output[*scheduled.Task], error) {
-	return adminOperation(handlers, input.request, "scheduled_task_create", 0, func(identity.Id) (string, *apiError) {
+	return adminOperation(handlers, input.request, "scheduled_task_create", 0, func(identity.ID) (string, *apiError) {
 		return "validation_failed", validateScheduledFields(&input.Body.Name, &input.Body.Cron, &input.Body.Timezone)
-	}, func(ctx context.Context, actor identity.Id, event domain.AuditEvent) (*scheduled.Task, int64, error) {
+	}, func(ctx context.Context, actor identity.ID, event domain.AuditEvent) (*scheduled.Task, int64, error) {
 		body := input.Body
 		result, err := handlers.scheduler.Create(ctx, scheduled.Create{Name: body.Name, Job: body.Job, Cron: body.Cron, Timezone: body.Timezone, TimeoutSeconds: uint64(*body.TimeoutSeconds), Coalesce: *body.Coalesce, Enabled: *body.Enabled}, &actor, &event)
 		if err != nil {
 			return nil, 0, err
 		}
-		return result, result.Id, nil
+		return result, result.ID, nil
 	})
 }
 
 // updateScheduledTask handles update_scheduled_task with typed input and output.
 func (handlers *adminHandlers) updateScheduledTask(ctx context.Context, input *UpdateScheduledTaskInput) (*output[*scheduled.Task], error) {
-	return adminOperation(handlers, input.request, "scheduled_task_update", input.TaskID, func(identity.Id) (string, *apiError) {
+	return adminOperation(handlers, input.request, "scheduled_task_update", input.TaskID, func(identity.ID) (string, *apiError) {
 		return "validation_failed", validateScheduledFields(input.Body.Name, input.Body.Cron, input.Body.Timezone)
-	}, func(ctx context.Context, actor identity.Id, event domain.AuditEvent) (*scheduled.Task, int64, error) {
+	}, func(ctx context.Context, actor identity.ID, event domain.AuditEvent) (*scheduled.Task, int64, error) {
 		body := input.Body
 		var timeout *uint64
 		if body.TimeoutSeconds != nil {
 			timeout = new(uint64(*body.TimeoutSeconds))
 		}
-		update := scheduled.Update{TaskId: input.TaskID, Name: body.Name, Job: body.Job, Cron: body.Cron, Timezone: body.Timezone, TimeoutSeconds: timeout, Coalesce: body.Coalesce, Enabled: body.Enabled}
+		update := scheduled.Update{TaskID: input.TaskID, Name: body.Name, Job: body.Job, Cron: body.Cron, Timezone: body.Timezone, TimeoutSeconds: timeout, Coalesce: body.Coalesce, Enabled: body.Enabled}
 		result, err := handlers.scheduler.Update(ctx, update, &actor, &event)
 		if err == nil && result == nil {
 			err = &apiError{status: http.StatusNotFound, detail: "Scheduled task not found"}
@@ -304,7 +304,7 @@ func (handlers *adminHandlers) updateScheduledTask(ctx context.Context, input *U
 
 // deleteScheduledTask handles delete_scheduled_task with typed input and output.
 func (handlers *adminHandlers) deleteScheduledTask(ctx context.Context, input *DeleteScheduledTaskInput) (*output[okResponse], error) {
-	return adminOperation(handlers, input.request, "scheduled_task_delete", input.TaskID, nil, func(ctx context.Context, actor identity.Id, event domain.AuditEvent) (okResponse, int64, error) {
+	return adminOperation(handlers, input.request, "scheduled_task_delete", input.TaskID, nil, func(ctx context.Context, actor identity.ID, event domain.AuditEvent) (okResponse, int64, error) {
 		changed, err := handlers.scheduler.Delete(ctx, input.TaskID, &actor, &event)
 		response, failure := changedResponse(changed, err, "Scheduled task not found")
 		return response, input.TaskID, failure
@@ -313,7 +313,7 @@ func (handlers *adminHandlers) deleteScheduledTask(ctx context.Context, input *D
 
 // schedulerStatus handles scheduler_status with typed input and output.
 func (handlers *adminHandlers) schedulerStatus(ctx context.Context, input *SchedulerStatusInput) (*output[scheduled.Status], error) {
-	return adminOperation(handlers, input.request, "", 0, nil, func(ctx context.Context, actor identity.Id, event domain.AuditEvent) (scheduled.Status, int64, error) {
+	return adminOperation(handlers, input.request, "", 0, nil, func(ctx context.Context, actor identity.ID, event domain.AuditEvent) (scheduled.Status, int64, error) {
 		result, err := handlers.scheduler.Status(ctx, currentTimestamp(), 90, 20)
 		return result, 0, err
 	})
@@ -321,7 +321,7 @@ func (handlers *adminHandlers) schedulerStatus(ctx context.Context, input *Sched
 
 // listRuntimeSettings handles list_runtime_settings with typed input and output.
 func (handlers *adminHandlers) listRuntimeSettings(ctx context.Context, input *ListRuntimeSettingsInput) (*output[[]settings.Info], error) {
-	return adminOperation(handlers, input.request, "", 0, nil, func(ctx context.Context, actor identity.Id, event domain.AuditEvent) ([]settings.Info, int64, error) {
+	return adminOperation(handlers, input.request, "", 0, nil, func(ctx context.Context, actor identity.ID, event domain.AuditEvent) ([]settings.Info, int64, error) {
 		result, err := handlers.settings.List(ctx)
 		return result, 0, err
 	})
@@ -329,9 +329,9 @@ func (handlers *adminHandlers) listRuntimeSettings(ctx context.Context, input *L
 
 // updateRuntimeSettings handles update_runtime_settings with typed input and output.
 func (handlers *adminHandlers) updateRuntimeSettings(ctx context.Context, input *UpdateRuntimeSettingsInput) (*output[[]settings.Info], error) {
-	return adminOperation(handlers, input.request, "runtime_settings_update", 0, func(identity.Id) (string, *apiError) {
+	return adminOperation(handlers, input.request, "runtime_settings_update", 0, func(identity.ID) (string, *apiError) {
 		return "validation_failed", validateRuntimeValues(input.Body.Values)
-	}, func(ctx context.Context, actor identity.Id, event domain.AuditEvent) ([]settings.Info, int64, error) {
+	}, func(ctx context.Context, actor identity.ID, event domain.AuditEvent) ([]settings.Info, int64, error) {
 		pools := make(map[string]settings.PoolUpdate, len(input.Body.SecretPoolUpdates))
 		for field, update := range input.Body.SecretPoolUpdates {
 			pools[field] = settings.PoolUpdate{Add: update.Add, Remove: update.Remove}
@@ -343,7 +343,7 @@ func (handlers *adminHandlers) updateRuntimeSettings(ctx context.Context, input 
 
 // providerCatalog handles get_provider_catalog with typed input and output.
 func (handlers *adminHandlers) providerCatalog(ctx context.Context, input *GetProviderCatalogInput) (*output[providerCatalogResponse], error) {
-	return adminOperation(handlers, input.request, "", 0, nil, func(ctx context.Context, actor identity.Id, event domain.AuditEvent) (providerCatalogResponse, int64, error) {
+	return adminOperation(handlers, input.request, "", 0, nil, func(ctx context.Context, actor identity.ID, event domain.AuditEvent) (providerCatalogResponse, int64, error) {
 		catalogs, err := handlers.storage.ListProviderCatalogs()
 		return providerCatalogResponse{sources.BuiltInCapabilities(), catalogs}, 0, err
 	})

@@ -21,7 +21,7 @@ import (
 func manualWeeklyFixture(t *testing.T, names []string) ManualWeeklyPushConfig {
 	t.Helper()
 	_, _, config := workflowFixture(t, store.WorkflowPush)
-	storage := storageconfig.FromProjectRoot(t.TempDir()).WithAuthDbPath(config.AuthDbPath)
+	storage := storageconfig.FromProjectRoot(t.TempDir()).WithAuthDBPath(config.AuthDBPath)
 	if err := os.MkdirAll(storage.IndexDir, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func manualWeeklyFixture(t *testing.T, names []string) ManualWeeklyPushConfig {
 	if !ok {
 		t.Fatal("invalid fixture time")
 	}
-	return ManualWeeklyPushConfig{WindowEnd: stamp, StorageConfig: storage, SecretCodec: config.SecretCodec, UserId: 1, AttemptId: "parent-attempt", TimeoutSeconds: 120, RetryAttempts: 3, DedupeRetentionDays: 60}
+	return ManualWeeklyPushConfig{WindowEnd: stamp, StorageConfig: storage, SecretCodec: config.SecretCodec, UserID: 1, AttemptID: "parent-attempt", TimeoutSeconds: 120, RetryAttempts: 3, DedupeRetentionDays: 60}
 }
 
 func TestManualWeeklyUsesFixedMembershipAndStableAttempt(t *testing.T) {
@@ -58,7 +58,7 @@ func TestManualWeeklyUsesFixedMembershipAndStableAttempt(t *testing.T) {
 	seen := []string{}
 	execute := func(ctx context.Context, child RunConfig, user *int64, manifest *recommend.ChangeManifest) (RunOutcome, error) {
 		assertManualSourceContext(t, child, user, manifest)
-		seen = append(seen, child.DbName)
+		seen = append(seen, child.DBName)
 		return runOutcome(child, 1, "completed", []int64{7}, []SubscriberPlan{{SelectedArticleIds: []int64{7}, FolderSyncedCount: 1}}), nil
 	}
 	outcome, err := runManualWeeklyPush(context.Background(), config, execute)
@@ -91,13 +91,13 @@ func TestManualWeeklySharesBudgetAndStopsAfterFailure(t *testing.T) {
 }
 
 func TestManualAggregationPreservesUnknownPriorityAndPublicMessages(t *testing.T) {
-	folder := &favorites.Folder{Id: 4, Name: "tracking"}
-	outcomes := []RunOutcome{{DbName: "first.sqlite", Status: "completed", CandidateArticleIds: []int64{7}, Subscribers: []SubscriberPlan{{SelectedArticleIds: []int64{7}, FolderSyncedCount: 1, MessageId: pointer("message")}}}}
+	folder := &favorites.Folder{ID: 4, Name: "tracking"}
+	outcomes := []RunOutcome{{DBName: "first.sqlite", Status: "completed", CandidateArticleIds: []int64{7}, Subscribers: []SubscriberPlan{{SelectedArticleIds: []int64{7}, FolderSyncedCount: 1, MessageID: new("message")}}}}
 	result := manualOutcomeFromDelivery("pushplus", folder, outcomes)
-	if result.Message != "PushPlus sent successfully (1 message); selected 1 article across 1 database; synced 1 article to the tracking folder" || result.FolderId == nil || *result.FolderId != 4 {
+	if result.Message != "PushPlus sent successfully (1 message); selected 1 article across 1 database; synced 1 article to the tracking folder" || result.FolderID == nil || *result.FolderID != 4 {
 		t.Fatal("public message changed")
 	}
-	outcomes = append(outcomes, RunOutcome{DbName: "second.sqlite", Status: "failed"}, RunOutcome{DbName: "third.sqlite", Status: "unknown"})
+	outcomes = append(outcomes, RunOutcome{DBName: "second.sqlite", Status: "failed"}, RunOutcome{DBName: "third.sqlite", Status: "unknown"})
 	result = manualOutcomeFromDelivery("pushplus", folder, outcomes)
 	if result.Status != "unknown" || result.Message != "second.sqlite delivery failed; third.sqlite delivery outcome is unknown" || result.Selected != 1 || result.Pushed != 1 {
 		t.Fatal("unknown aggregation changed")
@@ -108,14 +108,14 @@ func TestManualAggregationPreservesUnknownPriorityAndPublicMessages(t *testing.T
 
 func assertManualSourceContext(t *testing.T, child RunConfig, user *int64, manifest *recommend.ChangeManifest) {
 	t.Helper()
-	if user == nil || *user != 1 || child.Trigger != store.TriggerKindScheduled || child.Mode != store.RunModeExecute || child.AttemptId == nil || *child.AttemptId != "parent-attempt" || !reflect.DeepEqual(manifest.PendingArticleIds, []int64{7}) || manifest.RunId == nil || *manifest.RunId != "source-"+child.DbName[:len(child.DbName)-7] {
+	if user == nil || *user != 1 || child.Trigger != store.TriggerKindScheduled || child.Mode != store.RunModeExecute || child.AttemptID == nil || *child.AttemptID != "parent-attempt" || !reflect.DeepEqual(manifest.PendingArticleIds, []int64{7}) || manifest.RunID == nil || *manifest.RunID != "source-"+child.DBName[:len(child.DBName)-7] {
 		t.Fatal("manual source/context changed")
 	}
 }
 
 func assertManualSkipSummary(t *testing.T) {
 	t.Helper()
-	result := manualOutcomeFromDelivery("folder", nil, []RunOutcome{{Subscribers: []SubscriberPlan{{Error: pointer("first skip")}, {Error: pointer("second skip")}}}})
+	result := manualOutcomeFromDelivery("folder", nil, []RunOutcome{{Subscribers: []SubscriberPlan{{Error: new("first skip")}, {Error: new("second skip")}}}})
 	if result.Message != "first skip" || result.TotalCandidates == nil || *result.TotalCandidates != 0 {
 		t.Fatal("skip summary changed")
 	}

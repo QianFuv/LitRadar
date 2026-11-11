@@ -11,8 +11,8 @@ import (
 )
 
 const SessionCookieName = "litradar_session"
-const DefaultTokenTtl int64 = 604800
-const MaximumTokenTtl int64 = 31536000
+const DefaultTokenTTL int64 = 604800
+const MaximumTokenTTL int64 = 31536000
 const ActiveTokenLimit = 50
 const ReservedTokenName = "login"
 
@@ -20,48 +20,48 @@ const ReservedTokenName = "login"
 const UnusablePasswordHash = "!oidc"
 
 var (
-	ErrEmail               = errors.New("Email must be at most 254 bytes with one @ and no whitespace or control characters")
-	ErrEmailExists         = errors.New("Email already exists")
-	ErrManagedEmail        = errors.New("Email is managed by the identity provider")
-	ErrOidcPassword        = errors.New("Password login is not available for single sign-on accounts")
+	ErrEmail               = errors.New("email must be at most 254 bytes with one @ and no whitespace or control characters")
+	ErrEmailExists         = errors.New("email already exists")
+	ErrManagedEmail        = errors.New("email is managed by the identity provider")
+	ErrOidcPassword        = errors.New("password login is not available for single sign-on accounts")
 	ErrAccountConflict     = errors.New("account_conflict")
 	ErrExpiredSession      = errors.New("expired_session")
-	ErrCredentials         = errors.New("Invalid username or password")
-	ErrUsername            = errors.New("Username must be 3-32 alphanumeric or underscore characters")
-	ErrPasswordShort       = errors.New("Password must be at least 12 characters")
-	ErrTokenNameLength     = errors.New("Access token name must be at most 100 Unicode code points")
-	ErrTokenReservedName   = errors.New("Access token name \"login\" is reserved")
-	ErrTokenTtl            = errors.New("Access token TTL must be between 3600 and 31536000 seconds")
-	ErrTokenLimit          = errors.New("Active access token limit of 50 reached; revoke a token before creating another")
-	ErrInviteRequired      = errors.New("Invite code is required")
-	ErrBootstrapRequired   = errors.New("Administrator bootstrap is required")
-	ErrInvite              = errors.New("Invalid, expired, revoked, or exhausted invite code")
-	ErrActiveInvite        = errors.New("An unrevoked invite code already exists; rotate it instead")
-	ErrInvitePolicy        = errors.New("Invite code policy is outside the allowed range")
-	ErrUsernameExists      = errors.New("Username already exists")
-	ErrBootstrapComplete   = errors.New("Administrator bootstrap is already complete")
-	ErrEntropy             = errors.New("Operating-system cryptographic randomness is unavailable")
-	ErrCredentialInvariant = errors.New("Credential update affected an unexpected number of users")
-	ErrStaleAuthorization  = errors.New("Token authorization changed before issuance")
-	ErrAdminForbidden      = errors.New("Admin access required")
-	ErrAudit               = errors.New("Security audit persistence failed")
+	ErrCredentials         = errors.New("invalid username or password")
+	ErrUsername            = errors.New("username must be 3-32 alphanumeric or underscore characters")
+	ErrPasswordShort       = errors.New("password must be at least 12 characters")
+	ErrTokenNameLength     = errors.New("access token name must be at most 100 Unicode code points")
+	ErrTokenReservedName   = errors.New("access token name \"login\" is reserved")
+	ErrTokenTTL            = errors.New("access token TTL must be between 3600 and 31536000 seconds")
+	ErrTokenLimit          = errors.New("active access token limit of 50 reached; revoke a token before creating another")
+	ErrInviteRequired      = errors.New("invite code is required")
+	ErrBootstrapRequired   = errors.New("administrator bootstrap is required")
+	ErrInvite              = errors.New("invalid, expired, revoked, or exhausted invite code")
+	ErrActiveInvite        = errors.New("an unrevoked invite code already exists; rotate it instead")
+	ErrInvitePolicy        = errors.New("invite code policy is outside the allowed range")
+	ErrUsernameExists      = errors.New("username already exists")
+	ErrBootstrapComplete   = errors.New("administrator bootstrap is already complete")
+	ErrEntropy             = errors.New("operating-system cryptographic randomness is unavailable")
+	ErrCredentialInvariant = errors.New("credential update affected an unexpected number of users")
+	ErrStaleAuthorization  = errors.New("token authorization changed before issuance")
+	ErrAdminForbidden      = errors.New("admin access required")
+	ErrAudit               = errors.New("security audit persistence failed")
 )
 
 // ErrDeviceName rejects labels that cannot form a bounded device token name.
-var ErrDeviceName = errors.New("Device name must contain 1-93 Unicode code points, no control characters, and non-whitespace text")
+var ErrDeviceName = errors.New("device name must contain 1-93 Unicode code points, no control characters, and non-whitespace text")
 
 // User is the public identity projection. Its formatting hides the account name.
 type User struct {
 	Email        *string     `json:"email"`
 	AuthKind     string      `json:"auth_kind"`
 	IsOidcLinked bool        `json:"is_oidc_linked"`
-	Id           identity.Id `json:"id"`
+	ID           identity.ID `json:"id"`
 	Username     string      `json:"username"`
 	IsAdmin      bool        `json:"is_admin"`
 }
 
 func (user User) String() string {
-	return fmt.Sprintf("User{Id:%d Username:[REDACTED] IsAdmin:%t}", user.Id, user.IsAdmin)
+	return fmt.Sprintf("User{Id:%d Username:[REDACTED] IsAdmin:%t}", user.ID, user.IsAdmin)
 }
 func (user User) GoString() string { return user.String() }
 
@@ -89,7 +89,7 @@ func (authorization Authorization) GoString() string { return authorization.Stri
 
 // TokenInfo exposes metadata without a credential hash or raw bearer value.
 type TokenInfo struct {
-	Id        int64   `json:"id" nullable:"false" format:"int64"`
+	ID        int64   `json:"id" nullable:"false" format:"int64"`
 	Name      string  `json:"name" nullable:"false"`
 	ExpiresAt float64 `json:"expires_at" nullable:"false" format:"double"`
 	CreatedAt float64 `json:"created_at" nullable:"false" format:"double"`
@@ -97,7 +97,7 @@ type TokenInfo struct {
 
 // IssuedToken is the explicitly authorized one-time bearer disclosure.
 type IssuedToken struct {
-	Id        int64   `json:"id" nullable:"false" format:"int64"`
+	ID        int64   `json:"id" nullable:"false" format:"int64"`
 	Token     string  `json:"token" nullable:"false"`
 	Name      string  `json:"name" nullable:"false"`
 	ExpiresAt float64 `json:"expires_at" nullable:"false" format:"double"`
@@ -118,9 +118,9 @@ func (session LoginSession) GoString() string { return session.String() }
 
 // InviteRow holds the persisted first redemption and bounded lifecycle.
 type InviteRow struct {
-	Id        int64        `json:"-"`
+	ID        int64        `json:"-"`
 	Code      string       `json:"-"`
-	UsedBy    *identity.Id `json:"-"`
+	UsedBy    *identity.ID `json:"-"`
 	UsedAt    *float64     `json:"-"`
 	ExpiresAt float64      `json:"-"`
 	RevokedAt *float64     `json:"-"`
@@ -134,7 +134,7 @@ func (invite InviteRow) GoString() string { return invite.String() }
 
 // InviteResponse is the owner-visible issuance and lifecycle projection.
 type InviteResponse struct {
-	Id        int64    `json:"id" nullable:"false" format:"int64"`
+	ID        int64    `json:"id" nullable:"false" format:"int64"`
 	Code      string   `json:"code" nullable:"false"`
 	Used      bool     `json:"used" nullable:"false"`
 	Status    string   `json:"status" nullable:"false" enum:"active,expired,revoked,exhausted"`
@@ -159,22 +159,22 @@ func (invite InviteRow) Response(now float64) InviteResponse {
 	case invite.ExpiresAt <= now:
 		status = "expired"
 	}
-	return InviteResponse{invite.Id, invite.Code, invite.UseCount > 0, status, invite.ExpiresAt, invite.RevokedAt, invite.MaxUses, invite.UseCount, invite.CreatedAt}
+	return InviteResponse{invite.ID, invite.Code, invite.UseCount > 0, status, invite.ExpiresAt, invite.RevokedAt, invite.MaxUses, invite.UseCount, invite.CreatedAt}
 }
 
 // ValidInvitePolicy bounds both timestamps and the maximum redemption count.
 func ValidInvitePolicy(now, expires float64, maxUses int64) bool {
-	return !math.IsNaN(now) && !math.IsInf(now, 0) && !math.IsNaN(expires) && !math.IsInf(expires, 0) && expires > now && expires-now <= float64(MaximumTokenTtl) && maxUses >= 1 && maxUses <= 1000
+	return !math.IsNaN(now) && !math.IsInf(now, 0) && !math.IsNaN(expires) && !math.IsInf(expires, 0) && expires > now && expires-now <= float64(MaximumTokenTTL) && maxUses >= 1 && maxUses <= 1000
 }
 
 // AuditEvent contains only bounded structured security metadata.
 type AuditEvent struct {
-	ActorId           *int64
-	TargetId          *int64
+	ActorID           *int64
+	TargetID          *int64
 	Action            string
 	Outcome           string
 	Reason            string
-	RequestId         string
+	RequestID         string
 	SourceClass       string
 	Bucket            string
 	RejectedCount     int64
@@ -184,13 +184,13 @@ type AuditEvent struct {
 
 // WithIdentity copies an event so a mutation cannot change its caller's audit template.
 func (event AuditEvent) WithIdentity(actor, target int64) AuditEvent {
-	event.ActorId = &actor
-	event.TargetId = &target
+	event.ActorID = &actor
+	event.TargetID = &target
 	return event
 }
 
 // WithTarget copies an event and attaches the committed resource identifier.
-func (event AuditEvent) WithTarget(target int64) AuditEvent { event.TargetId = &target; return event }
+func (event AuditEvent) WithTarget(target int64) AuditEvent { event.TargetID = &target; return event }
 
 // LogValue keeps private account data out of both structured and text log handlers.
 func (user User) LogValue() slog.Value               { return slog.StringValue(user.String()) }

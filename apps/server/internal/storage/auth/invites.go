@@ -11,7 +11,7 @@ import (
 )
 
 // IssueInvite requires explicit rotation even when the previous unrevoked invite is expired or exhausted.
-func (repository *Repository) IssueInvite(ctx context.Context, user identity.Id, code string, now, expires float64, maxUses int64, isRotation bool, audit *domain.AuditEvent) (domain.InviteRow, error) {
+func (repository *Repository) IssueInvite(ctx context.Context, user identity.ID, code string, now, expires float64, maxUses int64, isRotation bool, audit *domain.AuditEvent) (domain.InviteRow, error) {
 	if !domain.ValidInvitePolicy(now, expires, maxUses) {
 		return domain.InviteRow{}, domain.ErrInvitePolicy
 	}
@@ -45,7 +45,7 @@ func (repository *Repository) IssueInvite(ctx context.Context, user identity.Id,
 		if err != nil {
 			return err
 		}
-		invite = domain.InviteRow{Id: id, Code: code, ExpiresAt: expires, MaxUses: maxUses, CreatedAt: now}
+		invite = domain.InviteRow{ID: id, Code: code, ExpiresAt: expires, MaxUses: maxUses, CreatedAt: now}
 		if audit != nil {
 			if lookup == nil && isRotation {
 				copy := audit.WithTarget(previous)
@@ -65,7 +65,7 @@ func (repository *Repository) IssueInvite(ctx context.Context, user identity.Id,
 }
 
 // RevokeInvite marks the creator's current invite irreversibly revoked and audits an actual transition.
-func (repository *Repository) RevokeInvite(ctx context.Context, user identity.Id, now float64, audit *domain.AuditEvent) (bool, error) {
+func (repository *Repository) RevokeInvite(ctx context.Context, user identity.ID, now float64, audit *domain.AuditEvent) (bool, error) {
 	var revoked bool
 	err := repository.Immediate(ctx, false, func(connection *sql.Conn) error {
 		var id int64
@@ -94,16 +94,16 @@ func (repository *Repository) RevokeInvite(ctx context.Context, user identity.Id
 }
 
 // Invite returns the latest issuance, including expired, exhausted or revoked history.
-func (repository *Repository) Invite(ctx context.Context, user identity.Id) (*domain.InviteRow, error) {
+func (repository *Repository) Invite(ctx context.Context, user identity.ID) (*domain.InviteRow, error) {
 	var invite domain.InviteRow
 	err := func() error {
 		queryResult, err := queries.LatestInvite(ctx, repository.database, authdb.LatestInviteParams{CreatedBy: new(int64(user))})
 		if err != nil {
 			return err
 		}
-		invite.Id = queryResult.ID
+		invite.ID = queryResult.ID
 		invite.Code = queryResult.Code
-		invite.UsedBy = (*identity.Id)(queryResult.UsedBy)
+		invite.UsedBy = (*identity.ID)(queryResult.UsedBy)
 		invite.UsedAt = queryResult.UsedAt
 		invite.ExpiresAt = queryResult.ExpiresAt
 		invite.RevokedAt = queryResult.RevokedAt

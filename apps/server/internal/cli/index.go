@@ -231,7 +231,7 @@ func parseIndexInvocation(args *arguments) (indexInvocation, error) {
 	if len(*args) != 0 {
 		return indexInvocation{}, fmt.Errorf("unexpected index arguments: %s", strings.Join(*args, " "))
 	}
-	configuration.AuthDbPath = storage.AuthDbPath
+	configuration.AuthDBPath = storage.AuthDBPath
 	return indexInvocation{storage, keyOption, configuration, isLegacyBatchExplicit}, nil
 }
 
@@ -241,12 +241,12 @@ func executeIndexInvocation(ctx context.Context, bundle string, invocation index
 	if err := prepareIndexDeployment(ctx, storage, configuration.File, bundle); err != nil {
 		return err
 	}
-	codec, err := loadVerifiedKey(ctx, storage.AuthDbPath, key)
+	codec, err := loadVerifiedKey(ctx, storage.AuthDBPath, key)
 	if err != nil {
 		return err
 	}
 	defer codec.Close()
-	repository, err := authstorage.Open(storage.AuthDbPath)
+	repository, err := authstorage.Open(storage.AuthDBPath)
 	if err != nil {
 		return err
 	}
@@ -271,7 +271,7 @@ func executeIndexInvocation(ctx context.Context, bundle string, invocation index
 
 // prepareIndexDeployment preserves migration, selected-index preflight and managed metadata order.
 func prepareIndexDeployment(ctx context.Context, storage config.Config, selected *string, bundle string) error {
-	if _, err := authmigration.Migrate(ctx, storage.AuthDbPath); err != nil {
+	if _, err := authmigration.Migrate(ctx, storage.AuthDBPath); err != nil {
 		return err
 	}
 	if err := preflightIndex(ctx, storage, selected); err != nil {

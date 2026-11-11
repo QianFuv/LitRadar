@@ -18,7 +18,7 @@ func (index *IndexProvider) fetchOpenAlex(ctx context.Context, catalog domain.Jo
 	if source.Kind != "open_alex" {
 		return domain.ProviderBatch{}, &provider.Error{Kind: provider.Internal, Message: "invalid OpenAlex continuation source"}
 	}
-	page, err := index.client.FetchOpenAlexWorksBySourcePage(ctx, source.SourceId, indexWindowFilter(window, indexCurrentDate(index.now())), source.Cursor)
+	page, err := index.client.FetchOpenAlexWorksBySourcePage(ctx, source.SourceID, indexWindowFilter(window, indexCurrentDate(index.now())), source.Cursor)
 	if err != nil {
 		return domain.ProviderBatch{}, mapIndexSourceError(err)
 	}
@@ -38,7 +38,7 @@ func (index *IndexProvider) fetchOpenAlex(ctx context.Context, catalog domain.Jo
 	if err != nil {
 		return domain.ProviderBatch{}, err
 	}
-	return finishOpenAlexPage(catalog, plan, articles, next, effective.SourceId)
+	return finishOpenAlexPage(catalog, plan, articles, next, effective.SourceID)
 }
 
 // resolveOpenAlexSource tries catalog ISSNs before title and requires a normalized source identifier.
@@ -60,7 +60,7 @@ func (index *IndexProvider) resolveOpenAlexSource(ctx context.Context, catalog d
 	if id == nil {
 		return nil, invalidWorkset("OpenAlex source has no identifier")
 	}
-	return &indexSource{Kind: "open_alex", SourceId: *id}, nil
+	return &indexSource{Kind: "open_alex", SourceID: *id}, nil
 }
 
 // nextOpenAlexSource rejects repeated cursors only for nonempty continuing pages.
@@ -70,7 +70,7 @@ func nextOpenAlexSource(page WorksPage, effective indexSource) (*indexSource, er
 		if effective.Cursor != nil && *effective.Cursor == *page.NextCursor {
 			return nil, invalidWorkset("scholarly provider returned a repeated cursor")
 		}
-		next = &indexSource{Kind: "open_alex", SourceId: effective.SourceId, Cursor: clonePointer(page.NextCursor)}
+		next = &indexSource{Kind: "open_alex", SourceID: effective.SourceID, Cursor: clonePointer(page.NextCursor)}
 	}
 	return next, nil
 }
@@ -97,7 +97,7 @@ func projectOpenAlexPage(catalog domain.JournalCatalogEntry, items []any) ([]dom
 }
 
 // finishOpenAlexPage preserves selected positions, continuation requirements and unbounded replay source.
-func finishOpenAlexPage(catalog domain.JournalCatalogEntry, plan indexPagePlan, articles []domain.ArticleDraft, next *indexSource, sourceId string) (domain.ProviderBatch, error) {
+func finishOpenAlexPage(catalog domain.JournalCatalogEntry, plan indexPagePlan, articles []domain.ArticleDraft, next *indexSource, sourceID string) (domain.ProviderBatch, error) {
 	selected := make([]domain.ArticleDraft, 0, len(plan.SelectedIndices))
 	for _, position := range plan.SelectedIndices {
 		selected = append(selected, articles[position])
@@ -112,6 +112,6 @@ func finishOpenAlexPage(catalog domain.JournalCatalogEntry, plan indexPagePlan, 
 		return completeIndexBatch(catalog, plan.Window, selected)
 	default:
 		unboundIndexWindow(&plan.Window)
-		return continueIndexBatch(catalog, plan.Window, indexSource{Kind: "open_alex", SourceId: sourceId}, nil)
+		return continueIndexBatch(catalog, plan.Window, indexSource{Kind: "open_alex", SourceID: sourceID}, nil)
 	}
 }

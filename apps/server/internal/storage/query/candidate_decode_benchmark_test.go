@@ -21,7 +21,7 @@ func pointerCandidateFromRow(row scanner) (domain.ArticleCandidate, error) {
 	if abstract.Value != nil {
 		text = *abstract.Value
 	}
-	return domain.ArticleCandidate{ArticleId: int64(id), JournalId: int64(journal), IssueId: issue.Value, Title: string(title), Abstract: text, Date: date.Value, JournalTitle: string(journalTitle), Doi: doi.Value, OpenAccess: openAccess.Value != nil && *openAccess.Value != 0, InPress: inPress.Value != nil && *inPress.Value != 0}, nil
+	return domain.ArticleCandidate{ArticleID: int64(id), JournalID: int64(journal), IssueID: issue.Value, Title: string(title), Abstract: text, Date: date.Value, JournalTitle: string(journalTitle), Doi: doi.Value, OpenAccess: openAccess.Value != nil && *openAccess.Value != 0, InPress: inPress.Value != nil && *inPress.Value != 0}, nil
 }
 
 // BenchmarkCandidateRowDecoding compares native reads with equivalent pointer and inline nullable mappings.

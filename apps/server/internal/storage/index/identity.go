@@ -20,7 +20,7 @@ type ArticleIdentityKey struct {
 
 // ArticleIdentityResolution selects an existing alias owner or a deterministic new identity.
 type ArticleIdentityResolution struct {
-	ArticleId   int64              `json:"article_id"`
+	ArticleID   int64              `json:"article_id"`
 	IsExisting  bool               `json:"is_existing"`
 	IdentityKey ArticleIdentityKey `json:"identity_key"`
 }
@@ -36,14 +36,14 @@ func (err *IdentityConflict) Error() string {
 	return "article aliases resolve to multiple IDs: [" + strings.Join(values, ", ") + "]"
 }
 
-// JournalId derives a stable identifier from the immutable maintained catalog key.
-func JournalId(catalogId string) int64 {
-	return int64(identity.Stable(asciiLower(strings.TrimSpace(catalogId)), "journal:v1"))
+// JournalID derives a stable identifier from the immutable maintained catalog key.
+func JournalID(catalogID string) int64 {
+	return int64(identity.Stable(asciiLower(strings.TrimSpace(catalogID)), "journal:v1"))
 }
 
 // IssueIdentityValue retains the original year/label, date, then title precedence.
-func IssueIdentityValue(journalId int64, issue domain.IssueDraft) *string {
-	prefix := strconv.FormatInt(journalId, 10)
+func IssueIdentityValue(journalID int64, issue domain.IssueDraft) *string {
+	prefix := strconv.FormatInt(journalID, 10)
 	volume, number := "", ""
 	if issue.Volume != nil {
 		volume = domain.NormalizeBibliographicLabel(*issue.Volume)
@@ -52,25 +52,25 @@ func IssueIdentityValue(journalId int64, issue domain.IssueDraft) *string {
 		number = domain.NormalizeBibliographicLabel(*issue.Number)
 	}
 	if issue.PublicationYear != nil && (volume != "" || number != "") {
-		return ptr(prefix + "|" + strconv.FormatInt(*issue.PublicationYear, 10) + "|" + volume + "|" + number)
+		return new(prefix + "|" + strconv.FormatInt(*issue.PublicationYear, 10) + "|" + volume + "|" + number)
 	}
 	if issue.Date != nil {
 		if date := strings.TrimSpace(*issue.Date); date != "" {
-			return ptr(prefix + "|date|" + date)
+			return new(prefix + "|date|" + date)
 		}
 	}
 	if issue.Title != nil {
 		if title := domain.NormalizeBibliographicText(*issue.Title); title != "" {
-			return ptr(prefix + "|title|" + title)
+			return new(prefix + "|title|" + title)
 		}
 	}
 	return nil
 }
 
-// IssueId returns no identifier when an issue has no sufficient bibliographic basis.
-func IssueId(journalId int64, issue domain.IssueDraft) *int64 {
-	if value := IssueIdentityValue(journalId, issue); value != nil {
-		return ptr(int64(identity.Stable(*value, "issue:v1")))
+// IssueID returns no identifier when an issue has no sufficient bibliographic basis.
+func IssueID(journalID int64, issue domain.IssueDraft) *int64 {
+	if value := IssueIdentityValue(journalID, issue); value != nil {
+		return new(int64(identity.Stable(*value, "issue:v1")))
 	}
 	return nil
 }
@@ -109,7 +109,7 @@ func resolveArticleIdentity(keys []ArticleIdentityKey, aliases map[ArticleIdenti
 	for _, key := range keys {
 		if owner, ok := aliases[key]; ok {
 			if first == nil {
-				first = ptr(key)
+				first = new(key)
 			}
 			if !slices.Contains(matched, owner) {
 				matched = append(matched, owner)
@@ -149,7 +149,7 @@ func bibliographicFingerprint(article domain.ArticleDraft) *string {
 	if values[0] == "" && values[1] == "" && values[2] == "" {
 		return nil
 	}
-	return ptr(asciiLower(strings.TrimSpace(article.CatalogId)) + "|" + title + "|" + publication + "|" + strings.Join(values, "|"))
+	return new(asciiLower(strings.TrimSpace(article.CatalogID)) + "|" + title + "|" + publication + "|" + strings.Join(values, "|"))
 }
 
 func publicationYear(value string) string {
@@ -204,15 +204,14 @@ func mergeDrafts(left, right domain.ArticleDraft, canMergeDois bool) (domain.Art
 	retractions := append(append([]string{}, left.RetractionDois...), right.RetractionDois...)
 	slices.Sort(retractions)
 	retractions = slices.Compact(retractions)
-	return domain.ArticleDraft{CatalogId: left.CatalogId, Title: richerText(left.Title, right.Title), PublicationYear: year, Date: richerOptional(left.Date, right.Date), IssueTitle: richerOptional(left.IssueTitle, right.IssueTitle), Volume: orderedText(left.Volume, right.Volume), IssueNumber: orderedText(left.IssueNumber, right.IssueNumber), Authors: append([]domain.ArticleAuthorDraft{}, authors...), StartPage: orderedText(left.StartPage, right.StartPage), EndPage: orderedText(left.EndPage, right.EndPage), AbstractText: richerOptional(left.AbstractText, right.AbstractText), Doi: doi, Pmid: firstValue(left.Pmid, right.Pmid), OpenAccess: mergeBool(left.OpenAccess, right.OpenAccess, true), InPress: mergeBool(left.InPress, right.InPress, false), RetractionDois: retractions}, nil
+	return domain.ArticleDraft{CatalogID: left.CatalogID, Title: richerText(left.Title, right.Title), PublicationYear: year, Date: richerOptional(left.Date, right.Date), IssueTitle: richerOptional(left.IssueTitle, right.IssueTitle), Volume: orderedText(left.Volume, right.Volume), IssueNumber: orderedText(left.IssueNumber, right.IssueNumber), Authors: append([]domain.ArticleAuthorDraft{}, authors...), StartPage: orderedText(left.StartPage, right.StartPage), EndPage: orderedText(left.EndPage, right.EndPage), AbstractText: richerOptional(left.AbstractText, right.AbstractText), Doi: doi, Pmid: firstValue(left.Pmid, right.Pmid), OpenAccess: mergeBool(left.OpenAccess, right.OpenAccess, true), InPress: mergeBool(left.InPress, right.InPress, false), RetractionDois: retractions}, nil
 }
 
-func ptr[T any](value T) *T { return &value }
 func copyValue[T any](value *T) *T {
 	if value == nil {
 		return nil
 	}
-	return ptr(*value)
+	return new(*value)
 }
 func firstValue[T any](first, second *T) *T {
 	if first != nil {
@@ -222,7 +221,7 @@ func firstValue[T any](first, second *T) *T {
 }
 func orderedText(first, second *string) *string {
 	if first != nil && second != nil {
-		return ptr(min(*first, *second))
+		return new(min(*first, *second))
 	}
 	return firstValue(first, second)
 }
@@ -237,7 +236,7 @@ func richerText(first, second string) string {
 }
 func richerOptional(first, second *string) *string {
 	if first != nil && second != nil {
-		return ptr(richerText(*first, *second))
+		return new(richerText(*first, *second))
 	}
 	return firstValue(first, second)
 }
@@ -246,9 +245,9 @@ func mergeBool(first, second *bool, isTruePreferred bool) *bool {
 		return firstValue(first, second)
 	}
 	if isTruePreferred {
-		return ptr(*first || *second)
+		return new(*first || *second)
 	}
-	return ptr(*first && *second)
+	return new(*first && *second)
 }
 func asciiLower(value string) string {
 	return strings.Map(func(character rune) rune {
@@ -288,7 +287,7 @@ func resolvedPublicationYear(date *string, preferred, fallback domain.ArticleDra
 }
 
 func validateDraftMerge(left, right domain.ArticleDraft, canMergeDois bool) error {
-	if left.CatalogId != right.CatalogId {
+	if left.CatalogID != right.CatalogID {
 		return errors.New("article drafts use different catalog IDs")
 	}
 	if !canMergeDois && left.Doi != nil && right.Doi != nil && *left.Doi != *right.Doi {

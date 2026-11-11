@@ -14,15 +14,15 @@ func TestCfpSnapshotIndexRetainsAliasOwnership(t *testing.T) {
 		entry     sources.JournalCatalogEntry
 		snapshots []storage.JournalSnapshot
 	}{
-		{"empty", sources.JournalCatalogEntry{CatalogId: "a"}, nil},
-		{"canonical", sources.JournalCatalogEntry{CatalogId: "a"}, []storage.JournalSnapshot{{CatalogIds: []string{"a"}}}},
-		{"aliases", sources.JournalCatalogEntry{CatalogId: "a", CatalogAliases: []string{"alias", "other", "alias"}}, []storage.JournalSnapshot{{CatalogIds: []string{"alias", "other", "alias"}}}},
-		{"shared-alias", sources.JournalCatalogEntry{CatalogId: "a"}, []storage.JournalSnapshot{{CatalogIds: []string{"a"}}, {CatalogIds: []string{"a"}}}},
-		{"different-alias-owners", sources.JournalCatalogEntry{CatalogId: "a", CatalogAliases: []string{"b"}}, []storage.JournalSnapshot{{CatalogIds: []string{"a"}}, {CatalogIds: []string{"b"}}}},
-		{"unrelated-conflict", sources.JournalCatalogEntry{CatalogId: "a"}, []storage.JournalSnapshot{{CatalogIds: []string{"a"}}, {CatalogIds: []string{"x"}}, {CatalogIds: []string{"x"}}}},
-		{"literal-case", sources.JournalCatalogEntry{CatalogId: "Alias"}, []storage.JournalSnapshot{{CatalogIds: []string{"alias"}}}},
-		{"journal-key-only", sources.JournalCatalogEntry{CatalogId: "a"}, []storage.JournalSnapshot{{JournalKey: "a", CatalogIds: []string{"b"}}}},
-		{"blank-alias", sources.JournalCatalogEntry{CatalogId: ""}, []storage.JournalSnapshot{{CatalogIds: []string{""}}}},
+		{"empty", sources.JournalCatalogEntry{CatalogID: "a"}, nil},
+		{"canonical", sources.JournalCatalogEntry{CatalogID: "a"}, []storage.JournalSnapshot{{CatalogIds: []string{"a"}}}},
+		{"aliases", sources.JournalCatalogEntry{CatalogID: "a", CatalogAliases: []string{"alias", "other", "alias"}}, []storage.JournalSnapshot{{CatalogIds: []string{"alias", "other", "alias"}}}},
+		{"shared-alias", sources.JournalCatalogEntry{CatalogID: "a"}, []storage.JournalSnapshot{{CatalogIds: []string{"a"}}, {CatalogIds: []string{"a"}}}},
+		{"different-alias-owners", sources.JournalCatalogEntry{CatalogID: "a", CatalogAliases: []string{"b"}}, []storage.JournalSnapshot{{CatalogIds: []string{"a"}}, {CatalogIds: []string{"b"}}}},
+		{"unrelated-conflict", sources.JournalCatalogEntry{CatalogID: "a"}, []storage.JournalSnapshot{{CatalogIds: []string{"a"}}, {CatalogIds: []string{"x"}}, {CatalogIds: []string{"x"}}}},
+		{"literal-case", sources.JournalCatalogEntry{CatalogID: "Alias"}, []storage.JournalSnapshot{{CatalogIds: []string{"alias"}}}},
+		{"journal-key-only", sources.JournalCatalogEntry{CatalogID: "a"}, []storage.JournalSnapshot{{JournalKey: "a", CatalogIds: []string{"b"}}}},
+		{"blank-alias", sources.JournalCatalogEntry{CatalogID: ""}, []storage.JournalSnapshot{{CatalogIds: []string{""}}}},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			expected, expectedFailure := cfpFindSnapshot(scenario.entry, scenario.snapshots)
@@ -34,7 +34,7 @@ func TestCfpSnapshotIndexRetainsAliasOwnership(t *testing.T) {
 	}
 	query := "never matches"
 	snapshots := []storage.JournalSnapshot{{CatalogIds: []string{"a"}}, {CatalogIds: []string{"a"}}}
-	if result, failure := cfpCatalog("fixture.sqlite", &query, []sources.JournalCatalogEntry{{CatalogId: "a", Title: "Journal"}}, snapshots, 100); result != nil || failure == nil || failure.status != 500 {
+	if result, failure := cfpCatalog("fixture.sqlite", &query, []sources.JournalCatalogEntry{{CatalogID: "a", Title: "Journal"}}, snapshots, 100); result != nil || failure == nil || failure.status != 500 {
 		t.Fatal("search filtering bypassed snapshot ambiguity", result, failure)
 	}
 }
@@ -59,7 +59,7 @@ func FuzzCfpSnapshotIndex(f *testing.F) {
 		}
 		words := []string{"", "a", "b", "Alias", "alias", "中文", " a "}
 		word := func() string { return words[int(next())%len(words)] }
-		entry := sources.JournalCatalogEntry{CatalogId: word()}
+		entry := sources.JournalCatalogEntry{CatalogID: word()}
 		for range int(next() % 4) {
 			entry.CatalogAliases = append(entry.CatalogAliases, word())
 		}

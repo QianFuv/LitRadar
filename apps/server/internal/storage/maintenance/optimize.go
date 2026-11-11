@@ -26,10 +26,7 @@ func call(hook func() error) error {
 
 // Optimize replaces the index directory only after every copied database passes compatibility checks.
 func Optimize(ctx context.Context, options Options) (Report, error) {
-	now := time.Now().Unix()
-	if now < 0 {
-		now = 0
-	}
+	now := max(time.Now().Unix(), 0)
 	return optimize(ctx, options, now, hooks{})
 }
 

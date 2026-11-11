@@ -98,7 +98,7 @@ func collectorFilename(t *testing.T, collector *Collector) string {
 // TestDisabledAndBoundedRecording ensures disabled hooks and contention cannot stall requests.
 func TestDisabledAndBoundedRecording(t *testing.T) {
 	var disabled *Collector
-	disabled.Http("/api/articles/{id}", "GET", 200, time.Millisecond)
+	disabled.HTTP("/api/articles/{id}", "GET", 200, time.Millisecond)
 	disabled.Mcp("search_articles", false, time.Millisecond)
 	report, err := disabled.Read(context.Background(), time.Now(), time.Now(), "")
 	if err != nil || report.Enabled || report.Series == nil {
@@ -126,7 +126,7 @@ func TestConcurrentRecordingAndSnapshots(t *testing.T) {
 	for range 8 {
 		workers.Go(func() {
 			for range 1000 {
-				collector.Http("/api/articles", "GET", 200, time.Millisecond)
+				collector.HTTP("/api/articles", "GET", 200, time.Millisecond)
 			}
 		})
 	}
@@ -198,7 +198,7 @@ func TestSearchShapeSemantics(t *testing.T) {
 // TestFailedFlushDropsBatch prevents retries from double-counting a failed transaction.
 func TestFailedFlushDropsBatch(t *testing.T) {
 	collector := openCollector(t)
-	collector.Http("/api/articles", "GET", 200, time.Millisecond)
+	collector.HTTP("/api/articles", "GET", 200, time.Millisecond)
 	if _, err := collector.store.database.Exec("DROP TABLE hourly_load"); err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func BenchmarkRecord(b *testing.B) {
 		b.Run(name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				collector.Http("/api/articles/{article_id}", "GET", 200, time.Millisecond)
+				collector.HTTP("/api/articles/{article_id}", "GET", 200, time.Millisecond)
 			}
 		})
 	}

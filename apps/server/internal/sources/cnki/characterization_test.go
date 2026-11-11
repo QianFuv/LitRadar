@@ -26,7 +26,7 @@ func TestCaptchaAcceptedCancellationRetainsId(t *testing.T) {
 	if err != nil || session.RemainingBudget() != 4 {
 		t.Fatalf("accepted cancellation changed quota or result: %v", err)
 	}
-	attached, err := session.AttachCaptchaId(KnsBase + "/article")
+	attached, err := session.AttachCaptchaID(KnsBase + "/article")
 	if err != nil || !strings.HasSuffix(attached, "captchaId=secret-id") {
 		t.Fatalf("accepted id lost: %q %v", attached, err)
 	}
@@ -42,7 +42,7 @@ func TestCaptchaFailedFetchAdvancesCandidate(t *testing.T) {
 	if err != wantFailure {
 		t.Fatal(err)
 	}
-	want, err := jfbym.EncryptPointJson(testPuzzle().SecretKey, 101, 5)
+	want, err := jfbym.EncryptPointJSON(testPuzzle().SecretKey, 101, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestQueryDecodingRejectsInvalidEscapesWithoutExposingSecrets(t *testing.T) 
 	if _, err := WithDomesticPlatform(invalid); err == nil {
 		t.Fatal("malformed query accepted")
 	}
-	if strings.Contains(RedactUrl(invalid), "private") {
+	if strings.Contains(RedactURL(invalid), "private") {
 		t.Fatal("malformed query bypassed redaction")
 	}
 }

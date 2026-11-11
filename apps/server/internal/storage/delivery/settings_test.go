@@ -24,9 +24,9 @@ func TestNotificationSettingsKeepClearAndReplaceCredentials(t *testing.T) {
 	}
 	update := domain.DefaultNotificationSettingsUpdate()
 	update.DeliveryMethod = "pushplus"
-	update.PushplusToken = domain.SecretUpdate{IsPresent: true, Value: pointer(" private-token ")}
-	update.AiApiKey = domain.SecretUpdate{IsPresent: true, Value: pointer("private-key")}
-	update.AiBaseUrl = " https://API.example.test/v1 "
+	update.PushplusToken = domain.SecretUpdate{IsPresent: true, Value: new(" private-token ")}
+	update.AiAPIKey = domain.SecretUpdate{IsPresent: true, Value: new("private-key")}
+	update.AiBaseURL = " https://API.example.test/v1 "
 	stored, err := repository.UpsertNotificationSettings(ctx, codec, 1, update)
 	if err != nil {
 		t.Fatal(err)
@@ -50,18 +50,18 @@ func TestNotificationSettingsRejectRevokedEndpointsAndCorruptExistingSecrets(t *
 		t.Fatal(err)
 	}
 	update := domain.DefaultNotificationSettingsUpdate()
-	update.AiBaseUrl = "https://revoked.example/v1"
+	update.AiBaseURL = "https://revoked.example/v1"
 	if _, err := repository.UpsertNotificationSettings(ctx, codec, 1, update); !errors.Is(err, ErrEndpointNotAllowed) {
 		t.Fatalf("unapproved endpoint accepted: %v", err)
 	}
-	update.AiBaseUrl = ""
+	update.AiBaseURL = ""
 	if _, err := repository.UpsertNotificationSettings(ctx, codec, 1, update); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repository.database.Exec("UPDATE notification_settings SET ai_backup_api_key='plaintext-secret'"); err != nil {
 		t.Fatal(err)
 	}
-	update.AiBackupApiKey = domain.SecretUpdate{IsPresent: true}
+	update.AiBackupAPIKey = domain.SecretUpdate{IsPresent: true}
 	if _, err := repository.UpsertNotificationSettings(ctx, codec, 1, update); !errors.Is(err, secrets.ErrLegacyPlaintext) {
 		t.Fatalf("corrupt old secret silently cleared: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestNotificationSettingsRequiredReadbackRollsBackWrite(t *testing.T) {
 
 func assertEncryptedNotificationCredentials(t *testing.T, repository *Repository, stored *domain.NotificationSettings) string {
 	t.Helper()
-	if stored.AiBaseUrl != "https://api.example.test/v1/" || stored.PushplusToken != "private-token" || stored.AiApiKey != "private-key" {
+	if stored.AiBaseURL != "https://api.example.test/v1/" || stored.PushplusToken != "private-token" || stored.AiAPIKey != "private-key" {
 		t.Fatal(stored)
 	}
 	var encrypted string
@@ -108,12 +108,12 @@ func assertEncryptedNotificationCredentials(t *testing.T, repository *Repository
 func assertNotificationSecretsArePreserved(t *testing.T, repository *Repository, ctx context.Context, codec *secrets.Codec, update *domain.NotificationSettingsUpdate, stored *domain.NotificationSettings, encrypted string) {
 	t.Helper()
 	update.PushplusToken = domain.SecretUpdate{}
-	update.AiApiKey = domain.SecretUpdate{IsPresent: true, Value: pointer("  ")}
+	update.AiAPIKey = domain.SecretUpdate{IsPresent: true, Value: new("  ")}
 	changed, err := repository.UpsertNotificationSettings(ctx, codec, 1, *update)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed.CreatedAt != stored.CreatedAt || changed.AiApiKey != "private-key" {
+	if changed.CreatedAt != stored.CreatedAt || changed.AiAPIKey != "private-key" {
 		t.Fatal(changed)
 	}
 	var preserved string
@@ -124,9 +124,9 @@ func assertNotificationSecretsArePreserved(t *testing.T, repository *Repository,
 
 func assertNotificationSecretClearAndPublicMask(t *testing.T, repository *Repository, ctx context.Context, codec *secrets.Codec, update *domain.NotificationSettingsUpdate) {
 	t.Helper()
-	update.AiApiKey = domain.SecretUpdate{IsPresent: true}
+	update.AiAPIKey = domain.SecretUpdate{IsPresent: true}
 	changed, err := repository.UpsertNotificationSettings(ctx, codec, 1, *update)
-	if err != nil || changed.AiApiKey != "" {
+	if err != nil || changed.AiAPIKey != "" {
 		t.Fatal(changed, err)
 	}
 	public, err := json.Marshal(changed.Public())

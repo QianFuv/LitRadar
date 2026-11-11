@@ -29,8 +29,7 @@ func (live *LiveTransport) roundTripSequence(ctx context.Context, method, locati
 	}
 	response, err := transport.RedirectSequence(ctx, live.state.redirect.Transport, live.state.redirect.Jar, method, location, body, headers, policy)
 	if err != nil {
-		var failure *Error
-		if errors.As(err, &failure) {
+		if failure, ok := errors.AsType[*Error](err); ok {
 			return nil, failure
 		}
 		if errors.Is(err, transport.ErrRequestBuild) {

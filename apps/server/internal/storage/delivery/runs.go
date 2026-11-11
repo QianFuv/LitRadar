@@ -41,7 +41,7 @@ func (repository *Repository) EnqueueRun(ctx context.Context, run RunCreate) (*R
 }
 
 func admitRun(ctx context.Context, connection *sql.Conn, run RunCreate) (RunOutcome, error) {
-	result, err := queries.AdmitRun(ctx, connection, deliverydb.AdmitRunParams{ExternalID: sqlite.Text(run.ExternalId), Workflow: sqlite.Text(run.Workflow), ScopeKey: sqlite.Text(run.ScopeKey), DBName: (*sqlite.Text)(run.DbName), TriggerKind: sqlite.Text(run.TriggerKind), Mode: sqlite.Text(run.Mode), UserID: (*sqlite.Integer)(run.UserId), DeadlineAt: (*sqlite.Number)(run.DeadlineAt), CreatedAt: sqlite.Number(run.CreatedAt), UpdatedAt: sqlite.Number(run.CreatedAt)})
+	result, err := queries.AdmitRun(ctx, connection, deliverydb.AdmitRunParams{ExternalID: sqlite.Text(run.ExternalID), Workflow: sqlite.Text(run.Workflow), ScopeKey: sqlite.Text(run.ScopeKey), DBName: (*sqlite.Text)(run.DBName), TriggerKind: sqlite.Text(run.TriggerKind), Mode: sqlite.Text(run.Mode), UserID: (*sqlite.Integer)(run.UserID), DeadlineAt: (*sqlite.Number)(run.DeadlineAt), CreatedAt: sqlite.Number(run.CreatedAt), UpdatedAt: sqlite.Number(run.CreatedAt)})
 	if err != nil {
 		return RunOutcome{}, storageError(err)
 	}
@@ -57,7 +57,7 @@ func admitRun(ctx context.Context, connection *sql.Conn, run RunCreate) (RunOutc
 		record, err := requireRecord(loadRunRecord(ctx, connection, id))
 		return RunOutcome{"enqueued", record}, err
 	}
-	record, err := decodeRunRecord(queries.RunIdentity(ctx, connection, deliverydb.RunIdentityParams{Workflow: sqlite.Text(run.Workflow), ScopeKey: sqlite.Text(run.ScopeKey), ExternalID: sqlite.Text(run.ExternalId)}))
+	record, err := decodeRunRecord(queries.RunIdentity(ctx, connection, deliverydb.RunIdentityParams{Workflow: sqlite.Text(run.Workflow), ScopeKey: sqlite.Text(run.ScopeKey), ExternalID: sqlite.Text(run.ExternalID)}))
 	if err != nil {
 		return RunOutcome{}, err
 	}
@@ -65,7 +65,7 @@ func admitRun(ctx context.Context, connection *sql.Conn, run RunCreate) (RunOutc
 		return RunOutcome{"existing", record}, nil
 	}
 	if run.TriggerKind == TriggerKindManual {
-		record, err = decodeRunRecord(queries.ActiveManualRun(ctx, connection, deliverydb.ActiveManualRunParams{UserID: (*sqlite.Integer)(run.UserId)}))
+		record, err = decodeRunRecord(queries.ActiveManualRun(ctx, connection, deliverydb.ActiveManualRunParams{UserID: (*sqlite.Integer)(run.UserID)}))
 		if err != nil {
 			return RunOutcome{}, err
 		}
@@ -78,7 +78,7 @@ func admitRun(ctx context.Context, connection *sql.Conn, run RunCreate) (RunOutc
 
 // LoadRun reads a durable run by its positive row identifier.
 func (repository *Repository) LoadRun(ctx context.Context, id int64) (*RunRecord, error) {
-	if err := validatePositiveId(id, "Delivery run id is invalid"); err != nil {
+	if err := validatePositiveID(id, "Delivery run id is invalid"); err != nil {
 		return nil, err
 	}
 	return decodeRunRecord(queries.Run(ctx, repository.database, deliverydb.RunParams{ID: sqlite.Integer(id)}))
@@ -86,7 +86,7 @@ func (repository *Repository) LoadRun(ctx context.Context, id int64) (*RunRecord
 
 // ClaimRun claims queued work or takes over expired active work after checking competing database owners.
 func (repository *Repository) ClaimRun(ctx context.Context, id int64, owner string, revision int64, now, seconds float64) (RunOutcome, error) {
-	if err := validatePositiveId(id, "Delivery run id is invalid"); err != nil {
+	if err := validatePositiveID(id, "Delivery run id is invalid"); err != nil {
 		return RunOutcome{}, err
 	}
 	if err := validateIdentifier(owner, "Delivery owner id is invalid"); err != nil {
@@ -112,8 +112,8 @@ func (repository *Repository) ClaimRun(ctx context.Context, id int64, owner stri
 			outcome = RunOutcome{"unavailable", run}
 			return nil
 		}
-		if run.DbName != nil {
-			active, err := decodeRunRecord(queries.ActiveRun(ctx, connection, deliverydb.ActiveRunParams{ID: sqlite.Integer(id), Workflow: sqlite.Text(run.Workflow), DBName: new(sqlite.Text(*run.DbName))}))
+		if run.DBName != nil {
+			active, err := decodeRunRecord(queries.ActiveRun(ctx, connection, deliverydb.ActiveRunParams{ID: sqlite.Integer(id), Workflow: sqlite.Text(run.Workflow), DBName: new(sqlite.Text(*run.DBName))}))
 			if err != nil {
 				return err
 			}
@@ -137,7 +137,7 @@ func (repository *Repository) ClaimRun(ctx context.Context, id int64, owner stri
 }
 
 func validateRunOwner(id int64, owner string, revision int64, now float64) error {
-	if err := validatePositiveId(id, "Delivery run id is invalid"); err != nil {
+	if err := validatePositiveID(id, "Delivery run id is invalid"); err != nil {
 		return err
 	}
 	if err := validateIdentifier(owner, "Delivery owner id is invalid"); err != nil {
@@ -180,7 +180,7 @@ func (repository *Repository) StartRun(ctx context.Context, id int64, owner stri
 
 // CancelRun finalizes queued work or asks an active owner to drain cancellation.
 func (repository *Repository) CancelRun(ctx context.Context, id, revision int64, now float64) (*RunRecord, error) {
-	if err := validatePositiveId(id, "Delivery run id is invalid"); err != nil {
+	if err := validatePositiveID(id, "Delivery run id is invalid"); err != nil {
 		return nil, err
 	}
 	if err := validateRevisionTime(revision, now); err != nil {
@@ -223,7 +223,7 @@ func (repository *Repository) FinalizeRun(ctx context.Context, id int64, owner s
 	if !status.IsTerminal() {
 		return nil, invalid("Delivery terminal status is invalid")
 	}
-	if err := validateOptionalJson(result); err != nil {
+	if err := validateOptionalJSON(result); err != nil {
 		return nil, err
 	}
 	if err := validateSymbol(errorCode, "Delivery error code is invalid"); err != nil {
@@ -234,7 +234,7 @@ func (repository *Repository) FinalizeRun(ctx context.Context, id int64, owner s
 
 // FinalizeQueuedRun records a dispatcher failure only while the observed run remains queued.
 func (repository *Repository) FinalizeQueuedRun(ctx context.Context, id, revision int64, status RunStatus, result, errorCode *string, now float64) (*RunRecord, error) {
-	if err := validatePositiveId(id, "Delivery run id is invalid"); err != nil {
+	if err := validatePositiveID(id, "Delivery run id is invalid"); err != nil {
 		return nil, err
 	}
 	if err := validateRevisionTime(revision, now); err != nil {
@@ -243,7 +243,7 @@ func (repository *Repository) FinalizeQueuedRun(ctx context.Context, id, revisio
 	if status != RunStatusFailed && status != RunStatusCancelled && status != RunStatusTimedOut {
 		return nil, invalid("Queued delivery terminal status is invalid")
 	}
-	if err := validateOptionalJson(result); err != nil {
+	if err := validateOptionalJSON(result); err != nil {
 		return nil, err
 	}
 	if err := validateSymbol(errorCode, "Delivery error code is invalid"); err != nil {

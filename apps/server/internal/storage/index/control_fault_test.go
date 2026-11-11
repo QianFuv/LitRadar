@@ -33,7 +33,7 @@ func preparedControl(t *testing.T) (*Connection, SyncRun, string) {
 			t.Errorf("control.Close: %v", err)
 		}
 	})
-	run := SyncRun{Scope: SyncScope{"catalog", "scholarly", "catalog:example"}, BatchId: "batch-1", RunId: "run-1", Mode: domain.Incremental}
+	run := SyncRun{Scope: SyncScope{"catalog", "scholarly", "catalog:example"}, BatchID: "batch-1", RunID: "run-1", Mode: domain.Incremental}
 	if _, err := PrepareJournalSync(ctx, control.Conn, run, true, "epoch"); err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func preparedControl(t *testing.T) (*Connection, SyncRun, string) {
 	if err := control.QueryRowContext(ctx, "SELECT unixepoch()").Scan(&now); err != nil {
 		t.Fatal(err)
 	}
-	if err := AcquireLease(ctx, control.Conn, run.Scope.CatalogName, run.Scope.ProviderName, run.RunId, now); err != nil {
+	if err := AcquireLease(ctx, control.Conn, run.Scope.CatalogName, run.Scope.ProviderName, run.RunID, now); err != nil {
 		t.Fatal(err)
 	}
 	return control, run, path
@@ -66,7 +66,7 @@ func TestContentCommitSurvivesProgressFailureAndReplay(t *testing.T) {
 	write := func() (ContentWriteOutcome, error) {
 		return WriteContentBatch(ctx, content.Conn, catalog, batch, "stable-revision", "epoch")
 	}
-	progress := domain.ProviderProgress{State: domain.Complete, NextAnchor: ptr("opaque-success")}
+	progress := domain.ProviderProgress{State: domain.Complete, NextAnchor: new("opaque-success")}
 	_, err = CommitContentThenProgress(ctx, control.Conn, run, progress, "done", write)
 	var failure *ContentCheckpointError
 	if !errors.As(err, &failure) || failure.Phase != "control" || !strings.HasPrefix(err.Error(), "sync progress commit failed: ") {
@@ -92,13 +92,13 @@ func TestContentFailureAndOwnershipFenceDoNotAdvance(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "stale-run":
-				run.RunId = "other"
+				run.RunID = "other"
 			case "stale-base":
-				run.BaseAnchor = ptr("wrong")
+				run.BaseAnchor = new("wrong")
 			case "stale-batch":
-				run.BatchId = "other"
+				run.BatchID = "other"
 			}
-			_, err := CommitContentThenProgress(ctx, control.Conn, run, domain.ProviderProgress{State: domain.Continue, Checkpoint: ptr("next")}, "later", func() (int, error) { called = true; return 0, cause })
+			_, err := CommitContentThenProgress(ctx, control.Conn, run, domain.ProviderProgress{State: domain.Continue, Checkpoint: new("next")}, "later", func() (int, error) { called = true; return 0, cause })
 			if err == nil {
 				t.Fatal("expected failure")
 			}
@@ -141,7 +141,7 @@ func TestControlLockFencesTakeoverAcrossContentCommit(t *testing.T) {
 	}()
 	started := make(chan struct{})
 	acquired := make(chan error, 1)
-	_, err = CommitContentThenProgress(ctx, control.Conn, run, domain.ProviderProgress{State: domain.Continue, Checkpoint: ptr("next")}, "later", func() (int, error) {
+	_, err = CommitContentThenProgress(ctx, control.Conn, run, domain.ProviderProgress{State: domain.Continue, Checkpoint: new("next")}, "later", func() (int, error) {
 		go func() {
 			close(started)
 			acquired <- AcquireLease(ctx, contender.Conn, run.Scope.CatalogName, run.Scope.ProviderName, "contender", time.Now().Unix()+1000)

@@ -197,7 +197,7 @@ func (workset *CrossrefWorkset) readEmissionWork(lookup *sql.Stmt, rankValue, da
 	if err := row.Scan(&payload); err != nil {
 		return nil, nil, 0, worksetStorageError(err)
 	}
-	decoded, err := transport.ParseJson([]byte(payload))
+	decoded, err := transport.ParseJSON([]byte(payload))
 	if err != nil {
 		return nil, nil, 0, invalidWorkset("invalid Crossref workset metadata")
 	}

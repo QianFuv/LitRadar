@@ -368,7 +368,7 @@ func TestPrimitiveHelperFixture(t *testing.T) {
 		}
 		os.Exit(0)
 	case "hold":
-		holdFixtureListener()
+		os.Exit(holdFixtureListener())
 	default:
 		t.Fatal("unknown synthetic fixture mode")
 	}
@@ -388,18 +388,18 @@ func writeFixtureEcho() {
 }
 
 // holdFixtureListener intentionally blocks stdin until the parent terminates its owned process.
-func holdFixtureListener() {
+func holdFixtureListener() (exitCode int) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		os.Exit(9)
+		return 9
 	}
 	defer func() {
 		if err := listener.Close(); err != nil {
-			os.Exit(99)
+			exitCode = 99
 		}
 	}()
 	if err := os.WriteFile(os.Getenv("LITRADAR_PRIMITIVE_HELPER_READY"), []byte(listener.Addr().String()), 0600); err != nil {
-		os.Exit(10)
+		return 10
 	}
 	for {
 		time.Sleep(time.Second)

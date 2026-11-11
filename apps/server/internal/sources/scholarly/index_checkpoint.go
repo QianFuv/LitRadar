@@ -33,7 +33,7 @@ func (window *indexWindow) UnmarshalJSON(body []byte) error {
 	}
 	mode := domain.IndexSyncMode(decoded.SyncMode)
 	if mode != domain.Bootstrap && mode != domain.Incremental && mode != domain.FullRescan || decoded.Phase != "bounded" && decoded.Phase != "unbounded" {
-		return errWorksetJson
+		return errWorksetJSON
 	}
 	*window = indexWindow{mode, string(decoded.Phase), decoded.BaseAnchor, decoded.CandidateAnchor, decoded.HasReachedCandidate, decoded.HasSeenBase}
 	return nil
@@ -44,7 +44,7 @@ type indexUnit string
 func (unit *indexUnit) UnmarshalJSON(body []byte) error {
 	var name string
 	if json.Unmarshal(body, &name) != nil {
-		return errWorksetJson
+		return errWorksetJSON
 	}
 	*unit = indexUnit(name)
 	return nil
@@ -60,7 +60,7 @@ type indexSource struct {
 	Kind     string
 	State    *CrossrefCheckpoint
 	Cursor   *string
-	SourceId string
+	SourceID string
 }
 
 type worksetSourceWire struct {
@@ -69,7 +69,7 @@ type worksetSourceWire struct {
 }
 type openAlexSourceWire struct {
 	Kind     string  `json:"kind"`
-	SourceId string  `json:"source_id"`
+	SourceID string  `json:"source_id"`
 	Cursor   *string `json:"cursor,omitempty"`
 }
 
@@ -77,13 +77,13 @@ func (source indexSource) MarshalJSON() ([]byte, error) {
 	switch source.Kind {
 	case "crossref_workset":
 		if source.State == nil {
-			return nil, errWorksetJson
+			return nil, errWorksetJSON
 		}
 		return encodeWorksetStruct(worksetSourceWire{source.Kind, *source.State})
 	case "open_alex":
-		return encodeWorksetStruct(openAlexSourceWire{source.Kind, source.SourceId, source.Cursor})
+		return encodeWorksetStruct(openAlexSourceWire{source.Kind, source.SourceID, source.Cursor})
 	default:
-		return nil, errWorksetJson
+		return nil, errWorksetJSON
 	}
 }
 
@@ -105,9 +105,9 @@ func (source *indexSource) UnmarshalJSON(body []byte) error {
 		if err := decodeWorksetStruct(body, &wire); err != nil {
 			return err
 		}
-		decoded.SourceId, decoded.Cursor = wire.SourceId, wire.Cursor
+		decoded.SourceID, decoded.Cursor = wire.SourceID, wire.Cursor
 	default:
-		return errWorksetJson
+		return errWorksetJSON
 	}
 	*source = decoded
 	return nil
@@ -214,7 +214,7 @@ func indexWorksetScope(catalog domain.JournalCatalogEntry, window indexWindow) (
 	if err != nil {
 		return "", &provider.Error{Kind: provider.Internal, Message: "Crossref frozen context could not be encoded"}
 	}
-	mode, err := domain.Json(string(window.SyncMode))
+	mode, err := domain.JSON(string(window.SyncMode))
 	if err != nil {
 		return "", err
 	}
@@ -234,7 +234,7 @@ func validIndexSource(version uint32, source indexSource) bool {
 	case "crossref_workset":
 		return version == 2 && source.State != nil && source.State.Validate() == nil
 	case "open_alex":
-		return strings.TrimSpace(source.SourceId) != "" && (source.Cursor == nil || *source.Cursor != "")
+		return strings.TrimSpace(source.SourceID) != "" && (source.Cursor == nil || *source.Cursor != "")
 	}
 	return false
 }

@@ -43,12 +43,12 @@ func TestOutboundCancelledContextKeepsAdmissionErrorPriority(t *testing.T) {
 		body    any
 		want    error
 	}{
-		{"http://example.invalid", http.Header{"Invalid\nName": {"x"}}, make(chan int), HttpsRequired},
+		{"http://example.invalid", http.Header{"Invalid\nName": {"x"}}, make(chan int), HTTPSRequired},
 		{"https://example.invalid", http.Header{"Invalid\nName": {"x"}}, make(chan int), RequestFailed},
 		{"https://example.invalid", http.Header{"Authorization": {"invalid\nvalue"}}, nil, RequestFailed},
 	}
 	for _, test := range cases {
-		if _, err := client.PostJson(ctx, test.url, test.headers, test.body, time.Second); err != test.want {
+		if _, err := client.PostJSON(ctx, test.url, test.headers, test.body, time.Second); err != test.want {
 			t.Fatalf("admission error displaced: %v want %v", err, test.want)
 		}
 	}
@@ -69,7 +69,7 @@ func TestOutboundRequestKeepsCallerHeaderAndTlsOwnership(t *testing.T) {
 	configuration := client.tlsConfig
 	headers := http.Header{"Accept": nil, "X-Custom": {"retained"}}
 	original := headers.Clone()
-	if _, err := client.PostJson(context.Background(), server.URL, headers, nil, time.Second); err != nil {
+	if _, err := client.PostJSON(context.Background(), server.URL, headers, nil, time.Second); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(headers, original) || client.tlsConfig != configuration || configuration.ServerName != "" {

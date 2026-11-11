@@ -63,7 +63,7 @@ type Handler struct {
 
 // New composes concrete operations and verifies their OpenAPI bindings before serving.
 func New(services Services, options Options) (*Handler, error) {
-	if err := validateApiServices(services); err != nil {
+	if err := validateAPIServices(services); err != nil {
 		return nil, err
 	}
 	if options.ContentSecurityPolicy == "" {
@@ -119,8 +119,8 @@ func New(services Services, options Options) (*Handler, error) {
 	return &Handler{telemetry: services.Telemetry, mux: mux, mcp: handler, options: options}, nil
 }
 
-// validateApiServices checks borrowed resources before validating router options.
-func validateApiServices(services Services) error {
+// validateAPIServices checks borrowed resources before validating router options.
+func validateAPIServices(services Services) error {
 	if services.Auth == nil || services.Cfp == nil || services.Delivery == nil || services.Scheduler == nil || services.Codec == nil || services.StoragePool == nil || services.UpstreamPool == nil || services.KdfPool == nil {
 		return errors.New("API services must be initialized before router construction")
 	}
@@ -201,8 +201,8 @@ func unmatchedRoute(path string) string {
 	return "http.unmatched"
 }
 
-func withRequestId(request *http.Request, id string) *http.Request {
-	request = request.Clone(context.WithValue(request.Context(), requestIdKey{}, id))
+func withRequestID(request *http.Request, id string) *http.Request {
+	request = request.Clone(context.WithValue(request.Context(), requestIDKey{}, id))
 	request.Header.Del("X-Request-Id")
 	request.Header.Set("X-Request-Id", id)
 	return request

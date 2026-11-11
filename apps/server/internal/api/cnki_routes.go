@@ -37,7 +37,7 @@ func (handlers *cnkiHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			return handlers.cnkiSession(input.request, context.WithoutCancel(ctx), owner, "get_session")
 		}),
 		typedRoute(openapi.Operation{Method: "DELETE", Path: "/api/cnki/session", ID: "clear_session"}, func(ctx context.Context, input *ClearSessionInput) (*output[storage.CnkiStatus], error) {
@@ -45,7 +45,7 @@ func (handlers *cnkiHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			return handlers.cnkiSession(input.request, context.WithoutCancel(ctx), owner, "clear_session")
 		}),
 		typedRoute(openapi.Operation{Method: "POST", Path: "/api/cnki/login/start", ID: "start_login"}, func(ctx context.Context, input *StartLoginInput) (*output[cnkiStartResponse], error) {
@@ -53,7 +53,7 @@ func (handlers *cnkiHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			return handlers.startCnkiLogin(input.request, context.WithoutCancel(ctx), owner)
 		}),
 		typedRoute(openapi.Operation{Method: "POST", Path: "/api/cnki/login/poll", ID: "poll_login"}, func(ctx context.Context, input *PollLoginInput) (*output[cnkiPollResponse], error) {
@@ -61,12 +61,12 @@ func (handlers *cnkiHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			return handlers.pollCnkiLogin(input.request, context.WithoutCancel(ctx), owner, *input.Body.TimeoutSeconds, *input.Body.IntervalSeconds)
 		}),
 	}
 }
-func (handlers *cnkiHandlers) cnkiSession(request *http.Request, ctx context.Context, owner identity.Id, name string) (*output[storage.CnkiStatus], error) {
+func (handlers *cnkiHandlers) cnkiSession(request *http.Request, ctx context.Context, owner identity.ID, name string) (*output[storage.CnkiStatus], error) {
 	status, failure := runCnki(request, handlers.pool, func() (storage.CnkiStatus, error) {
 		if name == "clear_session" {
 			if _, err := handlers.sessions.Clear(ctx, owner); err != nil {
@@ -82,7 +82,7 @@ func (handlers *cnkiHandlers) cnkiSession(request *http.Request, ctx context.Con
 }
 
 // startCnkiLogin publishes QR state only for the reserved generation.
-func (handlers *cnkiHandlers) startCnkiLogin(request *http.Request, ctx context.Context, owner identity.Id) (*output[cnkiStartResponse], error) {
+func (handlers *cnkiHandlers) startCnkiLogin(request *http.Request, ctx context.Context, owner identity.ID) (*output[cnkiStartResponse], error) {
 	generation, failure := runCnki(request, handlers.pool, func() (int64, error) { return handlers.sessions.Reserve(ctx, owner) })
 	if failure != nil {
 		return nil, failure.problem()
@@ -101,14 +101,14 @@ func (handlers *cnkiHandlers) startCnkiLogin(request *http.Request, ctx context.
 		if err != nil {
 			return loginResult{}, cnkiFailure(502, "cnki_login_start_failed", "login", "CNKI login start failed")
 		}
-		state, err := jsonvalue.EncodeJson(client.StateData())
+		state, err := jsonvalue.EncodeJSON(client.StateData())
 		return loginResult{qr, json.RawMessage(state)}, err
 	})
 	if failure != nil {
 		return nil, failure.problem()
 	}
 	status, failure := runCnki(request, handlers.pool, func() (*storage.CnkiStatus, error) {
-		return handlers.sessions.Complete(ctx, owner, generation, nil, login.state, "waiting_scan", &login.qr.Uuid)
+		return handlers.sessions.Complete(ctx, owner, generation, nil, login.state, "waiting_scan", &login.qr.UUID)
 	})
 	if failure != nil {
 		return nil, failure.problem()
@@ -116,16 +116,16 @@ func (handlers *cnkiHandlers) startCnkiLogin(request *http.Request, ctx context.
 	if status == nil {
 		return nil, cnkiSuperseded().problem()
 	}
-	return &output[cnkiStartResponse]{Body: cnkiStartResponse{UUID: login.qr.Uuid, Status: login.qr.Status, QRCode: login.qr.QrCode, Session: status}}, nil
+	return &output[cnkiStartResponse]{Body: cnkiStartResponse{UUID: login.qr.UUID, Status: login.qr.Status, QRCode: login.qr.QrCode, Session: status}}, nil
 }
 
 // pollCnkiLogin preserves stored QR identity and generation-checked completion.
-func (handlers *cnkiHandlers) pollCnkiLogin(request *http.Request, ctx context.Context, owner identity.Id, timeout int64, interval float64) (*output[cnkiPollResponse], error) {
+func (handlers *cnkiHandlers) pollCnkiLogin(request *http.Request, ctx context.Context, owner identity.ID, timeout int64, interval float64) (*output[cnkiPollResponse], error) {
 	row, failure := runCnki(request, handlers.pool, func() (*storage.CnkiData, error) { return handlers.sessions.Data(ctx, owner, false) })
 	if failure != nil {
 		return nil, failure.problem()
 	}
-	if row == nil || strings.TrimSpace(row.QrUuid) == "" {
+	if row == nil || strings.TrimSpace(row.QrUUID) == "" {
 		return nil, cnkiFailure(400, "cnki_login_not_started", "login", "CNKI QR login has not been started").problem()
 	}
 	state, failure := runCnki(request, handlers.upstream, func() (json.RawMessage, error) {
@@ -139,13 +139,13 @@ func (handlers *cnkiHandlers) pollCnkiLogin(request *http.Request, ctx context.C
 		if err := json.Unmarshal(state, &object); err != nil {
 			return nil, err
 		}
-		qr := row.QrUuid
+		qr := row.QrUUID
 		if raw, exists := object["qr_uuid"]; exists && len(raw) > 0 && raw[0] == '"' {
 			if err := json.Unmarshal(raw, &qr); err != nil {
 				return nil, err
 			}
 		}
-		return handlers.sessions.Complete(ctx, owner, row.Generation, &row.QrUuid, state, "active", &qr)
+		return handlers.sessions.Complete(ctx, owner, row.Generation, &row.QrUUID, state, "active", &qr)
 	})
 	if failure != nil {
 		return nil, failure.problem()

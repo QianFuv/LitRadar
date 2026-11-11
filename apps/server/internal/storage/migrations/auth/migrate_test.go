@@ -58,7 +58,7 @@ func historicalDatabase(t *testing.T, version int) (string, *sql.Conn) {
 	filename := filepath.Join(t.TempDir(), "auth.sqlite")
 	connection := testConnection(t, filename)
 	mustExecute(t, connection, "PRAGMA foreign_keys=ON")
-	for current := 0; current < version; current++ {
+	for current := range version {
 		if _, err := migrateStep(context.Background(), connection, current, 0); err != nil {
 			t.Fatal(err)
 		}
@@ -136,9 +136,8 @@ func TestConcurrentMigrationRechecksLockedVersion(t *testing.T) {
 	mustExecute(t, connection, "PRAGMA journal_mode=WAL")
 	var workers sync.WaitGroup
 	failures := make(chan error, 6)
-	for worker := 0; worker < 6; worker++ {
-		workers.Add(1)
-		go func() { defer workers.Done(); _, err := Migrate(context.Background(), filename); failures <- err }()
+	for range 6 {
+		workers.Go(func() { ; _, err := Migrate(context.Background(), filename); failures <- err })
 	}
 	workers.Wait()
 	close(failures)
@@ -441,7 +440,7 @@ func TestProviderOrderFieldOrderIsStable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := encodeJson(orders)
+	encoded, err := encodeJSON(orders)
 	if err != nil || encoded != `{"default":[],"catalogs":{"a":["cnki"],"z":[]}}` {
 		t.Fatalf("%s %v", encoded, err)
 	}
@@ -484,7 +483,7 @@ func TestMalformedSchemaDoesNotPreemptVersionCheck(t *testing.T) {
 
 func TestStrictJsonRejectsLossySyntaxAndValidatesOverwrittenValues(t *testing.T) {
 	for _, raw := range []string{`["\ud800"]`, `["\udc00"]`, string([]byte{'[', '"', 255, '"', ']'}), `{"x":1e999,"x":"cnki"}`} {
-		if validJson(raw) {
+		if validJSON(raw) {
 			t.Fatalf("accepted invalid input %q", raw)
 		}
 	}
@@ -495,7 +494,7 @@ func TestStrictJsonRejectsLossySyntaxAndValidatesOverwrittenValues(t *testing.T)
 	if err == nil {
 		t.Fatalf("duplicate map value accepted: %+v %v", orders, err)
 	}
-	if !validJson(strings.Repeat("[", 128)+"0"+strings.Repeat("]", 128)) || !validJson("1e999") {
+	if !validJSON(strings.Repeat("[", 128)+"0"+strings.Repeat("]", 128)) || !validJSON("1e999") {
 		t.Fatal("standard JSON token validation was restricted by legacy limits")
 	}
 	for _, value := range []string{"\u2028", "\u2029", `\u2028`, `\u2029`, "😀"} {
@@ -547,24 +546,24 @@ func TestProviderRetirementRetainsEquivalentFormatting(t *testing.T) {
 // assertRetainedSchedulerHistory checks every persisted field from the version-19 fixture.
 func assertRetainedSchedulerHistory(t *testing.T, connection *sql.Conn) {
 	t.Helper()
-	var id, taskId, scheduledFor int64
+	var id, taskID, scheduledFor int64
 	var taskName, status, worker, output, trigger string
 	var expiry, claimed, started, finished float64
 	err := connection.QueryRowContext(context.Background(), `SELECT id,task_id,task_name,scheduled_for,status,worker_id,
 		claim_expires_at,claimed_at,started_at,finished_at,output_summary,trigger_kind FROM scheduled_task_runs WHERE id=7`).Scan(
-		&id, &taskId, &taskName, &scheduledFor, &status, &worker, &expiry, &claimed, &started, &finished, &output, &trigger)
+		&id, &taskID, &taskName, &scheduledFor, &status, &worker, &expiry, &claimed, &started, &finished, &output, &trigger)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	assertRetainedSchedulerIdentity(t, id, taskId, scheduledFor, taskName, status, worker)
+	assertRetainedSchedulerIdentity(t, id, taskID, scheduledFor, taskName, status, worker)
 	assertRetainedSchedulerOutcome(t, expiry, claimed, started, finished, output, trigger)
 }
 
 // assertRetainedSchedulerIdentity checks the original run identity and worker ownership.
-func assertRetainedSchedulerIdentity(t *testing.T, id, taskId, scheduledFor int64, taskName, status, worker string) {
+func assertRetainedSchedulerIdentity(t *testing.T, id, taskID, scheduledFor int64, taskName, status, worker string) {
 	t.Helper()
-	if id != 7 || taskId != 42 || taskName != "retained job" || scheduledFor != 600 || status != "unknown" || worker != "worker-a" {
+	if id != 7 || taskID != 42 || taskName != "retained job" || scheduledFor != 600 || status != "unknown" || worker != "worker-a" {
 		t.Fatal("migration changed persisted scheduler history")
 	}
 }
@@ -580,7 +579,7 @@ func assertRetainedSchedulerOutcome(t *testing.T, expiry, claimed, started, fini
 // assertMigrationStringRoundTrip retains typed values and literal line separators during migration.
 func assertMigrationStringRoundTrip(t *testing.T, value string) {
 	t.Helper()
-	encoded, err := encodeJson([]string{value})
+	encoded, err := encodeJSON([]string{value})
 	if err != nil {
 		t.Fatal(err)
 	}

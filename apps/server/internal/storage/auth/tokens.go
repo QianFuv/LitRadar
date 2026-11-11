@@ -17,7 +17,7 @@ func (repository *Repository) IssueToken(ctx context.Context, authorization doma
 	err := repository.Immediate(ctx, false, func(connection *sql.Conn) error {
 		var generation int64
 		err := func() error {
-			queryResult, err := queries.TokenGeneration(ctx, connection, authdb.TokenGenerationParams{ID: int64(authorization.User.Id)})
+			queryResult, err := queries.TokenGeneration(ctx, connection, authdb.TokenGenerationParams{ID: int64(authorization.User.ID)})
 			if err != nil {
 				return err
 			}
@@ -33,7 +33,7 @@ func (repository *Repository) IssueToken(ctx context.Context, authorization doma
 		if !isLogin && authorization.TokenHash != nil {
 			var exists bool
 			if err := func() error {
-				queryResult, err := queries.HasActiveToken(ctx, connection, authdb.HasActiveTokenParams{UserID: int64(authorization.User.Id), TokenHash: *authorization.TokenHash, ExpiresAt: now})
+				queryResult, err := queries.HasActiveToken(ctx, connection, authdb.HasActiveTokenParams{UserID: int64(authorization.User.ID), TokenHash: *authorization.TokenHash, ExpiresAt: now})
 				if err != nil {
 					return err
 				}
@@ -51,13 +51,13 @@ func (repository *Repository) IssueToken(ctx context.Context, authorization doma
 		}
 		if isLogin {
 			name = domain.ReservedTokenName
-			if _, err := queries.DeleteLoginToken(ctx, connection, authdb.DeleteLoginTokenParams{UserID: int64(authorization.User.Id)}); err != nil {
+			if _, err := queries.DeleteLoginToken(ctx, connection, authdb.DeleteLoginTokenParams{UserID: int64(authorization.User.ID)}); err != nil {
 				return err
 			}
 		} else {
 			var count int64
 			if err := func() error {
-				queryResult, err := queries.TokenCount(ctx, connection, authdb.TokenCountParams{UserID: int64(authorization.User.Id), ExpiresAt: now})
+				queryResult, err := queries.TokenCount(ctx, connection, authdb.TokenCountParams{UserID: int64(authorization.User.ID), ExpiresAt: now})
 				if err != nil {
 					return err
 				}
@@ -70,7 +70,7 @@ func (repository *Repository) IssueToken(ctx context.Context, authorization doma
 				return domain.ErrTokenLimit
 			}
 		}
-		result, err := queries.CreateToken(ctx, connection, authdb.CreateTokenParams{UserID: int64(authorization.User.Id), TokenHash: hash, Name: name, ExpiresAt: expires, CreatedAt: now})
+		result, err := queries.CreateToken(ctx, connection, authdb.CreateTokenParams{UserID: int64(authorization.User.ID), TokenHash: hash, Name: name, ExpiresAt: expires, CreatedAt: now})
 		if err != nil {
 			return err
 		}
@@ -78,7 +78,7 @@ func (repository *Repository) IssueToken(ctx context.Context, authorization doma
 		if err != nil {
 			return err
 		}
-		token = domain.TokenInfo{Id: id, Name: name, ExpiresAt: expires, CreatedAt: now}
+		token = domain.TokenInfo{ID: id, Name: name, ExpiresAt: expires, CreatedAt: now}
 		if audit != nil {
 			copy := audit.WithTarget(id)
 			return InsertAudit(ctx, connection, &copy)
@@ -101,7 +101,7 @@ func (repository *Repository) VerifyToken(ctx context.Context, hash string, now 
 		if err != nil {
 			return err
 		}
-		authorization.User.Id = identity.Id(queryResult.UserID)
+		authorization.User.ID = identity.ID(queryResult.UserID)
 		expires = queryResult.ExpiresAt
 		authorization.User.Username = queryResult.Username
 		isAdmin = queryResult.IsAdmin
@@ -127,7 +127,7 @@ func (repository *Repository) VerifyToken(ctx context.Context, hash string, now 
 }
 
 // ListTokens purges expired rows before returning active personal-token metadata.
-func (repository *Repository) ListTokens(ctx context.Context, user identity.Id, now float64) ([]domain.TokenInfo, error) {
+func (repository *Repository) ListTokens(ctx context.Context, user identity.ID, now float64) ([]domain.TokenInfo, error) {
 	if _, err := queries.PruneTokens(ctx, repository.database, authdb.PruneTokensParams{ExpiresAt: now}); err != nil {
 		return nil, err
 	}
@@ -137,16 +137,16 @@ func (repository *Repository) ListTokens(ctx context.Context, user identity.Id, 
 	}
 	result := make([]domain.TokenInfo, 0, len(rows))
 	for _, row := range rows {
-		result = append(result, domain.TokenInfo{Id: row.ID, Name: row.Name, ExpiresAt: row.ExpiresAt, CreatedAt: row.CreatedAt})
+		result = append(result, domain.TokenInfo{ID: row.ID, Name: row.Name, ExpiresAt: row.ExpiresAt, CreatedAt: row.CreatedAt})
 	}
 	return result, nil
 }
 
-// RevokeTokenId audits only an actually deleted row owned by the specified user.
-func (repository *Repository) RevokeTokenId(ctx context.Context, user identity.Id, tokenId int64, audit *domain.AuditEvent) (bool, error) {
+// RevokeTokenID audits only an actually deleted row owned by the specified user.
+func (repository *Repository) RevokeTokenID(ctx context.Context, user identity.ID, tokenID int64, audit *domain.AuditEvent) (bool, error) {
 	var deleted bool
 	err := repository.Immediate(ctx, false, func(connection *sql.Conn) error {
-		result, err := queries.DeleteTokenID(ctx, connection, authdb.DeleteTokenIDParams{ID: tokenId, UserID: int64(user)})
+		result, err := queries.DeleteTokenID(ctx, connection, authdb.DeleteTokenIDParams{ID: tokenID, UserID: int64(user)})
 		if err != nil {
 			return err
 		}
@@ -156,7 +156,7 @@ func (repository *Repository) RevokeTokenId(ctx context.Context, user identity.I
 		}
 		deleted = count > 0
 		if deleted && audit != nil {
-			copy := audit.WithTarget(tokenId)
+			copy := audit.WithTarget(tokenID)
 			return InsertAudit(ctx, connection, &copy)
 		}
 		return nil
@@ -168,13 +168,13 @@ func (repository *Repository) RevokeTokenId(ctx context.Context, user identity.I
 func (repository *Repository) RevokeTokenHash(ctx context.Context, hash string, audit *domain.AuditEvent) (bool, error) {
 	var deleted bool
 	err := repository.Immediate(ctx, true, func(connection *sql.Conn) error {
-		var tokenId int64
+		var tokenID int64
 		lookup := func() error {
 			queryResult, err := queries.TokenID(ctx, connection, authdb.TokenIDParams{TokenHash: hash})
 			if err != nil {
 				return err
 			}
-			tokenId = queryResult
+			tokenID = queryResult
 			return nil
 		}()
 		if lookup != nil && !errors.Is(lookup, sql.ErrNoRows) {
@@ -192,7 +192,7 @@ func (repository *Repository) RevokeTokenHash(ctx context.Context, hash string, 
 		if audit != nil {
 			copy := *audit
 			if lookup == nil {
-				copy = copy.WithTarget(tokenId)
+				copy = copy.WithTarget(tokenID)
 			}
 			return InsertAudit(ctx, connection, &copy)
 		}
@@ -202,7 +202,7 @@ func (repository *Repository) RevokeTokenHash(ctx context.Context, hash string, 
 }
 
 // RevokeAll increments the generation even if no token rows remain.
-func (repository *Repository) RevokeAll(ctx context.Context, user identity.Id, audit domain.AuditEvent) (int64, error) {
+func (repository *Repository) RevokeAll(ctx context.Context, user identity.ID, audit domain.AuditEvent) (int64, error) {
 	var deleted int64
 	err := repository.Immediate(ctx, true, func(connection *sql.Conn) error {
 		result, err := queries.AdvanceTokenGeneration(ctx, connection, authdb.AdvanceTokenGenerationParams{ID: int64(user)})
@@ -232,7 +232,7 @@ func (repository *Repository) RevokeAll(ctx context.Context, user identity.Id, a
 
 // UpgradeLegacy performs one opaque hash-and-salt CAS without revoking sessions or increasing generation.
 func (repository *Repository) UpgradeLegacy(ctx context.Context, observed domain.Credentials, replacement string, now float64) (bool, error) {
-	result, err := queries.UpgradePassword(ctx, repository.database, authdb.UpgradePasswordParams{PasswordHash: replacement, UpdatedAt: now, ID: int64(observed.User.Id), PasswordHash_2: observed.PasswordHash, Salt: observed.Salt})
+	result, err := queries.UpgradePassword(ctx, repository.database, authdb.UpgradePasswordParams{PasswordHash: replacement, UpdatedAt: now, ID: int64(observed.User.ID), PasswordHash_2: observed.PasswordHash, Salt: observed.Salt})
 	if err != nil {
 		return false, err
 	}
@@ -253,7 +253,7 @@ func (repository *Repository) ChangePassword(ctx context.Context, observed domai
 	}
 	var changed bool
 	err := repository.Immediate(ctx, false, func(connection *sql.Conn) error {
-		result, err := queries.ChangePassword(ctx, connection, authdb.ChangePasswordParams{PasswordHash: replacement, Salt: salt, UpdatedAt: now, ID: int64(observed.User.Id), PasswordHash_2: observed.PasswordHash, Salt_2: observed.Salt})
+		result, err := queries.ChangePassword(ctx, connection, authdb.ChangePasswordParams{PasswordHash: replacement, Salt: salt, UpdatedAt: now, ID: int64(observed.User.ID), PasswordHash_2: observed.PasswordHash, Salt_2: observed.Salt})
 		if err != nil {
 			return err
 		}
@@ -268,7 +268,7 @@ func (repository *Repository) ChangePassword(ctx context.Context, observed domai
 			return nil
 		}
 		changed = true
-		if _, err := queries.DeleteUserTokens(ctx, connection, authdb.DeleteUserTokensParams{UserID: int64(observed.User.Id)}); err != nil {
+		if _, err := queries.DeleteUserTokens(ctx, connection, authdb.DeleteUserTokensParams{UserID: int64(observed.User.ID)}); err != nil {
 			return err
 		}
 		return InsertAudit(ctx, connection, &audit)
@@ -278,7 +278,7 @@ func (repository *Repository) ChangePassword(ctx context.Context, observed domai
 
 // ResetPassword optionally fences an administrator actor inside the credential mutation transaction.
 // A nil actor is reserved for trusted internal/CLI reset callers.
-func (repository *Repository) ResetPassword(ctx context.Context, actor *identity.Id, user identity.Id, replacement, salt string, now float64, audit *domain.AuditEvent) (bool, error) {
+func (repository *Repository) ResetPassword(ctx context.Context, actor *identity.ID, user identity.ID, replacement, salt string, now float64, audit *domain.AuditEvent) (bool, error) {
 	var changed bool
 	err := repository.Immediate(ctx, false, func(connection *sql.Conn) error {
 		if actor != nil {

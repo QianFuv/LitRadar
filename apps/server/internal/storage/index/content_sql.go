@@ -1,12 +1,12 @@
 package index
 
-const searchDeleteSql = `DELETE FROM article_search WHERE rowid = ?1`
+const searchDeleteSQL = `DELETE FROM article_search WHERE rowid = ?1`
 
-const searchInsertSql = `INSERT INTO article_search (
+const searchInsertSQL = `INSERT INTO article_search (
                      rowid, article_id, title, abstract_text, doi, pmid, authors, journal_title
                  ) VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)`
 
-const identityClaimSql = `WITH prior(owner) AS MATERIALIZED (
+const identityClaimSQL = `WITH prior(owner) AS MATERIALIZED (
                      SELECT (
                          SELECT article_id
                          FROM article_identity_keys

@@ -66,8 +66,8 @@ const (
 	RunStatusUnknown    RunStatus = "unknown"
 )
 
-func (value RunStatus) valid() bool {
-	switch value {
+func (status RunStatus) valid() bool {
+	switch status {
 	case RunStatusQueued, RunStatusClaimed, RunStatusRunning, RunStatusCancelling, RunStatusCompleted, RunStatusFailed, RunStatusCancelled, RunStatusTimedOut, RunStatusSkipped, RunStatusUnknown:
 		return true
 	}
@@ -126,8 +126,8 @@ const (
 	ItemStatusUnknown   ItemStatus = "unknown"
 )
 
-func (value ItemStatus) valid() bool {
-	switch value {
+func (status ItemStatus) valid() bool {
+	switch status {
 	case ItemStatusPending, ItemStatusClaimed, ItemStatusSending, ItemStatusSucceeded, ItemStatusFailed, ItemStatusSkipped, ItemStatusCancelled, ItemStatusUnknown:
 		return true
 	}
@@ -153,12 +153,12 @@ func (value DedupeStatus) valid() bool {
 
 // CheckpointRecord preserves the durable delivery contract.
 type CheckpointRecord struct {
-	Id                 int64            `json:"id"`
+	ID                 int64            `json:"id"`
 	Workflow           Workflow         `json:"workflow"`
-	DbName             string           `json:"db_name"`
+	DBName             string           `json:"db_name"`
 	Status             CheckpointStatus `json:"status"`
 	LegacyStatus       *string          `json:"legacy_status"`
-	SnapshotJson       string           `json:"snapshot_json"`
+	SnapshotJSON       string           `json:"snapshot_json"`
 	LastCompletedRunAt *string          `json:"last_completed_run_at"`
 	Revision           int64            `json:"revision"`
 	LegacySourceHash   *string          `json:"legacy_source_hash"`
@@ -171,41 +171,41 @@ type CheckpointRecord struct {
 // CheckpointUpdate preserves the durable delivery contract.
 type CheckpointUpdate struct {
 	Status             CheckpointStatus `json:"status"`
-	SnapshotJson       string           `json:"snapshot_json"`
+	SnapshotJSON       string           `json:"snapshot_json"`
 	LastCompletedRunAt *string          `json:"last_completed_run_at"`
 	UpdatedAt          float64          `json:"updated_at"`
 }
 
 // RunCreate preserves the durable delivery contract.
 type RunCreate struct {
-	ExternalId  string      `json:"external_id"`
+	ExternalID  string      `json:"external_id"`
 	Workflow    Workflow    `json:"workflow"`
 	ScopeKey    string      `json:"scope_key"`
-	DbName      *string     `json:"db_name"`
+	DBName      *string     `json:"db_name"`
 	TriggerKind TriggerKind `json:"trigger_kind"`
 	Mode        RunMode     `json:"mode"`
-	UserId      *int64      `json:"user_id"`
+	UserID      *int64      `json:"user_id"`
 	DeadlineAt  *float64    `json:"deadline_at"`
 	CreatedAt   float64     `json:"created_at"`
 }
 
 // RunRecord preserves the durable delivery contract.
 type RunRecord struct {
-	Id                    int64       `json:"id"`
-	ExternalId            string      `json:"external_id"`
+	ID                    int64       `json:"id"`
+	ExternalID            string      `json:"external_id"`
 	Workflow              Workflow    `json:"workflow"`
 	ScopeKey              string      `json:"scope_key"`
-	DbName                *string     `json:"db_name"`
+	DBName                *string     `json:"db_name"`
 	TriggerKind           TriggerKind `json:"trigger_kind"`
 	Mode                  RunMode     `json:"mode"`
-	UserId                *int64      `json:"user_id"`
+	UserID                *int64      `json:"user_id"`
 	Status                RunStatus   `json:"status"`
 	LegacyStatus          *string     `json:"legacy_status"`
-	OwnerId               *string     `json:"owner_id"`
+	OwnerID               *string     `json:"owner_id"`
 	LeaseExpiresAt        *float64    `json:"lease_expires_at"`
 	DeadlineAt            *float64    `json:"deadline_at"`
 	CancellationRequested bool        `json:"cancellation_requested"`
-	ResultJson            *string     `json:"result_json"`
+	ResultJSON            *string     `json:"result_json"`
 	ErrorCode             *string     `json:"error_code"`
 	Revision              int64       `json:"revision"`
 	CreatedAt             float64     `json:"created_at"`
@@ -218,24 +218,24 @@ type RunRecord struct {
 type RunItemCreate struct {
 	ItemKind  ItemKind `json:"item_kind"`
 	ItemKey   string   `json:"item_key"`
-	UserId    *int64   `json:"user_id"`
-	ArticleId *int64   `json:"article_id"`
+	UserID    *int64   `json:"user_id"`
+	ArticleID *int64   `json:"article_id"`
 }
 
 // RunItemRecord preserves the durable delivery contract.
 type RunItemRecord struct {
-	Id             int64      `json:"id"`
-	DeliveryRunId  int64      `json:"delivery_run_id"`
+	ID             int64      `json:"id"`
+	DeliveryRunID  int64      `json:"delivery_run_id"`
 	ItemKind       ItemKind   `json:"item_kind"`
 	ItemKey        string     `json:"item_key"`
-	UserId         *int64     `json:"user_id"`
-	ArticleId      *int64     `json:"article_id"`
+	UserID         *int64     `json:"user_id"`
+	ArticleID      *int64     `json:"article_id"`
 	Status         ItemStatus `json:"status"`
 	LegacyStatus   *string    `json:"legacy_status"`
-	OwnerId        *string    `json:"owner_id"`
+	OwnerID        *string    `json:"owner_id"`
 	LeaseExpiresAt *float64   `json:"lease_expires_at"`
 	AttemptCount   int64      `json:"attempt_count"`
-	ResultJson     *string    `json:"result_json"`
+	ResultJSON     *string    `json:"result_json"`
 	ErrorCode      *string    `json:"error_code"`
 	Revision       int64      `json:"revision"`
 	CreatedAt      float64    `json:"created_at"`
@@ -246,14 +246,14 @@ type RunItemRecord struct {
 
 // DedupeRecord preserves the durable delivery contract.
 type DedupeRecord struct {
-	Id                int64        `json:"id"`
+	ID                int64        `json:"id"`
 	Workflow          Workflow     `json:"workflow"`
-	DbName            string       `json:"db_name"`
-	UserId            int64        `json:"user_id"`
-	ArticleId         int64        `json:"article_id"`
-	DeliveryRunId     *int64       `json:"delivery_run_id"`
+	DBName            string       `json:"db_name"`
+	UserID            int64        `json:"user_id"`
+	ArticleID         int64        `json:"article_id"`
+	DeliveryRunID     *int64       `json:"delivery_run_id"`
 	Status            DedupeStatus `json:"status"`
-	MessageId         *string      `json:"message_id"`
+	MessageID         *string      `json:"message_id"`
 	ReservationOwner  *string      `json:"reservation_owner"`
 	LegacyDeliveredAt *string      `json:"legacy_delivered_at"`
 	Revision          int64        `json:"revision"`
@@ -264,17 +264,17 @@ type DedupeRecord struct {
 
 // DedupeResolution preserves the durable delivery contract.
 type DedupeResolution struct {
-	Id               int64 `json:"id"`
+	ID               int64 `json:"id"`
 	ExpectedRevision int64 `json:"expected_revision"`
 }
 
 // LeaseRecord preserves the durable delivery contract.
 type LeaseRecord struct {
-	Id            int64    `json:"id"`
+	ID            int64    `json:"id"`
 	Workflow      Workflow `json:"workflow"`
-	DbName        string   `json:"db_name"`
-	DeliveryRunId *int64   `json:"delivery_run_id"`
-	OwnerId       *string  `json:"owner_id"`
+	DBName        string   `json:"db_name"`
+	DeliveryRunID *int64   `json:"delivery_run_id"`
+	OwnerID       *string  `json:"owner_id"`
 	Revision      int64    `json:"revision"`
 	AcquiredAt    *float64 `json:"acquired_at"`
 	HeartbeatAt   *float64 `json:"heartbeat_at"`

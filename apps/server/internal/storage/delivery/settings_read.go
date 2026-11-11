@@ -12,8 +12,8 @@ import (
 )
 
 // GetNotificationSettings reads raw preferences and decrypted credentials, including disabled settings.
-func (repository *Repository) GetNotificationSettings(ctx context.Context, codec *secrets.Codec, userId int64) (*domain.NotificationSettings, error) {
-	row, err := notificationQueries.NotificationSettings(ctx, repository.database, notificationdb.NotificationSettingsParams{UserID: sqlite.Integer(userId)})
+func (repository *Repository) GetNotificationSettings(ctx context.Context, codec *secrets.Codec, userID int64) (*domain.NotificationSettings, error) {
+	row, err := notificationQueries.NotificationSettings(ctx, repository.database, notificationdb.NotificationSettingsParams{UserID: sqlite.Integer(userID)})
 	return decodeNotificationSettings(row, err, codec)
 }
 func decodeNotificationSettings(record notificationdb.NotificationSetting, err error, codec *secrets.Codec) (*domain.NotificationSettings, error) {
@@ -21,25 +21,25 @@ func decodeNotificationSettings(record notificationdb.NotificationSetting, err e
 	if errors.Is(row.err, sql.ErrNoRows) {
 		return nil, nil
 	}
-	userId := row.integer(1)
+	userID := row.integer(1)
 	result := domain.NotificationSettings{
-		Id:                   row.integer(0),
-		UserId:               userId,
+		ID:                   row.integer(0),
+		UserID:               userID,
 		Keywords:             row.strings(2),
 		Directions:           row.strings(3),
 		SelectedDatabases:    row.strings(4),
 		DeliveryMethod:       row.text(5),
-		PushplusToken:        row.secret(6, codec, userId, "pushplus_token"),
+		PushplusToken:        row.secret(6, codec, userID, "pushplus_token"),
 		PushplusTemplate:     row.text(7),
 		PushplusTopic:        row.text(8),
 		PushplusChannel:      row.text(9),
 		SyncToTrackingFolder: row.integer(10) != 0,
-		AiBaseUrl:            row.text(11),
-		AiApiKey:             row.secret(12, codec, userId, "ai_api_key"),
+		AiBaseURL:            row.text(11),
+		AiAPIKey:             row.secret(12, codec, userID, "ai_api_key"),
 		AiModel:              row.text(13),
 		AiSystemPrompt:       row.text(14),
-		AiBackupBaseUrl:      row.text(15),
-		AiBackupApiKey:       row.secret(16, codec, userId, "ai_backup_api_key"),
+		AiBackupBaseURL:      row.text(15),
+		AiBackupAPIKey:       row.secret(16, codec, userID, "ai_backup_api_key"),
 		AiBackupModel:        row.text(17),
 		AiBackupSystemPrompt: row.text(18),
 		AiRetryAttempts:      min(max(row.integer(19), 1), 10),

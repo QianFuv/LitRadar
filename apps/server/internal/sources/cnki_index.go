@@ -23,7 +23,7 @@ type cnkiJournalSnapshot struct {
 	shouldRefresh bool
 }
 type cnkiPageCache struct {
-	catalogId, issueId string
+	catalogID, issueID string
 	page               cnki.IssueArticlePage
 	articles           map[int]*domain.ArticleDraft
 }
@@ -103,7 +103,7 @@ func (index *CnkiIndexProvider) Fetch(ctx context.Context, catalog domain.Journa
 		failure := cnkiBatchRetryFailure(err, attempt)
 		if failure == nil {
 			if err == nil && batch.Progress.State == domain.Complete {
-				delete(index.snapshots, catalog.CatalogId)
+				delete(index.snapshots, catalog.CatalogID)
 			}
 			return batch, err
 		}
@@ -128,9 +128,9 @@ func (index *CnkiIndexProvider) resetCnkiBatch(ctx context.Context, attempt int)
 	if err := index.client.ResetTransientState(ctx); err != nil {
 		return mapCnkiProviderError(err)
 	}
-	for catalogId, snapshot := range index.snapshots {
+	for catalogID, snapshot := range index.snapshots {
 		snapshot.shouldRefresh = true
-		index.snapshots[catalogId] = snapshot
+		index.snapshots[catalogID] = snapshot
 	}
 	pool := newCnkiDetailPool(index.clone, index.pool.count)
 	index.pool.close()

@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -91,9 +92,7 @@ func (provider *fakeOidcProvider) serve(writer http.ResponseWriter, request *htt
 			nonce = "wrong"
 		}
 		claims := map[string]any{"iss": provider.issuer, "sub": provider.subject, "aud": "client", "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(), "nonce": nonce}
-		for field, value := range provider.claims {
-			claims[field] = value
-		}
+		maps.Copy(claims, provider.claims)
 		encoded, err := provider.key.Sign(claims)
 		if err != nil {
 			writer.WriteHeader(500)
@@ -168,7 +167,7 @@ func TestOidcProvisionReturningLoginAndPasswordRefusals(t *testing.T) {
 	if first.User.AuthKind != "oidc" || first.User.IsAdmin || !first.User.IsOidcLinked || first.User.Email == nil || *first.User.Email != "verified@example.com" || first.Token == "" {
 		t.Fatal("invalid provisioned projection")
 	}
-	credentials, err := oidc.service.repository.CredentialsById(t.Context(), first.User.Id)
+	credentials, err := oidc.service.repository.CredentialsByID(t.Context(), first.User.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,15 +177,15 @@ func TestOidcProvisionReturningLoginAndPasswordRefusals(t *testing.T) {
 	if _, err := oidc.service.Login(t.Context(), *first.User.Email, "anything", nil); !errors.Is(err, domain.ErrCredentials) {
 		t.Fatal(err)
 	}
-	if _, err := oidc.service.ChangePassword(t.Context(), first.User.Id, "anything", "Replacement!2026", nil); !errors.Is(err, domain.ErrOidcPassword) {
+	if _, err := oidc.service.ChangePassword(t.Context(), first.User.ID, "anything", "Replacement!2026", nil); !errors.Is(err, domain.ErrOidcPassword) {
 		t.Fatal(err)
 	}
-	for _, actor := range []*identity.Id{nil, &first.User.Id} {
-		if _, err := oidc.service.ResetPassword(t.Context(), actor, first.User.Id, "Replacement!2026", nil); !errors.Is(err, domain.ErrOidcPassword) {
+	for _, actor := range []*identity.ID{nil, &first.User.ID} {
+		if _, err := oidc.service.ResetPassword(t.Context(), actor, first.User.ID, "Replacement!2026", nil); !errors.Is(err, domain.ErrOidcPassword) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := oidc.service.UpdateEmail(t.Context(), first.User.Id, nil, nil); !errors.Is(err, domain.ErrManagedEmail) {
+	if _, err := oidc.service.UpdateEmail(t.Context(), first.User.ID, nil, nil); !errors.Is(err, domain.ErrManagedEmail) {
 		t.Fatal(err)
 	}
 	provider.mutex.Lock()
@@ -196,7 +195,7 @@ func TestOidcProvisionReturningLoginAndPasswordRefusals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.User.Id != first.User.Id || *second.User.Email != "new@example.com" {
+	if second.User.ID != first.User.ID || *second.User.Email != "new@example.com" {
 		t.Fatal("returning identity changed or email did not sync")
 	}
 	if old, err := oidc.service.VerifyToken(t.Context(), first.Token); err != nil || old != nil {
@@ -289,7 +288,7 @@ func TestOidcEmailConflictAndExplicitLinking(t *testing.T) {
 		t.Fatal(err)
 	}
 	email := "verified@example.com"
-	if _, err := oidc.service.UpdateEmail(ctx, local.Id, &email, nil); err != nil {
+	if _, err := oidc.service.UpdateEmail(ctx, local.ID, &email, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := finishOidc(t, oidc, beginOidc(t, oidc, provider, nil), nil); err == nil || err.Error() != "email_conflict" {
@@ -307,11 +306,11 @@ func TestOidcEmailConflictAndExplicitLinking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if linked.User.Id != local.Id || linked.User.AuthKind != "local" || !linked.User.IsOidcLinked || linked.Token != "" {
+	if linked.User.ID != local.ID || linked.User.AuthKind != "local" || !linked.User.IsOidcLinked || linked.Token != "" {
 		t.Fatal("link changed local credentials")
 	}
 	returned, err := finishOidc(t, oidc, beginOidc(t, oidc, provider, nil), nil)
-	if err != nil || returned.User.Id != local.Id {
+	if err != nil || returned.User.ID != local.ID {
 		t.Fatal("linked sign-in failed", err)
 	}
 	authorization, err = oidc.service.VerifyToken(ctx, returned.Token)
@@ -344,7 +343,7 @@ func TestOidcLinkConflictAndRevokedSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := oidc.service.CreateTrustedToken(ctx, credentials.User.Id, "test", 3600, nil)
+	token, err := oidc.service.CreateTrustedToken(ctx, credentials.User.ID, "test", 3600, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +359,7 @@ func TestOidcLinkConflictAndRevokedSession(t *testing.T) {
 	provider.subject = "unused-subject"
 	provider.mutex.Unlock()
 	state = beginOidc(t, oidc, provider, authorization)
-	if _, err := oidc.service.RevokeAll(ctx, credentials.User.Id, domain.AuditEvent{Action: "logout_all", Outcome: "completed", OccurredAt: oidc.service.now()}); err != nil {
+	if _, err := oidc.service.RevokeAll(ctx, credentials.User.ID, domain.AuditEvent{Action: "logout_all", Outcome: "completed", OccurredAt: oidc.service.now()}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := finishOidc(t, oidc, state, authorization); err == nil || err.Error() != "expired_session" {

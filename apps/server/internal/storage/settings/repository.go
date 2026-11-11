@@ -187,7 +187,7 @@ func (repository *Repository) settingInfo(definition *definition, value Value) (
 
 // Update preserves omitted/blank/null secret semantics and commits settings together with their audit.
 // The returned projection is read after commit; a projection failure cannot roll back an already committed update.
-func (repository *Repository) Update(ctx context.Context, actor *identity.Id, values map[string]*string, pools map[string]PoolUpdate, audit *domain.AuditEvent) ([]Info, error) {
+func (repository *Repository) Update(ctx context.Context, actor *identity.ID, values map[string]*string, pools map[string]PoolUpdate, audit *domain.AuditEvent) ([]Info, error) {
 	now := float64(time.Now().UnixNano()) / 1e9
 	err := repository.auth.Immediate(ctx, false, func(connection *sql.Conn) error {
 		if actor != nil {
@@ -249,7 +249,7 @@ func (repository *Repository) Update(ctx context.Context, actor *identity.Id, va
 				}
 			}
 			if field == "oidc_issuer_url" || field == "public_base_url" {
-				if err := ValidateOidcUrl(value, repository.isDevelopment); err != nil {
+				if err := ValidateOidcURL(value, repository.isDevelopment); err != nil {
 					return settingError(InvalidSetting, err.Error())
 				}
 			}

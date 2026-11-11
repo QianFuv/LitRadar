@@ -21,24 +21,24 @@ import (
 
 func fields(raw []byte, names []string, _ int) (map[string]json.RawMessage, error) {
 	if !json.Valid(raw) {
-		return nil, ErrManifestJson
+		return nil, ErrManifestJSON
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	opening, err := decoder.Token()
 	if err != nil {
-		return nil, ErrManifestJson
+		return nil, ErrManifestJSON
 	}
 	switch opening {
 	case json.Delim('{'):
 		return objectManifestFields(raw, names, decoder)
 	default:
-		return nil, ErrManifestJson
+		return nil, ErrManifestJSON
 	}
 }
 func required[T any](values map[string]json.RawMessage, key string, target *T) error {
 	raw := values[key]
-	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || !jsonvalue.ValidJson("["+string(raw)+"]") || json.Unmarshal(raw, target) != nil {
-		return ErrManifestJson
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || !jsonvalue.ValidJSON("["+string(raw)+"]") || json.Unmarshal(raw, target) != nil {
+		return ErrManifestJSON
 	}
 	return nil
 }
@@ -58,7 +58,7 @@ func ParseManifest(raw []byte) (Manifest, error) {
 	}
 	var components []json.RawMessage
 	if len(values["components"]) == 0 || !bytes.HasPrefix(bytes.TrimSpace(values["components"]), []byte("[")) || json.Unmarshal(values["components"], &components) != nil {
-		return result, ErrManifestJson
+		return result, ErrManifestJSON
 	}
 	result.Components = []Component{}
 	for _, raw := range components {
@@ -75,7 +75,7 @@ func parsePath(value string) (string, error) {
 	if value == "" || strings.Contains(value, "\\") {
 		return "", failure("manifest", "component path is not portable")
 	}
-	for _, part := range strings.Split(value, "/") {
+	for part := range strings.SplitSeq(value, "/") {
 		if part == "" || part == "." || part == ".." || strings.Contains(part, ":") {
 			return "", failure("manifest", "component path is unsafe")
 		}
@@ -83,14 +83,14 @@ func parsePath(value string) (string, error) {
 	return filepath.FromSlash(value), nil
 }
 func componentKind(raw []byte) (string, error) {
-	if !jsonvalue.ValidJson(string(raw)) {
-		return "", ErrManifestJson
+	if !jsonvalue.ValidJSON(string(raw)) {
+		return "", ErrManifestJSON
 	}
 	var name string
 	if json.Unmarshal(raw, &name) == nil {
 		return name, nil
 	}
-	return "", ErrManifestJson
+	return "", ErrManifestJSON
 }
 func extension(value string) string {
 	name := path.Base(filepath.ToSlash(value))
@@ -239,7 +239,7 @@ func objectManifestFields(raw []byte, names []string, decoder *json.Decoder) (ma
 			continue
 		}
 		if _, exists := result[name]; exists {
-			return nil, ErrManifestJson
+			return nil, ErrManifestJSON
 		}
 		result[name] = value
 	}
@@ -250,19 +250,19 @@ func readManifestMember(raw []byte, decoder *json.Decoder) (string, json.RawMess
 	start := decoder.InputOffset()
 	key, err := decoder.Token()
 	if err != nil {
-		return "", nil, ErrManifestJson
+		return "", nil, ErrManifestJSON
 	}
 	rawKey := bytes.TrimSpace(bytes.TrimPrefix(bytes.TrimSpace(raw[start:decoder.InputOffset()]), []byte(",")))
-	if !jsonvalue.ValidJson(string(rawKey)) {
-		return "", nil, ErrManifestJson
+	if !jsonvalue.ValidJSON(string(rawKey)) {
+		return "", nil, ErrManifestJSON
 	}
 	name, ok := key.(string)
 	if !ok {
-		return "", nil, ErrManifestJson
+		return "", nil, ErrManifestJSON
 	}
 	var value json.RawMessage
 	if decoder.Decode(&value) != nil {
-		return "", nil, ErrManifestJson
+		return "", nil, ErrManifestJSON
 	}
 	return name, value, nil
 }
@@ -278,7 +278,7 @@ func decodeManifestSelection(raw []byte, result *Selection) error {
 		}
 	}
 	if required(selection, "index_databases", &result.IndexDatabases) != nil || required(selection, "push_state", &result.PushState) != nil {
-		return ErrManifestJson
+		return ErrManifestJSON
 	}
 	return nil
 }
@@ -291,10 +291,10 @@ func decodeManifestComponent(raw []byte) (Component, error) {
 	item := Component{}
 	item.Kind, err = componentKind(values["kind"])
 	if err != nil || required(values, "path", &item.Path) != nil || required(values, "size", &item.Size) != nil || required(values, "sha256", &item.Sha256) != nil {
-		return Component{}, ErrManifestJson
+		return Component{}, ErrManifestJSON
 	}
 	if !slices.Contains([]string{"auth_database", "metadata", "index_database", "push_state"}, item.Kind) {
-		return Component{}, ErrManifestJson
+		return Component{}, ErrManifestJSON
 	}
 	if err := decodeComponentSchemaVersion(values, &item); err != nil {
 		return Component{}, err
@@ -306,7 +306,7 @@ func decodeComponentSchemaVersion(values map[string]json.RawMessage, item *Compo
 	if raw := values["schema_version"]; len(raw) > 0 && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		var version int64
 		if bytes.Equal(bytes.TrimSpace(raw), []byte("-0")) || required(values, "schema_version", &version) != nil {
-			return ErrManifestJson
+			return ErrManifestJSON
 		}
 		item.SchemaVersion = &version
 	}
@@ -375,7 +375,7 @@ func verifyManifestComponents(ctx context.Context, directory string, manifest Ma
 
 func decodeManifestHeader(values map[string]json.RawMessage, result *Manifest) error {
 	if required(values, "format", &result.Format) != nil || required(values, "version", &result.Version) != nil || required(values, "created_at", &result.CreatedAt) != nil {
-		return ErrManifestJson
+		return ErrManifestJSON
 	}
 	return nil
 }

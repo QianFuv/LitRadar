@@ -29,8 +29,8 @@ func failure(kind, format string, values ...any) error {
 // ErrActiveTarget prevents replacement while a service may still own the deployment.
 var ErrActiveTarget = errors.New("restore refused because a recent API or worker heartbeat marks the target active")
 
-// ErrManifestJson rejects invalid typed manifests before component validation.
-var ErrManifestJson = errors.New("invalid backup manifest JSON")
+// ErrManifestJSON rejects invalid typed manifests before component validation.
+var ErrManifestJSON = errors.New("invalid backup manifest JSON")
 
 // Selection explicitly controls complete group replacement during restore.
 type Selection struct {
@@ -60,14 +60,14 @@ type Manifest struct {
 // CreateOptions selects the source deployment and optional complete data groups.
 type CreateOptions struct {
 	Config                                  config.Config
-	AuthDbPath, OutputDir                   string
+	AuthDBPath, OutputDir                   string
 	IncludeIndexDatabases, IncludePushState bool
 }
 
 // RestoreOptions identifies the verified backup and inactive target deployment.
 type RestoreOptions struct {
 	Config                config.Config
-	AuthDbPath, BackupDir string
+	AuthDBPath, BackupDir string
 }
 
 // RestoreReport counts replaced files and records the selected data groups.
@@ -83,6 +83,6 @@ type RestoreReport struct {
 type ServiceKind string
 
 const (
-	Api    ServiceKind = "api"
+	API    ServiceKind = "api"
 	Worker ServiceKind = "worker"
 )

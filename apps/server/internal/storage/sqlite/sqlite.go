@@ -74,7 +74,7 @@ func OpenMigration(filename string) (*sql.DB, error) {
 
 // OpenPlain retains the original direct rusqlite reader's five-second timeout without loading FTS or enabling WAL.
 func OpenPlain(filename string) (*sql.DB, error) {
-	dsn, err := platform.FileUri(filename, "rwc")
+	dsn, err := platform.FileURI(filename, "rwc")
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func open(filename, mode string, capacity int, instance *native.Driver) (*sql.DB
 	if capacity < 1 {
 		return nil, errors.New("SQLite pool capacity must be positive")
 	}
-	dsn, err := platform.FileUri(filename, mode)
+	dsn, err := platform.FileURI(filename, mode)
 	if err != nil {
 		return nil, err
 	}

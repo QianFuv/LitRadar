@@ -18,7 +18,7 @@ import (
 // TestCfpCatalogRetainsPerJournalCapabilities compares shared catalog projection with individual summaries.
 func TestCfpCatalogRetainsPerJournalCapabilities(t *testing.T) {
 	registrations := acquisition.Registry()
-	entries := []sources.JournalCatalogEntry{{CatalogId: "unadapted", Title: "Unadapted"}}
+	entries := []sources.JournalCatalogEntry{{CatalogID: "unadapted", Title: "Unadapted"}}
 	snapshots := []storage.JournalSnapshot{}
 	seen := map[bool]bool{}
 	for _, registration := range registrations {
@@ -27,7 +27,7 @@ func TestCfpCatalogRetainsPerJournalCapabilities(t *testing.T) {
 			continue
 		}
 		seen[canRefresh] = true
-		entries = append(entries, sources.JournalCatalogEntry{CatalogId: registration.CatalogIds[0], Title: registration.JournalTitle})
+		entries = append(entries, sources.JournalCatalogEntry{CatalogID: registration.CatalogIds[0], Title: registration.JournalTitle})
 		snapshots = append(snapshots, storage.JournalSnapshot{JournalKey: registration.CatalogIds[0], CatalogIds: registration.CatalogIds, CheckedOn: "2026-09-15", Sources: []storage.SourceStatus{{SourceKey: registration.SourceKey, Status: "success", Revision: 2}}})
 	}
 	if len(seen) != 2 {
@@ -46,7 +46,7 @@ func TestCfpCatalogRetainsPerJournalCapabilities(t *testing.T) {
 		expected := cfpSummary(entry, snapshot, now, now)
 		hasItem := false
 		for _, item := range result.Items {
-			if item.CatalogId == entry.CatalogId {
+			if item.CatalogID == entry.CatalogID {
 				hasItem = true
 				if !reflect.DeepEqual(item, expected) {
 					t.Fatal("shared registry changed journal capability or freshness", item, expected)
@@ -54,12 +54,12 @@ func TestCfpCatalogRetainsPerJournalCapabilities(t *testing.T) {
 			}
 		}
 		if !hasItem {
-			t.Fatal("catalog lost a journal", entry.CatalogId)
+			t.Fatal("catalog lost a journal", entry.CatalogID)
 		}
 	}
 	query := "Unadapted"
 	filtered, failure := cfpCatalog("fixture.sqlite", &query, entries, snapshots, now)
-	if failure != nil || len(filtered.Items) != 1 || filtered.Items[0].CatalogId != "unadapted" || filtered.Summary != result.Summary {
+	if failure != nil || len(filtered.Items) != 1 || filtered.Items[0].CatalogID != "unadapted" || filtered.Summary != result.Summary {
 		t.Fatal("search changed global totals or returned unrelated journals", filtered, failure)
 	}
 }
@@ -67,15 +67,15 @@ func TestCfpCatalogRetainsPerJournalCapabilities(t *testing.T) {
 // TestCfpCatalogTitleOrdering preserves coverage, full Unicode title order, and exact identifier ties.
 func TestCfpCatalogTitleOrdering(t *testing.T) {
 	entries := []sources.JournalCatalogEntry{
-		{CatalogId: "u-z", Title: "Zulu"},
-		{CatalogId: "a-b", Title: "CAFÉ"},
-		{CatalogId: "a-a", Title: "café"},
-		{CatalogId: "greek-b", Title: "ΟΣ"},
-		{CatalogId: "greek-a", Title: "ος"},
-		{CatalogId: "dotted", Title: "İSTANBUL"},
-		{CatalogId: "adapted", Title: "zzz"},
-		{CatalogId: "same-two", Title: "Repeated"},
-		{CatalogId: "same-one", Title: "Repeated"},
+		{CatalogID: "u-z", Title: "Zulu"},
+		{CatalogID: "a-b", Title: "CAFÉ"},
+		{CatalogID: "a-a", Title: "café"},
+		{CatalogID: "greek-b", Title: "ΟΣ"},
+		{CatalogID: "greek-a", Title: "ος"},
+		{CatalogID: "dotted", Title: "İSTANBUL"},
+		{CatalogID: "adapted", Title: "zzz"},
+		{CatalogID: "same-two", Title: "Repeated"},
+		{CatalogID: "same-one", Title: "Repeated"},
 	}
 	before := append([]sources.JournalCatalogEntry(nil), entries...)
 	snapshots := []storage.JournalSnapshot{{JournalKey: "adapted", CatalogIds: []string{"adapted"}}}
@@ -85,7 +85,7 @@ func TestCfpCatalogTitleOrdering(t *testing.T) {
 	}
 	ids := make([]string, 0, len(result.Items))
 	for _, item := range result.Items {
-		ids = append(ids, item.CatalogId)
+		ids = append(ids, item.CatalogID)
 	}
 	want := []string{"adapted", "a-a", "a-b", "dotted", "same-one", "same-two", "u-z", "greek-a", "greek-b"}
 	if !reflect.DeepEqual(ids, want) || !reflect.DeepEqual(entries, before) {
@@ -93,7 +93,7 @@ func TestCfpCatalogTitleOrdering(t *testing.T) {
 	}
 	entries[1].Title = "Ωmega"
 	changed, failure := cfpCatalog("fixture.sqlite", nil, entries, snapshots, 100)
-	if failure != nil || changed.Items[len(changed.Items)-1].CatalogId != "a-b" {
+	if failure != nil || changed.Items[len(changed.Items)-1].CatalogID != "a-b" {
 		t.Fatal("updated titles reused stale ordering", changed, failure)
 	}
 }
@@ -101,7 +101,7 @@ func TestCfpCatalogTitleOrdering(t *testing.T) {
 // TestCfpCatalogSearchFields keeps field coverage, Unicode matching and global totals independent of filtering.
 func TestCfpCatalogSearchFields(t *testing.T) {
 	area := "CafÉ Economics"
-	entries := []sources.JournalCatalogEntry{{CatalogId: "catalog-key", CatalogAliases: []string{"identity-alias"}, Title: "Primary Journal", AllIssns: []string{"1234-5678"}, TitleAliases: []string{"Secondary Title", "中文期刊"}, Area: &area}}
+	entries := []sources.JournalCatalogEntry{{CatalogID: "catalog-key", CatalogAliases: []string{"identity-alias"}, Title: "Primary Journal", AllIssns: []string{"1234-5678"}, TitleAliases: []string{"Secondary Title", "中文期刊"}, Area: &area}}
 	baseline, failure := cfpCatalog("fixture.sqlite", nil, entries, nil, 100)
 	if failure != nil {
 		t.Fatal(failure)
@@ -147,7 +147,7 @@ func cfpBenchmarkCatalog(t testing.TB) ([]sources.JournalCatalogEntry, []storage
 			t.Errorf("repository.Close: %v", err)
 		}
 	}()
-	if _, err := repository.ImportSeed(ctx, assets.SeedId, assets.Seed()); err != nil {
+	if _, err := repository.ImportSeed(ctx, assets.SeedID, assets.Seed()); err != nil {
 		t.Fatal(err)
 	}
 	snapshots, err := repository.LoadJournals(ctx)

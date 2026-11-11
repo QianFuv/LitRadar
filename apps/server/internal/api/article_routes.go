@@ -12,7 +12,7 @@ import (
 type articleLocation struct {
 	article domain.ArticleLocator
 	stem    string
-	user    identity.Id
+	user    identity.ID
 }
 type articleOutput struct {
 	// Status contains the status value.
@@ -39,8 +39,8 @@ func (handlers *articleHandlers) locate(ctx context.Context, metadata RequestMet
 		if err != nil {
 			return articleLocation{}, err
 		}
-		article, err := sources.GetArticleLocator(context.WithoutCancel(ctx), handlers.storage, cleanText(database), identity.Id(articleID))
-		return articleLocation{article: article, stem: stem, user: current.authorization.User.Id}, err
+		article, err := sources.GetArticleLocator(context.WithoutCancel(ctx), handlers.storage, cleanText(database), identity.ID(articleID))
+		return articleLocation{article: article, stem: stem, user: current.authorization.User.ID}, err
 	}, mapIndexError)
 	if err != nil {
 		return articleLocation{}, err

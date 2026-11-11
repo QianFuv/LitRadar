@@ -31,7 +31,7 @@ type OidcState struct {
 	Nonce           string                `json:"nonce"`
 	Verifier        string                `json:"verifier"`
 	Next            string                `json:"next"`
-	UserId          identity.Id           `json:"user_id,omitempty"`
+	UserID          identity.ID           `json:"user_id,omitempty"`
 	TokenGeneration int64                 `json:"token_generation,omitempty"`
 	ExpiresAt       int64                 `json:"expires_at"`
 	Configuration   string                `json:"configuration"`
@@ -46,13 +46,13 @@ func (state OidcState) LogValue() slog.Value { return slog.StringValue(state.Str
 
 type oidcSigner interface{ SignOidcState([]byte) ([]byte, error) }
 
-type oidcConfiguration struct{ issuer, clientId, clientSecret, displayName, baseUrl string }
+type oidcConfiguration struct{ issuer, clientID, clientSecret, displayName, baseURL string }
 
 func (configuration oidcConfiguration) enabled() bool {
-	return configuration.issuer != "" && configuration.clientId != "" && configuration.clientSecret != "" && configuration.baseUrl != ""
+	return configuration.issuer != "" && configuration.clientID != "" && configuration.clientSecret != "" && configuration.baseURL != ""
 }
 func (configuration oidcConfiguration) binding() string {
-	return HashToken(configuration.issuer + "\x00" + configuration.clientId + "\x00" + configuration.baseUrl)
+	return HashToken(configuration.issuer + "\x00" + configuration.clientID + "\x00" + configuration.baseURL)
 }
 
 // Oidc owns the bounded discovery cache and reuses the ordinary login session service.
@@ -86,17 +86,17 @@ func (oidc *Oidc) configuration(ctx context.Context) (oidcConfiguration, error) 
 		case "oidc_issuer_url":
 			configuration.issuer = value.Value
 		case "oidc_client_id":
-			configuration.clientId = value.Value
+			configuration.clientID = value.Value
 		case "oidc_client_secret":
 			configuration.clientSecret = value.Value
 		case "oidc_display_name":
 			configuration.displayName = value.Value
 		case "public_base_url":
-			configuration.baseUrl = value.Value
+			configuration.baseURL = value.Value
 		}
 	}
-	for _, endpoint := range []string{configuration.issuer, configuration.baseUrl} {
-		if err := settings.ValidateOidcUrl(endpoint, oidc.isDevelopment); err != nil {
+	for _, endpoint := range []string{configuration.issuer, configuration.baseURL} {
+		if err := settings.ValidateOidcURL(endpoint, oidc.isDevelopment); err != nil {
 			return oidcConfiguration{}, OidcError("unavailable")
 		}
 	}
@@ -147,7 +147,7 @@ func (oidc *Oidc) discovery(ctx context.Context, configuration oidcConfiguration
 		return nil, OidcError("provider")
 	}
 	for _, endpoint := range []string{provider.Endpoint().AuthURL, provider.Endpoint().TokenURL, provider.UserInfoEndpoint(), document.JWKSURL} {
-		if endpoint == "" || settings.ValidateOidcUrl(endpoint, oidc.isDevelopment) != nil {
+		if endpoint == "" || settings.ValidateOidcURL(endpoint, oidc.isDevelopment) != nil {
 			return nil, OidcError("provider")
 		}
 	}
@@ -158,7 +158,7 @@ func (oidc *Oidc) discovery(ctx context.Context, configuration oidcConfiguration
 func oauthConfiguration(configuration oidcConfiguration, provider *openid.Provider) oauth2.Config {
 	endpoint := provider.Endpoint()
 	endpoint.AuthStyle = oauth2.AuthStyleInHeader
-	return oauth2.Config{ClientID: configuration.clientId, ClientSecret: configuration.clientSecret, RedirectURL: strings.TrimRight(configuration.baseUrl, "/") + "/api/auth/oidc/callback", Scopes: []string{openid.ScopeOpenID, "profile", "email"}, Endpoint: endpoint}
+	return oauth2.Config{ClientID: configuration.clientID, ClientSecret: configuration.clientSecret, RedirectURL: strings.TrimRight(configuration.baseURL, "/") + "/api/auth/oidc/callback", Scopes: []string{openid.ScopeOpenID, "profile", "email"}, Endpoint: endpoint}
 }
 
 // SafeOidcNext accepts only an absolute path on the current site, defaulting unsafe values to root.
@@ -202,7 +202,7 @@ func (oidc *Oidc) start(ctx context.Context, next string, link *domain.Authoriza
 		if link.User.AuthKind != "local" || link.User.IsOidcLinked {
 			return "", "", domain.ErrAccountConflict
 		}
-		state.UserId, state.TokenGeneration, state.Next = link.User.Id, link.TokenGeneration, "/?oidc_link=linked"
+		state.UserID, state.TokenGeneration, state.Next = link.User.ID, link.TokenGeneration, "/?oidc_link=linked"
 	}
 	data, err := json.Marshal(state)
 	if err != nil {
@@ -242,7 +242,7 @@ func (oidc *Oidc) ReadState(encoded string) (*OidcState, error) {
 	if json.Unmarshal(data, &state) != nil || state.State == "" || state.Nonce == "" || state.Verifier == "" {
 		return nil, OidcError("state")
 	}
-	if state.Native != nil && (!state.Native.Valid() || state.UserId != 0) {
+	if state.Native != nil && (!state.Native.Valid() || state.UserID != 0) {
 		return nil, OidcError("state")
 	}
 	if time.Now().Unix() >= state.ExpiresAt || state.ExpiresAt > time.Now().Add(10*time.Minute).Unix()+5 {
@@ -283,10 +283,10 @@ func (oidc *Oidc) finishIdentity(ctx context.Context, state OidcState, code stri
 	if configuration.binding() != state.Configuration || time.Now().Unix() >= state.ExpiresAt || code == "" {
 		return domain.Authorization{}, OidcError("state")
 	}
-	if state.UserId != 0 && (link == nil || state.UserId != link.User.Id || state.TokenGeneration != link.TokenGeneration) {
+	if state.UserID != 0 && (link == nil || state.UserID != link.User.ID || state.TokenGeneration != link.TokenGeneration) {
 		return domain.Authorization{}, OidcError("expired_session")
 	}
-	if state.UserId == 0 && link != nil {
+	if state.UserID == 0 && link != nil {
 		return domain.Authorization{}, OidcError("state")
 	}
 	discovery, err := oidc.discovery(ctx, configuration)
@@ -298,11 +298,11 @@ func (oidc *Oidc) finishIdentity(ctx context.Context, state OidcState, code stri
 	if err != nil {
 		return domain.Authorization{}, OidcError("provider")
 	}
-	rawIdToken, ok := token.Extra("id_token").(string)
+	rawIDToken, ok := token.Extra("id_token").(string)
 	if !ok {
 		return domain.Authorization{}, OidcError("provider")
 	}
-	subject, err := validateIDToken(oidc.providerContext(ctx), discovery, rawIdToken, configuration.issuer, configuration.clientId, state.Nonce, time.Now())
+	subject, err := validateIDToken(oidc.providerContext(ctx), discovery, rawIDToken, configuration.issuer, configuration.clientID, state.Nonce, time.Now())
 	if err != nil {
 		return domain.Authorization{}, err
 	}

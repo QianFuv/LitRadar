@@ -50,7 +50,7 @@ func prepare(ctx context.Context, configuration config.Config, directory string,
 	if err != nil {
 		return Report{}, err
 	}
-	database, err := storage.Open(configuration.AuthDbPath, false, 1)
+	database, err := storage.Open(configuration.AuthDBPath, false, 1)
 	if err != nil {
 		return Report{}, err
 	}

@@ -5,7 +5,7 @@ import (
 )
 
 type legacyState struct {
-	DbName             string            `json:"db_name"`
+	DBName             string            `json:"db_name"`
 	Status             string            `json:"status" default:"true"`
 	LastCompletedRunAt *string           `json:"last_completed_run_at" default:"true"`
 	Snapshot           legacySnapshot    `json:"snapshot" default:"true"`
@@ -19,7 +19,7 @@ type legacySnapshot struct {
 }
 
 type legacyRun struct {
-	RunId               string             `json:"run_id"`
+	RunID               string             `json:"run_id"`
 	Status              string             `json:"status" default:"true"`
 	PendingIssueKeys    []string           `json:"pending_issue_keys" default:"true"`
 	DoneIssueKeys       []string           `json:"done_issue_keys" default:"true"`
@@ -30,7 +30,7 @@ type legacyRun struct {
 }
 
 type legacyUserResult struct {
-	SubscriberId      string  `json:"subscriber_id"`
+	SubscriberID      string  `json:"subscriber_id"`
 	SelectedCount     uint64  `json:"selected_count" default:"true"`
 	PushedCount       uint64  `json:"pushed_count" default:"true"`
 	FolderSyncedCount *uint64 `json:"folder_synced_count" default:"true"`

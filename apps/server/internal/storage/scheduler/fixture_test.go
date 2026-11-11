@@ -96,7 +96,7 @@ func snapshot(t *testing.T, repository *Repository) map[string]any {
 	return tables
 }
 
-func applyFixtureSql(t *testing.T, repository *Repository, statement string) {
+func applyFixtureSQL(t *testing.T, repository *Repository, statement string) {
 	t.Helper()
 	if statement == "" {
 		return

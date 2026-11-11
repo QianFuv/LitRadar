@@ -85,8 +85,8 @@ func TestObservedIssnsValidateAfterMatch(t *testing.T) {
 
 // TestBatchContentErrorPrecedesProgress preserves validation before progress admission.
 func TestBatchContentErrorPrecedesProgress(t *testing.T) {
-	catalog := domain.JournalCatalogEntry{CatalogId: "journal.test", Title: "Journal"}
-	batch := domain.ProviderBatch{CatalogId: catalog.CatalogId, Journal: domain.JournalDraft{CatalogId: catalog.CatalogId}, Issues: []domain.IssueDraft{{CatalogId: "wrong"}}, Progress: domain.ProviderProgress{State: "invalid"}}
+	catalog := domain.JournalCatalogEntry{CatalogID: "journal.test", Title: "Journal"}
+	batch := domain.ProviderBatch{CatalogID: catalog.CatalogID, Journal: domain.JournalDraft{CatalogID: catalog.CatalogID}, Issues: []domain.IssueDraft{{CatalogID: "wrong"}}, Progress: domain.ProviderProgress{State: "invalid"}}
 	if err := ValidateProviderBatch(catalog, batch); err == nil || err.Error() != "issue must echo the requested catalog_id" {
 		t.Fatal(err)
 	}

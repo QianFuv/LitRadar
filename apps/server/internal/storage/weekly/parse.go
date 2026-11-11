@@ -13,13 +13,13 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 )
 
-// ErrManifestJson distinguishes invalid typed publications from intentionally ignored ones.
-var ErrManifestJson = errors.New("invalid weekly manifest JSON; expected an object with an RFC3339Nano generated_at; rerun indexing to rebuild the publication")
+// ErrManifestJSON distinguishes invalid typed publications from intentionally ignored ones.
+var ErrManifestJSON = errors.New("invalid weekly manifest JSON; expected an object with an RFC3339Nano generated_at; rerun indexing to rebuild the publication")
 
 // Manifest retains source order and untrimmed publication identity before optional delivery enrichment.
 type Manifest struct {
-	DbName      string
-	RunId       *string
+	DBName      string
+	RunID       *string
 	GeneratedAt Timestamp
 	ArticleIds  []int64
 }
@@ -27,19 +27,19 @@ type Manifest struct {
 // ParseManifest decodes object publications and requires RFC3339Nano generation times.
 func ParseManifest(data []byte) (*Manifest, error) {
 	var wire struct {
-		DbName      *string         `json:"db_name"`
+		DBName      *string         `json:"db_name"`
 		GeneratedAt *string         `json:"generated_at"`
-		RunId       *string         `json:"run_id"`
+		RunID       *string         `json:"run_id"`
 		ArticleIds  json.RawMessage `json:"notifiable_article_ids"`
 	}
 	data = bytes.TrimSpace(data)
 	if len(data) == 0 || data[0] != '{' || jsonv2.Unmarshal(data, &wire) != nil {
-		return nil, ErrManifestJson
+		return nil, ErrManifestJSON
 	}
-	if wire.DbName == nil {
+	if wire.DBName == nil {
 		return nil, nil
 	}
-	database := config.NormalizeDatabaseName(*wire.DbName)
+	database := config.NormalizeDatabaseName(*wire.DBName)
 	if database == "" {
 		return nil, nil
 	}
@@ -51,24 +51,24 @@ func ParseManifest(data []byte) (*Manifest, error) {
 		return nil, nil
 	}
 	if wire.GeneratedAt == nil {
-		return nil, ErrManifestJson
+		return nil, ErrManifestJSON
 	}
 	stamp, ok := ParseTimestamp(*wire.GeneratedAt)
 	if !ok {
-		return nil, ErrManifestJson
+		return nil, ErrManifestJSON
 	}
-	return &Manifest{database, wire.RunId, stamp, ids}, nil
+	return &Manifest{database, wire.RunID, stamp, ids}, nil
 }
 
-// manifestArticleId stores admitted integer tokens without retaining each element's encoded JSON.
-type manifestArticleId struct {
+// manifestArticleID stores admitted integer tokens without retaining each element's encoded JSON.
+type manifestArticleID struct {
 	value     int64
 	isInteger bool
 }
 
 // UnmarshalJSON ignores non-integer values and negative zero while preserving valid signed integer spelling.
-func (identifier *manifestArticleId) UnmarshalJSON(value []byte) error {
-	*identifier = manifestArticleId{}
+func (identifier *manifestArticleID) UnmarshalJSON(value []byte) error {
+	*identifier = manifestArticleID{}
 	raw := strings.TrimSpace(string(value))
 	if raw == "-0" || strings.ContainsAny(raw, ".eE") {
 		return nil
@@ -85,9 +85,9 @@ func decodeManifestArticleIds(value json.RawMessage) ([]int64, error) {
 	ids := []int64{}
 	seen := map[int64]bool{}
 	if bytes.HasPrefix(bytes.TrimSpace(value), []byte("[")) {
-		var values []manifestArticleId
+		var values []manifestArticleID
 		if json.Unmarshal(value, &values) != nil {
-			return nil, ErrManifestJson
+			return nil, ErrManifestJSON
 		}
 		for _, value := range values {
 			if !value.isInteger || seen[value.value] {

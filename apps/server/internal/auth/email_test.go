@@ -28,17 +28,17 @@ func TestEmailValidationAndLocalLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	address := " Mixed.Case@Example.com "
-	user, err := service.UpdateEmail(ctx, first.Id, &address, nil)
+	user, err := service.UpdateEmail(ctx, first.ID, &address, nil)
 	if err != nil || user.Email == nil || *user.Email != "mixed.case@example.com" {
 		t.Fatal("email normalization", err)
 	}
 	for _, identifier := range []string{"first_user", "MIXED.CASE@EXAMPLE.COM"} {
 		session, err := service.Login(ctx, identifier, "StrongPassword!2026", nil)
-		if err != nil || session.User.Id != first.Id {
+		if err != nil || session.User.ID != first.ID {
 			t.Fatal("identifier lookup failed", err)
 		}
 	}
-	invite, err := service.IssueInvite(ctx, first.Id, false, nil)
+	invite, err := service.IssueInvite(ctx, first.ID, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,16 +54,16 @@ func TestEmailValidationAndLocalLogin(t *testing.T) {
 	if err != nil || second.Email == nil {
 		t.Fatal("registration consumed invite on rejected email", err)
 	}
-	if _, err := service.UpdateEmail(ctx, second.Id, &address, nil); !errors.Is(err, domain.ErrEmailExists) {
+	if _, err := service.UpdateEmail(ctx, second.ID, &address, nil); !errors.Is(err, domain.ErrEmailExists) {
 		t.Fatal("duplicate email update accepted", err)
 	}
-	if _, err := service.UpdateEmail(ctx, first.Id, nil, nil); err != nil {
+	if _, err := service.UpdateEmail(ctx, first.ID, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := service.Login(ctx, "mixed.case@example.com", "StrongPassword!2026", nil); !errors.Is(err, domain.ErrCredentials) {
 		t.Fatal("cleared email still authenticates", err)
 	}
-	if _, err := service.UpdateEmail(ctx, second.Id, &address, nil); err != nil {
+	if _, err := service.UpdateEmail(ctx, second.ID, &address, nil); err != nil {
 		t.Fatal("cleared email remained reserved", err)
 	}
 }

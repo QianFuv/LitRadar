@@ -26,7 +26,7 @@ const (
 	SnapshotOnly        Adapter = "snapshot_only"
 )
 
-type UrlRule struct {
+type URLRule struct {
 	Host       string `json:"host"`
 	PathPrefix string `json:"pathPrefix"`
 }
@@ -34,23 +34,23 @@ type SourceConfig struct {
 	SourceKey              string    `json:"sourceKey"`
 	CatalogIds             []string  `json:"catalogIds"`
 	JournalTitle           string    `json:"journalTitle"`
-	DiscoveryUrl           string    `json:"discoveryUrl"`
+	DiscoveryURL           string    `json:"discoveryUrl"`
 	Adapter                Adapter   `json:"adapter"`
 	ConfigVersion          uint32    `json:"configVersion"`
-	AllowedUrls            []UrlRule `json:"allowedUrls"`
+	AllowedUrls            []URLRule `json:"allowedUrls"`
 	IdentityTexts          []string  `json:"identityTexts"`
 	EmptyStatements        []string  `json:"emptyStatements"`
 	CapabilityNote         *string   `json:"capabilityNote"`
 	RetainsPreviousNotices bool      `json:"retainsPreviousNotices"`
 }
 
-// PermitsUrl enforces exact hosts and path-segment boundaries for every request and redirect.
-func (config SourceConfig) PermitsUrl(location *whatwg.Url) bool {
-	if !permittedUrlAuthority(location) {
+// PermitsURL enforces exact hosts and path-segment boundaries for every request and redirect.
+func (config SourceConfig) PermitsURL(location *whatwg.Url) bool {
+	if !permittedURLAuthority(location) {
 		return false
 	}
 	for _, rule := range config.AllowedUrls {
-		if permittedUrlRule(location, rule) {
+		if permittedURLRule(location, rule) {
 			return true
 		}
 	}
@@ -65,8 +65,8 @@ func Registry() []SourceConfig {
 		panic(err)
 	}
 	for _, source := range sources {
-		location, err := whatwg.NewParser().Parse(source.DiscoveryUrl)
-		if err != nil || len(source.CatalogIds) == 0 || source.ConfigVersion == 0 || !source.PermitsUrl(location) {
+		location, err := whatwg.NewParser().Parse(source.DiscoveryURL)
+		if err != nil || len(source.CatalogIds) == 0 || source.ConfigVersion == 0 || !source.PermitsURL(location) {
 			panic("invalid bundled CFP registration")
 		}
 	}
@@ -102,7 +102,7 @@ func (failure SourceError) Error() string {
 var (
 	ErrUnsupported   = SourceError{Kind: "unsupported"}
 	ErrDeadline      = SourceError{Kind: "deadline"}
-	ErrDisallowedUrl = SourceError{Kind: "disallowed_url"}
+	ErrDisallowedURL = SourceError{Kind: "disallowed_url"}
 	ErrRequest       = SourceError{Kind: "request"}
 	ErrChallenge     = SourceError{Kind: "challenge"}
 	ErrTooLarge      = SourceError{Kind: "too_large"}
@@ -114,7 +114,7 @@ var (
 )
 
 type Document struct {
-	FinalUrl string `json:"finalUrl"`
+	FinalURL string `json:"finalUrl"`
 	Text     string `json:"text"`
 	Format   string `json:"format"`
 }
@@ -133,16 +133,16 @@ type ParsedPage struct {
 	DetailTitles  map[string]string
 }
 
-// permittedUrlAuthority preserves HTTP schemes, absent credentials and permitted explicit ports.
-func permittedUrlAuthority(location *whatwg.Url) bool {
+// permittedURLAuthority preserves HTTP schemes, absent credentials and permitted explicit ports.
+func permittedURLAuthority(location *whatwg.Url) bool {
 	if location == nil || (location.Scheme() != "http" && location.Scheme() != "https") || location.Username() != "" || location.Password() != "" || location.Port() != "" && location.Port() != "80" && location.Port() != "443" {
 		return false
 	}
 	return true
 }
 
-// permittedUrlRule matches exact hosts and original path-segment boundaries.
-func permittedUrlRule(location *whatwg.Url, rule UrlRule) bool {
+// permittedURLRule matches exact hosts and original path-segment boundaries.
+func permittedURLRule(location *whatwg.Url, rule URLRule) bool {
 	return location.Hostname() == rule.Host && (rule.PathPrefix == "/" || location.Pathname() == rule.PathPrefix || strings.HasPrefix(strings.TrimPrefix(location.Pathname(), strings.TrimRight(rule.PathPrefix, "/")), "/") && strings.HasPrefix(location.Pathname(), strings.TrimRight(rule.PathPrefix, "/")))
 }
 

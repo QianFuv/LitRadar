@@ -36,7 +36,7 @@ func liveFixture(t *testing.T, names ...string) LiveConfig {
 }
 
 func liveBatch(entry domain.JournalCatalogEntry) domain.ProviderBatch {
-	return domain.ProviderBatch{CatalogId: entry.CatalogId, Journal: domain.JournalDraft{CatalogId: entry.CatalogId}, Articles: []domain.ArticleDraft{{CatalogId: entry.CatalogId, Title: "Durable article", Doi: testCheckpoint("10.1234/" + entry.CatalogId), Authors: []domain.ArticleAuthorDraft{}, RetractionDois: []string{}}}, Progress: domain.ProviderProgress{State: domain.Complete, NextAnchor: testCheckpoint("committed-anchor")}}
+	return domain.ProviderBatch{CatalogID: entry.CatalogID, Journal: domain.JournalDraft{CatalogID: entry.CatalogID}, Articles: []domain.ArticleDraft{{CatalogID: entry.CatalogID, Title: "Durable article", Doi: new("10.1234/" + entry.CatalogID), Authors: []domain.ArticleAuthorDraft{}, RetractionDois: []string{}}}, Progress: domain.ProviderProgress{State: domain.Complete, NextAnchor: new("committed-anchor")}}
 }
 
 func liveRunner(t *testing.T, fetch workerTestProvider) catalogRunner {
@@ -76,10 +76,10 @@ func assertLiveContent(t *testing.T, config LiveConfig, name string, articles, e
 func TestLiveBoundaryResumeAndNoChangePreservePublication(t *testing.T) {
 	ctx := context.Background()
 	config := liveFixture(t, "alpha", "beta")
-	config.StopAfter = testCheckpoint("alpha.csv")
+	config.StopAfter = new("alpha.csv")
 	calls := map[string]int{}
 	run := liveRunner(t, func(ctx context.Context, entry domain.JournalCatalogEntry, fetch domain.IndexFetchContext) (domain.ProviderBatch, error) {
-		calls[entry.CatalogId]++
+		calls[entry.CatalogID]++
 		return liveBatch(entry), nil
 	})
 	first, err := runLiveIndex(ctx, config, run, rejectNotify(t))
@@ -126,15 +126,15 @@ func TestLiveUnknownNotificationRequiresAcknowledgmentAndNewAttempt(t *testing.T
 	ctx := context.Background()
 	config := liveFixture(t, "alpha")
 	config.ShouldNotify = true
-	config.AuthDbPath = filepath.Join(config.ProjectRoot, "private auth", "auth.sqlite")
+	config.AuthDBPath = filepath.Join(config.ProjectRoot, "private auth", "auth.sqlite")
 	fetches, notifications := 0, []string{}
 	run := liveRunner(t, func(ctx context.Context, entry domain.JournalCatalogEntry, fetch domain.IndexFetchContext) (domain.ProviderBatch, error) {
 		fetches++
 		return liveBatch(entry), nil
 	})
 	notify := func(ctx context.Context, options NotifyProcessConfig, database, manifest, attempt string) (NotifyObservation, error) {
-		if options.AuthDbPath != config.AuthDbPath {
-			t.Fatalf("notification lost auth database: got %q want %q", options.AuthDbPath, config.AuthDbPath)
+		if options.AuthDBPath != config.AuthDBPath {
+			t.Fatalf("notification lost auth database: got %q want %q", options.AuthDBPath, config.AuthDBPath)
 		}
 		if database != "alpha.sqlite" {
 			t.Fatalf("database=%s", database)
@@ -172,7 +172,7 @@ func TestLiveFailedPageResumesCommittedCheckpoint(t *testing.T) {
 		}
 		batch := liveBatch(entry)
 		if calls == 1 {
-			batch.Progress = domain.ProviderProgress{State: domain.Continue, Checkpoint: testCheckpoint("durable-page")}
+			batch.Progress = domain.ProviderProgress{State: domain.Continue, Checkpoint: new("durable-page")}
 		} else if fetch.TraversalCheckpoint == nil || *fetch.TraversalCheckpoint != "durable-page" {
 			t.Fatalf("lost checkpoint: %+v", fetch)
 		}
@@ -201,7 +201,7 @@ func TestCatalogSelectionExcludesDotfileAndSortsBoundaries(t *testing.T) {
 	if err != nil || len(paths) != 2 || filepath.Base(paths[0]) != "alpha.csv" || filepath.Base(paths[1]) != "beta.csv" {
 		t.Fatalf("paths=%v err=%v", paths, err)
 	}
-	if _, err := catalogPaths(meta, testCheckpoint(".csv")); err == nil {
+	if _, err := catalogPaths(meta, new(".csv")); err == nil {
 		t.Fatal("dotfile was treated as an extension")
 	}
 }
@@ -252,7 +252,7 @@ func TestLiveRejectsIncompleteCatalogLedgerBeforeAnyExecution(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := connection.Conn.ExecContext(ctx, mutation); err != nil {
+			if _, err := connection.ExecContext(ctx, mutation); err != nil {
 				t.Fatal(err)
 			}
 			_, err = runBatchCatalogs(ctx, connection.Conn, config, request, admission.Batch, 0, func(context.Context, LiveConfig, storage.CatalogInput, string) (LiveCatalogOutcome, error) {
@@ -307,7 +307,7 @@ func assertLivePausedBoundary(t *testing.T, first LiveRunOutcome, err error) (st
 // assertLiveResumedBoundary checks completed catalogs resume without starting another executor.
 func assertLiveResumedBoundary(t *testing.T, first, second LiveRunOutcome, calls map[string]int, err error) {
 	t.Helper()
-	if err != nil || second.Status != "succeeded" || len(second.Csvs) != 2 || second.Csvs[0].RunId != first.Csvs[0].RunId || second.Csvs[0].Concurrency.ExecutorCount != 0 || calls["journal-alpha"] != 1 || calls["journal-beta"] != 1 {
+	if err != nil || second.Status != "succeeded" || len(second.Csvs) != 2 || second.Csvs[0].RunID != first.Csvs[0].RunID || second.Csvs[0].Concurrency.ExecutorCount != 0 || calls["journal-alpha"] != 1 || calls["journal-beta"] != 1 {
 		t.Fatalf("second=%+v calls=%v err=%v", second, calls, err)
 	}
 }
@@ -332,7 +332,7 @@ func assertRecoveredLiveManifest(t *testing.T, recovered LiveRunOutcome) {
 		t.Fatal(err)
 	}
 	var manifest map[string]any
-	if err := json.Unmarshal(body, &manifest); err != nil || manifest["run_id"] != recovered.Csvs[0].RunId {
+	if err := json.Unmarshal(body, &manifest); err != nil || manifest["run_id"] != recovered.Csvs[0].RunID {
 		t.Fatalf("manifest=%v err=%v", manifest, err)
 	}
 }

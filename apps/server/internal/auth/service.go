@@ -70,8 +70,8 @@ func ValidateTokenRequest(name string, ttl int64) (string, error) {
 	if name == domain.ReservedTokenName {
 		return "", domain.ErrTokenReservedName
 	}
-	if ttl < 3600 || ttl > domain.MaximumTokenTtl {
-		return "", domain.ErrTokenTtl
+	if ttl < 3600 || ttl > domain.MaximumTokenTTL {
+		return "", domain.ErrTokenTTL
 	}
 	return name, nil
 }
@@ -184,7 +184,7 @@ func (service *Service) upgradeObservedLegacyAuthorization(ctx context.Context, 
 		return nil, err
 	}
 	if !changed {
-		current, err := service.repository.CredentialsById(ctx, credentials.User.Id)
+		current, err := service.repository.CredentialsByID(ctx, credentials.User.ID)
 		if err != nil || current == nil {
 			return nil, err
 		}
@@ -244,8 +244,8 @@ func (service *Service) issueDeviceToken(ctx context.Context, authorization doma
 	if err != nil {
 		return domain.LoginSession{}, err
 	}
-	actor := int64(authorization.User.Id)
-	event.ActorId = &actor
+	actor := int64(authorization.User.ID)
+	event.ActorID = &actor
 	token, err := service.createToken(ctx, authorization, name, 90*24*60*60, &event)
 	if errors.Is(err, domain.ErrStaleAuthorization) {
 		return domain.LoginSession{}, domain.ErrCredentials
@@ -262,9 +262,9 @@ func (service *Service) createLogin(ctx context.Context, authorization domain.Au
 		return domain.LoginSession{}, err
 	}
 	now := service.now()
-	actor := int64(authorization.User.Id)
-	audit.ActorId = &actor
-	row, err := service.repository.IssueToken(ctx, authorization, HashToken(token), domain.ReservedTokenName, now+float64(domain.DefaultTokenTtl), now, true, &audit)
+	actor := int64(authorization.User.ID)
+	audit.ActorID = &actor
+	row, err := service.repository.IssueToken(ctx, authorization, HashToken(token), domain.ReservedTokenName, now+float64(domain.DefaultTokenTTL), now, true, &audit)
 	if errors.Is(err, domain.ErrStaleAuthorization) {
 		return domain.LoginSession{}, domain.ErrCredentials
 	}
@@ -294,22 +294,22 @@ func (service *Service) createToken(ctx context.Context, authorization domain.Au
 	now := service.now()
 	event := service.event("token_create", audit)
 	if audit == nil {
-		actor := int64(authorization.User.Id)
-		event.ActorId = &actor
+		actor := int64(authorization.User.ID)
+		event.ActorID = &actor
 	}
 	row, err := service.repository.IssueToken(ctx, authorization, HashToken(token), name, now+float64(ttl), now, false, &event)
 	if err != nil {
 		return domain.IssuedToken{}, err
 	}
-	return domain.IssuedToken{Id: row.Id, Token: token, Name: row.Name, ExpiresAt: row.ExpiresAt}, nil
+	return domain.IssuedToken{ID: row.ID, Token: token, Name: row.Name, ExpiresAt: row.ExpiresAt}, nil
 }
 
 // CreateTrustedToken is reserved for internal callers already holding user authority.
-func (service *Service) CreateTrustedToken(ctx context.Context, user identity.Id, name string, ttl int64, audit *domain.AuditEvent) (domain.IssuedToken, error) {
+func (service *Service) CreateTrustedToken(ctx context.Context, user identity.ID, name string, ttl int64, audit *domain.AuditEvent) (domain.IssuedToken, error) {
 	if _, err := ValidateTokenRequest(name, ttl); err != nil {
 		return domain.IssuedToken{}, err
 	}
-	credentials, err := service.repository.CredentialsById(ctx, user)
+	credentials, err := service.repository.CredentialsByID(ctx, user)
 	if err != nil {
 		return domain.IssuedToken{}, err
 	}
@@ -325,13 +325,13 @@ func (service *Service) VerifyToken(ctx context.Context, token string) (*domain.
 }
 
 // ListTokens returns active personal credentials' public metadata.
-func (service *Service) ListTokens(ctx context.Context, user identity.Id) ([]domain.TokenInfo, error) {
+func (service *Service) ListTokens(ctx context.Context, user identity.ID) ([]domain.TokenInfo, error) {
 	return service.repository.ListTokens(ctx, user, service.now())
 }
 
-// RevokeTokenId revokes one owned credential and commits its completion event atomically.
-func (service *Service) RevokeTokenId(ctx context.Context, user identity.Id, tokenId int64, audit domain.AuditEvent) (bool, error) {
-	return service.repository.RevokeTokenId(ctx, user, tokenId, &audit)
+// RevokeTokenID revokes one owned credential and commits its completion event atomically.
+func (service *Service) RevokeTokenID(ctx context.Context, user identity.ID, tokenID int64, audit domain.AuditEvent) (bool, error) {
+	return service.repository.RevokeTokenID(ctx, user, tokenID, &audit)
 }
 
 // RevokeToken revokes an exact raw bearer without writing the raw value to storage or audit.
@@ -340,16 +340,16 @@ func (service *Service) RevokeToken(ctx context.Context, token string, audit dom
 }
 
 // RevokeAll invalidates both existing and concurrently prepared credentials.
-func (service *Service) RevokeAll(ctx context.Context, user identity.Id, audit domain.AuditEvent) (int64, error) {
+func (service *Service) RevokeAll(ctx context.Context, user identity.ID, audit domain.AuditEvent) (int64, error) {
 	return service.repository.RevokeAll(ctx, user, audit)
 }
 
 // ChangePassword validates the replacement first and commits only for the verified old hash and salt.
-func (service *Service) ChangePassword(ctx context.Context, user identity.Id, oldPassword, newPassword string, audit *domain.AuditEvent) (bool, error) {
+func (service *Service) ChangePassword(ctx context.Context, user identity.ID, oldPassword, newPassword string, audit *domain.AuditEvent) (bool, error) {
 	if !cryptography.ValidNewPassword(newPassword) {
 		return false, domain.ErrPasswordShort
 	}
-	credentials, err := service.repository.CredentialsById(ctx, user)
+	credentials, err := service.repository.CredentialsByID(ctx, user)
 	if err != nil || credentials == nil {
 		return false, err
 	}
@@ -375,8 +375,8 @@ func (service *Service) ChangePassword(ctx context.Context, user identity.Id, ol
 }
 
 // ResetPassword supports trusted CLI and actor-fenced administrator reset paths.
-func (service *Service) ResetPassword(ctx context.Context, actor *identity.Id, user identity.Id, password string, audit *domain.AuditEvent) (bool, error) {
-	credentials, err := service.repository.CredentialsById(ctx, user)
+func (service *Service) ResetPassword(ctx context.Context, actor *identity.ID, user identity.ID, password string, audit *domain.AuditEvent) (bool, error) {
+	credentials, err := service.repository.CredentialsByID(ctx, user)
 	if err != nil {
 		return false, err
 	}
@@ -398,7 +398,7 @@ func (service *Service) ResetPassword(ctx context.Context, actor *identity.Id, u
 }
 
 // IssueInvite creates or explicitly rotates the standard seven-day, single-use owner invite.
-func (service *Service) IssueInvite(ctx context.Context, user identity.Id, isRotation bool, audit *domain.AuditEvent) (domain.InviteResponse, error) {
+func (service *Service) IssueInvite(ctx context.Context, user identity.ID, isRotation bool, audit *domain.AuditEvent) (domain.InviteResponse, error) {
 	code, err := randomHex(8)
 	if err != nil {
 		return domain.InviteResponse{}, err
@@ -411,7 +411,7 @@ func (service *Service) IssueInvite(ctx context.Context, user identity.Id, isRot
 	event := service.event(action, audit)
 	if audit == nil {
 		actor := int64(user)
-		event.ActorId = &actor
+		event.ActorID = &actor
 	}
 	row, err := service.repository.IssueInvite(ctx, user, code, now, now+604800, 1, isRotation, &event)
 	if err != nil {
@@ -421,17 +421,17 @@ func (service *Service) IssueInvite(ctx context.Context, user identity.Id, isRot
 }
 
 // RevokeInvite irreversibly revokes the latest unrevoked owner issuance.
-func (service *Service) RevokeInvite(ctx context.Context, user identity.Id, audit *domain.AuditEvent) (bool, error) {
+func (service *Service) RevokeInvite(ctx context.Context, user identity.ID, audit *domain.AuditEvent) (bool, error) {
 	event := service.event("invite_revoke", audit)
 	if audit == nil {
 		actor := int64(user)
-		event.ActorId = &actor
+		event.ActorID = &actor
 	}
 	return service.repository.RevokeInvite(ctx, user, service.now(), &event)
 }
 
 // Invite projects the latest issuance, retaining explicit null revocation metadata.
-func (service *Service) Invite(ctx context.Context, user identity.Id) (*domain.InviteResponse, error) {
+func (service *Service) Invite(ctx context.Context, user identity.ID) (*domain.InviteResponse, error) {
 	row, err := service.repository.Invite(ctx, user)
 	if err != nil || row == nil {
 		return nil, err

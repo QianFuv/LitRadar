@@ -24,8 +24,8 @@ type fixtureTransport struct{ client *http.Client }
 // Fetch retains URL admission, one deadline and response ownership for the local fixture transport.
 func (transport fixtureTransport) Fetch(ctx context.Context, configuration cfp.SourceConfig, location string, deadline time.Time) (cfp.Document, error) {
 	parsed, err := whatwg.NewParser().Parse(location)
-	if location != cfpUrl || err != nil || !configuration.PermitsUrl(parsed) {
-		return cfp.Document{}, cfp.ErrDisallowedUrl
+	if location != cfpURL || err != nil || !configuration.PermitsURL(parsed) {
+		return cfp.Document{}, cfp.ErrDisallowedURL
 	}
 	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
@@ -62,7 +62,7 @@ func refresh(ctx context.Context, root string) (resultValue1 any, resultError er
 	transport := &http.Transport{Proxy: http.ProxyURL(proxy)}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	repository, err := cfpstorage.Open(config.FromProjectRoot(root).AuthDbPath)
+	repository, err := cfpstorage.Open(config.FromProjectRoot(root).AuthDBPath)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +74,7 @@ func refresh(ctx context.Context, root string) (resultValue1 any, resultError er
 	server := make(chan error, 1)
 	go func() { server <- serveCfp(listener) }()
 	catalog := fixtureCatalog()
-	configuration := cfp.SourceConfig{SourceKey: "journal:" + catalog.CatalogId, CatalogIds: []string{catalog.CatalogId}, JournalTitle: catalog.Title, DiscoveryUrl: cfpUrl, Adapter: cfp.ElsevierCalls, ConfigVersion: 1, AllowedUrls: []cfp.UrlRule{{Host: "cfp-fixture.example", PathPrefix: "/calls"}}, IdentityTexts: []string{catalog.Title}, EmptyStatements: []string{}, RetainsPreviousNotices: false}
+	configuration := cfp.SourceConfig{SourceKey: "journal:" + catalog.CatalogID, CatalogIds: []string{catalog.CatalogID}, JournalTitle: catalog.Title, DiscoveryURL: cfpURL, Adapter: cfp.ElsevierCalls, ConfigVersion: 1, AllowedUrls: []cfp.URLRule{{Host: "cfp-fixture.example", PathPrefix: "/calls"}}, IdentityTexts: []string{catalog.Title}, EmptyStatements: []string{}, RetainsPreviousNotices: false}
 	result, err := cfp.RefreshSource(ctx, repository, configuration, fixtureTransport{client}, time.Now().Add(5*time.Second))
 	if serverError := <-server; serverError != nil {
 		return nil, serverError
@@ -102,7 +102,7 @@ func serveCfp(listener *net.TCPListener) (resultError error) {
 		return err
 	}
 	line, err := bufio.NewReader(io.LimitReader(connection, 4096)).ReadString('\n')
-	if err != nil || !strings.HasPrefix(line, "GET "+cfpUrl+" ") {
+	if err != nil || !strings.HasPrefix(line, "GET "+cfpURL+" ") {
 		return errors.New("unexpected CFP proxy request")
 	}
 	if err := connection.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
@@ -125,5 +125,5 @@ func fixtureDocument(response *http.Response) (cfp.Document, error) {
 	if len(content) > 65536 {
 		return cfp.Document{}, cfp.ErrTooLarge
 	}
-	return cfp.Document{FinalUrl: response.Request.URL.String(), Text: string(content), Format: "html"}, nil
+	return cfp.Document{FinalURL: response.Request.URL.String(), Text: string(content), Format: "html"}, nil
 }

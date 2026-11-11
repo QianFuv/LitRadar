@@ -20,10 +20,10 @@ type providerOrders struct {
 	Catalogs map[string][]string `json:"catalogs"`
 }
 
-func encodeJson(value any) (string, error) { return jsonvalue.EncodeJson(value) }
+func encodeJSON(value any) (string, error) { return jsonvalue.EncodeJSON(value) }
 
 func stringList(raw json.RawMessage) ([]string, error) {
-	if !validJson(string(raw)) {
+	if !validJSON(string(raw)) {
 		return nil, ErrProviderState
 	}
 	var values []json.RawMessage
@@ -45,7 +45,7 @@ func stringList(raw json.RawMessage) ([]string, error) {
 // parseOrders retains strict outer fields and partial typed values on failure.
 func parseOrders(raw string) (providerOrders, error) {
 	result := providerOrders{Default: []string{}, Catalogs: map[string][]string{}}
-	if !validJson(raw) {
+	if !validJSON(raw) {
 		return result, ErrProviderState
 	}
 	fields, err := providerOrderFields(raw)
@@ -156,7 +156,7 @@ func versionSeven(ctx context.Context, connection *sql.Conn) error {
 		if !item.row.exists {
 			continue
 		}
-		value, err := encodeJson(providerOrders{item.row.values, map[string][]string{}})
+		value, err := encodeJSON(providerOrders{item.row.values, map[string][]string{}})
 		if err != nil {
 			return err
 		}
@@ -260,7 +260,7 @@ func readProviderSettings(ctx context.Context, connection *sql.Conn, retire bool
 
 // rewriteProviderValue preserves each setting's distinct raw-map and typed-list admission.
 func rewriteProviderValue(key, value string, retire bool) (string, error) {
-	if !validJson(value) {
+	if !validJSON(value) {
 		return "", ErrProviderState
 	}
 	var transformed any
@@ -276,7 +276,7 @@ func rewriteProviderValue(key, value string, retire bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	rewritten, err := encodeJson(transformed)
+	rewritten, err := encodeJSON(transformed)
 	if err != nil {
 		return "", ErrProviderState
 	}
@@ -341,19 +341,19 @@ func retireProviderProxyPolicy(value string) (map[string]bool, error) {
 }
 
 // rewriteProviderOrders coalesces outer duplicates only for retirement before typed parsing.
-func rewriteProviderOrders(orderJson string, retire bool) (providerOrders, error) {
+func rewriteProviderOrders(orderJSON string, retire bool) (providerOrders, error) {
 	if retire {
 		var value map[string]json.RawMessage
-		if json.Unmarshal([]byte(orderJson), &value) != nil || value == nil {
+		if json.Unmarshal([]byte(orderJSON), &value) != nil || value == nil {
 			return providerOrders{}, ErrProviderState
 		}
 		var err error
-		orderJson, err = encodeJson(value)
+		orderJSON, err = encodeJSON(value)
 		if err != nil {
 			return providerOrders{}, ErrProviderState
 		}
 	}
-	orders, err := parseOrders(orderJson)
+	orders, err := parseOrders(orderJSON)
 	if err != nil {
 		return orders, err
 	}
@@ -400,7 +400,7 @@ func versionTwelve(ctx context.Context, connection *sql.Conn) error {
 		return validateExistingInviteLifecycle(ctx, connection, names)
 	}
 	migrated := nowSeconds()
-	if err := execute(ctx, connection, inviteLifecycleTablesSql); err != nil {
+	if err := execute(ctx, connection, inviteLifecycleTablesSQL); err != nil {
 		return err
 	}
 	if err := execute(ctx, connection, `INSERT INTO invite_codes_v12 (id,code,created_by,used_by,used_at,created_at,expires_at,revoked_at,max_uses,use_count)
@@ -414,7 +414,7 @@ SELECT id,code,created_by,used_by,CASE WHEN used_by IS NOT NULL THEN COALESCE(us
 DROP TABLE invite_codes; ALTER TABLE invite_codes_v12 RENAME TO invite_codes;`); err != nil {
 		return err
 	}
-	if err := execute(ctx, connection, inviteLifecycleIndexesSql); err != nil {
+	if err := execute(ctx, connection, inviteLifecycleIndexesSQL); err != nil {
 		return err
 	}
 	return checkForeignKeys(ctx, connection)
@@ -430,7 +430,7 @@ func versionFourteen(ctx context.Context, connection *sql.Conn) error {
 			return err
 		}
 	}
-	if err := execute(ctx, connection, notificationSettingsV14TableSql); err != nil {
+	if err := execute(ctx, connection, notificationSettingsV14TableSQL); err != nil {
 		return err
 	}
 	if len(names) > 0 {
@@ -442,7 +442,7 @@ func versionFourteen(ctx context.Context, connection *sql.Conn) error {
 	if err := execute(ctx, connection, "ALTER TABLE notification_settings_v14 RENAME TO notification_settings; CREATE INDEX idx_notification_settings_user ON notification_settings(user_id);"); err != nil {
 		return err
 	}
-	if err := execute(ctx, connection, notificationSettingsV14TriggersSql); err != nil {
+	if err := execute(ctx, connection, notificationSettingsV14TriggersSQL); err != nil {
 		return err
 	}
 	return checkForeignKeys(ctx, connection)
@@ -484,7 +484,7 @@ func readLegacyProviderOrders(ctx context.Context, connection *sql.Conn) ([]lega
 func legacyProviderNames(value string) ([]string, error) {
 	values := []string{}
 	seen := map[string]bool{}
-	for _, item := range strings.Split(value, ",") {
+	for item := range strings.SplitSeq(value, ",") {
 		name := strings.TrimSpace(item)
 		if !runtimeName(name) || seen[name] {
 			return nil, ErrProviderState
@@ -509,7 +509,7 @@ func validateExistingInviteLifecycle(ctx context.Context, connection *sql.Conn, 
 	if !slices.Equal(names, []string{"id", "code", "created_by", "used_by", "used_at", "created_at", "expires_at", "revoked_at", "max_uses", "use_count"}) || !slices.Equal(uses, []string{"id", "invite_code_id", "user_id", "used_at"}) {
 		return errors.New("invalid query")
 	}
-	return execute(ctx, connection, inviteLifecycleIndexesSql)
+	return execute(ctx, connection, inviteLifecycleIndexesSQL)
 }
 
 // validateNotificationLists closes ordered historical rows before replacement-table DDL.

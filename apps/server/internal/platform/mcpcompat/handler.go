@@ -29,7 +29,7 @@ const maxNormalizedBodyBytes = 6 * maxRequestBodyBytes
 
 // Principal comes only from the application's authentication result for this HTTP request.
 type Principal struct {
-	UserId    identity.Id
+	UserID    identity.ID
 	ExpiresAt time.Time
 }
 
@@ -198,8 +198,7 @@ func shouldNormalizeMessage(request *http.Request) bool {
 func readLegacyMessage(writer http.ResponseWriter, request *http.Request) ([]byte, bool) {
 	body, err := io.ReadAll(http.MaxBytesReader(writer, request.Body, maxRequestBodyBytes))
 	if err != nil {
-		var limitError *http.MaxBytesError
-		if errors.As(err, &limitError) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			http.Error(writer, "request body exceeds 4194304 bytes", http.StatusRequestEntityTooLarge)
 			return nil, false
 		}

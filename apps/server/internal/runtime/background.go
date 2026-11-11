@@ -20,7 +20,7 @@ import (
 func (prepared *Prepared) runScheduler(ctx context.Context) (result error) {
 	worker := fmt.Sprintf("worker-%d-%d", os.Getpid(), time.Now().UnixNano())
 	ctx = observability.StartSpan(ctx, "litradar::runtime", "scheduler.loop", map[string]any{"component": "scheduler", "worker_id": worker})
-	processes := scheduler.ProcessConfig{ProjectRoot: prepared.configuration.Storage.ProjectRoot, AuthDatabase: prepared.configuration.Storage.AuthDbPath, Executable: prepared.configuration.Executable, SecretKeyFile: prepared.configuration.SecretKeyFile}
+	processes := scheduler.ProcessConfig{ProjectRoot: prepared.configuration.Storage.ProjectRoot, AuthDatabase: prepared.configuration.Storage.AuthDBPath, Executable: prepared.configuration.Executable, SecretKeyFile: prepared.configuration.SecretKeyFile}
 	claimContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 	completed := make(chan error, 4)

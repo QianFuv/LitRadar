@@ -47,7 +47,7 @@ func (counts cfpStateCounts) MarshalJSON() ([]byte, error) {
 			if result.Len() > 1 {
 				result.WriteByte(',')
 			}
-			encoded, err := jsonvalue.EncodeJson(count)
+			encoded, err := jsonvalue.EncodeJSON(count)
 			if err != nil {
 				return nil, err
 			}
@@ -59,7 +59,7 @@ func (counts cfpStateCounts) MarshalJSON() ([]byte, error) {
 }
 
 type cfpJournalSummary struct {
-	CatalogId       string         `json:"catalogId" nullable:"false"`
+	CatalogID       string         `json:"catalogId" nullable:"false"`
 	CatalogAliases  []string       `json:"catalogAliases" nullable:"false"`
 	AllIssns        []string       `json:"allIssns" nullable:"false"`
 	TitleAliases    []string       `json:"titleAliases" nullable:"false"`
@@ -67,7 +67,7 @@ type cfpJournalSummary struct {
 	Area            *string        `json:"area" required:"false" nullable:"true"`
 	Coverage        string         `json:"coverage" nullable:"false" enum:"adapted,unadapted"`
 	CheckedOn       *string        `json:"checkedOn" required:"false" nullable:"true"`
-	SourceUrl       *string        `json:"sourceUrl" required:"false" nullable:"true"`
+	SourceURL       *string        `json:"sourceUrl" required:"false" nullable:"true"`
 	SourceStatement *string        `json:"sourceStatement" required:"false" nullable:"true"`
 	NoticeCount     int            `json:"noticeCount" nullable:"false" minimum:"0" format:"int64"`
 	CurrentCount    int            `json:"currentCount" nullable:"false" minimum:"0" format:"int64"`
@@ -107,7 +107,7 @@ type cfpNoticePage struct {
 }
 type cfpCursor struct {
 	Database      string `json:"database"`
-	CatalogId     string `json:"catalog_id"`
+	CatalogID     string `json:"catalog_id"`
 	IncludeClosed bool   `json:"include_closed"`
 	Revision      string `json:"revision"`
 	EvaluatedAt   int64  `json:"evaluated_at"`
@@ -136,7 +136,7 @@ func cfpFindSnapshot(entry sources.JournalCatalogEntry, snapshots []storage.Jour
 	var result *storage.JournalSnapshot
 	for index := range snapshots {
 		for _, alias := range snapshots[index].CatalogIds {
-			if alias == entry.CatalogId || slices.Contains(entry.CatalogAliases, alias) {
+			if alias == entry.CatalogID || slices.Contains(entry.CatalogAliases, alias) {
 				if result != nil {
 					return nil, internalError()
 				}
@@ -167,7 +167,7 @@ func cfpIndexSnapshots(snapshots []storage.JournalSnapshot) map[string]*storage.
 // cfpFindIndexedSnapshot retains exact alias matching and rejects distinct matching snapshots.
 func cfpFindIndexedSnapshot(entry sources.JournalCatalogEntry, indexed map[string]*storage.JournalSnapshot) (*storage.JournalSnapshot, *apiError) {
 	var result *storage.JournalSnapshot
-	for _, aliases := range [][]string{{entry.CatalogId}, entry.CatalogAliases} {
+	for _, aliases := range [][]string{{entry.CatalogID}, entry.CatalogAliases} {
 		for _, alias := range aliases {
 			snapshot, exists := indexed[alias]
 			if !exists {
@@ -184,11 +184,11 @@ func cfpFindIndexedSnapshot(entry sources.JournalCatalogEntry, indexed map[strin
 
 // cfpSummary projects catalog identity before optional snapshot and refresh metadata.
 func cfpSummary(entry sources.JournalCatalogEntry, snapshot *storage.JournalSnapshot, evaluatedAt, now int64) cfpJournalSummary {
-	result := cfpJournalSummary{CatalogId: entry.CatalogId, CatalogAliases: entry.CatalogAliases, AllIssns: entry.AllIssns, TitleAliases: entry.TitleAliases, Title: entry.Title, Area: entry.Area, Coverage: "unadapted", RefreshStatus: "unadapted", StateCounts: cfpStateCounts{}}
+	result := cfpJournalSummary{CatalogID: entry.CatalogID, CatalogAliases: entry.CatalogAliases, AllIssns: entry.AllIssns, TitleAliases: entry.TitleAliases, Title: entry.Title, Area: entry.Area, Coverage: "unadapted", RefreshStatus: "unadapted", StateCounts: cfpStateCounts{}}
 	if snapshot == nil {
 		return result
 	}
-	result.Coverage, result.CheckedOn, result.SourceUrl, result.SourceStatement = "adapted", &snapshot.CheckedOn, snapshot.SourceUrl, snapshot.SourceStatement
+	result.Coverage, result.CheckedOn, result.SourceURL, result.SourceStatement = "adapted", &snapshot.CheckedOn, snapshot.SourceURL, snapshot.SourceStatement
 	result.NoticeCount = len(snapshot.Notices)
 	countCfpNotices(&result, snapshot, evaluatedAt)
 	applyCfpRefresh(&result, snapshot, now)
@@ -292,7 +292,7 @@ func cfpCatalog(database string, query *string, entries []sources.JournalCatalog
 		if order := strings.Compare(titleKey(first.Title), titleKey(second.Title)); order != 0 {
 			return order
 		}
-		return strings.Compare(first.CatalogId, second.CatalogId)
+		return strings.Compare(first.CatalogID, second.CatalogID)
 	})
 	return result, nil
 }
@@ -300,7 +300,7 @@ func cfpCatalog(database string, query *string, entries []sources.JournalCatalog
 // cfpMatchesSearch checks the existing searchable fields without allocating a combined field list.
 func cfpMatchesSearch(item cfpJournalSummary, search string) bool {
 	matches := func(field string) bool { return strings.Contains(sources.Lowercase(field), search) }
-	return matches(item.Title) || matches(item.CatalogId) || slices.ContainsFunc(item.AllIssns, matches) ||
+	return matches(item.Title) || matches(item.CatalogID) || slices.ContainsFunc(item.AllIssns, matches) ||
 		slices.ContainsFunc(item.TitleAliases, matches) || item.Area != nil && matches(*item.Area)
 }
 
@@ -323,7 +323,7 @@ func cfpRevision(entry sources.JournalCatalogEntry, snapshot *storage.JournalSna
 	if entry.TitleAliases == nil {
 		entry.TitleAliases = []string{}
 	}
-	encoded, err := jsonvalue.EncodeJson([2]any{revisionEntry(entry), revisions})
+	encoded, err := jsonvalue.EncodeJSON([2]any{revisionEntry(entry), revisions})
 	if err != nil {
 		return "", err
 	}
@@ -350,7 +350,7 @@ func cfpPage(codec *secrets.Codec, database string, entry sources.JournalCatalog
 	if err != nil {
 		return nil, internalError()
 	}
-	cursor := cfpCursor{database, entry.CatalogId, includeClosed, revision, now, 0, "source-v1"}
+	cursor := cfpCursor{database, entry.CatalogID, includeClosed, revision, now, 0, "source-v1"}
 	cursor, failure := resumeCfpCursor(codec, cursor, ciphertext, now)
 	if failure != nil {
 		return nil, failure
@@ -365,7 +365,7 @@ func cfpPage(codec *secrets.Codec, database string, entry sources.JournalCatalog
 	var nextCursor *string
 	if hasMore {
 		cursor.Position = next
-		encoded, err := jsonvalue.EncodeJson(cursor)
+		encoded, err := jsonvalue.EncodeJSON(cursor)
 		if err != nil {
 			return nil, internalError()
 		}
@@ -395,7 +395,7 @@ func resumeCfpCursor(codec *secrets.Codec, expected cfpCursor, ciphertext *strin
 
 // matchesCfpCursor excludes limit while enforcing the inclusive fifteen-minute lifetime.
 func matchesCfpCursor(decoded, expected cfpCursor, now int64) bool {
-	return decoded.Database == expected.Database && decoded.CatalogId == expected.CatalogId && decoded.IncludeClosed == expected.IncludeClosed && decoded.Revision == expected.Revision && decoded.Order == "source-v1" && decoded.EvaluatedAt <= now && decoded.EvaluatedAt >= now-900
+	return decoded.Database == expected.Database && decoded.CatalogID == expected.CatalogID && decoded.IncludeClosed == expected.IncludeClosed && decoded.Revision == expected.Revision && decoded.Order == "source-v1" && decoded.EvaluatedAt <= now && decoded.EvaluatedAt >= now-900
 }
 
 // cfpNoticeItems preserves source order and nonnil empty page items.

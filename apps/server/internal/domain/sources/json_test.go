@@ -8,7 +8,7 @@ import (
 
 func TestJsonPayloadIdentity(t *testing.T) {
 	value := map[string]any{"z": []any{json.Number("-0"), json.Number("18446744073709551615"), json.Number("1e-6"), json.Number("1e15")}, "a": "<>&\u2028\u2029\x00\b\f\n\r\t\"\\"}
-	encoded, err := Json(value)
+	encoded, err := JSON(value)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -17,7 +17,7 @@ func TestJsonPayloadIdentity(t *testing.T) {
 		t.Fatalf("%s want %s", encoded, want)
 	}
 	for _, invalid := range []any{math.NaN(), math.Inf(1), "\xff", make(chan int)} {
-		if _, err := Json(invalid); err == nil {
+		if _, err := JSON(invalid); err == nil {
 			t.Fatalf("accepted invalid %T", invalid)
 		}
 	}

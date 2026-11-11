@@ -54,9 +54,9 @@ func TestCfpPackagedCapabilitiesMatchRegistry(t *testing.T) {
 // TestCfpCapabilityReuseKeepsSnapshotStatusLive prevents fixed capability reuse from freezing mutable refresh data.
 func TestCfpCapabilityReuseKeepsSnapshotStatusLive(t *testing.T) {
 	registration := acquisition.Registry()[0]
-	entry := sources.JournalCatalogEntry{CatalogId: registration.CatalogIds[0]}
+	entry := sources.JournalCatalogEntry{CatalogID: registration.CatalogIds[0]}
 	lease := int64(100)
-	snapshot := storage.JournalSnapshot{JournalKey: entry.CatalogId, Sources: []storage.SourceStatus{{Status: "refreshing", LeaseExpiresAt: &lease}}}
+	snapshot := storage.JournalSnapshot{JournalKey: entry.CatalogID, Sources: []storage.SourceStatus{{Status: "refreshing", LeaseExpiresAt: &lease}}}
 	first := cfpSummary(entry, &snapshot, 100, 100)
 	expired := cfpSummary(entry, &snapshot, 100, 101)
 	if first.RefreshStatus != "refreshing" || expired.RefreshStatus != "failed" || expired.LastError == nil {

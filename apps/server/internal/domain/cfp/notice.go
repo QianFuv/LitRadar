@@ -15,8 +15,8 @@ func CleanText(value string) string {
 	return strings.TrimSpace(expression(`[\t \x{00a0}]+`).ReplaceAllString(value, " "))
 }
 
-// IsSourceUrl checks the original WHATWG URL syntax without performing network access.
-func IsSourceUrl(value string) bool {
+// IsSourceURL checks the original WHATWG URL syntax without performing network access.
+func IsSourceURL(value string) bool {
 	parsed, err := whatwg.NewParser().Parse(value)
 	return err == nil && (parsed.Scheme() == "http" || parsed.Scheme() == "https") && parsed.Hostname() != "" && parsed.Username() == "" && parsed.Password() == ""
 }
@@ -40,7 +40,7 @@ func ParseSource(source Source) *Notice {
 		dates = []Date{}
 	}
 	title := CleanText(source.Title)
-	return &Notice{Id: source.SourceUrl + "#" + title, Title: title, Scope: CleanText(source.Scope), Requirements: CleanText(source.Requirements), Kind: kind, SourceUrl: source.SourceUrl, CheckedOn: source.CheckedOn, Dates: dates, EntryStage: stage, TopicYear: sourceTopicYear(source, kind), TimeZone: source.TimeZone, SourceStatus: status, IsHistorical: source.IsHistorical, RawDateText: CleanText(source.RawDateText)}
+	return &Notice{ID: source.SourceURL + "#" + title, Title: title, Scope: CleanText(source.Scope), Requirements: CleanText(source.Requirements), Kind: kind, SourceURL: source.SourceURL, CheckedOn: source.CheckedOn, Dates: dates, EntryStage: stage, TopicYear: sourceTopicYear(source, kind), TimeZone: source.TimeZone, SourceStatus: status, IsHistorical: source.IsHistorical, RawDateText: CleanText(source.RawDateText)}
 }
 
 // sourceKind retains the precedence of mixed source classifications.
@@ -89,7 +89,7 @@ func sourceStatus(source Source) *State {
 
 // isAdmissibleSource validates literal source fields without normalizing identity.
 func isAdmissibleSource(source Source, stage Stage) bool {
-	if !stage.IsSubmission() || !IsSourceUrl(source.SourceUrl) || len(source.CatalogIds) == 0 || strings.TrimSpace(source.Title) == "" || matches(`^(just a moment|access denied|404|暂未适配)`, strings.TrimSpace(source.Title)) {
+	if !stage.IsSubmission() || !IsSourceURL(source.SourceURL) || len(source.CatalogIds) == 0 || strings.TrimSpace(source.Title) == "" || matches(`^(just a moment|access denied|404|暂未适配)`, strings.TrimSpace(source.Title)) {
 		return false
 	}
 	for _, id := range source.CatalogIds {

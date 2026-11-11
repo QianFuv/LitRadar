@@ -16,7 +16,7 @@ type cnkiDetailTask struct {
 	ordinal    int
 	summary    any
 	url        string
-	platformId *string
+	platformID *string
 }
 type cnkiDetailOutcome struct {
 	task             cnkiDetailTask
@@ -73,7 +73,7 @@ func (pool *cnkiDetailPool) run(client cnki.Transport, job cnkiDetailJob) (outco
 			break
 		}
 	}
-	outcome.detail, outcome.err = client.ArticleDetail(job.ctx, job.task.url, job.task.platformId)
+	outcome.detail, outcome.err = client.ArticleDetail(job.ctx, job.task.url, job.task.platformID)
 	outcome.attempts = client.DrainAttempts()
 	return outcome
 }

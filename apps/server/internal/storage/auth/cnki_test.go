@@ -31,7 +31,7 @@ func jwt(expiration string) string {
 	return "unsigned." + base64.RawURLEncoding.EncodeToString([]byte(`{"exp":`+expiration+`}`)) + ".unverified"
 }
 
-func sessionJson(t *testing.T, token string) json.RawMessage {
+func sessionJSON(t *testing.T, token string) json.RawMessage {
 	t.Helper()
 	encoded, err := json.Marshal(map[string]any{"bff_user_token": token, "cookies": []any{map[string]string{"name": " cookie ", "value": "synthetic-secret"}, map[string]string{"name": "cookie"}, map[string]string{"name": " "}}})
 	if err != nil {
@@ -45,7 +45,7 @@ func TestCnkiStatusHidesSecretsAndPreservesCookieOrder(t *testing.T) {
 	repository, sessions := testCnki(t)
 	ctx := context.Background()
 	token := jwt("200.75")
-	summary, err := sessions.Upsert(ctx, 1, sessionJson(t, token), "active", nil)
+	summary, err := sessions.Upsert(ctx, 1, sessionJSON(t, token), "active", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestCnkiReserveKeepsActiveSessionAndClearFencesLateCompletion(t *testing.T)
 	repository, sessions := testCnki(t)
 	ctx := context.Background()
 	qr := "old-qr"
-	data := sessionJson(t, jwt("200"))
+	data := sessionJSON(t, jwt("200"))
 	if _, err := sessions.Upsert(ctx, 1, data, "active", &qr); err != nil {
 		t.Fatal(err)
 	}
@@ -84,13 +84,13 @@ func TestCnkiGenerationAndExactQrMustBothMatch(t *testing.T) {
 	if _, err := sessions.Upsert(ctx, 1, json.RawMessage(`{"qr_uuid":"fallback"}`), "waiting_scan", &qr); err != nil {
 		t.Fatal(err)
 	}
-	if result, err := sessions.Complete(ctx, 1, 1, &wrong, sessionJson(t, jwt("200")), "active", nil); err != nil || result != nil {
+	if result, err := sessions.Complete(ctx, 1, 1, &wrong, sessionJSON(t, jwt("200")), "active", nil); err != nil || result != nil {
 		t.Fatal("wrong QR matched")
 	}
-	if result, err := sessions.Complete(ctx, 1, 1, &qr, sessionJson(t, jwt("200")), "active", nil); err != nil || result == nil {
+	if result, err := sessions.Complete(ctx, 1, 1, &qr, sessionJSON(t, jwt("200")), "active", nil); err != nil || result == nil {
 		t.Fatal(err)
 	}
-	if result, err := sessions.Complete(ctx, 1, 1, &qr, sessionJson(t, jwt("200")), "active", nil); err != nil || result != nil {
+	if result, err := sessions.Complete(ctx, 1, 1, &qr, sessionJSON(t, jwt("200")), "active", nil); err != nil || result != nil {
 		t.Fatal("old generation matched")
 	}
 }
@@ -105,7 +105,7 @@ func TestCnkiRawJsonStrictButSummaryTolerant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runSql(t, repository, "UPDATE cnki_sessions SET session_json=?", encrypted)
+	runSQL(t, repository, "UPDATE cnki_sessions SET session_json=?", encrypted)
 	if _, err := sessions.Data(ctx, 1, false); err == nil {
 		t.Fatal("raw loader accepted corrupt JSON")
 	}
@@ -121,13 +121,13 @@ func TestCnkiExpiryBoundaryUnknownTokenAndPermissivePayloadDecoder(t *testing.T)
 		token, status string
 		remaining     *int64
 	}{
-		{jwt("100"), "expired", pointerInt64(0)},
-		{jwt("99.99"), "expired", pointerInt64(0)},
-		{jwt("101.9"), "active", pointerInt64(1)},
+		{jwt("100"), "expired", new(int64(0))},
+		{jwt("99.99"), "expired", new(int64(0))},
+		{jwt("101.9"), "active", new(int64(1))},
 		{"unparseable-token", "active", nil},
 		{jwt(`"100"`), "active", nil},
 	} {
-		summary, err := sessions.Upsert(ctx, 1, sessionJson(t, item.token), "waiting_scan", nil)
+		summary, err := sessions.Upsert(ctx, 1, sessionJSON(t, item.token), "waiting_scan", nil)
 		if err != nil || summary.Status != item.status || !reflect.DeepEqual(summary.SecondsRemaining, item.remaining) {
 			t.Fatalf("%+v %v", summary, err)
 		}
@@ -143,8 +143,6 @@ func TestCnkiExpiryBoundaryUnknownTokenAndPermissivePayloadDecoder(t *testing.T)
 	}
 }
 
-func pointerInt64(value int64) *int64 { return &value }
-
 func TestCnkiClearingAbsentRowStillCreatesFenceAndQrFallback(t *testing.T) {
 	repository, sessions := testCnki(t)
 	ctx := context.Background()
@@ -158,7 +156,7 @@ func TestCnkiClearingAbsentRowStillCreatesFenceAndQrFallback(t *testing.T) {
 	if _, err := sessions.Upsert(ctx, 1, json.RawMessage(`{"qr_uuid":" fallback "}`), "unknown", &blank); err != nil {
 		t.Fatal(err)
 	}
-	if data, err := sessions.Data(ctx, 1, false); err != nil || data.QrUuid != "fallback" || data.Status != "unknown" {
+	if data, err := sessions.Data(ctx, 1, false); err != nil || data.QrUUID != "fallback" || data.Status != "unknown" {
 		t.Fatalf("%v %v", data, err)
 	}
 	if summary, err := sessions.Status(ctx, 1); err != nil || summary.Status != "waiting_scan" {
@@ -208,7 +206,7 @@ func assertCnkiReserveKeepsActive(t *testing.T, repository *Repository, sessions
 		t.Fatal("reserve touched last completion")
 	}
 	active, err := sessions.Data(ctx, 1, true)
-	if err != nil || active == nil || active.QrUuid != "" || active.Generation != 2 {
+	if err != nil || active == nil || active.QrUUID != "" || active.Generation != 2 {
 		t.Fatalf("%v %v", active, err)
 	}
 	return generation

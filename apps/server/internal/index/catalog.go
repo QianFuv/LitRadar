@@ -37,7 +37,7 @@ func ReadCatalogCsv(path string) ([]domain.JournalCatalogEntry, error) {
 // ParseCatalogCsv preserves the historical single-line quote grammar and filtered row numbering.
 func ParseCatalogCsv(text string) ([]domain.JournalCatalogEntry, error) {
 	lines := []string{}
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		if strings.TrimSpace(line) != "" {
 			lines = append(lines, line)
 		}
@@ -111,14 +111,14 @@ func BuildCatalogEntry(row map[string]string) (domain.JournalCatalogEntry, error
 	if err := validateCatalogColumns(row); err != nil {
 		return entry, err
 	}
-	catalogId := domain.NormalizeText(row["catalog_id"])
-	if catalogId == nil {
+	catalogID := domain.NormalizeText(row["catalog_id"])
+	if catalogID == nil {
 		return entry, errors.New("catalog_id must not be blank")
 	}
-	if *catalogId != row["catalog_id"] {
+	if *catalogID != row["catalog_id"] {
 		return entry, errors.New("catalog_id must already use canonical trimmed form")
 	}
-	entry.CatalogId = *catalogId
+	entry.CatalogID = *catalogID
 	aliases, err := catalogList(row, "catalog_aliases", true, false)
 	if err != nil {
 		return entry, err
@@ -150,7 +150,7 @@ func BuildCatalogEntry(row map[string]string) (domain.JournalCatalogEntry, error
 
 func catalogList(row map[string]string, field string, isIdentity, isIssn bool) ([]string, error) {
 	values := []string{}
-	for _, raw := range strings.Split(row[field], ";") {
+	for raw := range strings.SplitSeq(row[field], ";") {
 		value, err := catalogListValue(raw, field, isIdentity, isIssn)
 		if err != nil {
 			return nil, err
@@ -187,17 +187,17 @@ func BuildCatalogEntries(rows []map[string]string) ([]domain.JournalCatalogEntry
 		if err != nil {
 			return nil, fmt.Errorf("catalog row %d: %w", rowNumber, err)
 		}
-		for _, value := range append([]string{entry.CatalogId}, entry.CatalogAliases...) {
+		for _, value := range append([]string{entry.CatalogID}, entry.CatalogAliases...) {
 			if previous, ok := catalogOwners[value]; ok {
 				return nil, fmt.Errorf("catalog row %d catalog identity %s is already owned by row %d (%s)", rowNumber, value, previous.row, previous.catalog)
 			}
-			catalogOwners[value] = owner{rowNumber, entry.CatalogId}
+			catalogOwners[value] = owner{rowNumber, entry.CatalogID}
 		}
 		for _, value := range entry.AllIssns {
 			if previous, ok := issnOwners[value]; ok {
 				return nil, fmt.Errorf("catalog row %d ISSN %s is already owned by row %d (%s)", rowNumber, value, previous.row, previous.catalog)
 			}
-			issnOwners[value] = owner{rowNumber, entry.CatalogId}
+			issnOwners[value] = owner{rowNumber, entry.CatalogID}
 		}
 		entries = append(entries, entry)
 	}

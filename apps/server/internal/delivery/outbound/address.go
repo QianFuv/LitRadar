@@ -25,7 +25,7 @@ func isPublicIpv6(address netip.Addr) bool {
 	first := uint16(bytes[0])<<8 | uint16(bytes[1])
 	second := uint16(bytes[2])<<8 | uint16(bytes[3])
 	third := uint16(bytes[4])<<8 | uint16(bytes[5])
-	return first&0xe000 == 0x2000 && !isIpv6ProtocolAssignment(first, second) && !isIpv6Documentation(first, second) && first != 0x2002 && !(first == 0x2620 && second == 0x004f && third == 0x8000)
+	return first&0xe000 == 0x2000 && !isIpv6ProtocolAssignment(first, second) && !isIpv6Documentation(first, second) && first != 0x2002 && (first != 0x2620 || second != 0x004f || third != 0x8000)
 }
 
 func isIpv4Compatible(bytes [16]byte) bool {
@@ -47,7 +47,7 @@ func isIpv6Documentation(first, second uint16) bool {
 
 func isPublicIpv4(address netip.Addr) bool {
 	bytes := address.As4()
-	return !(address.IsUnspecified() || address.IsLoopback() || address.IsPrivate() || address.IsLinkLocalUnicast() || address.IsMulticast() || isIpv4SharedOrProtocol(bytes) || isIpv4BenchmarkOrReserved(bytes) || isIpv4Documentation(bytes))
+	return !address.IsUnspecified() && !address.IsLoopback() && !address.IsPrivate() && !address.IsLinkLocalUnicast() && !address.IsMulticast() && !isIpv4SharedOrProtocol(bytes) && !isIpv4BenchmarkOrReserved(bytes) && !isIpv4Documentation(bytes)
 }
 
 func isIpv4SharedOrProtocol(bytes [4]byte) bool {

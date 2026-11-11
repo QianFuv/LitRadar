@@ -32,7 +32,7 @@ func NewCnkiSessions(repository *Repository, codec *secrets.Codec) *CnkiSessions
 // CnkiData is private source-adapter state and never an ordinary API response.
 type CnkiData struct {
 	SessionData json.RawMessage `json:"-"`
-	QrUuid      string          `json:"-"`
+	QrUUID      string          `json:"-"`
 	Status      string          `json:"-"`
 	Generation  int64           `json:"-"`
 }
@@ -54,12 +54,12 @@ type CnkiStatus struct {
 }
 
 type cnkiRow struct {
-	plaintext, qrUuid, status string
+	plaintext, qrUUID, status string
 	updated, lastUsed         *float64
 	generation                int64
 }
 
-func (sessions *CnkiSessions) row(ctx context.Context, user identity.Id) (*cnkiRow, error) {
+func (sessions *CnkiSessions) row(ctx context.Context, user identity.ID) (*cnkiRow, error) {
 	var row cnkiRow
 	err := func() error {
 		queryResult, err := queries.CNKISession(ctx, sessions.repository.database, authdb.CNKISessionParams{UserID: int64(user)})
@@ -67,7 +67,7 @@ func (sessions *CnkiSessions) row(ctx context.Context, user identity.Id) (*cnkiR
 			return err
 		}
 		row.plaintext = queryResult.SessionJSON
-		row.qrUuid = queryResult.QRUUID
+		row.qrUUID = queryResult.QRUUID
 		row.status = queryResult.Status
 		row.updated = new(queryResult.UpdatedAt)
 		row.lastUsed = queryResult.LastUsedAt
@@ -88,7 +88,7 @@ func (sessions *CnkiSessions) row(ctx context.Context, user identity.Id) (*cnkiR
 }
 
 func decodeSession(raw string) (any, error) {
-	if !jsonvalue.ValidJson(raw) {
+	if !jsonvalue.ValidJSON(raw) {
 		return nil, errors.New("invalid CNKI session JSON")
 	}
 	decoder := json.NewDecoder(strings.NewReader(raw))
@@ -110,7 +110,7 @@ func sessionString(value any, field string) string {
 }
 
 // Data strictly decodes persisted state, unlike the tolerant status projection.
-func (sessions *CnkiSessions) Data(ctx context.Context, user identity.Id, isActiveOnly bool) (*CnkiData, error) {
+func (sessions *CnkiSessions) Data(ctx context.Context, user identity.ID, isActiveOnly bool) (*CnkiData, error) {
 	row, err := sessions.row(ctx, user)
 	if err != nil || row == nil {
 		return nil, err
@@ -126,11 +126,11 @@ func (sessions *CnkiSessions) Data(ctx context.Context, user identity.Id, isActi
 			return nil, nil
 		}
 	}
-	return &CnkiData{json.RawMessage(row.plaintext), row.qrUuid, status, row.generation}, nil
+	return &CnkiData{json.RawMessage(row.plaintext), row.qrUUID, status, row.generation}, nil
 }
 
 // Status tolerates malformed decrypted JSON while retaining effective token expiry rules.
-func (sessions *CnkiSessions) Status(ctx context.Context, user identity.Id) (CnkiStatus, error) {
+func (sessions *CnkiSessions) Status(ctx context.Context, user identity.ID) (CnkiStatus, error) {
 	row, err := sessions.row(ctx, user)
 	if err != nil {
 		return CnkiStatus{}, err
@@ -139,7 +139,7 @@ func (sessions *CnkiSessions) Status(ctx context.Context, user identity.Id) (Cnk
 }
 
 // Reserve clears only the pending QR identifier on conflict, preserving an existing active session.
-func (sessions *CnkiSessions) Reserve(ctx context.Context, user identity.Id) (int64, error) {
+func (sessions *CnkiSessions) Reserve(ctx context.Context, user identity.ID) (int64, error) {
 	empty, err := sessions.codec.Encrypt("{}", secrets.CnkiContext(int64(user)))
 	if err != nil {
 		return 0, err
@@ -156,35 +156,35 @@ func (sessions *CnkiSessions) Reserve(ctx context.Context, user identity.Id) (in
 	return generation, err
 }
 
-func (sessions *CnkiSessions) prepare(user identity.Id, data json.RawMessage, status string, qrUuid *string, now float64) (cnkiRow, string, *float64, error) {
+func (sessions *CnkiSessions) prepare(user identity.ID, data json.RawMessage, status string, qrUUID *string, now float64) (cnkiRow, string, *float64, error) {
 	value, err := decodeSession(string(data))
 	if err != nil {
 		return cnkiRow{}, "", nil, err
 	}
-	plaintext, err := jsonvalue.EncodeJson(value)
+	plaintext, err := jsonvalue.EncodeJSON(value)
 	if err != nil {
 		return cnkiRow{}, "", nil, err
 	}
 	resolved := ""
-	if qrUuid != nil {
-		resolved = strings.TrimSpace(*qrUuid)
+	if qrUUID != nil {
+		resolved = strings.TrimSpace(*qrUUID)
 	}
 	if resolved == "" {
 		resolved = strings.TrimSpace(sessionString(value, "qr_uuid"))
 	}
 	expires := jwtExpiration(sessionString(value, "bff_user_token"))
 	encrypted, err := sessions.codec.Encrypt(plaintext, secrets.CnkiContext(int64(user)))
-	return cnkiRow{plaintext: plaintext, qrUuid: resolved, status: status, updated: &now}, encrypted, expires, err
+	return cnkiRow{plaintext: plaintext, qrUUID: resolved, status: status, updated: &now}, encrypted, expires, err
 }
 
 // Complete publishes only the matching generation and optional exact QR identity.
-func (sessions *CnkiSessions) Complete(ctx context.Context, user identity.Id, generation int64, expectedQr *string, data json.RawMessage, status string, qrUuid *string) (*CnkiStatus, error) {
+func (sessions *CnkiSessions) Complete(ctx context.Context, user identity.ID, generation int64, expectedQr *string, data json.RawMessage, status string, qrUUID *string) (*CnkiStatus, error) {
 	now := sessions.now()
-	row, encrypted, expires, err := sessions.prepare(user, data, status, qrUuid, now)
+	row, encrypted, expires, err := sessions.prepare(user, data, status, qrUUID, now)
 	if err != nil {
 		return nil, err
 	}
-	result, err := queries.CompleteCNKISession(ctx, sessions.repository.database, authdb.CompleteCNKISessionParams{SessionJSON: encrypted, QRUUID: row.qrUuid, Status: row.status, TokenExpiresAt: expires, UpdatedAt: now, UserID: int64(user), Generation: generation, Column8: expectedQr})
+	result, err := queries.CompleteCNKISession(ctx, sessions.repository.database, authdb.CompleteCNKISessionParams{SessionJSON: encrypted, QRUUID: row.qrUUID, Status: row.status, TokenExpiresAt: expires, UpdatedAt: now, UserID: int64(user), Generation: generation, Column8: expectedQr})
 	if err != nil {
 		return nil, err
 	}
@@ -201,14 +201,14 @@ func (sessions *CnkiSessions) Complete(ctx context.Context, user identity.Id, ge
 }
 
 // Upsert atomically replaces session data while preserving the original creation and last-use timestamps.
-func (sessions *CnkiSessions) Upsert(ctx context.Context, user identity.Id, data json.RawMessage, status string, qrUuid *string) (CnkiStatus, error) {
+func (sessions *CnkiSessions) Upsert(ctx context.Context, user identity.ID, data json.RawMessage, status string, qrUUID *string) (CnkiStatus, error) {
 	now := sessions.now()
-	row, encrypted, expires, err := sessions.prepare(user, data, status, qrUuid, now)
+	row, encrypted, expires, err := sessions.prepare(user, data, status, qrUUID, now)
 	if err != nil {
 		return CnkiStatus{}, err
 	}
 	err = func() error {
-		queryResult, err := queries.StoreCNKISession(ctx, sessions.repository.database, authdb.StoreCNKISessionParams{UserID: int64(user), SessionJSON: encrypted, QRUUID: row.qrUuid, Status: row.status, TokenExpiresAt: expires, CreatedAt: now})
+		queryResult, err := queries.StoreCNKISession(ctx, sessions.repository.database, authdb.StoreCNKISessionParams{UserID: int64(user), SessionJSON: encrypted, QRUUID: row.qrUUID, Status: row.status, TokenExpiresAt: expires, CreatedAt: now})
 		if err != nil {
 			return err
 		}
@@ -222,7 +222,7 @@ func (sessions *CnkiSessions) Upsert(ctx context.Context, user identity.Id, data
 }
 
 // Clear stores a generation-advancing tombstone so delayed network results cannot resurrect credentials.
-func (sessions *CnkiSessions) Clear(ctx context.Context, user identity.Id) (bool, error) {
+func (sessions *CnkiSessions) Clear(ctx context.Context, user identity.ID) (bool, error) {
 	now := sessions.now()
 	empty, err := sessions.codec.Encrypt("{}", secrets.CnkiContext(int64(user)))
 	if err != nil {
@@ -248,7 +248,7 @@ func (sessions *CnkiSessions) Clear(ctx context.Context, user identity.Id) (bool
 }
 
 // TouchUsed records use only for a visible session without changing its generation.
-func (sessions *CnkiSessions) TouchUsed(ctx context.Context, user identity.Id) (bool, error) {
+func (sessions *CnkiSessions) TouchUsed(ctx context.Context, user identity.ID) (bool, error) {
 	result, err := queries.TouchCNKISession(ctx, sessions.repository.database, authdb.TouchCNKISessionParams{LastUsedAt: new(sessions.now()), UserID: int64(user)})
 	if err != nil {
 		return false, err
@@ -266,7 +266,7 @@ func effectiveCnkiStatus(value any, row *cnkiRow, now float64) string {
 		}
 		return "active"
 	}
-	if strings.TrimSpace(row.qrUuid) != "" {
+	if strings.TrimSpace(row.qrUUID) != "" {
 		return "waiting_scan"
 	}
 	status := strings.TrimSpace(row.status)

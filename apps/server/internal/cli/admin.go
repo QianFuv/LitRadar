@@ -32,7 +32,7 @@ var adminUsage = map[string]any{"usage": []string{
 }}
 
 func writeResult(output io.Writer, result any) error {
-	encoded, err := jsonvalue.EncodeJson(result)
+	encoded, err := jsonvalue.EncodeJSON(result)
 	if err != nil {
 		return err
 	}
@@ -41,7 +41,7 @@ func writeResult(output io.Writer, result any) error {
 }
 
 func usageError(value any) error {
-	encoded, err := jsonvalue.EncodeJson(value)
+	encoded, err := jsonvalue.EncodeJSON(value)
 	if err != nil {
 		return err
 	}
@@ -54,8 +54,7 @@ func runAdmin(ctx context.Context, values []string, input io.Reader, output io.W
 	}
 	result, err := adminResult(ctx, arguments(slices.Clone(values)), input)
 	if err != nil {
-		var failure maintenance.Failure
-		if errors.As(err, &failure) {
+		if failure, ok := errors.AsType[maintenance.Failure](err); ok {
 			if outputError := writeResult(output, map[string]any{"status": "failed", "error": map[string]any{"code": failure.Code, "message": failure.Error(), "recovery_paths": failure.Recovery}}); outputError != nil {
 				return outputError
 			}
@@ -100,14 +99,16 @@ func adminCommand(args *arguments) (string, error) {
 	command := []string{}
 	for index := 0; index < len(*args); {
 		argument := (*args)[index]
-		if slices.Contains([]string{"--username", "--secret-key-file", "--old-key-file", "--new-key-file", "--output", "--backup"}, argument) {
+		switch {
+		case slices.Contains([]string{"--username", "--secret-key-file", "--old-key-file", "--new-key-file", "--output", "--backup"}, argument):
 			if index+1 >= len(*args) {
 				return "", errors.New(argument + " requires a value")
 			}
 			index += 2
-		} else if strings.HasPrefix(argument, "-") {
+		case strings.HasPrefix(argument, "-"):
 			index++
-		} else {
+		default:
+
 			command = append(command, argument)
 			*args = slices.Delete(*args, index, index+1)
 		}
@@ -188,7 +189,7 @@ func adminBootstrap(ctx context.Context, args arguments, filename string, input 
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"status": "created", "user": map[string]any{"id": int64(user.Id), "username": user.Username, "is_admin": user.IsAdmin}}, nil
+	return map[string]any{"status": "created", "user": map[string]any{"id": int64(user.ID), "username": user.Username, "is_admin": user.IsAdmin}}, nil
 }
 
 // adminBackupCreate preserves backup options and result payload even on backup failure.
@@ -202,7 +203,7 @@ func adminBackupCreate(ctx context.Context, args arguments, root, filename strin
 		return nil, usageError(adminUsage)
 	}
 	directory := projectPath(root, *output)
-	manifest, err := backup.Create(ctx, backup.CreateOptions{Config: configuration, AuthDbPath: filename, OutputDir: directory, IncludeIndexDatabases: includeIndexes, IncludePushState: includePush})
+	manifest, err := backup.Create(ctx, backup.CreateOptions{Config: configuration, AuthDBPath: filename, OutputDir: directory, IncludeIndexDatabases: includeIndexes, IncludePushState: includePush})
 	return map[string]any{"status": "created", "backup": directory, "manifest": manifest}, err
 }
 
@@ -219,7 +220,7 @@ func adminBackupRead(ctx context.Context, command string, args arguments, root, 
 	}
 	directory := projectPath(root, *input)
 	if isRestore {
-		report, err := backup.Restore(ctx, backup.RestoreOptions{Config: configuration, AuthDbPath: filename, BackupDir: directory})
+		report, err := backup.Restore(ctx, backup.RestoreOptions{Config: configuration, AuthDBPath: filename, BackupDir: directory})
 		return map[string]any{"status": "restored", "backup": directory, "report": report}, err
 	}
 	manifest, err := backup.Verify(ctx, directory)

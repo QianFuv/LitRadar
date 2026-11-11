@@ -67,7 +67,7 @@ func BenchmarkUsernameAdmission(b *testing.B) {
 	} {
 		b.Run(scenario.name, func(b *testing.B) {
 			policy := settings.TokenBucketPolicy{Capacity: 1, RefillTokens: 1, RefillSeconds: 1}
-			limiter := newAuthRateLimiter(settings.RateLimitPolicy{LoginIp: policy, RegisterIp: policy, Username: policy, GlobalLogin: policy, GlobalRegister: policy, IpKeyLimit: 1, UsernameKeyLimit: 1})
+			limiter := newAuthRateLimiter(settings.RateLimitPolicy{LoginIP: policy, RegisterIP: policy, Username: policy, GlobalLogin: policy, GlobalRegister: policy, IPKeyLimit: 1, UsernameKeyLimit: 1})
 			source := directSource("192.0.2.45")
 			var now uint64
 			b.ReportAllocs()

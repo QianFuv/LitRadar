@@ -9,16 +9,16 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/secrets"
 )
 
-var ErrBusy = errors.New("Delivery workflow is already running")
+var ErrBusy = errors.New("delivery workflow is already running")
 
 // RunConfig binds one database delivery to its explicit invocation and optional parent execution boundary.
 type RunConfig struct {
-	AuthDbPath          string
+	AuthDBPath          string
 	SecretCodec         *secrets.Codec
-	IndexDbPath         string
-	DbName              string
+	IndexDBPath         string
+	DBName              string
 	ChangesFile         *string
-	AttemptId           *string
+	AttemptID           *string
 	AiModel             *string
 	MaxCandidates       *int
 	TimeoutSeconds      uint64
@@ -36,22 +36,22 @@ func (config RunConfig) LogValue() slog.Value { return slog.StringValue(config.S
 
 // FavoriteWritePlan preserves the owner, folder and source database of an accepted article.
 type FavoriteWritePlan struct {
-	UserId    int64  `json:"user_id"`
-	FolderId  int64  `json:"folder_id"`
-	ArticleId int64  `json:"article_id"`
-	DbName    string `json:"db_name"`
+	UserID    int64  `json:"user_id"`
+	FolderID  int64  `json:"folder_id"`
+	ArticleID int64  `json:"article_id"`
+	DBName    string `json:"db_name"`
 }
 
 // SubscriberPlan records planned content separately from observed external delivery results.
 type SubscriberPlan struct {
-	SubscriberId       string              `json:"subscriber_id"`
+	SubscriberID       string              `json:"subscriber_id"`
 	DeliveryMethod     string              `json:"delivery_method"`
 	Status             string              `json:"status"`
 	Error              *string             `json:"error"`
 	SelectedArticleIds []int64             `json:"selected_article_ids"`
 	MessageTitle       *string             `json:"message_title"`
 	MessageContent     *string             `json:"message_content"`
-	MessageId          *string             `json:"message_id"`
+	MessageID          *string             `json:"message_id"`
 	FavoriteWrites     []FavoriteWritePlan `json:"favorite_writes"`
 	FolderSyncedCount  uint64              `json:"folder_synced_count"`
 	WouldSendPushplus  bool                `json:"would_send_pushplus"`
@@ -63,11 +63,11 @@ func (plan SubscriberPlan) LogValue() slog.Value { return slog.StringValue(plan.
 
 // RunOutcome is the public result of one durable database delivery invocation.
 type RunOutcome struct {
-	DbName              string           `json:"db_name"`
+	DBName              string           `json:"db_name"`
 	Workflow            store.Workflow   `json:"workflow"`
 	Mode                store.RunMode    `json:"mode"`
 	Status              string           `json:"status"`
-	DeliveryRunId       int64            `json:"delivery_run_id"`
+	DeliveryRunID       int64            `json:"delivery_run_id"`
 	CandidateArticleIds []int64          `json:"candidate_article_ids"`
 	Subscribers         []SubscriberPlan `json:"subscribers"`
 }

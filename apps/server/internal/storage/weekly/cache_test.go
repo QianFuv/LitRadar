@@ -63,9 +63,9 @@ func TestCacheExpiresFromLoadTimeAndReturnsIndependentCopies(t *testing.T) {
 		t.Fatal(err)
 	}
 	first.ArticleIds[0] = 999
-	*first.RunId = "mutated"
+	*first.RunID = "mutated"
 	second, err := cache.readAt(filename, now.Add(59*time.Second))
-	if err != nil || second.ArticleIds[0] != 1 || *second.RunId != "source" {
+	if err != nil || second.ArticleIds[0] != 1 || *second.RunID != "source" {
 		t.Fatalf("cached data mutated: %+v %v", second, err)
 	}
 	if stats := cache.statsAt(now.Add(59 * time.Second)); stats.ParseAttempts != 1 || stats.Entries != 1 || stats.ArticleIds != 2 {

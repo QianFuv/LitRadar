@@ -84,14 +84,14 @@ func TestBackupLockedSourceRetryAndCancellation(t *testing.T) {
 			if _, err := sourceConnection.ExecContext(ctx, "PRAGMA busy_timeout=0"); err != nil {
 				t.Fatal(err)
 			}
-			destinationUri, err := backupDestinationUri(destination)
+			destinationURI, err := backupDestinationURI(destination)
 			if err != nil {
 				t.Fatal(err)
 			}
 			err = sourceConnection.Raw(func(source any) error {
 				backup, err := source.(interface {
 					NewBackup(string) (*native.Backup, error)
-				}).NewBackup(destinationUri)
+				}).NewBackup(destinationURI)
 				if err != nil {
 					return err
 				}

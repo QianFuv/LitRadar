@@ -94,11 +94,11 @@ func TestDecodedBodyLimitsOverRealHttp(t *testing.T) {
 		{"chunked", "Transfer-Encoding: chunked\r\n", []byte("41\r\n" + strings.Repeat("a", 65) + "\r\n0\r\n\r\n"), ErrTooLarge},
 		{"gzip", "Content-Encoding: gzip\r\nContent-Length: " + strconv.Itoa(compressed.Len()) + "\r\n", compressed.Bytes(), ErrTooLarge},
 		{"truncated", "Content-Length: 32\r\n", []byte(`{"ok":true}`), ErrReadFailed},
-		{"invalid-json", "Content-Length: 8\r\n", []byte("not-json"), ErrInvalidJson},
+		{"invalid-json", "Content-Length: 8\r\n", []byte("not-json"), ErrInvalidJSON},
 		{"valid", "Content-Length: 11\r\n", []byte(`{"ok":true}`), nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := BoundedJson(rawResponse(t, test.headers, test.body), 64)
+			_, err := BoundedJSON(rawResponse(t, test.headers, test.body), 64)
 			if !errors.Is(err, test.want) {
 				t.Fatalf("got %v want %v", err, test.want)
 			}
@@ -137,11 +137,11 @@ func TestLossyTextIgnoresCharsetAndPreservesBom(t *testing.T) {
 }
 
 func TestJsonRetainsNumericTokensAndRejectsMultipleValues(t *testing.T) {
-	if _, err := ParseJson([]byte(`1 2`)); err != ErrInvalidJson {
+	if _, err := ParseJSON([]byte(`1 2`)); err != ErrInvalidJSON {
 		t.Fatal(err)
 	}
 	for _, input := range []string{`{"x":1e400}`, `{"x":1e-400}`, `{"x":9007199254740993}`} {
-		if _, err := ParseJson([]byte(input)); err != nil {
+		if _, err := ParseJSON([]byte(input)); err != nil {
 			t.Fatal(input, err)
 		}
 	}

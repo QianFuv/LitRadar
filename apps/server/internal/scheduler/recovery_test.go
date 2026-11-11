@@ -79,7 +79,7 @@ func TestSchedulerRealCrashRecovery(t *testing.T) {
 			expected := domain.Success
 			if boundary == "claimed" {
 				expected = domain.Claimed
-				if len(claims) != 1 || claims[0].WorkerId != "restarted" {
+				if len(claims) != 1 || claims[0].WorkerID != "restarted" {
 					t.Fatal("unstarted work was not recovered")
 				}
 			} else {

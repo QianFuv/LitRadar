@@ -63,9 +63,9 @@ func InitBatch(ctx context.Context, connection *sql.Conn) error {
 		return nil
 	}
 	return immediate(ctx, connection, func() error {
-		statement := batchCreateSql
+		statement := batchCreateSQL
 		if version == 1 {
-			statement = batchUpgradeSql
+			statement = batchUpgradeSQL
 		} else if version != 0 {
 			return unsupported()
 		}
@@ -77,19 +77,19 @@ func InitBatch(ctx context.Context, connection *sql.Conn) error {
 	})
 }
 
-var batchIdSequence atomic.Uint64
+var batchIDSequence atomic.Uint64
 
-// NewBatchOwnerId creates an invocation identity independent of content and provider state.
-func NewBatchOwnerId() string { return uniqueBatchId("index-owner") }
+// NewBatchOwnerID creates an invocation identity independent of content and provider state.
+func NewBatchOwnerID() string { return uniqueBatchID("index-owner") }
 
-// NewNotifyAttemptId creates a bounded stable identity for one notification handoff.
-func NewNotifyAttemptId() string { return sha256Hex([]byte(uniqueBatchId("notify-attempt")))[:32] }
-func uniqueBatchId(prefix string) string {
-	return fmt.Sprintf("%s-%x-%d-%d", prefix, time.Now().UnixNano(), os.Getpid(), batchIdSequence.Add(1)-1)
+// NewNotifyAttemptID creates a bounded stable identity for one notification handoff.
+func NewNotifyAttemptID() string { return sha256Hex([]byte(uniqueBatchID("notify-attempt")))[:32] }
+func uniqueBatchID(prefix string) string {
+	return fmt.Sprintf("%s-%x-%d-%d", prefix, time.Now().UnixNano(), os.Getpid(), batchIDSequence.Add(1)-1)
 }
 
 type batchHeader struct {
-	batchId, status, fingerprint, selection string
+	batchID, status, fingerprint, selection string
 	mode                                    domain.IndexSyncMode
 	issueBatchSize                          uint64
 	shouldNotify, isNotifyDryRun            bool
@@ -147,7 +147,7 @@ func AdmitBatch(ctx context.Context, connection *sql.Conn, request BatchRequest,
 		if err != nil {
 			return err
 		}
-		id := uniqueBatchId("index-batch")
+		id := uniqueBatchID("index-batch")
 		didResume := false
 		isAbandoning := false
 		if active == nil {
@@ -155,14 +155,15 @@ func AdmitBatch(ctx context.Context, connection *sql.Conn, request BatchRequest,
 				return err
 			}
 		} else {
-			id = active.batchId
-			if active.status == "abandoning" {
+			id = active.batchID
+			switch {
+			case active.status == "abandoning":
 				if shouldResume {
 					return &BatchError{Kind: "abandonment_pending"}
 				}
 				isAbandoning = true
 				didResume = true
-			} else if shouldResume {
+			case shouldResume:
 				fields, err := batchMismatches(ctx, connection, *active, request)
 				if err != nil {
 					return err
@@ -171,7 +172,8 @@ func AdmitBatch(ctx context.Context, connection *sql.Conn, request BatchRequest,
 					return &BatchError{Kind: "compatibility", Fields: fields}
 				}
 				didResume = true
-			} else {
+			default:
+
 				isAbandoning = true
 			}
 		}
@@ -225,7 +227,7 @@ func ReplaceAbandoningBatch(ctx context.Context, connection *sql.Conn, previous 
 		if err = expectBatchChange(changed, err, "batch replacement requires an abandoning batch"); err != nil {
 			return err
 		}
-		id := uniqueBatchId("index-batch")
+		id := uniqueBatchID("index-batch")
 		if err := insertBatch(ctx, connection, id, request, now); err != nil {
 			return err
 		}
@@ -260,7 +262,7 @@ func batchMismatches(ctx context.Context, connection *sql.Conn, active batchHead
 		return nil, nil
 	}
 	mismatch := map[string]bool{"catalog_selection": active.selection != request.Selection, "sync_mode": active.mode != request.Mode, "issue_batch_size": active.issueBatchSize != request.IssueBatchSize, "notify": active.shouldNotify != request.ShouldNotify, "notify_dry_run": active.isNotifyDryRun != request.IsNotifyDryRun}
-	stored, err := readBatchCatalogDescriptors(ctx, connection, active.batchId)
+	stored, err := readBatchCatalogDescriptors(ctx, connection, active.batchID)
 	if err != nil {
 		return nil, err
 	}
@@ -293,7 +295,7 @@ func claimBatchLease(ctx context.Context, connection *sql.Conn, id, owner string
 		return err
 	}
 	if err == nil && string(previous) != owner && int64(expires) > now {
-		return &BatchError{Kind: "active_lease", OwnerId: string(previous), ExpiresAt: int64(expires)}
+		return &BatchError{Kind: "active_lease", OwnerID: string(previous), ExpiresAt: int64(expires)}
 	}
 	_, err = batchQueries.UpsertBatchLease(ctx, connection, batchdb.UpsertBatchLeaseParams{BatchID: sqlite.Text(id), OwnerID: sqlite.Text(owner), HeartbeatAt: sqlite.Integer(now), ExpiresAt: sqlite.Integer(batchLeaseExpiry(now))})
 	return err
@@ -311,7 +313,7 @@ func verifyBatchOwnership(ctx context.Context, connection *sql.Conn, id, owner s
 		return err
 	}
 	if owns == 0 {
-		return &BatchError{Kind: "ownership_lost", OwnerId: owner}
+		return &BatchError{Kind: "ownership_lost", OwnerID: owner}
 	}
 	return nil
 }
@@ -339,7 +341,7 @@ func ReleaseBatchLease(ctx context.Context, connection *sql.Conn, id, owner stri
 	if err != nil {
 		return err
 	}
-	return &BatchError{Kind: "ownership_lost", OwnerId: owner}
+	return &BatchError{Kind: "ownership_lost", OwnerID: owner}
 }
 func expectLeaseChange(result sql.Result, err error, owner string) error {
 	if err != nil {
@@ -350,7 +352,7 @@ func expectLeaseChange(result sql.Result, err error, owner string) error {
 		return err
 	}
 	if count != 1 {
-		return &BatchError{Kind: "ownership_lost", OwnerId: owner}
+		return &BatchError{Kind: "ownership_lost", OwnerID: owner}
 	}
 	return nil
 }

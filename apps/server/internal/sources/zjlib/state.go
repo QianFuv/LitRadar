@@ -17,7 +17,7 @@ func jwtExpiration(token string) *int64 {
 	if !ok {
 		return nil
 	}
-	body, err := transport.ParseJson(raw)
+	body, err := transport.ParseJSON(raw)
 	if err != nil {
 		return nil
 	}

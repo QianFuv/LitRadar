@@ -11,15 +11,15 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
-const insertRunSql = `INSERT INTO provider_run_checkpoints(catalog_name,provider_name,catalog_id,batch_id,run_id,sync_mode,base_anchor,traversal_checkpoint,started_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,NULL,?8,?8)`
+const insertRunSQL = `INSERT INTO provider_run_checkpoints(catalog_name,provider_name,catalog_id,batch_id,run_id,sync_mode,base_anchor,traversal_checkpoint,started_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,NULL,?8,?8)`
 
 // PrepareJournalSync freezes the anchor and either resumes its exact batch or replaces traversal state.
 func PrepareJournalSync(ctx context.Context, connection *sql.Conn, run SyncRun, shouldResume bool, updatedAt string) (JournalSyncPreparation, error) {
 	var result JournalSyncPreparation
-	if err := validateBatchId(run.BatchId); err != nil {
+	if err := validateBatchID(run.BatchID); err != nil {
 		return result, err
 	}
-	if err := validateRunMetadata(run.RunId, updatedAt); err != nil {
+	if err := validateRunMetadata(run.RunID, updatedAt); err != nil {
 		return result, err
 	}
 	err := immediate(ctx, connection, func() error {
@@ -27,7 +27,7 @@ func PrepareJournalSync(ctx context.Context, connection *sql.Conn, run SyncRun, 
 		if err != nil {
 			return err
 		}
-		if shouldResume && anchor != nil && anchor.CompletedBatchId != nil && *anchor.CompletedBatchId == run.BatchId {
+		if shouldResume && anchor != nil && anchor.CompletedBatchID != nil && *anchor.CompletedBatchID == run.BatchID {
 			result.ShouldSkip = true
 			return nil
 		}
@@ -40,7 +40,7 @@ func PrepareJournalSync(ctx context.Context, connection *sql.Conn, run SyncRun, 
 			return err
 		}
 		if shouldResume && existing != nil {
-			if existing.BatchId == nil || *existing.BatchId != run.BatchId {
+			if existing.BatchID == nil || *existing.BatchID != run.BatchID {
 				return &ControlError{Kind: "batch_mismatch"}
 			}
 			if existing.Mode != run.Mode {
@@ -49,23 +49,23 @@ func PrepareJournalSync(ctx context.Context, connection *sql.Conn, run SyncRun, 
 			if !reflect.DeepEqual(existing.BaseAnchor, desired) {
 				return invalidSync("run base anchor does not match the committed anchor")
 			}
-			changed, err := controlQueries.ResumeRun(ctx, connection, controldb.ResumeRunParams{CatalogName: sqlite.Text(run.Scope.CatalogName), ProviderName: sqlite.Text(run.Scope.ProviderName), CatalogID: sqlite.Text(run.Scope.CatalogId), BatchID: new(sqlite.Text(run.BatchId)), RunID: sqlite.Text(run.RunId), RunID_2: sqlite.Text(existing.RunId), SyncMode: sqlite.Text(run.Mode), BaseAnchor: (*sqlite.Text)(desired), UpdatedAt: sqlite.Text(updatedAt)})
-			if err := requireRunChange(changed, err, run.RunId); err != nil {
+			changed, err := controlQueries.ResumeRun(ctx, connection, controldb.ResumeRunParams{CatalogName: sqlite.Text(run.Scope.CatalogName), ProviderName: sqlite.Text(run.Scope.ProviderName), CatalogID: sqlite.Text(run.Scope.CatalogID), BatchID: new(sqlite.Text(run.BatchID)), RunID: sqlite.Text(run.RunID), RunID_2: sqlite.Text(existing.RunID), SyncMode: sqlite.Text(run.Mode), BaseAnchor: (*sqlite.Text)(desired), UpdatedAt: sqlite.Text(updatedAt)})
+			if err := requireRunChange(changed, err, run.RunID); err != nil {
 				return err
 			}
-			existing.RunId = run.RunId
+			existing.RunID = run.RunID
 			existing.UpdatedAt = updatedAt
 			result.Checkpoint = existing
 			return nil
 		}
-		statement := insertRunSql
+		statement := insertRunSQL
 		if !shouldResume {
 			statement += ` ON CONFLICT(catalog_name,provider_name,catalog_id) DO UPDATE SET batch_id=excluded.batch_id,run_id=excluded.run_id,sync_mode=excluded.sync_mode,base_anchor=excluded.base_anchor,traversal_checkpoint=NULL,started_at=excluded.started_at,updated_at=excluded.updated_at`
 		}
-		if _, err := connection.ExecContext(ctx, statement, run.Scope.CatalogName, run.Scope.ProviderName, run.Scope.CatalogId, run.BatchId, run.RunId, run.Mode, desired, updatedAt); err != nil {
+		if _, err := connection.ExecContext(ctx, statement, run.Scope.CatalogName, run.Scope.ProviderName, run.Scope.CatalogID, run.BatchID, run.RunID, run.Mode, desired, updatedAt); err != nil {
 			return err
 		}
-		result.Checkpoint = &ProviderRunCheckpoint{BatchId: ptr(run.BatchId), RunId: run.RunId, Mode: run.Mode, BaseAnchor: desired, StartedAt: updatedAt, UpdatedAt: updatedAt}
+		result.Checkpoint = &ProviderRunCheckpoint{BatchID: new(run.BatchID), RunID: run.RunID, Mode: run.Mode, BaseAnchor: desired, StartedAt: updatedAt, UpdatedAt: updatedAt}
 		return nil
 	})
 	if err != nil {
@@ -83,16 +83,16 @@ func requireRunChange(result sql.Result, err error, run string) error {
 		return err
 	}
 	if count != 1 {
-		return &ControlError{Kind: "run_ownership_lost", RunId: run}
+		return &ControlError{Kind: "run_ownership_lost", RunID: run}
 	}
 	return nil
 }
 
 func validateProgress(run SyncRun, value *string, field, updatedAt string) error {
-	if err := validateBatchId(run.BatchId); err != nil {
+	if err := validateBatchID(run.BatchID); err != nil {
 		return err
 	}
-	if err := validateRunMetadata(run.RunId, updatedAt); err != nil {
+	if err := validateRunMetadata(run.RunID, updatedAt); err != nil {
 		return err
 	}
 	if err := validateOpaque(run.BaseAnchor, "base anchor"); err != nil {
@@ -102,8 +102,8 @@ func validateProgress(run SyncRun, value *string, field, updatedAt string) error
 }
 
 func advanceRun(ctx context.Context, connection *sql.Conn, run SyncRun, checkpoint, updatedAt string) error {
-	result, err := controlQueries.AdvanceRun(ctx, connection, controldb.AdvanceRunParams{CatalogName: sqlite.Text(run.Scope.CatalogName), ProviderName: sqlite.Text(run.Scope.ProviderName), CatalogID: sqlite.Text(run.Scope.CatalogId), BatchID: new(sqlite.Text(run.BatchId)), RunID: sqlite.Text(run.RunId), SyncMode: sqlite.Text(run.Mode), BaseAnchor: (*sqlite.Text)(run.BaseAnchor), TraversalCheckpoint: new(sqlite.Text(checkpoint)), UpdatedAt: sqlite.Text(updatedAt)})
-	return requireRunChange(result, err, run.RunId)
+	result, err := controlQueries.AdvanceRun(ctx, connection, controldb.AdvanceRunParams{CatalogName: sqlite.Text(run.Scope.CatalogName), ProviderName: sqlite.Text(run.Scope.ProviderName), CatalogID: sqlite.Text(run.Scope.CatalogID), BatchID: new(sqlite.Text(run.BatchID)), RunID: sqlite.Text(run.RunID), SyncMode: sqlite.Text(run.Mode), BaseAnchor: (*sqlite.Text)(run.BaseAnchor), TraversalCheckpoint: new(sqlite.Text(checkpoint)), UpdatedAt: sqlite.Text(updatedAt)})
+	return requireRunChange(result, err, run.RunID)
 }
 
 // AdvanceRunCheckpoint advances an exact journal owner without imposing the composition API's lease check.
@@ -115,12 +115,12 @@ func AdvanceRunCheckpoint(ctx context.Context, connection *sql.Conn, run SyncRun
 }
 
 func verifyJournalRun(ctx context.Context, connection *sql.Conn, run SyncRun) error {
-	exists, err := controlQueries.OwnsJournalRun(ctx, connection, controldb.OwnsJournalRunParams{CatalogName: sqlite.Text(run.Scope.CatalogName), ProviderName: sqlite.Text(run.Scope.ProviderName), CatalogID: sqlite.Text(run.Scope.CatalogId), BatchID: new(sqlite.Text(run.BatchId)), RunID: sqlite.Text(run.RunId), SyncMode: sqlite.Text(run.Mode), BaseAnchor: (*sqlite.Text)(run.BaseAnchor)})
+	exists, err := controlQueries.OwnsJournalRun(ctx, connection, controldb.OwnsJournalRunParams{CatalogName: sqlite.Text(run.Scope.CatalogName), ProviderName: sqlite.Text(run.Scope.ProviderName), CatalogID: sqlite.Text(run.Scope.CatalogID), BatchID: new(sqlite.Text(run.BatchID)), RunID: sqlite.Text(run.RunID), SyncMode: sqlite.Text(run.Mode), BaseAnchor: (*sqlite.Text)(run.BaseAnchor)})
 	if err != nil {
 		return err
 	}
 	if !exists {
-		return &ControlError{Kind: "run_ownership_lost", RunId: run.RunId}
+		return &ControlError{Kind: "run_ownership_lost", RunID: run.RunID}
 	}
 	return nil
 }
@@ -129,11 +129,11 @@ func completeRun(ctx context.Context, connection *sql.Conn, run SyncRun, nextAnc
 	if err := verifyJournalRun(ctx, connection, run); err != nil {
 		return err
 	}
-	if _, err := controlQueries.CompleteRun(ctx, connection, controldb.CompleteRunParams{CatalogName: sqlite.Text(run.Scope.CatalogName), ProviderName: sqlite.Text(run.Scope.ProviderName), CatalogID: sqlite.Text(run.Scope.CatalogId), CommittedAnchor: (*sqlite.Text)(nextAnchor), CompletedAt: sqlite.Text(completedAt), CompletedBatchID: new(sqlite.Text(run.BatchId))}); err != nil {
+	if _, err := controlQueries.CompleteRun(ctx, connection, controldb.CompleteRunParams{CatalogName: sqlite.Text(run.Scope.CatalogName), ProviderName: sqlite.Text(run.Scope.ProviderName), CatalogID: sqlite.Text(run.Scope.CatalogID), CommittedAnchor: (*sqlite.Text)(nextAnchor), CompletedAt: sqlite.Text(completedAt), CompletedBatchID: new(sqlite.Text(run.BatchID))}); err != nil {
 		return err
 	}
-	result, err := controlQueries.DeleteRun(ctx, connection, controldb.DeleteRunParams{CatalogName: sqlite.Text(run.Scope.CatalogName), ProviderName: sqlite.Text(run.Scope.ProviderName), CatalogID: sqlite.Text(run.Scope.CatalogId), BatchID: new(sqlite.Text(run.BatchId)), RunID: sqlite.Text(run.RunId), SyncMode: sqlite.Text(run.Mode), BaseAnchor: (*sqlite.Text)(run.BaseAnchor)})
-	return requireRunChange(result, err, run.RunId)
+	result, err := controlQueries.DeleteRun(ctx, connection, controldb.DeleteRunParams{CatalogName: sqlite.Text(run.Scope.CatalogName), ProviderName: sqlite.Text(run.Scope.ProviderName), CatalogID: sqlite.Text(run.Scope.CatalogID), BatchID: new(sqlite.Text(run.BatchID)), RunID: sqlite.Text(run.RunID), SyncMode: sqlite.Text(run.Mode), BaseAnchor: (*sqlite.Text)(run.BaseAnchor)})
+	return requireRunChange(result, err, run.RunID)
 }
 
 // CompleteSyncRun atomically replaces exact journal traversal ownership with a successful anchor.
@@ -180,7 +180,7 @@ func CommitContentThenProgress[T any](ctx context.Context, connection *sql.Conn,
 	err := immediate(ctx, connection, func() error {
 		var exists sqlite.Integer
 		if err := func() error {
-			queryResult, err := controlQueries.OwnsLiveLease(ctx, connection, controldb.OwnsLiveLeaseParams{CatalogName: sqlite.Text(run.Scope.CatalogName), ProviderName: sqlite.Text(run.Scope.ProviderName), RunID: sqlite.Text(run.RunId)})
+			queryResult, err := controlQueries.OwnsLiveLease(ctx, connection, controldb.OwnsLiveLeaseParams{CatalogName: sqlite.Text(run.Scope.CatalogName), ProviderName: sqlite.Text(run.Scope.ProviderName), RunID: sqlite.Text(run.RunID)})
 			if err != nil {
 				return err
 			}
@@ -190,7 +190,7 @@ func CommitContentThenProgress[T any](ctx context.Context, connection *sql.Conn,
 			return err
 		}
 		if exists == 0 {
-			return &ControlError{Kind: "ownership_lost", RunId: run.RunId}
+			return &ControlError{Kind: "ownership_lost", RunID: run.RunID}
 		}
 		if err := verifyJournalRun(ctx, connection, run); err != nil {
 			return err

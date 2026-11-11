@@ -99,7 +99,7 @@ func (handlers *trackingHandlers) validateTrackingDelivery(ctx context.Context, 
 	if update.DeliveryMethod == "folder" || update.SyncToTrackingFolder {
 		var failure *apiError
 		hasFolder, failure = trackingStorage(ctx, handlers.pool, func() (bool, error) {
-			folder, err := handlers.favorites.TrackingFolder(context.WithoutCancel(ctx), identity.Id(user))
+			folder, err := handlers.favorites.TrackingFolder(context.WithoutCancel(ctx), identity.ID(user))
 			return folder != nil, err
 		})
 		if failure != nil {
@@ -126,12 +126,12 @@ func validateTrackingPrerequisites(update domain.NotificationSettingsUpdate, has
 
 // normalizeTrackingEndpoints validates primary then backup against the current allowlist.
 func normalizeTrackingEndpoints(update *domain.NotificationSettingsUpdate, allowed []string) *apiError {
-	for _, value := range []*string{&update.AiBaseUrl, &update.AiBackupBaseUrl} {
+	for _, value := range []*string{&update.AiBaseURL, &update.AiBackupBaseURL} {
 		if strings.TrimSpace(*value) == "" {
 			*value = ""
 			continue
 		}
-		normalized, err := settings.CanonicalizeBaseUrl(*value)
+		normalized, err := settings.CanonicalizeBaseURL(*value)
 		if err != nil || !slices.Contains(allowed, normalized) {
 			return badRequest("AI endpoint is not available")
 		}
@@ -159,7 +159,7 @@ func trimNotificationUpdate(update *domain.NotificationSettingsUpdate) {
 	if update.PushplusTemplate == "" {
 		update.PushplusTemplate = "markdown"
 	}
-	for _, secret := range []*domain.SecretUpdate{&update.PushplusToken, &update.AiApiKey, &update.AiBackupApiKey} {
+	for _, secret := range []*domain.SecretUpdate{&update.PushplusToken, &update.AiAPIKey, &update.AiBackupAPIKey} {
 		if secret.Value != nil {
 			value := strings.TrimSpace(*secret.Value)
 			secret.Value = &value
@@ -191,7 +191,12 @@ func (handlers *trackingHandlers) persistNotificationUpdate(ctx context.Context,
 		if errors.Is(observed.err, storage.ErrEndpointNotAllowed) {
 			return domain.NotificationSettingsResponse{}, badRequest("AI endpoint is not available")
 		}
-		if slices.Contains([]string{"A tracking folder is required when delivery_method is 'folder'", "pushplus_token is required when delivery_method is 'pushplus'", "A tracking folder is required before enabling PushPlus sync to tracking"}, observed.err.Error()) {
+		switch observed.err.Error() {
+		case "a tracking folder is required when delivery_method is 'folder'":
+			return domain.NotificationSettingsResponse{}, badRequest("A tracking folder is required when delivery_method is 'folder'")
+		case "a tracking folder is required before enabling PushPlus sync to tracking":
+			return domain.NotificationSettingsResponse{}, badRequest("A tracking folder is required before enabling PushPlus sync to tracking")
+		case "pushplus_token is required when delivery_method is 'pushplus'":
 			return domain.NotificationSettingsResponse{}, badRequest(observed.err.Error())
 		}
 		return domain.NotificationSettingsResponse{}, internalError()

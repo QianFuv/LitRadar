@@ -22,7 +22,7 @@ func TestNotificationProcessPreservesAuthDatabase(t *testing.T) {
 			t.Setenv("LITRADAR_NOTIFY_EXPECTED_AUTH_DB", database)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			config := NotifyProcessConfig{Executable: executable, SecretKeyFile: "private-key-path", ProjectRoot: "project-root", AuthDbPath: database}
+			config := NotifyProcessConfig{Executable: executable, SecretKeyFile: "private-key-path", ProjectRoot: "project-root", AuthDBPath: database}
 			observed, err := RunNotifyProcess(ctx, config, "catalog.sqlite", "manifest-path", "current-attempt")
 			if err != nil || observed.Status != storage.NotifyCompleted || observed.ExitCode == nil || *observed.ExitCode != 0 {
 				t.Fatalf("notification did not receive auth database %q: observed=%+v err=%v", database, observed, err)

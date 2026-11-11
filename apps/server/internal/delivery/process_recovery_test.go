@@ -77,10 +77,10 @@ func TestDeliveryCrashChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer codec.Close()
-	config := RunConfig{AuthDbPath: input.AuthPath, IndexDbPath: input.IndexPath, SecretCodec: codec, DbName: "fixture.sqlite", Workflow: store.WorkflowNotify, Mode: store.RunModeExecute, Trigger: store.TriggerKindScheduled}
+	config := RunConfig{AuthDBPath: input.AuthPath, IndexDBPath: input.IndexPath, SecretCodec: codec, DBName: "fixture.sqlite", Workflow: store.WorkflowNotify, Mode: store.RunModeExecute, Trigger: store.TriggerKindScheduled}
 	folders := favorites.New(accounts)
 	engine := deliveryEngine{repository: repository, settings: settings.New(accounts, codec), selectArticles: func(context.Context, recommend.SelectionRequest) (recommend.SelectionOutcome, error) {
-		return recommend.SelectionOutcome{Accepted: []domain.RankedSelection{{ArticleId: 7, Score: 1}}}, nil
+		return recommend.SelectionOutcome{Accepted: []domain.RankedSelection{{ArticleID: 7, Score: 1}}}, nil
 	}, writeFavorites: func(ctx context.Context, writes []FavoriteWritePlan) error {
 		pause("reserved")
 		if err := executeFavoriteWrites(ctx, folders, writes); err != nil {
@@ -108,7 +108,7 @@ func TestDeliveryProcessKillPreservesEffectsAndQuarantinesAmbiguity(t *testing.T
 			engine, database, config := workflowFixture(t, store.WorkflowNotify)
 			directory := t.TempDir()
 			ready, ledger := filepath.Join(directory, "ready"), filepath.Join(directory, "messages")
-			input, _ := json.Marshal(map[string]string{"AuthPath": config.AuthDbPath, "IndexPath": config.IndexDbPath, "Barrier": boundary, "Ready": ready, "Ledger": ledger})
+			input, _ := json.Marshal(map[string]string{"AuthPath": config.AuthDBPath, "IndexPath": config.IndexDBPath, "Barrier": boundary, "Ready": ready, "Ledger": ledger})
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDeliveryCrashChild$", "-test.timeout=35s")
@@ -136,8 +136,7 @@ func TestDeliveryProcessKillPreservesEffectsAndQuarantinesAmbiguity(t *testing.T
 						t.Errorf("command.Process.Kill: %v", err)
 					}
 					if err := <-done; err != nil {
-						var exitError *exec.ExitError
-						if !errors.As(err, &exitError) {
+						if _, ok := errors.AsType[*exec.ExitError](err); !ok {
 							t.Error(err)
 						}
 					}
@@ -159,8 +158,7 @@ func TestDeliveryProcessKillPreservesEffectsAndQuarantinesAmbiguity(t *testing.T
 						t.Errorf("command.Process.Kill: %v", err)
 					}
 					if err := <-done; err != nil {
-						var exitError *exec.ExitError
-						if !errors.As(err, &exitError) {
+						if _, ok := errors.AsType[*exec.ExitError](err); !ok {
 							t.Error(err)
 						}
 					}
@@ -198,7 +196,7 @@ func TestDeliveryProcessKillPreservesEffectsAndQuarantinesAmbiguity(t *testing.T
 			if outcome.Status != wantStatus || strings.Count(string(data), "message\n") != wantMessages || countRows(t, database, "favorites") != 1 {
 				t.Fatalf("recovery status=%s messages=%q", outcome.Status, data)
 			}
-			record, err := engine.repository.LoadDedupe(context.Background(), config.Workflow, config.DbName, 1, 7)
+			record, err := engine.repository.LoadDedupe(context.Background(), config.Workflow, config.DBName, 1, 7)
 			if err != nil {
 				t.Fatal(err)
 			}

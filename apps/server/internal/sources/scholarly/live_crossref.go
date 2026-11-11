@@ -68,14 +68,14 @@ func (live *LiveTransport) crossrefAttempt(ctx context.Context, deadline time.Ti
 	}
 	status := uint16(response.StatusCode)
 	delay, isRetryable := live.observeCrossrefResponseHeaders(status, response.Header, number)
-	payload, bodyError := responseJson(response)
+	payload, bodyError := responseJSON(response)
 	cancel()
 	payload, isTooLarge, err := live.normalizeCrossrefResponse(ctx, request.URL.String(), number, status, started, payload, bodyError)
 	if err != nil {
 		return nil, false, err
 	}
 	if status < 200 || status >= 300 {
-		return live.crossrefHttpFailure(ctx, deadline, request.URL.String(), number, status, started, payload, isRetryable, isTooLarge, delay)
+		return live.crossrefHTTPFailure(ctx, deadline, request.URL.String(), number, status, started, payload, isRetryable, isTooLarge, delay)
 	}
 	live.recordCrossref(ctx, newAttempt(Crossref, endpoint, "GET", request.URL.String(), number, 0, &status, true, false, "none", started))
 	return payload, false, nil
@@ -118,8 +118,8 @@ func (live *LiveTransport) observeCrossrefResponseHeaders(status uint16, headers
 func (live *LiveTransport) normalizeCrossrefResponse(ctx context.Context, address string, number int, status uint16, started time.Time, payload any, bodyError error) (any, bool, error) {
 	const endpoint = "journal_works"
 	isTooLarge := false
-	if errors.Is(bodyError, transport.ErrInvalidJson) {
-		payload = map[string]any{"error": transport.ErrInvalidJson.Error()}
+	if errors.Is(bodyError, transport.ErrInvalidJSON) {
+		payload = map[string]any{"error": transport.ErrInvalidJSON.Error()}
 		bodyError = nil
 	}
 	if bodyError != nil {
@@ -141,8 +141,8 @@ func (live *LiveTransport) normalizeCrossrefResponse(ctx context.Context, addres
 	return payload, isTooLarge, nil
 }
 
-// crossrefHttpFailure retains the three-attempt HTTP ceiling and terminal cooldown publication.
-func (live *LiveTransport) crossrefHttpFailure(ctx context.Context, deadline time.Time, address string, number int, status uint16, started time.Time, payload any, isRetryable, isTooLarge bool, delay scheduleTime) (any, bool, error) {
+// crossrefHTTPFailure retains the three-attempt HTTP ceiling and terminal cooldown publication.
+func (live *LiveTransport) crossrefHTTPFailure(ctx context.Context, deadline time.Time, address string, number int, status uint16, started time.Time, payload any, isRetryable, isTooLarge bool, delay scheduleTime) (any, bool, error) {
 	const endpoint = "journal_works"
 	shouldRetry := isRetryable && number < 3 && !isTooLarge && transport.CanWait(delay.timer(), deadline)
 	record := newAttempt(Crossref, endpoint, "GET", address, number, 0, &status, false, shouldRetry, "http_status", started)

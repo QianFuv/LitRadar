@@ -66,7 +66,7 @@ func TestLiveRequestAndFailureBoundaries(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer solver.Close()
-			solver.apiUrl = server.URL
+			solver.apiURL = server.URL
 			value, err := solver.SolveDualImage(context.Background(), "data:image/png;base64,slide-image", "background-image")
 			if test.want == "" {
 				if err != nil || value != 261.5 {
@@ -116,7 +116,7 @@ func TestSolverFormattingRedactsPointersAndValues(t *testing.T) {
 		var output strings.Builder
 		logger := slog.New(slog.NewJSONHandler(&output, nil))
 		logger.Info("solver", slog.Any("value", value))
-		output.WriteString(fmt.Sprintf("%v %+v %#v", value, value, value))
+		fmt.Fprintf(&output, "%v %+v %#v", value, value, value)
 		if strings.Contains(output.String(), "private-token-sentinel") {
 			t.Fatal("solver token leaked")
 		}
@@ -142,7 +142,7 @@ func TestLiveBodyCancellationAndTruncation(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer solver.Close()
-			solver.apiUrl = server.URL
+			solver.apiURL = server.URL
 			_, err = solver.SolveDualImage(context.Background(), "slide", "background")
 			if err == nil || err.Error() != "jfbym response body could not be read" {
 				t.Fatal(err)

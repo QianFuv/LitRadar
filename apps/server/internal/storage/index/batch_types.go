@@ -124,10 +124,10 @@ func (status NotifyStatus) canRetry() bool {
 
 // NotifyHandoffState retains stable dedupe identity and explicit acknowledgement of a previous Unknown attempt.
 type NotifyHandoffState struct {
-	AttemptId                    string
+	AttemptID                    string
 	Status                       NotifyStatus
 	ExitCode                     *int32
-	UnknownAcknowledgedAttemptId *string
+	UnknownAcknowledgedAttemptID *string
 	UnknownAcknowledgedAt        *int64
 }
 
@@ -139,7 +139,7 @@ type NotifyAttemptPreparation struct {
 
 // BatchCatalogOutcome preserves completed indexing counters during publication and notification recovery.
 type BatchCatalogOutcome struct {
-	RunId               string
+	RunID               string
 	JournalCount        uint64
 	WrittenArticleCount int64
 	SourceAttemptCount  uint64
@@ -150,13 +150,13 @@ type BatchCatalogOutcome struct {
 type ManifestIntent struct {
 	Payload                  []byte
 	Sha256                   string
-	ThroughEventId           *int64
-	Path, RunId, GeneratedAt string
+	ThroughEventID           *int64
+	Path, RunID, GeneratedAt string
 }
 
 // Format excludes publication bytes, digests and directory components.
 func (value ManifestIntent) Format(state fmt.State, verb rune) {
-	_, _ = fmt.Fprintf(state, "ManifestIntent{payload_bytes:%d has_cursor:%t file_name:%q run_id:%q generated_at:%q}", len(value.Payload), value.ThroughEventId != nil, filepath.Base(value.Path), value.RunId, value.GeneratedAt)
+	_, _ = fmt.Fprintf(state, "ManifestIntent{payload_bytes:%d has_cursor:%t file_name:%q run_id:%q generated_at:%q}", len(value.Payload), value.ThroughEventID != nil, filepath.Base(value.Path), value.RunID, value.GeneratedAt)
 }
 
 // NewManifestIntent validates bounded metadata without interpreting the already prepared JSON bytes.
@@ -192,7 +192,7 @@ type IndexBatchCatalog struct {
 
 // IndexBatch is the project-wide batch currently fenced by one invocation owner.
 type IndexBatch struct {
-	BatchId, OwnerId string
+	BatchID, OwnerID string
 	StartedAt        int64
 	DidResume        bool
 	Catalogs         []IndexBatchCatalog
@@ -206,7 +206,7 @@ type BatchAdmission struct {
 
 // BatchError carries bounded recovery decisions without provider payloads, secrets or fingerprints.
 type BatchError struct {
-	Kind, Reason, OwnerId   string
+	Kind, Reason, OwnerID   string
 	FoundVersion, ExpiresAt int64
 	Fields                  []string
 }
@@ -218,9 +218,9 @@ func (err *BatchError) Error() string {
 	case "compatibility":
 		return "active index batch is incompatible in: " + strings.Join(err.Fields, ", ") + "; restore the original inputs or disable resume"
 	case "active_lease":
-		return fmt.Sprintf("index batch is owned by active invocation %s until %d", err.OwnerId, err.ExpiresAt)
+		return fmt.Sprintf("index batch is owned by active invocation %s until %d", err.OwnerID, err.ExpiresAt)
 	case "ownership_lost":
-		return "index invocation " + err.OwnerId + " no longer owns the project batch lease"
+		return "index invocation " + err.OwnerID + " no longer owns the project batch lease"
 	case "abandonment_pending":
 		return "an index batch abandonment is incomplete; retry with resume disabled"
 	case "published_notification_pending":
@@ -257,16 +257,14 @@ func validateRelativePath(value string) error {
 	if hasDrivePrefix || strings.HasPrefix(normalized, "/") {
 		return batchInput("manifest path must remain project-relative")
 	}
-	for _, part := range strings.Split(normalized, "/") {
-		if part == ".." {
-			return batchInput("manifest path must remain project-relative")
-		}
+	if slices.Contains(strings.Split(normalized, "/"), "..") {
+		return batchInput("manifest path must remain project-relative")
 	}
 	return nil
 }
 func isHexDigest(value string) bool {
 	for _, character := range []byte(value) {
-		if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f' || character >= 'A' && character <= 'F') {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') && (character < 'A' || character > 'F') {
 			return false
 		}
 	}

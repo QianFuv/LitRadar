@@ -29,10 +29,10 @@ func TestNumberRetainsTokensAndUsesStandardConversion(t *testing.T) {
 }
 
 func TestJsonUsesStandardEncoding(t *testing.T) {
-	if encoded, err := Json(map[string]any{"invalid": make(chan int)}); err == nil || encoded != nil {
+	if encoded, err := JSON(map[string]any{"invalid": make(chan int)}); err == nil || encoded != nil {
 		t.Fatal(string(encoded), err)
 	}
-	encoded, err := Json([]any{[]any(nil), map[string]any(nil), "<>&"})
+	encoded, err := JSON([]any{[]any(nil), map[string]any(nil), "<>&"})
 	if err != nil || string(encoded) != `[[],{},"<>&"]` {
 		t.Fatal(string(encoded), err)
 	}
@@ -40,13 +40,13 @@ func TestJsonUsesStandardEncoding(t *testing.T) {
 
 // TestIssueRejectsFloatingYearWithoutReplacingReceiver preserves typed year admission and atomic decoding.
 func TestIssueRejectsFloatingYearWithoutReplacingReceiver(t *testing.T) {
-	value := IssueDraft{CatalogId: "original", PublicationYear: new(int64(2000))}
-	before := IssueDraft{CatalogId: "original", PublicationYear: new(int64(2000))}
+	value := IssueDraft{CatalogID: "original", PublicationYear: new(int64(2000))}
+	before := IssueDraft{CatalogID: "original", PublicationYear: new(int64(2000))}
 	err := value.UnmarshalJSON([]byte(`{"catalog_id":"accepted","publication_year":2026.0}`))
-	if err != errContractJson || !reflect.DeepEqual(value, before) {
+	if err != errContractJSON || !reflect.DeepEqual(value, before) {
 		t.Fatal(value, err)
 	}
-	if err := value.UnmarshalJSON([]byte(`{"catalog_id":"accepted","publication_year":2026}`)); err != nil || value.CatalogId != "accepted" || value.PublicationYear == nil || *value.PublicationYear != 2026 {
+	if err := value.UnmarshalJSON([]byte(`{"catalog_id":"accepted","publication_year":2026}`)); err != nil || value.CatalogID != "accepted" || value.PublicationYear == nil || *value.PublicationYear != 2026 {
 		t.Fatal("valid integer year was rejected", value, err)
 	}
 }

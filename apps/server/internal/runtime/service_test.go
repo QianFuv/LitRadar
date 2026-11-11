@@ -30,7 +30,7 @@ func TestPrepareRejectsDevelopmentBeforeStorageMutation(t *testing.T) {
 	if prepared, err := Prepare(context.Background(), configuration); err == nil || prepared != nil {
 		t.Fatal("invalid development server prepared", err)
 	}
-	if _, err := os.Stat(configuration.Storage.AuthDbPath); !os.IsNotExist(err) {
+	if _, err := os.Stat(configuration.Storage.AuthDBPath); !os.IsNotExist(err) {
 		t.Fatal("development validation touched storage", err)
 	}
 }
@@ -111,7 +111,7 @@ func TestHeartbeatOperationBudgetWithNativeWriteLock(t *testing.T) {
 			t.Errorf("prepared.Close: %v", err)
 		}
 	}()
-	database, err := platform.Open(platform.Config{Filename: prepared.configuration.Storage.AuthDbPath, Mode: "rwc", MaxConnections: 1})
+	database, err := platform.Open(platform.Config{Filename: prepared.configuration.Storage.AuthDBPath, Mode: "rwc", MaxConnections: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ func TestHttpChildPanicStillJoinsAndReleasesHeartbeat(t *testing.T) {
 	if err := prepared.Run(ctx); err == nil || !strings.Contains(err.Error(), "API server task failed") || strings.Contains(err.Error(), "private") {
 		t.Fatal("nested panic escaped supervised shutdown", err)
 	}
-	repository, err := auth.Open(configuration.Storage.AuthDbPath)
+	repository, err := auth.Open(configuration.Storage.AuthDBPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +273,7 @@ func TestPrepareChecksRecoveryBeforeMigrationAndSecurityBeforeBinding(t *testing
 	if _, err := Prepare(context.Background(), configuration); err == nil {
 		t.Fatal("interrupted maintenance admitted")
 	}
-	if _, err := os.Stat(configuration.Storage.AuthDbPath); !os.IsNotExist(err) {
+	if _, err := os.Stat(configuration.Storage.AuthDBPath); !os.IsNotExist(err) {
 		t.Fatal("migration ran before recovery guard", err)
 	}
 	configuration = runtimeConfiguration(t)
@@ -292,7 +292,7 @@ func TestPrepareChecksRecoveryBeforeMigrationAndSecurityBeforeBinding(t *testing
 	if _, err := Prepare(context.Background(), configuration); err == nil || strings.Contains(err.Error(), "bind") {
 		t.Fatal("listener checked before secure-cookie policy", err)
 	}
-	if _, err := os.Stat(configuration.Storage.AuthDbPath); err != nil {
+	if _, err := os.Stat(configuration.Storage.AuthDBPath); err != nil {
 		t.Fatal("ordered migrations did not precede runtime security validation", err)
 	}
 }
@@ -387,7 +387,7 @@ func TestCloseWaitsForCancelledCallerWorkerBeforeClosingRepository(t *testing.T)
 	if err := <-closed; err != nil {
 		t.Fatal(err)
 	}
-	repository, err := auth.Open(prepared.configuration.Storage.AuthDbPath)
+	repository, err := auth.Open(prepared.configuration.Storage.AuthDBPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +429,7 @@ func TestRunningServiceStopsAndDeletesOnlyOwnedApiHeartbeat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := backup.RecordHeartbeat(context.Background(), configuration.Storage.AuthDbPath, backup.Api, "other-instance", unixTime()); err != nil {
+	if err := backup.RecordHeartbeat(context.Background(), configuration.Storage.AuthDBPath, backup.API, "other-instance", unixTime()); err != nil {
 		t.Fatal(err)
 	}
 	address := prepared.Address().String()
@@ -460,7 +460,7 @@ func TestRunningServiceStopsAndDeletesOnlyOwnedApiHeartbeat(t *testing.T) {
 	if err := listener.Close(); err != nil {
 		t.Fatalf("listener.Close: %v", err)
 	}
-	repository, err := auth.Open(configuration.Storage.AuthDbPath)
+	repository, err := auth.Open(configuration.Storage.AuthDBPath)
 	if err != nil {
 		t.Fatal(err)
 	}

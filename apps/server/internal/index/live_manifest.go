@@ -26,24 +26,24 @@ func prepareCatalogManifest(ctx context.Context, config LiveConfig, input storag
 		}
 	}()
 	generated := time.Now().UTC().Format(time.RFC3339Nano)
-	prepared, err := storage.PrepareContentChangeManifest(ctx, content.Conn, catalogDatabaseName(input), outcome.RunId, generated)
+	prepared, err := storage.PrepareContentChangeManifest(ctx, content.Conn, catalogDatabaseName(input), outcome.RunID, generated)
 	if err != nil {
 		return storage.ManifestIntent{}, err
 	}
-	return storage.NewManifestIntent(prepared.Payload, prepared.ThroughEventId, catalogManifestPath(input), outcome.RunId, generated)
+	return storage.NewManifestIntent(prepared.Payload, prepared.ThroughEventID, catalogManifestPath(input), outcome.RunID, generated)
 }
 func validateManifestRecovery(input storage.CatalogInput, outcome storage.BatchCatalogOutcome, intent storage.ManifestIntent) error {
 	if _, err := time.Parse(time.RFC3339Nano, intent.GeneratedAt); err != nil {
 		return invalidWorker("manifest recovery timestamp is obsolete or invalid; restart the indexing run")
 	}
 	expected := catalogManifestPath(input)
-	if intent.RunId != outcome.RunId || intent.Path != expected || outcome.ManifestPath != nil && *outcome.ManifestPath != expected {
+	if intent.RunID != outcome.RunID || intent.Path != expected || outcome.ManifestPath != nil && *outcome.ManifestPath != expected {
 		return &storage.BatchError{Kind: "state", Reason: "manifest recovery metadata does not match the frozen catalog"}
 	}
 	return nil
 }
 func shouldPublishManifest(config LiveConfig, input storage.CatalogInput, outcome storage.BatchCatalogOutcome, intent storage.ManifestIntent) (bool, error) {
-	if intent.ThroughEventId != nil || outcome.ManifestPath != nil {
+	if intent.ThroughEventID != nil || outcome.ManifestPath != nil {
 		return true, nil
 	}
 	path := filepath.Join(config.ProjectRoot, intent.Path)
@@ -67,7 +67,7 @@ func shouldPublishManifest(config LiveConfig, input storage.CatalogInput, outcom
 		return false, err
 	}
 	var manifest map[string]json.RawMessage
-	if !jsonvalue.ValidJson(string(body)) {
+	if !jsonvalue.ValidJSON(string(body)) {
 		return false, invalidWorker("existing change manifest is not valid LitRadar JSON")
 	}
 	if json.Unmarshal(body, &manifest) != nil {
@@ -95,7 +95,7 @@ func publishCatalogManifest(ctx context.Context, config LiveConfig, input storag
 		}
 	}()
 	history := catalogHistoryDirectory(config, input)
-	if intent.ThroughEventId != nil {
+	if intent.ThroughEventID != nil {
 		if err := storage.PublishContentChangeHistory(filepath.Join(history, intent.Sha256+".changes.json"), intent.Payload); err != nil {
 			return err
 		}
@@ -103,8 +103,8 @@ func publishCatalogManifest(ctx context.Context, config LiveConfig, input storag
 	if err := storage.PublishContentChangeManifest(filepath.Join(config.ProjectRoot, intent.Path), intent.Payload); err != nil {
 		return err
 	}
-	if intent.ThroughEventId != nil {
-		if _, err := storage.AcknowledgeContentChangeEvents(ctx, content.Conn, *intent.ThroughEventId); err != nil {
+	if intent.ThroughEventID != nil {
+		if _, err := storage.AcknowledgeContentChangeEvents(ctx, content.Conn, *intent.ThroughEventID); err != nil {
 			return err
 		}
 	}

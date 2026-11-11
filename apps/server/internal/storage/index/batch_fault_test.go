@@ -45,7 +45,7 @@ func TestBatchV1QuarantinesAmbiguousNotifications(t *testing.T) {
 		phase    string
 		exit     *int32
 		expected NotifyStatus
-	}{{"notifying", nil, NotifyUnknown}, {"notifying", ptr(int32(0)), NotifyUnknown}, {"completed", ptr(int32(0)), NotifyCompleted}, {"completed", ptr(int32(1)), NotifyUnknown}, {"indexing", ptr(int32(0)), NotifyUnknown}, {"indexing", nil, ""}} {
+	}{{"notifying", nil, NotifyUnknown}, {"notifying", new(int32(0)), NotifyUnknown}, {"completed", new(int32(0)), NotifyCompleted}, {"completed", new(int32(1)), NotifyUnknown}, {"indexing", new(int32(0)), NotifyUnknown}, {"indexing", nil, ""}} {
 		t.Run(fmt.Sprintf("%s-%v", state.phase, state.expected), func(t *testing.T) {
 			connection, batch, _, path := batchFixture(t)
 			ctx := context.Background()
@@ -72,7 +72,7 @@ func TestBatchV1QuarantinesAmbiguousNotifications(t *testing.T) {
 					t.Errorf("other.Close: %v", err)
 				}
 			}()
-			values, err := ReadBatchCatalogs(ctx, other.Conn, batch.BatchId)
+			values, err := ReadBatchCatalogs(ctx, other.Conn, batch.BatchID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -83,15 +83,15 @@ func TestBatchV1QuarantinesAmbiguousNotifications(t *testing.T) {
 				}
 				return
 			}
-			if handoff == nil || handoff.Status != state.expected || !sameOptional(handoff.ExitCode, state.exit) || !strings.HasPrefix(handoff.AttemptId, "legacy-notify-") || len(handoff.AttemptId) != 46 {
+			if handoff == nil || handoff.Status != state.expected || !sameOptional(handoff.ExitCode, state.exit) || !strings.HasPrefix(handoff.AttemptID, "legacy-notify-") || len(handoff.AttemptID) != 46 {
 				t.Fatalf("handoff=%+v", handoff)
 			}
-			first := handoff.AttemptId
+			first := handoff.AttemptID
 			if err := InitBatch(ctx, other.Conn); err != nil {
 				t.Fatal(err)
 			}
-			values, err = ReadBatchCatalogs(ctx, other.Conn, batch.BatchId)
-			if err != nil || values[0].NotifyHandoff.AttemptId != first {
+			values, err = ReadBatchCatalogs(ctx, other.Conn, batch.BatchID)
+			if err != nil || values[0].NotifyHandoff.AttemptID != first {
 				t.Fatalf("v2 reopen changed attempt: %v", err)
 			}
 		})
@@ -143,7 +143,7 @@ func TestBatchAdmissionAndReplacementRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := selectedSnapshot(t, connection.Conn, []string{"index_batches", "index_batch_catalogs", "index_batch_lease"})
-	if _, err := ReplaceAbandoningBatch(ctx, connection.Conn, batch.BatchId, request, "owner", 102); err == nil {
+	if _, err := ReplaceAbandoningBatch(ctx, connection.Conn, batch.BatchID, request, "owner", 102); err == nil {
 		t.Fatal("replacement succeeded through failure")
 	}
 	after := selectedSnapshot(t, connection.Conn, []string{"index_batches", "index_batch_catalogs", "index_batch_lease"})
@@ -153,8 +153,8 @@ func TestBatchAdmissionAndReplacementRollback(t *testing.T) {
 	if _, err := connection.ExecContext(ctx, "DROP TRIGGER reject_catalog"); err != nil {
 		t.Fatal(err)
 	}
-	replacement, err := ReplaceAbandoningBatch(ctx, connection.Conn, batch.BatchId, request, "owner", 103)
-	if err != nil || replacement.BatchId == batch.BatchId {
+	replacement, err := ReplaceAbandoningBatch(ctx, connection.Conn, batch.BatchID, request, "owner", 103)
+	if err != nil || replacement.BatchID == batch.BatchID {
 		t.Fatal(err)
 	}
 }
@@ -175,16 +175,16 @@ func TestBatchCompetingConnectionsAndLeaseBoundary(t *testing.T) {
 		t.Fatal("unexpired lease stolen")
 	}
 	admission, err := AdmitBatch(ctx, other.Conn, request, true, "other", 400)
-	if err != nil || admission.Batch.BatchId != batch.BatchId {
+	if err != nil || admission.Batch.BatchID != batch.BatchID {
 		t.Fatal(err)
 	}
-	if err := TransitionCatalogPhase(ctx, connection.Conn, batch.BatchId, "owner", 0, CatalogIndexing, 401); err == nil {
+	if err := TransitionCatalogPhase(ctx, connection.Conn, batch.BatchID, "owner", 0, CatalogIndexing, 401); err == nil {
 		t.Fatal("stale owner wrote")
 	}
-	if err := HeartbeatBatchLease(ctx, other.Conn, batch.BatchId, "other", 699); err != nil {
+	if err := HeartbeatBatchLease(ctx, other.Conn, batch.BatchID, "other", 699); err != nil {
 		t.Fatal(err)
 	}
-	if err := HeartbeatBatchLease(ctx, other.Conn, batch.BatchId, "other", 999); err == nil {
+	if err := HeartbeatBatchLease(ctx, other.Conn, batch.BatchID, "other", 999); err == nil {
 		t.Fatal("expired lease revived by heartbeat")
 	}
 	assertBatchLeaseSaturates(t, connection, other, request)
@@ -200,7 +200,7 @@ func TestBatchMalformedRecoveryMetadataRejected(t *testing.T) {
 			if _, err := connection.ExecContext(ctx, "PRAGMA ignore_check_constraints=ON; UPDATE index_batch_catalogs SET "+mutation); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := ReadBatchCatalogs(ctx, connection.Conn, batch.BatchId); err == nil {
+			if _, err := ReadBatchCatalogs(ctx, connection.Conn, batch.BatchID); err == nil {
 				t.Fatal("malformed state accepted")
 			}
 		})
@@ -210,20 +210,20 @@ func TestBatchMalformedRecoveryMetadataRejected(t *testing.T) {
 func TestBatchIntentFailureDoesNotAdvancePhase(t *testing.T) {
 	connection, batch, _, _ := batchFixture(t)
 	ctx := context.Background()
-	if err := TransitionCatalogPhase(ctx, connection.Conn, batch.BatchId, "owner", 0, CatalogIndexing, 100); err != nil {
+	if err := TransitionCatalogPhase(ctx, connection.Conn, batch.BatchID, "owner", 0, CatalogIndexing, 100); err != nil {
 		t.Fatal(err)
 	}
-	intent, err := NewManifestIntent([]byte("{}\n"), ptr(int64(9)), "changes.json", "run", "100")
+	intent, err := NewManifestIntent([]byte("{}\n"), new(int64(9)), "changes.json", "run", "100")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := connection.ExecContext(ctx, `CREATE TRIGGER reject_touch BEFORE UPDATE OF updated_at ON index_batches BEGIN SELECT RAISE(FAIL,'injected touch failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := StoreManifestIntent(ctx, connection.Conn, batch.BatchId, "owner", 0, intent, 101); err == nil {
+	if err := StoreManifestIntent(ctx, connection.Conn, batch.BatchID, "owner", 0, intent, 101); err == nil {
 		t.Fatal("injected failure ignored")
 	}
-	values, err := ReadBatchCatalogs(ctx, connection.Conn, batch.BatchId)
+	values, err := ReadBatchCatalogs(ctx, connection.Conn, batch.BatchID)
 	if err != nil || values[0].ManifestIntent != nil || values[0].Phase != CatalogIndexing {
 		t.Fatalf("partly committed intent: %v %v", values, err)
 	}

@@ -19,12 +19,12 @@ import (
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
-func encodeCursor(owner identity.Id, favorite Favorite) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("1|%d|%d|%016x|%d", owner, favorite.FolderId, math.Float64bits(favorite.CreatedAt), favorite.Id)))
+func encodeCursor(owner identity.ID, favorite Favorite) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("1|%d|%d|%016x|%d", owner, favorite.FolderID, math.Float64bits(favorite.CreatedAt), favorite.ID)))
 }
 
 // decodeCursor binds admitted fields to owner and folder before timestamp/identifier decoding.
-func decodeCursor(cursor string, owner identity.Id, folder int64) (float64, int64, error) {
+func decodeCursor(cursor string, owner identity.ID, folder int64) (float64, int64, error) {
 	fields, err := favoriteCursorFields(cursor)
 	if err != nil {
 		return 0, 0, err
@@ -70,7 +70,7 @@ type CitationSnapshot struct {
 }
 
 // LoadCitationSnapshot permits a zero limit and uses one extra row for exact oversize detection.
-func (repository *Repository) LoadCitationSnapshot(ctx context.Context, owner identity.Id, folder int64, limit uint64) (CitationSnapshot, error) {
+func (repository *Repository) LoadCitationSnapshot(ctx context.Context, owner identity.ID, folder int64, limit uint64) (CitationSnapshot, error) {
 	if err := positive("folder_id", folder); err != nil {
 		return CitationSnapshot{}, err
 	}
@@ -101,7 +101,7 @@ func (repository *Repository) LoadCitationSnapshot(ctx context.Context, owner id
 			return err
 		}
 		for _, row := range rows {
-			result.References = append(result.References, Reference{identity.Id(row.ArticleID), string(row.DBName)})
+			result.References = append(result.References, Reference{identity.ID(row.ArticleID), string(row.DBName)})
 		}
 		return nil
 	})
@@ -116,7 +116,7 @@ func (repository *Repository) LoadCitationSnapshot(ctx context.Context, owner id
 }
 
 // ArticlePage checks ownership before decoding its scope-bound cursor and enriches after committing the read snapshot.
-func (repository *Repository) ArticlePage(ctx context.Context, configuration config.Config, owner identity.Id, folder, limit int64, cursor *string) (domain.Page[Article], error) {
+func (repository *Repository) ArticlePage(ctx context.Context, configuration config.Config, owner identity.ID, folder, limit int64, cursor *string) (domain.Page[Article], error) {
 	empty := domain.Page[Article]{}
 	if err := positive("folder_id", folder); err != nil {
 		return empty, err
@@ -162,7 +162,7 @@ func (repository *Repository) ArticlePage(ctx context.Context, configuration con
 }
 
 // ListArticles enriches the legacy offset list without imposing cursor-page validation.
-func (repository *Repository) ListArticles(ctx context.Context, configuration config.Config, owner identity.Id, folder *int64, limit, offset int64) ([]Article, error) {
+func (repository *Repository) ListArticles(ctx context.Context, configuration config.Config, owner identity.ID, folder *int64, limit, offset int64) ([]Article, error) {
 	favorites, err := repository.ListFavorites(ctx, owner, folder, limit, offset)
 	if err != nil {
 		return nil, err

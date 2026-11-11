@@ -86,7 +86,7 @@ func TestWeeklyMembershipPreservesExactIntegerSet(t *testing.T) {
 // TestEmptyWeeklyWindowsRetainValidation verifies empty pages without bypassing cursor or publication errors.
 func TestEmptyWeeklyWindowsRetainValidation(t *testing.T) {
 	configuration, _ := queryFixture(t)
-	params := WeeklyArticlePageParams{DbName: "catalog.sqlite", JournalId: 1, WindowEnd: "2026-10-04T00:00:00Z", Limit: 1}
+	params := WeeklyArticlePageParams{DBName: "catalog.sqlite", JournalID: 1, WindowEnd: "2026-10-04T00:00:00Z", Limit: 1}
 	for _, query := range []*string{nil, new(" \t"), new("Research")} {
 		params.Query = query
 		page, err := WeeklyArticles(context.Background(), configuration, params, nil)
@@ -103,10 +103,10 @@ func TestEmptyWeeklyWindowsRetainValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	params.Cursor = nil
-	if _, err := WeeklyArticles(context.Background(), configuration, params, nil); !errors.Is(err, weekly.ErrManifestJson) {
+	if _, err := WeeklyArticles(context.Background(), configuration, params, nil); !errors.Is(err, weekly.ErrManifestJSON) {
 		t.Fatal("empty-window handling skipped manifest validation", err)
 	}
-	params.JournalId = 999
+	params.JournalID = 999
 	if _, err := WeeklyArticles(context.Background(), configuration, params, nil); err == nil || err.Error() != "Journal not found" {
 		t.Fatal("manifest error replaced journal admission", err)
 	}
@@ -208,14 +208,14 @@ func TestWeeklyLargeMembershipPreservesCursorPaging(t *testing.T) {
 	}
 	ids = append(ids, 1012, 1001, 1012)
 	writeQueryManifest(t, configuration, "catalog.sqlite", ids)
-	params := WeeklyArticlePageParams{DbName: "catalog.sqlite", JournalId: 1, WindowEnd: "2026-10-04T00:00:00Z", Limit: 1}
+	params := WeeklyArticlePageParams{DBName: "catalog.sqlite", JournalID: 1, WindowEnd: "2026-10-04T00:00:00Z", Limit: 1}
 	first, err := WeeklyArticles(context.Background(), configuration, params, nil)
-	if err != nil || len(first.Items) != 1 || first.Items[0].ArticleId != 1012 || first.Page.HasMore == nil || !*first.Page.HasMore || first.Page.NextCursor == nil {
+	if err != nil || len(first.Items) != 1 || first.Items[0].ArticleID != 1012 || first.Page.HasMore == nil || !*first.Page.HasMore || first.Page.NextCursor == nil {
 		t.Fatal("large membership first page changed", first, err)
 	}
 	params.Cursor = first.Page.NextCursor
 	second, err := WeeklyArticles(context.Background(), configuration, params, nil)
-	if err != nil || len(second.Items) != 1 || second.Items[0].ArticleId != 1001 || second.Items[0].Date != nil || second.Page.HasMore == nil || *second.Page.HasMore || second.Page.NextCursor != nil {
+	if err != nil || len(second.Items) != 1 || second.Items[0].ArticleID != 1001 || second.Items[0].Date != nil || second.Page.HasMore == nil || *second.Page.HasMore || second.Page.NextCursor != nil {
 		t.Fatal("large membership NULL-date page changed", second, err)
 	}
 }

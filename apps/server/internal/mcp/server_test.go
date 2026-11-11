@@ -71,7 +71,7 @@ func (client *wireClient) post(token string, body any) (int, map[string]any) {
 		_ = json.Unmarshal(wire, &payload)
 		return response.StatusCode, payload
 	}
-	for _, line := range strings.Split(string(wire), "\n") {
+	for line := range strings.SplitSeq(string(wire), "\n") {
 		if strings.HasPrefix(line, "data: {") {
 			decoder := json.NewDecoder(strings.NewReader(strings.TrimPrefix(line, "data: ")))
 			decoder.UseNumber()
@@ -118,10 +118,10 @@ func toolText(t *testing.T, result map[string]any) string {
 func TestAuthenticatedToolsEnforceCurrentIdentity(t *testing.T) {
 	ctx := context.Background()
 	configuration := config.FromProjectRoot(t.TempDir())
-	if _, err := migration.Migrate(ctx, configuration.AuthDbPath); err != nil {
+	if _, err := migration.Migrate(ctx, configuration.AuthDBPath); err != nil {
 		t.Fatal(err)
 	}
-	repository, err := storageauth.Open(configuration.AuthDbPath)
+	repository, err := storageauth.Open(configuration.AuthDBPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func authenticatedToolActors(t *testing.T, ctx context.Context, service *auth.Se
 	if err != nil {
 		t.Fatal(err)
 	}
-	invite, err := service.IssueInvite(ctx, admin.Id, false, nil)
+	invite, err := service.IssueInvite(ctx, admin.ID, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,11 +192,11 @@ func authenticatedToolActors(t *testing.T, ctx context.Context, service *auth.Se
 	if err != nil {
 		t.Fatal(err)
 	}
-	adminToken, err := service.CreateTrustedToken(ctx, admin.Id, "fixture", 3600, nil)
+	adminToken, err := service.CreateTrustedToken(ctx, admin.ID, "fixture", 3600, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	readerToken, err := service.CreateTrustedToken(ctx, reader.Id, "fixture", 3600, nil)
+	readerToken, err := service.CreateTrustedToken(ctx, reader.ID, "fixture", 3600, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,11 +206,11 @@ func authenticatedToolActors(t *testing.T, ctx context.Context, service *auth.Se
 // authenticatedToolFolders creates separate folders for the two authenticated users.
 func authenticatedToolFolders(t *testing.T, ctx context.Context, folders *favorites.Repository, actors authenticatedActors) (favorites.Folder, favorites.Folder) {
 	t.Helper()
-	adminFolder, err := folders.CreateFolder(ctx, actors.admin.Id, "admin only", false)
+	adminFolder, err := folders.CreateFolder(ctx, actors.admin.ID, "admin only", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	readerFolder, err := folders.CreateFolder(ctx, actors.reader.Id, "reader only", false)
+	readerFolder, err := folders.CreateFolder(ctx, actors.reader.ID, "reader only", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func assertAuthenticatedToolInputErrors(t *testing.T, client *wireClient, token 
 func assertAuthenticatedFavoriteOwnership(t *testing.T, client *wireClient, actors authenticatedActors, adminFolder, readerFolder favorites.Folder) {
 	t.Helper()
 	assertCurrentToolIdentity(t, client, actors.readerToken.Token)
-	args := map[string]any{"folder_id": readerFolder.Id, "article_id": "9007199254740993", "db_name": "fixture"}
+	args := map[string]any{"folder_id": readerFolder.ID, "article_id": "9007199254740993", "db_name": "fixture"}
 	added := client.call(actors.readerToken.Token, "add_favorite", args)
 	if added["isError"] == true || !strings.Contains(toolText(t, added), `"article_id": "9007199254740993"`) {
 		t.Fatal(added)
@@ -275,7 +275,7 @@ func assertAuthenticatedFavoriteOwnership(t *testing.T, client *wireClient, acto
 	if missing := client.call(actors.readerToken.Token, "remove_favorite", args); toolText(t, missing) != "Favorite not found" || missing["isError"] != true {
 		t.Fatal(missing)
 	}
-	args["folder_id"] = adminFolder.Id
+	args["folder_id"] = adminFolder.ID
 	if denied := client.call(actors.readerToken.Token, "add_favorite", args); denied["isError"] != true {
 		t.Fatal("foreign folder accepted")
 	}

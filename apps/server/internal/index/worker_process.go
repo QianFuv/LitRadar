@@ -86,10 +86,10 @@ func runWorkerProcesses(ctx context.Context, writer *ParentWriter, requests []Wo
 		}
 		children = append(children, worker)
 		if err := WriteProtocol(worker.child.Stdin, config.Bootstrap(request)); err != nil {
-			return writer.Metrics, parentProtocolFailure(request.WorkerId)
+			return writer.Metrics, parentProtocolFailure(request.WorkerID)
 		}
 		readers.Add(1)
-		go readWorkerFrames(lifetime, request.WorkerId, worker.child, events, &readers)
+		go readWorkerFrames(lifetime, request.WorkerID, worker.child, events, &readers)
 	}
 	err := superviseWorkerFrames(ctx, writer, children, events, heartbeatInterval)
 	return writer.Metrics, err
@@ -106,7 +106,7 @@ func prepareWorkerRequestDirectory(directory string) error {
 
 // launchOwnedWorker removes its request on failure and returns ownership before bootstrap writing.
 func launchOwnedWorker(ctx context.Context, request WorkerRequest, config WorkerProcessConfig, launcher workerLauncher) (ownedWorker, error) {
-	path := filepath.Join(config.RequestDirectory, request.RunId+"-worker-"+strconv.FormatUint(request.WorkerId, 10)+".json")
+	path := filepath.Join(config.RequestDirectory, request.RunID+"-worker-"+strconv.FormatUint(request.WorkerID, 10)+".json")
 	body, err := json.Marshal(request)
 	if err != nil {
 		return ownedWorker{}, err
@@ -116,13 +116,13 @@ func launchOwnedWorker(ctx context.Context, request WorkerRequest, config Worker
 		return ownedWorker{}, err
 	}
 	defer func() { _ = root.Close() }()
-	if err := root.WriteFile(request.RunId+"-worker-"+strconv.FormatUint(request.WorkerId, 10)+".json", body, 0666); err != nil {
+	if err := root.WriteFile(request.RunID+"-worker-"+strconv.FormatUint(request.WorkerID, 10)+".json", body, 0666); err != nil {
 		if err := removeWorkerFile(path); err != nil {
 			slog.Warn("cleanup.failed", "operation", "removeWorkerFile", "error", err)
 		}
 		return ownedWorker{}, err
 	}
-	child, err := launcher(ctx, path, request.WorkerId)
+	child, err := launcher(ctx, path, request.WorkerID)
 	if err != nil {
 		if err := removeWorkerFile(path); err != nil {
 			slog.Warn("cleanup.failed", "operation", "removeWorkerFile", "error", err)
@@ -160,7 +160,7 @@ func superviseWorkerFrames(ctx context.Context, writer *ParentWriter, children [
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if err := storage.HeartbeatLease(ctx, writer.control, writer.context.CatalogName, writer.context.ProviderName, writer.context.RunId, time.Now().Unix()); err != nil {
+			if err := storage.HeartbeatLease(ctx, writer.control, writer.context.CatalogName, writer.context.ProviderName, writer.context.RunID, time.Now().Unix()); err != nil {
 				return err
 			}
 		case event := <-events:

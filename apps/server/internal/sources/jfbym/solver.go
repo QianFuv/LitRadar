@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	// ApiUrl is the verified upstream custom recognition endpoint.
-	ApiUrl = "https://api.jfbym.com/api/YmServer/customApi"
+	// APIURL is the verified upstream custom recognition endpoint.
+	APIURL = "https://api.jfbym.com/api/YmServer/customApi"
 	// DualSliderType identifies the CNKI blockPuzzle solver.
 	DualSliderType = "20111"
 	// SuccessCode is the exact integer recognition-success discriminator.
@@ -92,7 +92,7 @@ type Live struct {
 	client           *http.Client
 	requestTimeout   time.Duration
 	deadline         time.Time
-	apiUrl, typeCode string
+	apiURL, typeCode string
 }
 
 // NewLive preserves a minimum one-second HTTP timeout and a shared optional article deadline.
@@ -104,7 +104,7 @@ func NewLive(token string, timeoutSeconds uint64, proxy transport.Proxy, deadlin
 	if err != nil {
 		return nil, failure(Request, err.Error())
 	}
-	return &Live{token: token, client: &http.Client{Transport: wire, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, requestTimeout: (transport.Delay{Seconds: max(timeoutSeconds, 1)}).Duration(), deadline: deadline, apiUrl: ApiUrl, typeCode: DualSliderType}, nil
+	return &Live{token: token, client: &http.Client{Transport: wire, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, requestTimeout: (transport.Delay{Seconds: max(timeoutSeconds, 1)}).Duration(), deadline: deadline, apiURL: APIURL, typeCode: DualSliderType}, nil
 }
 
 // Close releases idle sockets owned by this solver.
@@ -136,7 +136,7 @@ func (solver *Live) SolveDualImage(ctx context.Context, slideImage, backgroundIm
 	}
 	requestContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	request, err := http.NewRequestWithContext(requestContext, http.MethodPost, solver.apiUrl, bytes.NewReader(payload))
+	request, err := http.NewRequestWithContext(requestContext, http.MethodPost, solver.apiURL, bytes.NewReader(payload))
 	if err != nil {
 		return 0, failure(Request, "jfbym request could not be constructed")
 	}
@@ -152,8 +152,8 @@ func (solver *Live) SolveDualImage(ctx context.Context, slideImage, backgroundIm
 	return recognitionDistance(response)
 }
 
-// StripDataUrlBase64 removes an optional case-insensitive data-URL prefix.
-func StripDataUrlBase64(value string) string {
+// StripDataURLBase64 removes an optional case-insensitive data-URL prefix.
+func StripDataURLBase64(value string) string {
 	value = strings.TrimSpace(value)
 	if len(value) >= 5 && strings.EqualFold(value[:5], "data:") {
 		if _, payload, hasComma := strings.Cut(value, ","); hasComma {
@@ -163,8 +163,8 @@ func StripDataUrlBase64(value string) string {
 	return value
 }
 
-// EncryptPointJson preserves AES-128 ECB/PKCS7 and the exact compact x-then-y JSON payload.
-func EncryptPointJson(secretKey string, x, y int32) (string, error) {
+// EncryptPointJSON preserves AES-128 ECB/PKCS7 and the exact compact x-then-y JSON payload.
+func EncryptPointJSON(secretKey string, x, y int32) (string, error) {
 	if len(secretKey) != 16 {
 		return "", failure(InvalidResponse, fmt.Sprintf("captcha secretKey must be 16 bytes, got %d", len(secretKey)))
 	}
@@ -278,7 +278,7 @@ func PointXCandidates(rawDistance float64) ([]int32, error) {
 
 // recognitionDistance preserves bounded JSON error classes and exact recognition code diagnostics.
 func recognitionDistance(response *http.Response) (float64, error) {
-	body, err := transport.BoundedJson(response, maximumResponse)
+	body, err := transport.BoundedJSON(response, maximumResponse)
 	if err != nil {
 		switch err {
 		case transport.ErrTooLarge:
@@ -302,8 +302,8 @@ func recognitionDistance(response *http.Response) (float64, error) {
 
 // prepareDualImages strips data prefixes before requiring both recognition images.
 func prepareDualImages(slideImage, backgroundImage string) (string, string, error) {
-	slideImage = StripDataUrlBase64(slideImage)
-	backgroundImage = StripDataUrlBase64(backgroundImage)
+	slideImage = StripDataURLBase64(slideImage)
+	backgroundImage = StripDataURLBase64(backgroundImage)
 	if slideImage == "" || backgroundImage == "" {
 		return "", "", failure(InvalidResponse, "jfbym dual-image solve requires slide and background images")
 	}

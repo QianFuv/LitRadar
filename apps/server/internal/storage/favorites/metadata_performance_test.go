@@ -46,7 +46,7 @@ func metadataBenchmarkFixture(t testing.TB, count, groups int) (config.Config, [
 		if index%groups != 0 {
 			name = "second"
 		}
-		references[index] = Reference{identity.Id(2000 + count - index), name}
+		references[index] = Reference{identity.ID(2000 + count - index), name}
 	}
 	return configuration, references
 }
@@ -66,7 +66,7 @@ func TestMetadataGroupMapsPreserveOrderAndPerCallOwnership(t *testing.T) {
 		t.Fatal("metadata lost references", len(items), len(records), err)
 	}
 	for index, title := range []string{"metadata article 1", "second article 1", "metadata article 1"} {
-		if items[index].Title == nil || *items[index].Title != title || items[index].Note != fmt.Sprint(index) || records[index].Title == nil || *records[index].Title != title || records[index].DbName != references[index].DbName {
+		if items[index].Title == nil || *items[index].Title != title || items[index].Note != fmt.Sprint(index) || records[index].Title == nil || *records[index].Title != title || records[index].DBName != references[index].DBName {
 			t.Fatal("metadata group ownership or request order changed", index, items[index], records[index])
 		}
 	}

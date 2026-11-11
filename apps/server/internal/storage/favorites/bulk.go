@@ -22,7 +22,7 @@ func uniqueReferences(items []Reference) []Reference {
 	result := []Reference{}
 	seen := map[Reference]bool{}
 	for _, item := range items {
-		if item.ArticleId > 0 && !seen[item] {
+		if item.ArticleID > 0 && !seen[item] {
 			seen[item] = true
 			result = append(result, item)
 		}
@@ -31,7 +31,7 @@ func uniqueReferences(items []Reference) []Reference {
 }
 
 // BulkAdd validates the entire submitted batch before atomically inserting new references.
-func (repository *Repository) BulkAdd(ctx context.Context, owner identity.Id, folder int64, items []Add) (int64, error) {
+func (repository *Repository) BulkAdd(ctx context.Context, owner identity.ID, folder int64, items []Add) (int64, error) {
 	if err := positive("folder_id", folder); err != nil {
 		return 0, err
 	}
@@ -59,7 +59,7 @@ func (repository *Repository) BulkAdd(ctx context.Context, owner identity.Id, fo
 		}()
 		now := nowSeconds()
 		for _, item := range items {
-			result, err := statement.ExecContext(ctx, owner, folder, item.ArticleId, item.DbName, item.Note, now)
+			result, err := statement.ExecContext(ctx, owner, folder, item.ArticleID, item.DBName, item.Note, now)
 			if err != nil {
 				return err
 			}
@@ -78,7 +78,7 @@ func (repository *Repository) BulkAdd(ctx context.Context, owner identity.Id, fo
 }
 
 // BulkRemove treats an empty validated batch as a no-op before opening the repository.
-func (repository *Repository) BulkRemove(ctx context.Context, owner identity.Id, folder int64, items []Reference) (int64, error) {
+func (repository *Repository) BulkRemove(ctx context.Context, owner identity.ID, folder int64, items []Reference) (int64, error) {
 	if err := positive("folder_id", folder); err != nil {
 		return 0, err
 	}
@@ -109,7 +109,7 @@ func (repository *Repository) BulkRemove(ctx context.Context, owner identity.Id,
 			}
 		}()
 		for _, item := range items {
-			result, err := statement.ExecContext(ctx, owner, folder, item.ArticleId, item.DbName)
+			result, err := statement.ExecContext(ctx, owner, folder, item.ArticleID, item.DBName)
 			if err != nil {
 				return err
 			}
@@ -128,7 +128,7 @@ func (repository *Repository) BulkRemove(ctx context.Context, owner identity.Id,
 }
 
 // BulkMove copies notes then counts all source deletions, including references already in the target.
-func (repository *Repository) BulkMove(ctx context.Context, owner identity.Id, source, target int64, items []Reference) (int64, error) {
+func (repository *Repository) BulkMove(ctx context.Context, owner identity.ID, source, target int64, items []Reference) (int64, error) {
 	if err := positive("source_folder_id", source); err != nil {
 		return 0, err
 	}
@@ -169,7 +169,7 @@ func (repository *Repository) BulkMove(ctx context.Context, owner identity.Id, s
 		}()
 		now := nowSeconds()
 		for _, item := range items {
-			if _, err := insert.ExecContext(ctx, target, now, owner, source, item.ArticleId, item.DbName); err != nil {
+			if _, err := insert.ExecContext(ctx, target, now, owner, source, item.ArticleID, item.DBName); err != nil {
 				return err
 			}
 		}
@@ -194,7 +194,7 @@ func (repository *Repository) BulkMove(ctx context.Context, owner identity.Id, s
 			}
 		}()
 		for _, item := range items {
-			if _, err := remove.ExecContext(ctx, owner, source, item.ArticleId, item.DbName); err != nil {
+			if _, err := remove.ExecContext(ctx, owner, source, item.ArticleID, item.DBName); err != nil {
 				return err
 			}
 		}
@@ -215,24 +215,24 @@ func (repository *Repository) BulkMove(ctx context.Context, owner identity.Id, s
 
 // Membership identifies an owned folder containing a database-qualified article.
 type Membership struct {
-	FolderId   int64  `json:"folder_id" nullable:"false" format:"int64"`
+	FolderID   int64  `json:"folder_id" nullable:"false" format:"int64"`
 	FolderName string `json:"folder_name" nullable:"false"`
 }
 
 // BatchMembership retains first-occurrence request ordering after filtering nonpositive identifiers.
 type BatchMembership struct {
-	ArticleId identity.Id  `json:"article_id" nullable:"false"`
+	ArticleID identity.ID  `json:"article_id" nullable:"false"`
 	Folders   []Membership `json:"folders" nullable:"false"`
 }
 
 // IsFavorited returns all owned memberships for one exact reference.
-func (repository *Repository) IsFavorited(ctx context.Context, owner identity.Id, item Reference) ([]Membership, error) {
+func (repository *Repository) IsFavorited(ctx context.Context, owner identity.ID, item Reference) ([]Membership, error) {
 	if err := validateReference(item); err != nil {
 		return nil, err
 	}
 	result := []Membership{}
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
-		rows, err := queries.Memberships(ctx, connection, favoritesdb.MembershipsParams{UserID: storage.Integer(owner), ArticleID: storage.Integer(item.ArticleId), DBName: storage.Text(item.DbName)})
+		rows, err := queries.Memberships(ctx, connection, favoritesdb.MembershipsParams{UserID: storage.Integer(owner), ArticleID: storage.Integer(item.ArticleID), DBName: storage.Text(item.DBName)})
 		if err != nil {
 			return err
 		}
@@ -245,7 +245,7 @@ func (repository *Repository) IsFavorited(ctx context.Context, owner identity.Id
 }
 
 // BatchIsFavorited checks at most 500 raw identifiers and ignores repeated or nonpositive entries.
-func (repository *Repository) BatchIsFavorited(ctx context.Context, owner identity.Id, ids []int64, name string) ([]BatchMembership, error) {
+func (repository *Repository) BatchIsFavorited(ctx context.Context, owner identity.ID, ids []int64, name string) ([]BatchMembership, error) {
 	if err := itemCount("article_ids", len(ids)); err != nil {
 		return nil, err
 	}
@@ -258,7 +258,7 @@ func (repository *Repository) BatchIsFavorited(ctx context.Context, owner identi
 	for _, id := range ids {
 		if _, exists := positions[id]; id > 0 && !exists {
 			positions[id] = len(result)
-			result = append(result, BatchMembership{identity.Id(id), []Membership{}})
+			result = append(result, BatchMembership{identity.ID(id), []Membership{}})
 			values = append(values, id)
 		}
 	}

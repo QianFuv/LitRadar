@@ -43,13 +43,13 @@ func DefaultRefreshOptions() RefreshOptions {
 }
 
 type LiveTransport struct {
-	http           *HttpTransport
+	http           *HTTPTransport
 	options        RefreshOptions
 	hasUsedObscura atomic.Bool
 }
 
 func NewLiveTransport(options RefreshOptions) *LiveTransport {
-	return &LiveTransport{http: NewHttpTransport(), options: options}
+	return &LiveTransport{http: NewHTTPTransport(), options: options}
 }
 func (transport *LiveTransport) Close() { transport.http.Close() }
 func check(ctx context.Context, deadline time.Time) error {
@@ -105,13 +105,13 @@ func (transport *LiveTransport) httpDocument(ctx context.Context, config SourceC
 		if strings.TrimSpace(string(data)) == "" {
 			return Document{}, ErrUnrecognized
 		}
-		return Document{FinalUrl: response.FinalUrl, Text: string(data), Format: "pdf_text"}, nil
+		return Document{FinalURL: response.FinalURL, Text: string(data), Format: "pdf_text"}, nil
 	}
 	text, err := DecodeBody(response.Bytes, response.ContentType)
 	if err != nil {
 		return Document{}, err
 	}
-	return Document{FinalUrl: response.FinalUrl, Text: text, Format: "html"}, nil
+	return Document{FinalURL: response.FinalURL, Text: text, Format: "html"}, nil
 }
 
 // obscuraDocument consumes one browser attempt after cancellation and deadline admission.
@@ -151,7 +151,7 @@ func decodeObscura(config SourceConfig, data []byte) (Document, error) {
 	if len(data) > MaxPageBytes {
 		return Document{}, ErrTooLarge
 	}
-	if !jsonvalue.ValidJson(string(data)) {
+	if !jsonvalue.ValidJSON(string(data)) {
 		return Document{}, ErrHelper
 	}
 	fields, err := decodeObscuraObject(data)
@@ -162,10 +162,10 @@ func decodeObscura(config SourceConfig, data []byte) (Document, error) {
 		return Document{}, ErrUnrecognized
 	}
 	location, err := whatwg.NewParser().Parse(fields[1])
-	if err != nil || !config.PermitsUrl(location) {
-		return Document{}, ErrDisallowedUrl
+	if err != nil || !config.PermitsURL(location) {
+		return Document{}, ErrDisallowedURL
 	}
-	return Document{FinalUrl: fields[1], Text: fields[2], Format: "html"}, nil
+	return Document{FinalURL: fields[1], Text: fields[2], Format: "html"}, nil
 }
 
 func canRender(err error, includesDeadline bool) bool {
@@ -182,8 +182,8 @@ func (transport *LiveTransport) Fetch(ctx context.Context, config SourceConfig, 
 		return Document{}, err
 	}
 	document, err := transport.httpDocument(ctx, config, url, deadline)
-	if err == nil && !(document.Format == "pdf_text" && url != config.DiscoveryUrl) {
-		_, err = ParsePage(config, document, utcNow().Format("2006-01-02"), url == config.DiscoveryUrl)
+	if err == nil && (document.Format != "pdf_text" || url == config.DiscoveryURL) {
+		_, err = ParsePage(config, document, utcNow().Format("2006-01-02"), url == config.DiscoveryURL)
 	}
 	if err == nil {
 		return document, nil
@@ -196,7 +196,7 @@ func (transport *LiveTransport) Fetch(ctx context.Context, config SourceConfig, 
 	if err != nil {
 		return Document{}, err
 	}
-	_, err = ParsePage(config, document, utcNow().Format("2006-01-02"), url == config.DiscoveryUrl)
+	_, err = ParsePage(config, document, utcNow().Format("2006-01-02"), url == config.DiscoveryURL)
 	if errors.Is(err, ErrUnsupported) {
 		return Document{}, originalError
 	}
@@ -278,13 +278,13 @@ func obscuraEnvironment() []string {
 func decodeObscuraObject(data []byte) ([]string, error) {
 	var document struct {
 		Protocol string `json:"protocol"`
-		FinalUrl string `json:"finalUrl"`
-		Html     string `json:"html"`
+		FinalURL string `json:"finalUrl"`
+		HTML     string `json:"html"`
 	}
 	if jsonobject.Decode(data, &document) != nil {
 		return nil, ErrHelper
 	}
-	return []string{document.Protocol, document.FinalUrl, document.Html}, nil
+	return []string{document.Protocol, document.FinalURL, document.HTML}, nil
 }
 
 // waitForHelper retains tree ownership and gives close failure priority over acquisition errors.

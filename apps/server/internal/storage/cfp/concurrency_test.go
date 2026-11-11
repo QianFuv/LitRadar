@@ -19,10 +19,10 @@ func TestConcurrentSeedAndGenerationFencing(t *testing.T) {
 	if _, err := migration.Migrate(ctx, path); err != nil {
 		t.Fatal(err)
 	}
-	source := domain.Source{CatalogIds: []string{"a"}, JournalTitle: "Original Journal", Title: "Original topic", TypeText: "Special Issue", DateText: "Submission deadline: 31 December 2026", SourceUrl: "https://example.org/cfp", CheckedOn: "2026-09-15"}
+	source := domain.Source{CatalogIds: []string{"a"}, JournalTitle: "Original Journal", Title: "Original topic", TypeText: "Special Issue", DateText: "Submission deadline: 31 December 2026", SourceURL: "https://example.org/cfp", CheckedOn: "2026-09-15"}
 	payload := concurrentSeedPayload(t, source)
 	repositories := []*Repository{}
-	for index := 0; index < 8; index++ {
+	for range 8 {
 		repository, err := Open(path)
 		if err != nil {
 			t.Fatal(err)
@@ -48,7 +48,7 @@ func TestConcurrentSeedAndGenerationFencing(t *testing.T) {
 	}
 	workers.Wait()
 	assertUniqueConcurrentGenerations(t, leases, failures)
-	publication := Publication{Capture: "complete capture", CaptureFormat: "html", SourceUrl: source.SourceUrl, ConfigVersion: 1, Sources: []domain.Source{source}, EmptyJournals: []domain.EmptyJournal{}}
+	publication := Publication{Capture: "complete capture", CaptureFormat: "html", SourceURL: source.SourceURL, ConfigVersion: 1, Sources: []domain.Source{source}, EmptyJournals: []domain.EmptyJournal{}}
 	for index, repository := range repositories {
 		workers.Go(func() { failures[index] = repository.PublishRefresh(ctx, leases[index], publication, 105) })
 	}
@@ -75,7 +75,7 @@ func TestReadersSeeOnePublicationSnapshot(t *testing.T) {
 			t.Errorf("repository.Close: %v", err)
 		}
 	}()
-	source := domain.Source{CatalogIds: []string{"a"}, JournalTitle: "Journal", Title: "Topic", TypeText: "Special Issue", DateText: "Submission deadline: 31 December 2026", SourceUrl: "https://example.org/cfp", CheckedOn: "2026-09-15", Scope: "revision-1"}
+	source := domain.Source{CatalogIds: []string{"a"}, JournalTitle: "Journal", Title: "Topic", TypeText: "Special Issue", DateText: "Submission deadline: 31 December 2026", SourceURL: "https://example.org/cfp", CheckedOn: "2026-09-15", Scope: "revision-1"}
 	payload, _ := json.Marshal(domain.Seed{FormatVersion: 1, Sources: []domain.Source{source}, EmptyJournals: []domain.EmptyJournal{}})
 	if _, err = repository.ImportSeed(ctx, "fixture", payload); err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func TestReadersSeeOnePublicationSnapshot(t *testing.T) {
 				return
 			}
 			source.Scope = fmt.Sprintf("revision-%d", revision)
-			err = repository.PublishRefresh(ctx, lease, Publication{Capture: source.Scope, CaptureFormat: "html", SourceUrl: source.SourceUrl, ConfigVersion: 1, Sources: []domain.Source{source}, EmptyJournals: []domain.EmptyJournal{}}, 105)
+			err = repository.PublishRefresh(ctx, lease, Publication{Capture: source.Scope, CaptureFormat: "html", SourceURL: source.SourceURL, ConfigVersion: 1, Sources: []domain.Source{source}, EmptyJournals: []domain.EmptyJournal{}}, 105)
 			if err != nil {
 				finished <- err
 				return
@@ -97,7 +97,7 @@ func TestReadersSeeOnePublicationSnapshot(t *testing.T) {
 		}
 		finished <- nil
 	}()
-	for index := 0; index < 60; index++ {
+	for range 60 {
 		journals, err := repository.LoadJournals(ctx)
 		if err != nil {
 			t.Fatal(err)

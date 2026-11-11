@@ -11,11 +11,11 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/jsonobject"
 )
 
-var errContractJson = errors.New("invalid canonical provider contract JSON")
+var errContractJSON = errors.New("invalid canonical provider contract JSON")
 
 func decodeContractStruct(data []byte, target any) error {
 	if err := jsonobject.Decode(data, target); err != nil {
-		return errContractJson
+		return errContractJSON
 	}
 	return nil
 }
@@ -152,27 +152,27 @@ func (value ProviderBatch) MarshalJSON() ([]byte, error) {
 func (value *IndexSyncMode) UnmarshalJSON(data []byte) error {
 	var decoded string
 	if jsonv2.Unmarshal(data, &decoded) != nil {
-		return errContractJson
+		return errContractJSON
 	}
 	switch IndexSyncMode(decoded) {
 	case Bootstrap, Incremental, FullRescan:
 		*value = IndexSyncMode(decoded)
 		return nil
 	}
-	return errContractJson
+	return errContractJSON
 }
 
 // UnmarshalJSON enforces variant-specific fields and required continuation checkpoints.
 func (value *ProviderProgress) UnmarshalJSON(data []byte) error {
 	if !jsontext.Value(data).IsValid() {
-		return errContractJson
+		return errContractJSON
 	}
 	data = bytes.TrimSpace(data)
 	var selector struct {
 		State string `json:"state"`
 	}
 	if jsonv2.Unmarshal(data, &selector) != nil {
-		return errContractJson
+		return errContractJSON
 	}
 	switch ProgressState(selector.State) {
 	case Continue:
@@ -196,7 +196,7 @@ func (value *ProviderProgress) UnmarshalJSON(data []byte) error {
 		*value = ProviderProgress{State: Complete, NextAnchor: wire.NextAnchor}
 		return nil
 	default:
-		return errContractJson
+		return errContractJSON
 	}
 }
 
@@ -205,7 +205,7 @@ func (value ProviderProgress) MarshalJSON() ([]byte, error) {
 	switch value.State {
 	case Continue:
 		if value.Checkpoint == nil || value.NextAnchor != nil {
-			return nil, errContractJson
+			return nil, errContractJSON
 		}
 		return jsonv2.Marshal(struct {
 			State      ProgressState `json:"state"`
@@ -213,13 +213,13 @@ func (value ProviderProgress) MarshalJSON() ([]byte, error) {
 		}{value.State, *value.Checkpoint})
 	case Complete:
 		if value.Checkpoint != nil {
-			return nil, errContractJson
+			return nil, errContractJSON
 		}
 		return jsonv2.Marshal(struct {
 			State      ProgressState `json:"state"`
 			NextAnchor *string       `json:"next_anchor,omitempty"`
 		}{value.State, value.NextAnchor})
 	default:
-		return nil, errContractJson
+		return nil, errContractJSON
 	}
 }

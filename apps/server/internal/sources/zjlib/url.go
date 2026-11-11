@@ -98,7 +98,7 @@ func queryDict(value string) (map[string]string, error) {
 	}
 	return result, nil
 }
-func titleFromPdfUrl(value string) *string {
+func titleFromPdfURL(value string) *string {
 	query, err := queryDict(value)
 	if err != nil {
 		return nil
@@ -126,7 +126,7 @@ func parseSearchResults(text, base string, allowed endpoints) ([]SearchResult, e
 		if !strings.Contains(asciiLower(anchor.href), "/kns55/detail/detail.aspx") {
 			continue
 		}
-		detail, err := allowed.join(base, decodeHtml(anchor.href), proxyFamily)
+		detail, err := allowed.join(base, decodeHTML(anchor.href), proxyFamily)
 		if err != nil {
 			return nil, err
 		}
@@ -143,11 +143,11 @@ func parseSearchResults(text, base string, allowed endpoints) ([]SearchResult, e
 	}
 	return results, nil
 }
-func extractDownloadUrl(text, base string, allowed endpoints, requirePdf bool) (*string, error) {
+func extractDownloadURL(text, base string, allowed endpoints, requirePdf bool) (*string, error) {
 	for _, anchor := range anchorLinks(text) {
 		href := anchor.href
 		if requirePdf {
-			href = decodeHtml(href)
+			href = decodeHTML(href)
 		}
 		lower := asciiLower(href)
 		if !strings.Contains(lower, "download.aspx") {
@@ -157,7 +157,7 @@ func extractDownloadUrl(text, base string, allowed endpoints, requirePdf bool) (
 			continue
 		}
 		if !requirePdf {
-			href = decodeHtml(href)
+			href = decodeHTML(href)
 		}
 		value, err := allowed.join(base, href, proxyFamily)
 		if err != nil {
@@ -194,22 +194,22 @@ func buildSearchResult(anchor anchorLink, detail, row, base string, allowed endp
 		if value, ok := query["FileName"]; ok {
 			title = &value
 		} else {
-			title = pointer("result-" + strconv.Itoa(index))
+			title = new("result-" + strconv.Itoa(index))
 		}
 	}
-	download, err := extractDownloadUrl(row, base, allowed, false)
+	download, err := extractDownloadURL(row, base, allowed, false)
 	if err != nil {
 		return SearchResult{}, err
 	}
-	result := SearchResult{Index: uint64(index), Title: *title, DetailUrl: detail, DownloadUrl: download}
+	result := SearchResult{Index: uint64(index), Title: *title, DetailURL: detail, DownloadURL: download}
 	if value, ok := query["FileName"]; ok {
 		result.FileName = &value
 	}
 	if value, ok := query["DbName"]; ok {
-		result.DbName = &value
+		result.DBName = &value
 	}
 	if value, ok := query["DbCode"]; ok {
-		result.DbCode = &value
+		result.DBCode = &value
 	}
 	return result, nil
 }

@@ -12,10 +12,10 @@ func TestAdministratorUserListIncludesAccountIdentity(t *testing.T) {
 	auth, router, token, member, _ := adminFixture(t)
 	ctx := context.Background()
 	err := auth.repository.WithConnection(ctx, func(connection *sql.Conn) error {
-		if _, err := connection.ExecContext(ctx, "UPDATE users SET email='sso@example.test',auth_kind='oidc' WHERE id=?", member.Id); err != nil {
+		if _, err := connection.ExecContext(ctx, "UPDATE users SET email='sso@example.test',auth_kind='oidc' WHERE id=?", member.ID); err != nil {
 			return err
 		}
-		_, err := connection.ExecContext(ctx, "INSERT INTO user_identities(user_id,issuer,subject,created_at,last_login_at) VALUES(?,'https://identity.example.test','member',1,1)", member.Id)
+		_, err := connection.ExecContext(ctx, "INSERT INTO user_identities(user_id,issuer,subject,created_at,last_login_at) VALUES(?,'https://identity.example.test','member',1,1)", member.ID)
 		return err
 	})
 	if err != nil {

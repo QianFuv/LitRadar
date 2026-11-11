@@ -44,26 +44,26 @@ func DeduplicateCandidates(candidates []storage.ArticleCandidate) []storage.Arti
 	result := []storage.ArticleCandidate{}
 	seen := map[int64]bool{}
 	for _, candidate := range candidates {
-		if !seen[candidate.ArticleId] {
-			seen[candidate.ArticleId] = true
+		if !seen[candidate.ArticleID] {
+			seen[candidate.ArticleID] = true
 			result = append(result, candidate)
 		}
 	}
 	return result
 }
 
-// CandidatesById preserves the last duplicate, matching the original ordered-map collection.
-func CandidatesById(candidates []storage.ArticleCandidate) map[int64]storage.ArticleCandidate {
+// CandidatesByID preserves the last duplicate, matching the original ordered-map collection.
+func CandidatesByID(candidates []storage.ArticleCandidate) map[int64]storage.ArticleCandidate {
 	result := make(map[int64]storage.ArticleCandidate, len(candidates))
 	for _, candidate := range candidates {
-		result[candidate.ArticleId] = candidate
+		result[candidate.ArticleID] = candidate
 	}
 	return result
 }
 
 // DeliveryKey identifies one subscriber/article dedupe reservation.
-func DeliveryKey(subscriber domain.Subscriber, articleId int64) string {
-	return subscriber.SubscriberId + ":" + strconv.FormatInt(articleId, 10)
+func DeliveryKey(subscriber domain.Subscriber, articleID int64) string {
+	return subscriber.SubscriberID + ":" + strconv.FormatInt(articleID, 10)
 }
 
 // ApplySelectionRules filters stale and delivered identifiers, supplements matching candidates, and stably ranks at most twenty entries.
@@ -95,41 +95,41 @@ func ApplySelectionRules(result domain.SelectionResult, subscriber domain.Subscr
 		return score
 	}
 	matchScores := map[int64]int64{}
-	matchScore := func(articleId int64) int64 {
-		if score, exists := matchScores[articleId]; exists {
+	matchScore := func(articleID int64) int64 {
+		if score, exists := matchScores[articleID]; exists {
 			return score
 		}
-		score := scoreCandidate(candidates[articleId])
-		matchScores[articleId] = score
+		score := scoreCandidate(candidates[articleID])
+		matchScores[articleID] = score
 		return score
 	}
-	isDelivered := func(articleId int64) bool { _, exists := dedupe[DeliveryKey(subscriber, articleId)]; return exists }
+	isDelivered := func(articleID int64) bool { _, exists := dedupe[DeliveryKey(subscriber, articleID)]; return exists }
 	for _, selection := range result.Selections {
-		candidate, exists := candidates[selection.ArticleId]
-		if !exists || isDelivered(candidate.ArticleId) {
+		candidate, exists := candidates[selection.ArticleID]
+		if !exists || isDelivered(candidate.ArticleID) {
 			continue
 		}
 		eligible = append(eligible, selection)
-		selected[selection.ArticleId] = true
+		selected[selection.ArticleID] = true
 	}
 	if len(eligible) < MaxArticlesPerPush && HasSelectionPreferences(subscriber) {
 		supplemental := []domain.RankedSelection{}
-		for articleId, candidate := range candidates {
-			if selected[candidate.ArticleId] || isDelivered(candidate.ArticleId) {
+		for articleID, candidate := range candidates {
+			if selected[candidate.ArticleID] || isDelivered(candidate.ArticleID) {
 				continue
 			}
 			if score := scoreCandidate(candidate); score > 0 {
-				matchScores[articleId] = score
-				supplemental = append(supplemental, domain.RankedSelection{ArticleId: candidate.ArticleId})
+				matchScores[articleID] = score
+				supplemental = append(supplemental, domain.RankedSelection{ArticleID: candidate.ArticleID})
 			}
 		}
 		slices.SortFunc(supplemental, func(first, second domain.RankedSelection) int {
-			return cmp.Or(cmp.Compare(matchScore(second.ArticleId), matchScore(first.ArticleId)), cmp.Compare(second.ArticleId, first.ArticleId))
+			return cmp.Or(cmp.Compare(matchScore(second.ArticleID), matchScore(first.ArticleID)), cmp.Compare(second.ArticleID, first.ArticleID))
 		})
 		eligible = append(eligible, supplemental...)
 	}
 	slices.SortStableFunc(eligible, func(first, second domain.RankedSelection) int {
-		return cmp.Or(cmp.Compare(matchScore(second.ArticleId), matchScore(first.ArticleId)), cmp.Compare(orderedScore(second.Score), orderedScore(first.Score)))
+		return cmp.Or(cmp.Compare(matchScore(second.ArticleID), matchScore(first.ArticleID)), cmp.Compare(orderedScore(second.Score), orderedScore(first.Score)))
 	})
 	if len(eligible) > MaxArticlesPerPush {
 		eligible = eligible[:MaxArticlesPerPush]

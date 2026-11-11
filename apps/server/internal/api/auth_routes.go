@@ -49,7 +49,7 @@ type inviteRequiredResponse struct {
 
 func authOperation[Body any](handlers *authHandlers, request *http.Request, name string, tokenID int64, work func(context.Context, currentIdentity, *domain.AuditEvent) (Body, *apiError)) (*output[Body], error) {
 	request = beginAuthAudit(request)
-	event := domain.AuditEvent{Action: authOperationAction(name), Outcome: "completed", RequestId: requestId(request), OccurredAt: currentTimestamp()}
+	event := domain.AuditEvent{Action: authOperationAction(name), Outcome: "completed", RequestID: requestID(request), OccurredAt: currentTimestamp()}
 	current, failure := handlers.authenticator.requireUser(request)
 	if failure != nil {
 		return nil, handlers.authOperationFailure(request, event, "authentication_required", failure).problem()
@@ -75,7 +75,7 @@ func authOperation[Body any](handlers *authHandlers, request *http.Request, name
 }
 func bodyAuthOperation[Body any](handlers *authHandlers, request *http.Request, action string, work func(context.Context, *http.Request, *domain.AuditEvent) (Body, *apiError)) (*output[Body], error) {
 	request = beginAuthAudit(request)
-	event := domain.AuditEvent{Action: action, Outcome: "completed", RequestId: requestId(request), OccurredAt: currentTimestamp()}
+	event := domain.AuditEvent{Action: action, Outcome: "completed", RequestID: requestID(request), OccurredAt: currentTimestamp()}
 	payload, failure := work(context.WithoutCancel(request.Context()), request, &event)
 	if failure != nil {
 		return nil, failure.problem()
@@ -100,14 +100,14 @@ func (handlers *authHandlers) routes() []route {
 		typedRoute(openapi.Operation{Method: "GET", Path: "/api/auth/tokens", ID: "get_tokens"}, func(ctx context.Context, input *GetTokensInput) (*output[[]domain.TokenInfo], error) {
 			return authOperation(handlers, input.request, "get_tokens", 0, func(workContext context.Context, current currentIdentity, event *domain.AuditEvent) ([]domain.TokenInfo, *apiError) {
 				return runAuth(input.request, handlers.pool, func() ([]domain.TokenInfo, error) {
-					return handlers.service.ListTokens(workContext, current.authorization.User.Id)
+					return handlers.service.ListTokens(workContext, current.authorization.User.ID)
 				})
 			})
 		}),
 		typedRoute(openapi.Operation{Method: "GET", Path: "/api/auth/invite-code", ID: "get_invite_code"}, func(ctx context.Context, input *GetInviteCodeInput) (*output[nullableBody[domain.InviteResponse]], error) {
 			value, err := authOperation(handlers, input.request, "get_invite_code", 0, func(workContext context.Context, current currentIdentity, event *domain.AuditEvent) (*domain.InviteResponse, *apiError) {
 				return runAuth(input.request, handlers.pool, func() (*domain.InviteResponse, error) {
-					return handlers.service.Invite(workContext, current.authorization.User.Id)
+					return handlers.service.Invite(workContext, current.authorization.User.ID)
 				})
 			})
 			if err != nil {
@@ -118,10 +118,10 @@ func (handlers *authHandlers) routes() []route {
 		typedRoute(openapi.Operation{Method: "POST", Path: "/api/auth/invite-code", ID: "generate_invite_code"}, func(ctx context.Context, input *GenerateInviteCodeInput) (*output[domain.InviteResponse], error) {
 			return authOperation(handlers, input.request, "generate_invite_code", 0, func(workContext context.Context, current currentIdentity, event *domain.AuditEvent) (domain.InviteResponse, *apiError) {
 				value, failure := runAuth(input.request, handlers.pool, func() (domain.InviteResponse, error) {
-					return handlers.service.IssueInvite(workContext, current.authorization.User.Id, false, event)
+					return handlers.service.IssueInvite(workContext, current.authorization.User.ID, false, event)
 				})
 				if failure == nil {
-					event.TargetId = &value.Id
+					event.TargetID = &value.ID
 				}
 				return value, failure
 			})
@@ -129,10 +129,10 @@ func (handlers *authHandlers) routes() []route {
 		typedRoute(openapi.Operation{Method: "POST", Path: "/api/auth/invite-code/rotate", ID: "rotate_invite_code"}, func(ctx context.Context, input *RotateInviteCodeInput) (*output[domain.InviteResponse], error) {
 			return authOperation(handlers, input.request, "rotate_invite_code", 0, func(workContext context.Context, current currentIdentity, event *domain.AuditEvent) (domain.InviteResponse, *apiError) {
 				value, failure := runAuth(input.request, handlers.pool, func() (domain.InviteResponse, error) {
-					return handlers.service.IssueInvite(workContext, current.authorization.User.Id, true, event)
+					return handlers.service.IssueInvite(workContext, current.authorization.User.ID, true, event)
 				})
 				if failure == nil {
-					event.TargetId = &value.Id
+					event.TargetID = &value.ID
 				}
 				return value, failure
 			})
@@ -140,7 +140,7 @@ func (handlers *authHandlers) routes() []route {
 		typedRoute(openapi.Operation{Method: "DELETE", Path: "/api/auth/tokens/{token_id}", ID: "delete_token"}, func(ctx context.Context, input *DeleteTokenInput) (*output[okResponse], error) {
 			return authOperation(handlers, input.request, "delete_token", input.TokenID, func(workContext context.Context, current currentIdentity, event *domain.AuditEvent) (okResponse, *apiError) {
 				changed, failure := runAuth(input.request, handlers.pool, func() (bool, error) {
-					return handlers.service.RevokeTokenId(workContext, current.authorization.User.Id, input.TokenID, *event)
+					return handlers.service.RevokeTokenID(workContext, current.authorization.User.ID, input.TokenID, *event)
 				})
 				if failure != nil {
 					return okResponse{}, failure
@@ -154,7 +154,7 @@ func (handlers *authHandlers) routes() []route {
 		typedRoute(openapi.Operation{Method: "DELETE", Path: "/api/auth/invite-code", ID: "revoke_invite_code"}, func(ctx context.Context, input *RevokeInviteCodeInput) (*output[okResponse], error) {
 			return authOperation(handlers, input.request, "revoke_invite_code", 0, func(workContext context.Context, current currentIdentity, event *domain.AuditEvent) (okResponse, *apiError) {
 				changed, failure := runAuth(input.request, handlers.pool, func() (bool, error) {
-					return handlers.service.RevokeInvite(workContext, current.authorization.User.Id, event)
+					return handlers.service.RevokeInvite(workContext, current.authorization.User.ID, event)
 				})
 				if failure != nil {
 					return okResponse{}, failure
@@ -197,8 +197,8 @@ func (handlers *authHandlers) routes() []route {
 				if failure != nil {
 					return userResponse{}, handlers.reject(request, *event, "registration_failed", failure)
 				}
-				actor := int64(user.Id)
-				event.ActorId = &actor
+				actor := int64(user.ID)
+				event.ActorID = &actor
 				handlers.limiter.clearUsername(registerAttempt, username)
 				return publicUser(user), nil
 			})
@@ -216,8 +216,8 @@ func (handlers *authHandlers) routes() []route {
 				if failure != nil {
 					return nativeLoginResponse{}, handlers.reject(request, *event, "authentication_failed", failure)
 				}
-				actor := int64(session.User.Id)
-				event.ActorId = &actor
+				actor := int64(session.User.ID)
+				event.ActorID = &actor
 				handlers.limiter.clearUsername(loginAttempt, username)
 				return nativeLoginResponse{Token: session.Token, ExpiresAt: session.ExpiresAt, User: publicUser(session.User)}, nil
 			})
@@ -229,11 +229,11 @@ func (handlers *authHandlers) routes() []route {
 					var zero userResponse
 					return zero, handlers.reject(request, *event, "authentication_required", failure)
 				}
-				actor := int64(current.authorization.User.Id)
-				event.ActorId = &actor
+				actor := int64(current.authorization.User.ID)
+				event.ActorID = &actor
 				value, failure := func() (userResponse, *apiError) {
 					user, failure := runAuth(request, handlers.pool, func() (domain.User, error) {
-						return handlers.service.UpdateEmail(workContext, current.authorization.User.Id, input.Body.Email, event)
+						return handlers.service.UpdateEmail(workContext, current.authorization.User.ID, input.Body.Email, event)
 					})
 					return publicUser(user), failure
 				}()
@@ -250,14 +250,14 @@ func (handlers *authHandlers) routes() []route {
 					var zero domain.IssuedToken
 					return zero, handlers.reject(request, *event, "authentication_required", failure)
 				}
-				actor := int64(current.authorization.User.Id)
-				event.ActorId = &actor
+				actor := int64(current.authorization.User.ID)
+				event.ActorID = &actor
 				value, failure := func() (domain.IssuedToken, *apiError) {
 					token, failure := runAuth(request, handlers.pool, func() (domain.IssuedToken, error) {
 						return handlers.service.CreateToken(workContext, current.authorization, input.Body.Name, input.Body.TTL, event)
 					})
 					if failure == nil {
-						event.TargetId = &token.Id
+						event.TargetID = &token.ID
 					}
 					return token, failure
 				}()
@@ -277,11 +277,11 @@ func (handlers *authHandlers) routes() []route {
 					var zero okResponse
 					return zero, handlers.reject(request, *event, "authentication_required", failure)
 				}
-				actor := int64(current.authorization.User.Id)
-				event.ActorId = &actor
+				actor := int64(current.authorization.User.ID)
+				event.ActorID = &actor
 				value, failure := func() (okResponse, *apiError) {
 					changed, failure := runAuth(request, handlers.kdfPool, func() (bool, error) {
-						return handlers.service.ChangePassword(workContext, current.authorization.User.Id, input.Body.OldPassword, input.Body.NewPassword, event)
+						return handlers.service.ChangePassword(workContext, current.authorization.User.ID, input.Body.OldPassword, input.Body.NewPassword, event)
 					})
 					if failure == nil && !changed {
 						failure = &apiError{status: 400, detail: "Old password is incorrect"}
@@ -317,8 +317,8 @@ func (handlers *authHandlers) login(ctx context.Context, input *LoginInput) (*se
 		if failure != nil {
 			return loginResponse{}, handlers.reject(request, *event, "authentication_failed", failure)
 		}
-		actor := int64(session.User.Id)
-		event.ActorId = &actor
+		actor := int64(session.User.ID)
+		event.ActorID = &actor
 		cookie = sessionCookieHeader(session.Token, session.ExpiresAt, currentTimestamp(), handlers.isCookieSecure)
 		handlers.limiter.clearUsername(loginAttempt, username)
 		return loginResponse{User: publicUser(session.User), ExpiresAt: session.ExpiresAt}, nil
@@ -334,19 +334,19 @@ func (handlers *authHandlers) logout(request *http.Request, name string) (*sessi
 		cookies = append(cookies, sessionCookieHeader("", 0, 0, handlers.isCookieSecure))
 	}
 	value, err := authOperation(handlers, request, name, 0, func(workContext context.Context, current currentIdentity, event *domain.AuditEvent) (logoutResponse, *apiError) {
-		actor := int64(current.authorization.User.Id)
+		actor := int64(current.authorization.User.ID)
 		_, failure := runAuth(request, handlers.pool, func() (bool, error) {
 			return retryRevocation(func() (bool, error) {
 				if name == "logout" {
 					return handlers.service.RevokeToken(workContext, current.token, *event)
 				}
-				_, err := handlers.service.RevokeAll(workContext, current.authorization.User.Id, *event)
+				_, err := handlers.service.RevokeAll(workContext, current.authorization.User.ID, *event)
 				return err == nil, err
 			})
 		})
 		if failure != nil {
-			slog.WarnContext(request.Context(), "security.auth.revocation_unconfirmed", "event", "security.auth.revocation_unconfirmed", "component", "security", "action", event.Action, "actor_id", actor, "request_id", event.RequestId)
-			return logoutResponse{}, &apiError{status: 503, detail: "Session revocation could not be confirmed", details: []error{&huma.ErrorDetail{Location: "code", Message: "session_revocation_unconfirmed"}, &huma.ErrorDetail{Location: "request_id", Message: event.RequestId}}}
+			slog.WarnContext(request.Context(), "security.auth.revocation_unconfirmed", "event", "security.auth.revocation_unconfirmed", "component", "security", "action", event.Action, "actor_id", actor, "request_id", event.RequestID)
+			return logoutResponse{}, &apiError{status: 503, detail: "Session revocation could not be confirmed", details: []error{&huma.ErrorDetail{Location: "code", Message: "session_revocation_unconfirmed"}, &huma.ErrorDetail{Location: "request_id", Message: event.RequestID}}}
 		}
 		return logoutResponse{OK: true, UserID: actor}, nil
 	})

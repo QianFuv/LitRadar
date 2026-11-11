@@ -48,7 +48,7 @@ func TestTokenizeClampsTruncatedLeads(t *testing.T) {
 
 // TestTokenizeAllAscii checks every control, digit, letter and punctuation byte.
 func TestTokenizeAllAscii(t *testing.T) {
-	for character := byte(0); character < 128; character++ {
+	for character := range byte(128) {
 		expected := []string{string(character)}
 		if character <= 32 || character == 127 {
 			expected = []string{}

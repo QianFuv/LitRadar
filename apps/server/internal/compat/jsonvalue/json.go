@@ -9,11 +9,11 @@ import (
 	json "encoding/json/v2"
 )
 
-// ValidJson reports whether value is a valid UTF-8 JSON value with unique object names.
-func ValidJson(value string) bool { return jsontext.Value(value).IsValid() }
+// ValidJSON reports whether value is a valid UTF-8 JSON value with unique object names.
+func ValidJSON(value string) bool { return jsontext.Value(value).IsValid() }
 
-// EncodeJson encodes deterministic JSON while retaining the public omitempty field contract.
-func EncodeJson(value any) (string, error) {
+// EncodeJSON encodes deterministic JSON while retaining the public omitempty field contract.
+func EncodeJSON(value any) (string, error) {
 	encoded, err := json.Marshal(value, json.Deterministic(true), jsonv1.OmitEmptyWithLegacySemantics(true))
 	if err != nil {
 		return "", err

@@ -18,7 +18,7 @@ func requireObservedSession(ctx context.Context, connection *sql.Conn, authoriza
 	}
 	var exists bool
 	err := func() error {
-		queryResult, err := queries.ObservedSession(ctx, connection, authdb.ObservedSessionParams{ID: int64(authorization.User.Id), TokenGeneration: authorization.TokenGeneration, TokenHash: *authorization.TokenHash, ExpiresAt: now})
+		queryResult, err := queries.ObservedSession(ctx, connection, authdb.ObservedSessionParams{ID: int64(authorization.User.ID), TokenGeneration: authorization.TokenGeneration, TokenHash: *authorization.TokenHash, ExpiresAt: now})
 		if err != nil {
 			return err
 		}
@@ -40,13 +40,13 @@ func requireObservedSession(ctx context.Context, connection *sql.Conn, authoriza
 func (repository *Repository) CompleteOidc(ctx context.Context, issuer, subject, email, preferredUsername string, link *domain.Authorization, now float64, audit domain.AuditEvent) (domain.Authorization, error) {
 	var result domain.Authorization
 	err := repository.Immediate(ctx, false, func(connection *sql.Conn) error {
-		var owner identity.Id
+		var owner identity.ID
 		lookup := func() error {
 			queryResult, err := queries.IdentityOwner(ctx, connection, authdb.IdentityOwnerParams{Issuer: issuer, Subject: subject})
 			if err != nil {
 				return err
 			}
-			owner = identity.Id(queryResult)
+			owner = identity.ID(queryResult)
 			return nil
 		}()
 		if lookup != nil && !errors.Is(lookup, sql.ErrNoRows) {
@@ -58,7 +58,7 @@ func (repository *Repository) CompleteOidc(ctx context.Context, issuer, subject,
 			}
 			var hasIdentity bool
 			if err := func() error {
-				queryResult, err := queries.HasIdentity(ctx, connection, authdb.HasIdentityParams{UserID: int64(link.User.Id)})
+				queryResult, err := queries.HasIdentity(ctx, connection, authdb.HasIdentityParams{UserID: int64(link.User.ID)})
 				if err != nil {
 					return err
 				}
@@ -70,7 +70,7 @@ func (repository *Repository) CompleteOidc(ctx context.Context, issuer, subject,
 			if lookup == nil || hasIdentity {
 				return domain.ErrAccountConflict
 			}
-			owner = link.User.Id
+			owner = link.User.ID
 			if _, err := queries.CreateIdentity(ctx, connection, authdb.CreateIdentityParams{UserID: int64(owner), Issuer: issuer, Subject: subject, CreatedAt: now, LastLoginAt: now}); err != nil {
 				return err
 			}
@@ -92,7 +92,7 @@ func (repository *Repository) CompleteOidc(ctx context.Context, issuer, subject,
 			}
 			var user domain.User
 			var err error
-			for attempt := 0; attempt < 8; attempt++ {
+			for attempt := range 8 {
 				username := preferredUsername
 				if attempt > 0 || username == "" {
 					username, err = identityUsername()
@@ -108,7 +108,7 @@ func (repository *Repository) CompleteOidc(ctx context.Context, issuer, subject,
 			if err != nil {
 				return err
 			}
-			owner = user.Id
+			owner = user.ID
 			if _, err := queries.SetOIDCEmail(ctx, connection, authdb.SetOIDCEmailParams{Email: new(email), ID: int64(owner)}); err != nil {
 				return err
 			}
@@ -170,7 +170,7 @@ func (repository *Repository) UnlinkOidc(ctx context.Context, authorization doma
 		if err := requireObservedSession(ctx, connection, authorization, now); err != nil {
 			return err
 		}
-		result, err := queries.DeleteIdentity(ctx, connection, authdb.DeleteIdentityParams{UserID: int64(authorization.User.Id)})
+		result, err := queries.DeleteIdentity(ctx, connection, authdb.DeleteIdentityParams{UserID: int64(authorization.User.ID)})
 		if err != nil {
 			return err
 		}
@@ -181,7 +181,7 @@ func (repository *Repository) UnlinkOidc(ctx context.Context, authorization doma
 		if count == 0 {
 			return domain.ErrAccountConflict
 		}
-		credentials, err := decodeCredentials(queries.CredentialsByID(ctx, connection, authdb.CredentialsByIDParams{ID: int64(authorization.User.Id)}))
+		credentials, err := decodeCredentials(queries.CredentialsByID(ctx, connection, authdb.CredentialsByIDParams{ID: int64(authorization.User.ID)}))
 		if err != nil {
 			return err
 		}
@@ -189,7 +189,7 @@ func (repository *Repository) UnlinkOidc(ctx context.Context, authorization doma
 			return ErrUserNotFound
 		}
 		user = credentials.User
-		event := audit.WithIdentity(int64(user.Id), int64(user.Id))
+		event := audit.WithIdentity(int64(user.ID), int64(user.ID))
 		return InsertAudit(ctx, connection, &event)
 	})
 	return user, err

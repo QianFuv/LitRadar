@@ -40,7 +40,7 @@ func TestFavoriteLifecycleOwnerIsolationAndExport(t *testing.T) {
 		if err := json.Unmarshal(response.Body.Bytes(), &folder); err != nil {
 			t.Fatal(err)
 		}
-		return folder.Id
+		return folder.ID
 	}
 	source, target := create("文献"), create("target")
 	path := fmt.Sprintf("/api/favorites/folders/%d", source)
@@ -95,13 +95,13 @@ func TestFavoriteExportRejectsOversizeSnapshotBeforeMetadata(t *testing.T) {
 		t.Fatal(response.Body.String())
 	}
 	err := auth.repository.Immediate(context.Background(), false, func(connection *sql.Conn) error {
-		_, err := connection.ExecContext(context.Background(), "WITH RECURSIVE ids(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM ids WHERE value<10001) INSERT INTO favorites(user_id,folder_id,article_id,db_name,note,created_at) SELECT 1,?,value,'unavailable','',1 FROM ids", folder.Id)
+		_, err := connection.ExecContext(context.Background(), "WITH RECURSIVE ids(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM ids WHERE value<10001) INSERT INTO favorites(user_id,folder_id,article_id,db_name,note,created_at) SELECT 1,?,value,'unavailable','',1 FROM ids", folder.ID)
 		return err
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	response = authRequest(router, "GET", fmt.Sprintf("/api/favorites/folders/%d/export", folder.Id), "", token)
+	response = authRequest(router, "GET", fmt.Sprintf("/api/favorites/folders/%d/export", folder.ID), "", token)
 	if response.Code != 413 || strings.Contains(response.Header().Get("Content-Disposition"), "attachment") || !strings.Contains(response.Body.String(), "10000 items") {
 		t.Fatal(response.Code, response.Header(), response.Body.String())
 	}
@@ -129,7 +129,7 @@ func assertFavoriteOwnerIsolation(t *testing.T, auth *authHandlers, handlers *fa
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreignToken, err := auth.service.CreateTrustedToken(context.Background(), foreign.Id, "foreign", 3600, nil)
+	foreignToken, err := auth.service.CreateTrustedToken(context.Background(), foreign.ID, "foreign", 3600, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,9 +139,9 @@ func assertFavoriteOwnerIsolation(t *testing.T, auth *authHandlers, handlers *fa
 			t.Fatal("foreign access", response.Code, response.Body.String())
 		}
 	}
-	foreignFolder, err := handlers.repository.CreateFolder(context.Background(), foreign.Id, "foreign", false)
+	foreignFolder, err := handlers.repository.CreateFolder(context.Background(), foreign.ID, "foreign", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	require("POST", fmt.Sprintf("/api/favorites/folders/%d/articles", foreignFolder.Id), `{"article_id":"1"}`, 404)
+	require("POST", fmt.Sprintf("/api/favorites/folders/%d/articles", foreignFolder.ID), `{"article_id":"1"}`, 404)
 }

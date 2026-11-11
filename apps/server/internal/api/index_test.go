@@ -95,10 +95,10 @@ func waitForIndexReader(t *testing.T, database *sql.DB) {
 // indexCancellationIdentity creates authentication resources without releasing their outer lifetime.
 func indexCancellationIdentity(t *testing.T, ctx context.Context, configuration config.Config) (*storageauth.Repository, *auth.Service, string) {
 	t.Helper()
-	if _, err := migration.Migrate(ctx, configuration.AuthDbPath); err != nil {
+	if _, err := migration.Migrate(ctx, configuration.AuthDBPath); err != nil {
 		t.Fatal(err)
 	}
-	repository, err := storageauth.Open(configuration.AuthDbPath)
+	repository, err := storageauth.Open(configuration.AuthDBPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func indexCancellationIdentity(t *testing.T, ctx context.Context, configuration 
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := service.CreateTrustedToken(ctx, user.Id, "fixture", 3600, nil)
+	token, err := service.CreateTrustedToken(ctx, user.ID, "fixture", 3600, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

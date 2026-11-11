@@ -40,7 +40,7 @@ type liveState struct {
 	config       LiveConfig
 	deadline     time.Time
 	proxy        transport.Proxy
-	lastBriefUrl *string
+	lastBriefURL *string
 }
 
 // NewLiveTransport creates the production endpoint policy and an independent cookie jar.
@@ -73,7 +73,7 @@ func (live *LiveTransport) leave() { live.state.gate.Release(1) }
 func (live *LiveTransport) Clone() *LiveTransport {
 	_ = live.state.gate.Acquire(context.Background(), 1)
 	defer live.leave()
-	return &LiveTransport{state: &liveState{gate: semaphore.NewWeighted(1), redirect: live.state.redirect, allowed: live.state.allowed, config: live.state.config, deadline: live.state.deadline, proxy: live.state.proxy, lastBriefUrl: cloneString(live.state.lastBriefUrl)}}
+	return &LiveTransport{state: &liveState{gate: semaphore.NewWeighted(1), redirect: live.state.redirect, allowed: live.state.allowed, config: live.state.config, deadline: live.state.deadline, proxy: live.state.proxy, lastBriefURL: cloneString(live.state.lastBriefURL)}}
 }
 
 // Close releases idle pooled connections without discarding session state.
@@ -92,7 +92,7 @@ func (live *LiveTransport) send(ctx context.Context, method, location, body stri
 	finish := func() { _ = response.Body.Close(); cancel() }
 	return response, finish, nil
 }
-func redactUrl(value string) string {
+func redactURL(value string) string {
 	parsed, err := whatwg.NewParser().Parse(value)
 	if err != nil {
 		return "<invalid-url>"
@@ -103,7 +103,7 @@ func redactUrl(value string) string {
 }
 func raiseForStatus(response *http.Response, action string) error {
 	if response.StatusCode >= 400 {
-		return &Error{Kind: "Request", Message: fmt.Sprintf("%s failed with HTTP %d: %s", action, response.StatusCode, redactUrl(response.Request.URL.String()))}
+		return &Error{Kind: "Request", Message: fmt.Sprintf("%s failed with HTTP %d: %s", action, response.StatusCode, redactURL(response.Request.URL.String()))}
 	}
 	return nil
 }
@@ -121,7 +121,7 @@ func jsonPayload(response *http.Response, action string) (any, error) {
 	if err := raiseForStatus(response, action); err != nil {
 		return nil, err
 	}
-	value, err := transport.BoundedJson(response, responseMaximumBytes)
+	value, err := transport.BoundedJSON(response, responseMaximumBytes)
 	if err != nil {
 		switch {
 		case errors.Is(err, transport.ErrTooLarge):

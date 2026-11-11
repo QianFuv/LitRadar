@@ -9,13 +9,13 @@ import (
 
 func TestParentRunMarkerIsUniqueBoundedAndRemovedBeforeDispatch(t *testing.T) {
 	args := arguments{"notify", "--litradar-parent-run-id", "run-123.safe", "--dry-run"}
-	value, err := parentRunId(&args)
+	value, err := parentRunID(&args)
 	if err != nil || value != "run-123.safe" || !reflect.DeepEqual([]string(args), []string{"notify", "--dry-run"}) {
 		t.Fatal(value, args, err)
 	}
 	for _, values := range [][]string{{"--litradar-parent-run-id"}, {"--litradar-parent-run-id", "unsafe/value"}, {"--litradar-parent-run-id", "-bad"}, {"--litradar-parent-run-id", ""}, {"--litradar-parent-run-id", strings.Repeat("x", 129)}, {"--litradar-parent-run-id", "first", "--litradar-parent-run-id", "second"}, {"--help", "--litradar-parent-run-id", "非ASCII"}} {
 		args := arguments(values)
-		if _, err := parentRunId(&args); err == nil {
+		if _, err := parentRunID(&args); err == nil {
 			t.Fatal(values)
 		}
 	}

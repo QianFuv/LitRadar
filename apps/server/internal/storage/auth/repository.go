@@ -23,8 +23,8 @@ import (
 
 var queries authdb.Queries
 
-var ErrUserNotFound = errors.New("User not found")
-var ErrLastAdministrator = errors.New("At least one administrator is required")
+var ErrUserNotFound = errors.New("user not found")
+var ErrLastAdministrator = errors.New("at least one administrator is required")
 
 // AuditFailure preserves retry classification without exposing SQLite details in ordinary messages.
 type AuditFailure struct{ cause error }
@@ -123,7 +123,7 @@ func insertAudit(ctx context.Context, connection *sql.Conn, event *domain.AuditE
 	if !validAudit(event) {
 		return AuditFailure{cause: ErrAuditEvent}
 	}
-	_, err := queries.InsertAudit(ctx, connection, authdb.InsertAuditParams{ActorID: event.ActorId, TargetID: event.TargetId, Action: event.Action, Outcome: event.Outcome, Reason: event.Reason, RequestID: event.RequestId, SourceClass: event.SourceClass, Bucket: event.Bucket, RejectedCount: event.RejectedCount, RetryAfterSeconds: event.RetryAfterSeconds, OccurredAt: event.OccurredAt})
+	_, err := queries.InsertAudit(ctx, connection, authdb.InsertAuditParams{ActorID: event.ActorID, TargetID: event.TargetID, Action: event.Action, Outcome: event.Outcome, Reason: event.Reason, RequestID: event.RequestID, SourceClass: event.SourceClass, Bucket: event.Bucket, RejectedCount: event.RejectedCount, RetryAfterSeconds: event.RetryAfterSeconds, OccurredAt: event.OccurredAt})
 	if err != nil {
 		return AuditFailure{cause: err}
 	}
@@ -132,7 +132,7 @@ func insertAudit(ctx context.Context, connection *sql.Conn, event *domain.AuditE
 
 // validAudit checks symbols, scalar metadata and request bytes in their original order.
 func validAudit(event *domain.AuditEvent) bool {
-	return validAuditSymbols(event) && validAuditScalars(event) && validAuditRequestId(event.RequestId)
+	return validAuditSymbols(event) && validAuditScalars(event) && validAuditRequestID(event.RequestID)
 }
 
 // validAuditSymbols keeps required and optional fixed metadata distinct.
@@ -146,7 +146,7 @@ func validAuditSymbol(value string, shouldAllowEmpty bool) bool {
 		return false
 	}
 	for _, character := range []byte(value) {
-		if !(character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '_') {
+		if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '_' {
 			return false
 		}
 	}
@@ -155,7 +155,7 @@ func validAuditSymbol(value string, shouldAllowEmpty bool) bool {
 
 // validAuditScalars retains optional positive identities and finite unrestricted timestamps.
 func validAuditScalars(event *domain.AuditEvent) bool {
-	return validAuditIdentity(event.ActorId) && validAuditIdentity(event.TargetId) && !math.IsNaN(event.OccurredAt) && !math.IsInf(event.OccurredAt, 0) && len(event.RequestId) <= 128
+	return validAuditIdentity(event.ActorID) && validAuditIdentity(event.TargetID) && !math.IsNaN(event.OccurredAt) && !math.IsInf(event.OccurredAt, 0) && len(event.RequestID) <= 128
 }
 
 // validAuditIdentity allows an omitted identity but requires a positive supplied value.
@@ -163,23 +163,23 @@ func validAuditIdentity(value *int64) bool {
 	return value == nil || *value > 0
 }
 
-// validAuditRequestId permits only the original request correlation alphabet.
-func validAuditRequestId(value string) bool {
+// validAuditRequestID permits only the original request correlation alphabet.
+func validAuditRequestID(value string) bool {
 	for _, character := range []byte(value) {
-		if !isAuditRequestIdByte(character) {
+		if !isAuditRequestIDByte(character) {
 			return false
 		}
 	}
 	return true
 }
 
-// isAuditRequestIdByte recognizes case-sensitive ASCII request metadata without normalization.
-func isAuditRequestIdByte(character byte) bool {
+// isAuditRequestIDByte recognizes case-sensitive ASCII request metadata without normalization.
+func isAuditRequestIDByte(character byte) bool {
 	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '-' || character == '_' || character == '.' || character == ':'
 }
 
 // RequireAdministrator rechecks live authority while the caller owns the write transaction.
-func RequireAdministrator(ctx context.Context, connection *sql.Conn, actor identity.Id) error {
+func RequireAdministrator(ctx context.Context, connection *sql.Conn, actor identity.ID) error {
 	var isAdmin int64
 	err := func() error {
 		row, err := queries.Administrator(ctx, connection, authdb.AdministratorParams{ID: int64(actor)})
@@ -218,11 +218,11 @@ func (repository *Repository) Bootstrap(ctx context.Context, username, passwordH
 		if err != nil {
 			return err
 		}
-		if err := defaultFolder(ctx, connection, user.Id, now); err != nil {
+		if err := defaultFolder(ctx, connection, user.ID, now); err != nil {
 			return err
 		}
 		if audit != nil {
-			copy := audit.WithIdentity(int64(user.Id), int64(user.Id))
+			copy := audit.WithIdentity(int64(user.ID), int64(user.ID))
 			return InsertAudit(ctx, connection, &copy)
 		}
 		return nil
@@ -259,13 +259,13 @@ func (repository *Repository) Register(ctx context.Context, username, passwordHa
 		if err != nil {
 			return err
 		}
-		var inviteId int64
+		var inviteID int64
 		err = func() error {
-			row, err := queries.RedeemInvite(ctx, connection, authdb.RedeemInviteParams{UsedBy: new(int64(user.Id)), UsedAt: new(now), Code: *invite})
+			row, err := queries.RedeemInvite(ctx, connection, authdb.RedeemInviteParams{UsedBy: new(int64(user.ID)), UsedAt: new(now), Code: *invite})
 			if err != nil {
 				return err
 			}
-			inviteId = row
+			inviteID = row
 			return nil
 		}()
 		if errors.Is(err, sql.ErrNoRows) {
@@ -274,27 +274,27 @@ func (repository *Repository) Register(ctx context.Context, username, passwordHa
 		if err != nil {
 			return err
 		}
-		if _, err := queries.RecordInviteUse(ctx, connection, authdb.RecordInviteUseParams{InviteCodeID: inviteId, UserID: new(int64(user.Id)), UsedAt: now}); err != nil {
+		if _, err := queries.RecordInviteUse(ctx, connection, authdb.RecordInviteUseParams{InviteCodeID: inviteID, UserID: new(int64(user.ID)), UsedAt: now}); err != nil {
 			return err
 		}
 		if email != nil {
-			if err := updateEmail(ctx, connection, user.Id, email, now); err != nil {
+			if err := updateEmail(ctx, connection, user.ID, email, now); err != nil {
 				return err
 			}
 			user.Email = email
 		}
-		redemption := (domain.AuditEvent{Action: "invite_redeem", Outcome: "completed", OccurredAt: now}).WithIdentity(int64(user.Id), inviteId)
+		redemption := (domain.AuditEvent{Action: "invite_redeem", Outcome: "completed", OccurredAt: now}).WithIdentity(int64(user.ID), inviteID)
 		if audit != nil {
-			redemption.RequestId = audit.RequestId
+			redemption.RequestID = audit.RequestID
 		}
 		if err := InsertAudit(ctx, connection, &redemption); err != nil {
 			return err
 		}
-		if err := defaultFolder(ctx, connection, user.Id, now); err != nil {
+		if err := defaultFolder(ctx, connection, user.ID, now); err != nil {
 			return err
 		}
 		if audit != nil {
-			copy := audit.WithIdentity(int64(user.Id), int64(user.Id))
+			copy := audit.WithIdentity(int64(user.ID), int64(user.ID))
 			return InsertAudit(ctx, connection, &copy)
 		}
 		return nil
@@ -315,10 +315,10 @@ func insertUser(ctx context.Context, connection *sql.Conn, username, passwordHas
 		return domain.User{}, err
 	}
 	id, err := result.LastInsertId()
-	return domain.User{Id: identity.Id(id), Username: username, IsAdmin: isAdmin, AuthKind: "local"}, err
+	return domain.User{ID: identity.ID(id), Username: username, IsAdmin: isAdmin, AuthKind: "local"}, err
 }
 
-func defaultFolder(ctx context.Context, connection *sql.Conn, user identity.Id, now float64) error {
+func defaultFolder(ctx context.Context, connection *sql.Conn, user identity.ID, now float64) error {
 	_, err := queries.CreateDefaultFolder(ctx, connection, authdb.CreateDefaultFolderParams{UserID: int64(user), Name: "默认收藏", CreatedAt: now, UpdatedAt: now})
 	return err
 }
@@ -330,7 +330,7 @@ func decodeCredentials(row authdb.CredentialsByIDRow, err error) (*domain.Creden
 	if err != nil {
 		return nil, err
 	}
-	return &domain.Credentials{User: domain.User{Id: identity.Id(row.ID), Username: row.Username, IsAdmin: row.IsAdmin != 0, Email: row.Email, AuthKind: row.AuthKind, IsOidcLinked: row.Exists}, PasswordHash: row.PasswordHash, Salt: row.Salt, CreatedAt: row.CreatedAt, TokenGeneration: row.TokenGeneration}, nil
+	return &domain.Credentials{User: domain.User{ID: identity.ID(row.ID), Username: row.Username, IsAdmin: row.IsAdmin != 0, Email: row.Email, AuthKind: row.AuthKind, IsOidcLinked: row.Exists}, PasswordHash: row.PasswordHash, Salt: row.Salt, CreatedAt: row.CreatedAt, TokenGeneration: row.TokenGeneration}, nil
 }
 
 // CredentialsByName preserves SQLite's existing NOCASE username comparison.
@@ -343,8 +343,8 @@ func (repository *Repository) CredentialsByName(ctx context.Context, username st
 	return decodeCredentials(authdb.CredentialsByIDRow(row), err)
 }
 
-// CredentialsById loads the current credential generation for post-work race checks.
-func (repository *Repository) CredentialsById(ctx context.Context, user identity.Id) (*domain.Credentials, error) {
+// CredentialsByID loads the current credential generation for post-work race checks.
+func (repository *Repository) CredentialsByID(ctx context.Context, user identity.ID) (*domain.Credentials, error) {
 	return decodeCredentials(queries.CredentialsByID(ctx, repository.database, authdb.CredentialsByIDParams{ID: int64(user)}))
 }
 
@@ -363,7 +363,7 @@ func (repository *Repository) BootstrapRequired(ctx context.Context) (bool, erro
 }
 
 // SetAdministrator preserves at least one administrator without revoking existing credentials.
-func (repository *Repository) SetAdministrator(ctx context.Context, actor, target identity.Id, isAdmin bool, audit *domain.AuditEvent) error {
+func (repository *Repository) SetAdministrator(ctx context.Context, actor, target identity.ID, isAdmin bool, audit *domain.AuditEvent) error {
 	return repository.Immediate(ctx, false, func(connection *sql.Conn) error {
 		if err := checkAdminTarget(ctx, connection, actor, target, !isAdmin); err != nil {
 			return err
@@ -386,7 +386,7 @@ func (repository *Repository) SetAdministrator(ctx context.Context, actor, targe
 }
 
 // DeleteUser first revokes issued invites, then atomically deletes the account and its owned rows.
-func (repository *Repository) DeleteUser(ctx context.Context, actor, target identity.Id, audit *domain.AuditEvent) error {
+func (repository *Repository) DeleteUser(ctx context.Context, actor, target identity.ID, audit *domain.AuditEvent) error {
 	return repository.Immediate(ctx, false, func(connection *sql.Conn) error {
 		if err := checkAdminTarget(ctx, connection, actor, target, true); err != nil {
 			return err
@@ -411,7 +411,7 @@ func (repository *Repository) DeleteUser(ctx context.Context, actor, target iden
 	})
 }
 
-func checkAdminTarget(ctx context.Context, connection *sql.Conn, actor, target identity.Id, canRemoveAdmin bool) error {
+func checkAdminTarget(ctx context.Context, connection *sql.Conn, actor, target identity.ID, canRemoveAdmin bool) error {
 	if err := RequireAdministrator(ctx, connection, actor); err != nil {
 		return err
 	}

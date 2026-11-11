@@ -87,7 +87,7 @@ func Migrate(ctx context.Context, filename string) (resultValue1 Summary, result
 }
 
 func openMigrationDatabase(filename string) (*sql.DB, error) {
-	dsn, err := platformsqlite.FileUri(filename, "rwc")
+	dsn, err := platformsqlite.FileURI(filename, "rwc")
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +145,7 @@ func migrateStep(ctx context.Context, connection *sql.Conn, version, fromVersion
 }
 
 func applyVersion(ctx context.Context, connection *sql.Conn, version, fromVersion int) error {
-	statements := map[int]string{2: versionTwoSql, 3: versionThreeSql, 4: versionFourSql, 5: versionFiveSql, 6: versionSixSql, 9: versionNineSql, 10: versionTenSql, 11: versionElevenSql, 16: versionSixteenSql, 17: versionSeventeenSql, 18: versionEighteenSql, 21: versionTwentyOneSql, 22: versionTwentyTwoSql, 23: versionTwentyThreeSql}
+	statements := map[int]string{2: versionTwoSQL, 3: versionThreeSQL, 4: versionFourSQL, 5: versionFiveSQL, 6: versionSixSQL, 9: versionNineSQL, 10: versionTenSQL, 11: versionElevenSQL, 16: versionSixteenSQL, 17: versionSeventeenSQL, 18: versionEighteenSQL, 21: versionTwentyOneSQL, 22: versionTwentyTwoSQL, 23: versionTwentyThreeSQL}
 	if statement, exists := statements[version]; exists {
 		return execute(ctx, connection, statement)
 	}
@@ -209,7 +209,7 @@ func addColumn(ctx context.Context, connection *sql.Conn, table, column, stateme
 }
 
 func versionOne(ctx context.Context, connection *sql.Conn) error {
-	if err := execute(ctx, connection, authTablesSql); err != nil {
+	if err := execute(ctx, connection, authTablesSQL); err != nil {
 		return err
 	}
 	names, err := columns(ctx, connection, "users")
@@ -236,7 +236,7 @@ func versionOne(ctx context.Context, connection *sql.Conn) error {
 	if err := addColumn(ctx, connection, "announcements", "priority", "ALTER TABLE announcements ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'"); err != nil {
 		return err
 	}
-	return execute(ctx, connection, authIndexesSql)
+	return execute(ctx, connection, authIndexesSQL)
 }
 
 func nowSeconds() float64 { return float64(time.Now().UnixNano()) / 1e9 }
@@ -258,7 +258,7 @@ func versionTwenty(ctx context.Context, connection *sql.Conn) error {
 	if err := connection.QueryRowContext(ctx, "SELECT COALESCE(MAX(seq), 0) FROM sqlite_sequence WHERE name = 'scheduled_task_runs'").Scan(&sequence); err != nil {
 		return err
 	}
-	if err := execute(ctx, connection, versionTwentySql); err != nil {
+	if err := execute(ctx, connection, versionTwentySQL); err != nil {
 		return err
 	}
 	if err := execute(ctx, connection, "UPDATE sqlite_sequence SET seq = MAX(seq, ?1) WHERE name = 'scheduled_task_runs'", sequence); err != nil {

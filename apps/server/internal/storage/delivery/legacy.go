@@ -69,10 +69,10 @@ func legacyPair(value string) (int64, int64, error) {
 }
 
 func validateLegacy(name string, state legacyState) error {
-	if err := validateDbName(state.DbName); err != nil {
+	if err := validateDBName(state.DBName); err != nil {
 		return err
 	}
-	if name != strings.TrimSuffix(state.DbName, ".sqlite")+".json" {
+	if name != strings.TrimSuffix(state.DBName, ".sqlite")+".json" {
 		return &Error{Kind: "invalid_legacy"}
 	}
 	if err := validateOptionalText(state.LastCompletedRunAt, 128, "Legacy completion timestamp is invalid"); err != nil {
@@ -108,7 +108,7 @@ func ImportLegacyFiles(ctx context.Context, config storageconfig.Config, now flo
 		emitLegacyImportFailure(ctx, started, err)
 		return LegacyImportResult{}, err
 	}
-	repository, err := Open(config.AuthDbPath)
+	repository, err := Open(config.AuthDBPath)
 	if err != nil {
 		return LegacyImportResult{}, err
 	}
@@ -208,7 +208,7 @@ func validateLegacySnapshot(snapshot legacySnapshot) error {
 }
 
 func validateLegacyRun(run legacyRun) error {
-	if err := validateIdentifier(run.RunId, "Legacy delivery run id is invalid"); err != nil {
+	if err := validateIdentifier(run.RunID, "Legacy delivery run id is invalid"); err != nil {
 		return err
 	}
 	for index, keys := range [][]string{run.PendingIssueKeys, run.DoneIssueKeys, run.PendingInpressKeys, run.DoneInpressKeys} {
@@ -222,7 +222,7 @@ func validateLegacyRun(run legacyRun) error {
 		}
 	}
 	for _, result := range run.UserResults {
-		if _, err := legacyNumeric(result.SubscriberId); err != nil {
+		if _, err := legacyNumeric(result.SubscriberID); err != nil {
 			return err
 		}
 	}
@@ -251,8 +251,7 @@ func validateLegacyRunKeys(keys []string, isIssue bool) error {
 
 func legacyImportFailureKind(err error) string {
 	kind := "sqlite"
-	var classified *Error
-	if errors.As(err, &classified) {
+	if classified, ok := errors.AsType[*Error](err); ok {
 		switch classified.Kind {
 		case "io":
 			kind = "io"

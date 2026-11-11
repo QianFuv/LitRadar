@@ -3,7 +3,7 @@ package cfp
 
 import _ "embed"
 
-const SeedId = "reviewed-2026-09-15-v1"
+const SeedID = "reviewed-2026-09-15-v1"
 
 //go:embed seed.json
 var seed []byte

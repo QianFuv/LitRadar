@@ -29,7 +29,7 @@ type batchCatalogRecovery struct {
 
 // runBatchCatalogs validates the full ledger count before honoring the selected stop boundary.
 func runBatchCatalogs(ctx context.Context, connection *sql.Conn, config LiveConfig, request storage.BatchRequest, batch storage.IndexBatch, stopAfter int, run catalogRunner, notify notifyRunner) ([]LiveCatalogOutcome, error) {
-	catalogs, err := storage.ReadBatchCatalogs(ctx, connection, batch.BatchId)
+	catalogs, err := storage.ReadBatchCatalogs(ctx, connection, batch.BatchID)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +61,7 @@ func runBatchCatalogs(ctx context.Context, connection *sql.Conn, config LiveConf
 
 // transition changes the in-memory phase only after its durable transition succeeds.
 func (recovery *batchCatalogRecovery) transition(next storage.CatalogPhase) error {
-	if err := storage.TransitionCatalogPhase(recovery.ctx, recovery.connection, recovery.batch.BatchId, recovery.batch.OwnerId, recovery.stored.Ordinal, next, time.Now().Unix()); err != nil {
+	if err := storage.TransitionCatalogPhase(recovery.ctx, recovery.connection, recovery.batch.BatchID, recovery.batch.OwnerID, recovery.stored.Ordinal, next, time.Now().Unix()); err != nil {
 		return err
 	}
 	recovery.phase = next
@@ -70,7 +70,7 @@ func (recovery *batchCatalogRecovery) transition(next storage.CatalogPhase) erro
 
 // complete records the latest outcome, including any persisted manifest path enrichment.
 func (recovery *batchCatalogRecovery) complete(handoff *storage.NotifyHandoffState) (LiveCatalogOutcome, error) {
-	if err := storage.CompleteCatalog(recovery.ctx, recovery.connection, recovery.batch.BatchId, recovery.batch.OwnerId, recovery.stored.Ordinal, *recovery.persisted, time.Now().Unix()); err != nil {
+	if err := storage.CompleteCatalog(recovery.ctx, recovery.connection, recovery.batch.BatchID, recovery.batch.OwnerID, recovery.stored.Ordinal, *recovery.persisted, time.Now().Unix()); err != nil {
 		return LiveCatalogOutcome{}, err
 	}
 	return recovery.outcome(handoff), nil
@@ -109,13 +109,13 @@ func (recovery *batchCatalogRecovery) index(run catalogRunner) error {
 		}
 	}
 	if recovery.phase == storage.CatalogIndexing && recovery.persisted == nil {
-		observed, err := run(recovery.ctx, recovery.config, recovery.input, recovery.batch.BatchId)
+		observed, err := run(recovery.ctx, recovery.config, recovery.input, recovery.batch.BatchID)
 		if err != nil {
 			return err
 		}
 		recovery.concurrency = observed.Concurrency
-		value := storage.BatchCatalogOutcome{RunId: observed.RunId, JournalCount: observed.JournalCount, WrittenArticleCount: observed.WrittenArticleCount, SourceAttemptCount: observed.SourceAttemptCount}
-		if err := storage.StoreCatalogOutcome(recovery.ctx, recovery.connection, recovery.batch.BatchId, recovery.batch.OwnerId, recovery.stored.Ordinal, value, time.Now().Unix()); err != nil {
+		value := storage.BatchCatalogOutcome{RunID: observed.RunID, JournalCount: observed.JournalCount, WrittenArticleCount: observed.WrittenArticleCount, SourceAttemptCount: observed.SourceAttemptCount}
+		if err := storage.StoreCatalogOutcome(recovery.ctx, recovery.connection, recovery.batch.BatchID, recovery.batch.OwnerID, recovery.stored.Ordinal, value, time.Now().Unix()); err != nil {
 			return err
 		}
 		recovery.persisted = &value
@@ -141,7 +141,7 @@ func (recovery *batchCatalogRecovery) recoverManifest() error {
 		if err != nil {
 			return err
 		}
-		if err := storage.StoreManifestIntent(recovery.ctx, recovery.connection, recovery.batch.BatchId, recovery.batch.OwnerId, recovery.stored.Ordinal, prepared, time.Now().Unix()); err != nil {
+		if err := storage.StoreManifestIntent(recovery.ctx, recovery.connection, recovery.batch.BatchID, recovery.batch.OwnerID, recovery.stored.Ordinal, prepared, time.Now().Unix()); err != nil {
 			return err
 		}
 		recovery.intent = &prepared
@@ -170,7 +170,7 @@ func (recovery *batchCatalogRecovery) publishManifest() error {
 		copied := *recovery.persisted
 		copied.ManifestPath = &recovery.intent.Path
 		recovery.persisted = &copied
-		if err := storage.StoreCatalogOutcome(recovery.ctx, recovery.connection, recovery.batch.BatchId, recovery.batch.OwnerId, recovery.stored.Ordinal, *recovery.persisted, time.Now().Unix()); err != nil {
+		if err := storage.StoreCatalogOutcome(recovery.ctx, recovery.connection, recovery.batch.BatchID, recovery.batch.OwnerID, recovery.stored.Ordinal, *recovery.persisted, time.Now().Unix()); err != nil {
 			return err
 		}
 	}
@@ -213,7 +213,7 @@ func (recovery *batchCatalogRecovery) notify(run notifyRunner) (storage.NotifyHa
 	if recovery.persisted.ManifestPath == nil {
 		return storage.NotifyHandoffState{}, &storage.BatchError{Kind: "state", Reason: "notifying catalog has no published manifest outcome"}
 	}
-	prepared, err := storage.PrepareNotifyAttempt(recovery.ctx, recovery.connection, recovery.batch.BatchId, recovery.batch.OwnerId, recovery.stored.Ordinal, storage.NewNotifyAttemptId(), recovery.config.ShouldAcknowledgeUnknownNotify, time.Now().Unix())
+	prepared, err := storage.PrepareNotifyAttempt(recovery.ctx, recovery.connection, recovery.batch.BatchID, recovery.batch.OwnerID, recovery.stored.Ordinal, storage.NewNotifyAttemptID(), recovery.config.ShouldAcknowledgeUnknownNotify, time.Now().Unix())
 	if err != nil {
 		return storage.NotifyHandoffState{}, err
 	}
@@ -233,17 +233,17 @@ func (recovery *batchCatalogRecovery) recordNotification(run notifyRunner, hando
 		Executable:    recovery.config.ApplicationExecutable,
 		SecretKeyFile: recovery.config.SecretKeyFile,
 		ProjectRoot:   recovery.config.ProjectRoot,
-		AuthDbPath:    recovery.config.AuthDbPath,
+		AuthDBPath:    recovery.config.AuthDBPath,
 		IsDryRun:      recovery.config.IsNotifyDryRun,
 	}
-	observed, err := run(recovery.ctx, options, catalogDatabaseName(recovery.input), filepath.Join(recovery.config.ProjectRoot, recovery.intent.Path), handoff.AttemptId)
+	observed, err := run(recovery.ctx, options, catalogDatabaseName(recovery.input), filepath.Join(recovery.config.ProjectRoot, recovery.intent.Path), handoff.AttemptID)
 	if err != nil {
-		if _, recordError := storage.RecordNotifyAttemptResult(recovery.ctx, recovery.connection, recovery.batch.BatchId, recovery.batch.OwnerId, recovery.stored.Ordinal, handoff.AttemptId, storage.NotifyFailed, nil, time.Now().Unix()); recordError != nil {
+		if _, recordError := storage.RecordNotifyAttemptResult(recovery.ctx, recovery.connection, recovery.batch.BatchID, recovery.batch.OwnerID, recovery.stored.Ordinal, handoff.AttemptID, storage.NotifyFailed, nil, time.Now().Unix()); recordError != nil {
 			return storage.NotifyHandoffState{}, recordError
 		}
 		return storage.NotifyHandoffState{}, err
 	}
-	handoff, err = storage.RecordNotifyAttemptResult(recovery.ctx, recovery.connection, recovery.batch.BatchId, recovery.batch.OwnerId, recovery.stored.Ordinal, handoff.AttemptId, observed.Status, observed.ExitCode, time.Now().Unix())
+	handoff, err = storage.RecordNotifyAttemptResult(recovery.ctx, recovery.connection, recovery.batch.BatchID, recovery.batch.OwnerID, recovery.stored.Ordinal, handoff.AttemptID, observed.Status, observed.ExitCode, time.Now().Unix())
 	if err != nil {
 		return storage.NotifyHandoffState{}, err
 	}

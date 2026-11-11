@@ -107,9 +107,7 @@ func crossrefOrder(work any, key string) (workOrder, error) {
 			return ""
 		}
 		trimmed := strings.TrimSpace(value)
-		if strings.HasPrefix(trimmed, "+") {
-			trimmed = trimmed[1:]
-		}
+		trimmed = strings.TrimPrefix(trimmed, "+")
 		number, err := strconv.ParseUint(trimmed, 10, 64)
 		if err != nil {
 			return ""

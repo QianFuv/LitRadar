@@ -9,7 +9,7 @@ import (
 
 // validLogFilter follows the frozen EnvFilter directive state machine before regex validation.
 func validLogFilter(value string) bool {
-	for _, directive := range strings.Split(value, ",") {
+	for directive := range strings.SplitSeq(value, ",") {
 		if directive != "" && !validLogDirective(directive) {
 			return false
 		}
@@ -99,10 +99,11 @@ func (parser *logDirectiveParser) start(index int, character rune) bool {
 
 // levelOrTarget keeps a target prefix open until a level separator or span bracket appears.
 func (parser *logDirectiveParser) levelOrTarget(index int, character rune) {
-	if character == '=' {
+	switch character {
+	case '=':
 		parser.state = directiveLevel
 		parser.offset = index + 1
-	} else if character == '[' {
+	case '[':
 		parser.state = directiveSpan
 		parser.offset = index + 1
 	}
@@ -110,12 +111,13 @@ func (parser *logDirectiveParser) levelOrTarget(index int, character rune) {
 
 // span verifies its original substring before entering a field or target suffix.
 func (parser *logDirectiveParser) span(index int, character rune) bool {
-	if character == ']' {
+	switch character {
+	case ']':
 		if _, ok := parser.slice(index); !ok {
 			return false
 		}
 		parser.state = directiveTarget
-	} else if character == '{' {
+	case '{':
 		if _, ok := parser.slice(index); !ok {
 			return false
 		}

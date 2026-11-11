@@ -60,7 +60,7 @@ func TestNoticeBatchFailureIsAtomic(t *testing.T) {
 			ctx := context.Background()
 			sources := batchSources(3)
 			prepared := preparedBatch(t, sources)
-			publication := Publication{Capture: "new capture", CaptureFormat: "html", SourceUrl: sources[0].SourceUrl, Sources: sources, ConfigVersion: 1}
+			publication := Publication{Capture: "new capture", CaptureFormat: "html", SourceURL: sources[0].SourceURL, Sources: sources, ConfigVersion: 1}
 			var lease RefreshLease
 			var before []JournalSnapshot
 			var oldSources []domain.Source
@@ -132,7 +132,7 @@ func BenchmarkNoticeBatch(b *testing.B) {
 				ctx := context.Background()
 				sources := batchSources(count)
 				prepared := preparedBatch(b, sources)
-				publication := Publication{Capture: "complete capture", CaptureFormat: "html", SourceUrl: sources[0].SourceUrl, Sources: sources, ConfigVersion: 1}
+				publication := Publication{Capture: "complete capture", CaptureFormat: "html", SourceURL: sources[0].SourceURL, Sources: sources, ConfigVersion: 1}
 				if isRefresh {
 					importPreparationSource(b, repository, sources[0])
 				}

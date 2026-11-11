@@ -92,8 +92,8 @@ func assertMigrationBatchProgress(t *testing.T, configuration config.Config, isP
 	if first.version != expected {
 		t.Fatal(first)
 	}
-	lastDb, err := inspect(context.Background(), filepath.Join(configuration.IndexDir, "c.sqlite"))
-	if err != nil || lastDb.version != 6 {
-		t.Fatalf("later database touched: %+v %v", lastDb, err)
+	lastDB, err := inspect(context.Background(), filepath.Join(configuration.IndexDir, "c.sqlite"))
+	if err != nil || lastDB.version != 6 {
+		t.Fatalf("later database touched: %+v %v", lastDB, err)
 	}
 }

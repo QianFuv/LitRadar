@@ -31,13 +31,13 @@ func schemaFixture(t *testing.T, version int) *sql.Conn {
 			t.Errorf("connection.Close: %v", err)
 		}
 	})
-	if _, err := connection.ExecContext(context.Background(), schemaFixtureSql(version)); err != nil {
+	if _, err := connection.ExecContext(context.Background(), schemaFixtureSQL(version)); err != nil {
 		t.Fatal(err)
 	}
 	return connection
 }
 
-func schemaFixtureSql(version int) string {
+func schemaFixtureSQL(version int) string {
 	statement := ContentTables
 	if version < 10 {
 		statement = strings.ReplaceAll(statement, IdentifierIndexes, "")

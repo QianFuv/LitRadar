@@ -20,8 +20,8 @@ func TestIndexInvocationRetainsNotificationAuthDatabase(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if invocation.storage.AuthDbPath != expected || invocation.options.AuthDbPath != expected {
-				t.Fatalf("auth database mismatch: storage=%q notification=%q expected=%q", invocation.storage.AuthDbPath, invocation.options.AuthDbPath, expected)
+			if invocation.storage.AuthDBPath != expected || invocation.options.AuthDBPath != expected {
+				t.Fatalf("auth database mismatch: storage=%q notification=%q expected=%q", invocation.storage.AuthDBPath, invocation.options.AuthDBPath, expected)
 			}
 		})
 	}

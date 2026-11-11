@@ -22,7 +22,7 @@ type scriptedSelection struct {
 func (client *scriptedSelection) SelectArticles(ctx context.Context, config AiRuntimeConfig, subscriber domain.Subscriber, defaults Defaults, candidates []storage.ArticleCandidate) (domain.SelectionResult, error) {
 	ids := []int64{}
 	for _, candidate := range candidates {
-		ids = append(ids, candidate.ArticleId)
+		ids = append(ids, candidate.ArticleID)
 	}
 	client.batches = append(client.batches, ids)
 	if client.errorAt == len(client.batches) {
@@ -38,18 +38,18 @@ func (client *scriptedSelection) SelectArticles(ctx context.Context, config AiRu
 
 func (client *scriptedSelection) SummarizeSelectedArticles(ctx context.Context, config AiRuntimeConfig, subscriber domain.Subscriber, candidates []storage.ArticleCandidate) (string, error) {
 	for _, candidate := range candidates {
-		client.summarized = append(client.summarized, candidate.ArticleId)
+		client.summarized = append(client.summarized, candidate.ArticleID)
 	}
 	return client.summary, client.summaryError
 }
 
 func selectorFixture(clients ...*scriptedSelection) (*Selector, SelectionRequest, *[]int) {
 	backup := "https://backup.test/v1/"
-	request := SelectionRequest{Subscriber: domain.Subscriber{SubscriberId: "1", Keywords: []string{"match"}, AiBackupBaseUrl: &backup}, Global: GlobalConfig{AiBaseUrl: "https://primary.test/v1/", AiAllowedBaseUrls: []string{"https://primary.test/v1/", backup}, AiApiKey: "key"}, Defaults: Defaults{AiModel: "model", Temperature: 0.2}, Dedupe: map[string]string{}}
+	request := SelectionRequest{Subscriber: domain.Subscriber{SubscriberID: "1", Keywords: []string{"match"}, AiBackupBaseURL: &backup}, Global: GlobalConfig{AiBaseURL: "https://primary.test/v1/", AiAllowedBaseUrls: []string{"https://primary.test/v1/", backup}, AiAPIKey: "key"}, Defaults: Defaults{AiModel: "model", Temperature: 0.2}, Dedupe: map[string]string{}}
 	for _, id := range []int64{1, 2, 3} {
-		request.CandidatesForModel = append(request.CandidatesForModel, storage.ArticleCandidate{ArticleId: id, Title: "match"})
+		request.CandidatesForModel = append(request.CandidatesForModel, storage.ArticleCandidate{ArticleID: id, Title: "match"})
 	}
-	request.CandidatesById = CandidatesById(request.CandidatesForModel)
+	request.CandidatesByID = CandidatesByID(request.CandidatesForModel)
 	builds := []int{}
 	selector := &Selector{maxRounds: 5, build: func(config AiRuntimeConfig, retries int, temperature float64) (selectionClient, error) {
 		builds = append(builds, retries)
@@ -64,7 +64,7 @@ func selectorFixture(clients ...*scriptedSelection) (*Selector, SelectionRequest
 }
 
 func TestSelectorRemovesModelIdsAndUsesFirstSummaryOnSummaryFailure(t *testing.T) {
-	client := &scriptedSelection{selections: []domain.SelectionResult{{Summary: " first ", Selections: []domain.RankedSelection{{ArticleId: 1, Score: 9}}}, {Summary: "second", Selections: []domain.RankedSelection{{ArticleId: 2, Score: 8}}}, {Selections: []domain.RankedSelection{{ArticleId: 3, Score: 7}}}}, summaryError: errors.New("summary failed")}
+	client := &scriptedSelection{selections: []domain.SelectionResult{{Summary: " first ", Selections: []domain.RankedSelection{{ArticleID: 1, Score: 9}}}, {Summary: "second", Selections: []domain.RankedSelection{{ArticleID: 2, Score: 8}}}, {Selections: []domain.RankedSelection{{ArticleID: 3, Score: 7}}}}, summaryError: errors.New("summary failed")}
 	selector, request, _ := selectorFixture(client)
 	request.Dedupe["1:1"] = "delivered"
 	result, err := selector.SelectForSubscriber(context.Background(), request)
@@ -77,15 +77,15 @@ func TestSelectorRemovesModelIdsAndUsesFirstSummaryOnSummaryFailure(t *testing.T
 }
 
 func TestSelectorBackupStartsFreshAfterPartialPrimaryFailure(t *testing.T) {
-	primary := &scriptedSelection{selections: []domain.SelectionResult{{Summary: "partial", Selections: []domain.RankedSelection{{ArticleId: 1, Score: 999}}}}, errorAt: 2}
-	backup := &scriptedSelection{selections: []domain.SelectionResult{{Summary: "backup", Selections: []domain.RankedSelection{{ArticleId: 2, Score: 9}, {ArticleId: 3, Score: 8}, {ArticleId: 1, Score: 1}}}}, summary: " final "}
+	primary := &scriptedSelection{selections: []domain.SelectionResult{{Summary: "partial", Selections: []domain.RankedSelection{{ArticleID: 1, Score: 999}}}}, errorAt: 2}
+	backup := &scriptedSelection{selections: []domain.SelectionResult{{Summary: "backup", Selections: []domain.RankedSelection{{ArticleID: 2, Score: 9}, {ArticleID: 3, Score: 8}, {ArticleID: 1, Score: 1}}}}, summary: " final "}
 	selector, request, builds := selectorFixture(primary, backup)
 	request.Subscriber.AiRetryAttempts = 999
 	result, err := selector.SelectForSubscriber(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(*builds, []int{10, 10}) || !reflect.DeepEqual(backup.batches, [][]int64{{1, 2, 3}}) || result.Summary != " final " || len(result.Accepted) != 3 || result.Accepted[0].ArticleId != 2 {
+	if !reflect.DeepEqual(*builds, []int{10, 10}) || !reflect.DeepEqual(backup.batches, [][]int64{{1, 2, 3}}) || result.Summary != " final " || len(result.Accepted) != 3 || result.Accepted[0].ArticleID != 2 {
 		t.Fatalf("backup retained primary state: %v %v %+v", *builds, backup.batches, result)
 	}
 }
@@ -93,9 +93,9 @@ func TestSelectorBackupStartsFreshAfterPartialPrimaryFailure(t *testing.T) {
 func TestSelectorSuccessfulEmptyResultDoesNotFallback(t *testing.T) {
 	primary := &scriptedSelection{}
 	selector, request, builds := selectorFixture(primary)
-	for id, candidate := range request.CandidatesById {
+	for id, candidate := range request.CandidatesByID {
 		candidate.Title = "unrelated"
-		request.CandidatesById[id] = candidate
+		request.CandidatesByID[id] = candidate
 	}
 	result, err := selector.SelectForSubscriber(context.Background(), request)
 	if err != nil {
@@ -111,13 +111,13 @@ func TestSelectorSupplementCanFinishFromCandidatesOutsideModelBatch(t *testing.T
 	selector, request, _ := selectorFixture(primary)
 	request.CandidatesForModel = request.CandidatesForModel[:1]
 	for id := int64(4); id <= 25; id++ {
-		request.CandidatesById[id] = storage.ArticleCandidate{ArticleId: id, Title: "match"}
+		request.CandidatesByID[id] = storage.ArticleCandidate{ArticleID: id, Title: "match"}
 	}
 	result, err := selector.SelectForSubscriber(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(primary.batches) != 1 || len(result.Accepted) != 20 || len(primary.summarized) != 20 || result.Accepted[0].ArticleId != 25 {
+	if len(primary.batches) != 1 || len(result.Accepted) != 20 || len(primary.summarized) != 20 || result.Accepted[0].ArticleID != 25 {
 		t.Fatalf("full candidate supplementation lost: rounds=%d count=%d", len(primary.batches), len(result.Accepted))
 	}
 }

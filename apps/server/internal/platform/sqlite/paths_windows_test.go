@@ -46,7 +46,7 @@ func TestExtendedWindowsPathOpensExactTarget(t *testing.T) {
 
 func TestUncAndExtendedUriKeepEmptyAuthority(t *testing.T) {
 	for _, filename := range []string{`\\server\share\中文 #% &.sqlite`, `\\?\UNC\server\share\中文 #% &.sqlite`, `\\?\C:\中文 #% &.sqlite`} {
-		encoded, err := FileUri(filename, "rw")
+		encoded, err := FileURI(filename, "rw")
 		if err != nil {
 			t.Fatal(err)
 		}

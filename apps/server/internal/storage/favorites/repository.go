@@ -27,16 +27,16 @@ var ErrDuplicateFolder = errors.New("Folder name already exists")
 var ErrFolderNotFound = errors.New("Folder not found")
 
 // ErrSourceFolderNotFound identifies an unavailable source in a bulk move.
-var ErrSourceFolderNotFound = errors.New("Source folder not found")
+var ErrSourceFolderNotFound = errors.New("source folder not found")
 
 // ErrTargetFolderNotFound identifies an unavailable target in a bulk move.
-var ErrTargetFolderNotFound = errors.New("Target folder not found")
+var ErrTargetFolderNotFound = errors.New("target folder not found")
 
 // ErrSameFolders prevents a bulk move from deleting its own source entries.
-var ErrSameFolders = errors.New("Source and target folders must be different")
+var ErrSameFolders = errors.New("source and target folders must be different")
 
 // ErrCursor rejects malformed or owner-incompatible pagination anchors.
-var ErrCursor = errors.New("Invalid favorite pagination cursor")
+var ErrCursor = errors.New("invalid favorite pagination cursor")
 
 // InvalidInput retains the public business validation category.
 type InvalidInput struct{ Message string }
@@ -46,7 +46,7 @@ func (failure InvalidInput) Error() string { return failure.Message }
 
 // Folder retains numeric row identities and original fractional creation timestamps.
 type Folder struct {
-	Id           int64   `json:"id" nullable:"false" format:"int64"`
+	ID           int64   `json:"id" nullable:"false" format:"int64"`
 	Name         string  `json:"name" nullable:"false"`
 	IsTracking   bool    `json:"is_tracking" nullable:"false"`
 	ArticleCount int64   `json:"article_count" nullable:"false" format:"int64"`
@@ -55,8 +55,8 @@ type Folder struct {
 
 // Reference distinguishes equal article identifiers in separate source databases.
 type Reference struct {
-	ArticleId identity.Id `json:"article_id" nullable:"false"`
-	DbName    string      `json:"db_name" nullable:"false"`
+	ArticleID identity.ID `json:"article_id" nullable:"false"`
+	DBName    string      `json:"db_name" nullable:"false"`
 }
 
 // Add supplies a reference and its initial note, which duplicate adds do not replace.
@@ -67,8 +67,8 @@ type Add struct {
 
 // Favorite is the persisted owner-scoped favorite response.
 type Favorite struct {
-	Id       int64 `json:"id" nullable:"false" format:"int64"`
-	FolderId int64 `json:"folder_id" nullable:"false" format:"int64"`
+	ID       int64 `json:"id" nullable:"false" format:"int64"`
+	FolderID int64 `json:"folder_id" nullable:"false" format:"int64"`
 	Reference
 	Note      string  `json:"note" nullable:"false"`
 	CreatedAt float64 `json:"created_at" nullable:"false" format:"double"`
@@ -100,10 +100,10 @@ func folderName(value string) (string, error) {
 	return value, nil
 }
 func validateReference(value Reference) error {
-	if err := positive("article_id", int64(value.ArticleId)); err != nil {
+	if err := positive("article_id", int64(value.ArticleID)); err != nil {
 		return err
 	}
-	return characters("db_name", value.DbName, 255)
+	return characters("db_name", value.DBName, 255)
 }
 func validateAdd(value Add) error {
 	if err := validateReference(value.Reference); err != nil {
@@ -129,9 +129,9 @@ func scanFavorite(row scanner) (Favorite, error) {
 	if err := row.Scan(&id, &folder, &article, &name, &note, &created); err != nil {
 		return Favorite{}, err
 	}
-	return Favorite{int64(id), int64(folder), Reference{identity.Id(article), string(name)}, string(note), float64(created)}, nil
+	return Favorite{int64(id), int64(folder), Reference{identity.ID(article), string(name)}, string(note), float64(created)}, nil
 }
-func ensureFolder(ctx context.Context, connection *sql.Conn, owner identity.Id, folder int64, missing error) error {
+func ensureFolder(ctx context.Context, connection *sql.Conn, owner identity.ID, folder int64, missing error) error {
 	_, err := queries.FolderID(ctx, connection, favoritesdb.FolderIDParams{ID: storage.Integer(folder), UserID: storage.Integer(owner)})
 	if errors.Is(err, sql.ErrNoRows) {
 		return missing
@@ -140,7 +140,7 @@ func ensureFolder(ctx context.Context, connection *sql.Conn, owner identity.Id, 
 }
 
 // CreateFolder atomically changes the tracking selection only if the new folder is created.
-func (repository *Repository) CreateFolder(ctx context.Context, owner identity.Id, name string, isTracking bool) (Folder, error) {
+func (repository *Repository) CreateFolder(ctx context.Context, owner identity.ID, name string, isTracking bool) (Folder, error) {
 	name, err := folderName(name)
 	if err != nil {
 		return Folder{}, err
@@ -168,7 +168,7 @@ func (repository *Repository) CreateFolder(ctx context.Context, owner identity.I
 }
 
 // ListFolders returns creation-ordered folders with current membership counts.
-func (repository *Repository) ListFolders(ctx context.Context, owner identity.Id) ([]Folder, error) {
+func (repository *Repository) ListFolders(ctx context.Context, owner identity.ID) ([]Folder, error) {
 	result := []Folder{}
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
 		rows, err := queries.Folders(ctx, connection, favoritesdb.FoldersParams{UserID: storage.Integer(owner)})
@@ -184,7 +184,7 @@ func (repository *Repository) ListFolders(ctx context.Context, owner identity.Id
 }
 
 // RenameFolder does not expose whether another owner's folder exists.
-func (repository *Repository) RenameFolder(ctx context.Context, owner identity.Id, folder int64, name string) (bool, error) {
+func (repository *Repository) RenameFolder(ctx context.Context, owner identity.ID, folder int64, name string) (bool, error) {
 	name, err := folderName(name)
 	if err != nil {
 		return false, err
@@ -203,7 +203,7 @@ func (repository *Repository) RenameFolder(ctx context.Context, owner identity.I
 }
 
 // TrackingFolder returns the exact is_tracking=1 selection without counting its favorites.
-func (repository *Repository) TrackingFolder(ctx context.Context, owner identity.Id) (*Folder, error) {
+func (repository *Repository) TrackingFolder(ctx context.Context, owner identity.ID) (*Folder, error) {
 	var result *Folder
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
 		row, err := queries.TrackingFolder(ctx, connection, favoritesdb.TrackingFolderParams{UserID: storage.Integer(owner)})
@@ -220,7 +220,7 @@ func (repository *Repository) TrackingFolder(ctx context.Context, owner identity
 }
 
 // SetTrackingFolder retains the previous selection when the requested folder is not owned.
-func (repository *Repository) SetTrackingFolder(ctx context.Context, owner identity.Id, folder int64) (bool, error) {
+func (repository *Repository) SetTrackingFolder(ctx context.Context, owner identity.ID, folder int64) (bool, error) {
 	if err := positive("folder_id", folder); err != nil {
 		return false, err
 	}
@@ -255,7 +255,7 @@ func (repository *Repository) SetTrackingFolder(ctx context.Context, owner ident
 }
 
 // DeleteFolder rechecks notification dependencies under the same write lock as deletion.
-func (repository *Repository) DeleteFolder(ctx context.Context, owner identity.Id, folder int64) (bool, error) {
+func (repository *Repository) DeleteFolder(ctx context.Context, owner identity.ID, folder int64) (bool, error) {
 	if err := positive("folder_id", folder); err != nil {
 		return false, err
 	}
@@ -321,7 +321,7 @@ func (repository *Repository) DeleteFolder(ctx context.Context, owner identity.I
 }
 
 // AddFavorite preserves the first note and creation time on repeated insertion.
-func (repository *Repository) AddFavorite(ctx context.Context, owner identity.Id, folder int64, value Add) (Favorite, error) {
+func (repository *Repository) AddFavorite(ctx context.Context, owner identity.ID, folder int64, value Add) (Favorite, error) {
 	if err := positive("folder_id", folder); err != nil {
 		return Favorite{}, err
 	}
@@ -347,7 +347,7 @@ func (repository *Repository) AddFavorite(ctx context.Context, owner identity.Id
 }
 
 // RemoveFavorite deletes only the exact owner's database-qualified reference.
-func (repository *Repository) RemoveFavorite(ctx context.Context, owner identity.Id, folder int64, value Reference) (bool, error) {
+func (repository *Repository) RemoveFavorite(ctx context.Context, owner identity.ID, folder int64, value Reference) (bool, error) {
 	if err := positive("folder_id", folder); err != nil {
 		return false, err
 	}
@@ -356,7 +356,7 @@ func (repository *Repository) RemoveFavorite(ctx context.Context, owner identity
 	}
 	changed := false
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
-		result, err := queries.RemoveFavorite(ctx, connection, favoritesdb.RemoveFavoriteParams{UserID: storage.Integer(owner), FolderID: storage.Integer(folder), ArticleID: storage.Integer(value.ArticleId), DBName: storage.Text(value.DbName)})
+		result, err := queries.RemoveFavorite(ctx, connection, favoritesdb.RemoveFavoriteParams{UserID: storage.Integer(owner), FolderID: storage.Integer(folder), ArticleID: storage.Integer(value.ArticleID), DBName: storage.Text(value.DBName)})
 		if err != nil {
 			return err
 		}
@@ -389,7 +389,7 @@ func favoriteRows(ctx context.Context, connection *sql.Conn, statement string, v
 }
 
 // ListFavorites retains legacy raw SQLite limit/offset behavior and creation-time ordering.
-func (repository *Repository) ListFavorites(ctx context.Context, owner identity.Id, folder *int64, limit, offset int64) ([]Favorite, error) {
+func (repository *Repository) ListFavorites(ctx context.Context, owner identity.ID, folder *int64, limit, offset int64) ([]Favorite, error) {
 	var result []Favorite
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
 		statement := "SELECT id,folder_id,article_id,db_name,note,created_at FROM favorites WHERE user_id=?"
@@ -408,7 +408,7 @@ func (repository *Repository) ListFavorites(ctx context.Context, owner identity.
 }
 
 // CountFavorites counts either all owned references or those in one folder.
-func (repository *Repository) CountFavorites(ctx context.Context, owner identity.Id, folder *int64) (int64, error) {
+func (repository *Repository) CountFavorites(ctx context.Context, owner identity.ID, folder *int64) (int64, error) {
 	var count storage.Integer
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
 		statement := "SELECT COUNT(*) FROM favorites WHERE user_id=?"
@@ -422,16 +422,16 @@ func (repository *Repository) CountFavorites(ctx context.Context, owner identity
 	return int64(count), err
 }
 
-func favoriteInsert(ctx context.Context, connection *sql.Conn, owner identity.Id, folder int64, item Add) (Favorite, error) {
-	row, err := queries.AddFavorite(ctx, connection, favoritesdb.AddFavoriteParams{UserID: storage.Integer(owner), FolderID: storage.Integer(folder), ArticleID: storage.Integer(item.ArticleId), DBName: storage.Text(item.DbName), Note: storage.Text(item.Note), CreatedAt: storage.Number(nowSeconds())})
+func favoriteInsert(ctx context.Context, connection *sql.Conn, owner identity.ID, folder int64, item Add) (Favorite, error) {
+	row, err := queries.AddFavorite(ctx, connection, favoritesdb.AddFavoriteParams{UserID: storage.Integer(owner), FolderID: storage.Integer(folder), ArticleID: storage.Integer(item.ArticleID), DBName: storage.Text(item.DBName), Note: storage.Text(item.Note), CreatedAt: storage.Number(nowSeconds())})
 	return decodeFavorite(favoritesdb.FavoriteRow(row)), err
 }
 
-func favoriteLookup(ctx context.Context, connection *sql.Conn, owner identity.Id, folder int64, item Reference) (Favorite, error) {
-	row, err := queries.Favorite(ctx, connection, favoritesdb.FavoriteParams{UserID: storage.Integer(owner), FolderID: storage.Integer(folder), ArticleID: storage.Integer(item.ArticleId), DBName: storage.Text(item.DbName)})
+func favoriteLookup(ctx context.Context, connection *sql.Conn, owner identity.ID, folder int64, item Reference) (Favorite, error) {
+	row, err := queries.Favorite(ctx, connection, favoritesdb.FavoriteParams{UserID: storage.Integer(owner), FolderID: storage.Integer(folder), ArticleID: storage.Integer(item.ArticleID), DBName: storage.Text(item.DBName)})
 	return decodeFavorite(row), err
 }
 
 func decodeFavorite(row favoritesdb.FavoriteRow) Favorite {
-	return Favorite{int64(row.ID), int64(row.FolderID), Reference{identity.Id(row.ArticleID), string(row.DBName)}, string(row.Note), float64(row.CreatedAt)}
+	return Favorite{int64(row.ID), int64(row.FolderID), Reference{identity.ID(row.ArticleID), string(row.DBName)}, string(row.Note), float64(row.CreatedAt)}
 }

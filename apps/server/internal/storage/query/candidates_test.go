@@ -128,8 +128,8 @@ func TestLargeCandidateMembershipPreservesAllThreeSelectors(t *testing.T) {
 				}
 				actual := []int64{}
 				for _, item := range items {
-					actual = append(actual, item.ArticleId)
-					if item.ArticleId == 50001 && (item.Date != nil || item.JournalTitle != "large" || item.Abstract != "" || item.OpenAccess) {
+					actual = append(actual, item.ArticleID)
+					if item.ArticleID == 50001 && (item.Date != nil || item.JournalTitle != "large" || item.Abstract != "" || item.OpenAccess) {
 						t.Fatal("nullable candidate mapping changed", item)
 					}
 				}
@@ -176,7 +176,7 @@ func assertCandidateConnectionReuse(t *testing.T, connection *sql.Conn) {
 	t.Helper()
 	for _, id := range []int64{50001, 1} {
 		items, err := largeCandidateRows(context.Background(), connection, "a.article_id", []int64{id}, "")
-		if err != nil || len(items) != 1 || items[0].ArticleId != id {
+		if err != nil || len(items) != 1 || items[0].ArticleID != id {
 			t.Fatal("reused connection retained stale membership", items, err)
 		}
 	}

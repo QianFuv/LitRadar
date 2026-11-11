@@ -10,18 +10,18 @@ import (
 // TestOidcSettingsValidationAndSecretStorage checks HTTPS policy and encrypted client secrets.
 func TestOidcSettingsValidationAndSecretStorage(t *testing.T) {
 	for _, value := range []string{"http://issuer.example", "https://user:pass@issuer.example", "https://issuer.example?query=secret", "https://issuer.example/#fragment", "//issuer.example", "ftp://issuer.example"} {
-		if ValidateOidcUrl(value, false) == nil {
+		if ValidateOidcURL(value, false) == nil {
 			t.Fatal("invalid production endpoint accepted")
 		}
 	}
-	if err := ValidateOidcUrl("http://127.0.0.1:8000", true); err != nil {
+	if err := ValidateOidcURL("http://127.0.0.1:8000", true); err != nil {
 		t.Fatal(err)
 	}
 	repository, _ := testSettings(t)
-	if _, err := repository.Update(context.Background(), nil, map[string]*string{"oidc_issuer_url": textValue("http://127.0.0.1")}, nil, nil); err == nil {
+	if _, err := repository.Update(context.Background(), nil, map[string]*string{"oidc_issuer_url": new("http://127.0.0.1")}, nil, nil); err == nil {
 		t.Fatal("production accepted HTTP issuer")
 	}
-	items, err := repository.Update(context.Background(), nil, map[string]*string{"oidc_client_secret": textValue("oidc-test-secret")}, nil, nil)
+	items, err := repository.Update(context.Background(), nil, map[string]*string{"oidc_client_secret": new("oidc-test-secret")}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestOidcSettingsValidationAndSecretStorage(t *testing.T) {
 		t.Fatal("secret did not decrypt")
 	}
 	repository.isDevelopment = true
-	if _, err := repository.Update(context.Background(), nil, map[string]*string{"oidc_issuer_url": textValue("http://127.0.0.1")}, nil, nil); err != nil {
+	if _, err := repository.Update(context.Background(), nil, map[string]*string{"oidc_issuer_url": new("http://127.0.0.1")}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -16,10 +17,10 @@ func Validate(path string, isDirectory bool) error {
 		return err
 	}
 	if isLink(metadata) || metadata.IsDir() != isDirectory || !isDirectory && !metadata.Mode().IsRegular() {
-		return fmt.Errorf("Crossref workset path is not an ordinary owned file or directory")
+		return fmt.Errorf("crossref workset path is not an ordinary owned file or directory")
 	}
 	if !isDirectory && hasMultipleLinks(metadata) {
-		return fmt.Errorf("Crossref workset hard links are not allowed")
+		return fmt.Errorf("crossref workset hard links are not allowed")
 	}
 	return nil
 }
@@ -37,8 +38,8 @@ func Prepare(root string) (string, error) {
 			break
 		}
 	}
-	for index := len(ancestors) - 1; index >= 0; index-- {
-		current := ancestors[index]
+	for _, current := range slices.Backward(ancestors) {
+
 		if err := prepareAncestor(current); err != nil {
 			return "", err
 		}
@@ -49,12 +50,10 @@ func Prepare(root string) (string, error) {
 // validateRootComponents rejects relative roots and parent traversal before cleaning the path.
 func validateRootComponents(root string) error {
 	if !filepath.IsAbs(root) {
-		return fmt.Errorf("Crossref workset root must be an absolute core-owned path")
+		return fmt.Errorf("crossref workset root must be an absolute core-owned path")
 	}
-	for _, part := range strings.FieldsFunc(root, func(character rune) bool { return character == '/' || os.PathSeparator == '\\' && character == '\\' }) {
-		if part == ".." {
-			return fmt.Errorf("Crossref workset root must be an absolute core-owned path")
-		}
+	if slices.Contains(strings.FieldsFunc(root, func(character rune) bool { return character == '/' || os.PathSeparator == '\\' && character == '\\' }), "..") {
+		return fmt.Errorf("crossref workset root must be an absolute core-owned path")
 	}
 	return nil
 }

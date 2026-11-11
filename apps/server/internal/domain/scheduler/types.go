@@ -36,7 +36,7 @@ func (job Job) MarshalJSON() ([]byte, error) {
 	default:
 		return nil, errors.New("invalid scheduled job kind")
 	}
-	encoded, err := jsonvalue.EncodeJson(value)
+	encoded, err := jsonvalue.EncodeJSON(value)
 	return []byte(encoded), err
 }
 
@@ -69,7 +69,7 @@ func (job *Job) UnmarshalJSON(data []byte) error {
 
 // scheduledJobFields validates the entire JSON before retaining duplicate-free object field bytes.
 func scheduledJobFields(data []byte, invalid error) (map[string]json.RawMessage, error) {
-	if !jsonvalue.ValidJson(string(data)) {
+	if !jsonvalue.ValidJSON(string(data)) {
 		return nil, invalid
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -194,7 +194,7 @@ type State string
 // UnmarshalJSON accepts declared enum values while keeping permissive legacy mapping storage-only.
 func (state *State) UnmarshalJSON(data []byte) error {
 	invalid := errors.New("invalid scheduler state JSON")
-	if !jsonvalue.ValidJson(string(data)) {
+	if !jsonvalue.ValidJSON(string(data)) {
 		return invalid
 	}
 	data = bytes.TrimSpace(data)
@@ -248,7 +248,7 @@ func (state State) IsTerminal() bool {
 
 // Task is the persisted administrator task response, including retained legacy commands.
 type Task struct {
-	Id             int64    `json:"id" nullable:"false" format:"int64"`
+	ID             int64    `json:"id" nullable:"false" format:"int64"`
 	Name           string   `json:"name" nullable:"false"`
 	Job            *Job     `json:"job" required:"false" allowNull:"true" nullable:"false"`
 	LegacyCommand  *string  `json:"legacy_command" required:"false" nullable:"true"`
@@ -274,7 +274,7 @@ type Create struct {
 
 // Update distinguishes omitted task replacements from explicitly false values.
 type Update struct {
-	TaskId            int64
+	TaskID            int64
 	Name              *string
 	Job               *Job
 	Cron, Timezone    *string
@@ -284,12 +284,12 @@ type Update struct {
 
 // Run is the bounded public task execution history without captured output.
 type Run struct {
-	Id           int64    `json:"id" nullable:"false" format:"int64"`
-	TaskId       int64    `json:"task_id" nullable:"false" format:"int64"`
+	ID           int64    `json:"id" nullable:"false" format:"int64"`
+	TaskID       int64    `json:"task_id" nullable:"false" format:"int64"`
 	TaskName     string   `json:"task_name" nullable:"false"`
 	ScheduledFor int64    `json:"scheduled_for" nullable:"false" format:"int64"`
 	Status       State    `json:"status" nullable:"false" enum:"idle,pending,claimed,running,success,failed,timed_out,error,unknown,cancelled"`
-	WorkerId     *string  `json:"worker_id" required:"false" nullable:"true"`
+	WorkerID     *string  `json:"worker_id" required:"false" nullable:"true"`
 	ClaimedAt    *float64 `json:"claimed_at" required:"false" nullable:"true" format:"double"`
 	StartedAt    *float64 `json:"started_at" required:"false" nullable:"true" format:"double"`
 	FinishedAt   *float64 `json:"finished_at" required:"false" nullable:"true" format:"double"`
@@ -297,7 +297,7 @@ type Run struct {
 
 // Worker reports persisted heartbeat health against the caller's wall clock.
 type Worker struct {
-	WorkerId    string  `json:"worker_id" nullable:"false"`
+	WorkerID    string  `json:"worker_id" nullable:"false"`
 	StartedAt   float64 `json:"started_at" nullable:"false" format:"double"`
 	HeartbeatAt float64 `json:"heartbeat_at" nullable:"false" format:"double"`
 	IsHealthy   bool    `json:"is_healthy" nullable:"false"`
@@ -318,11 +318,12 @@ func isScheduledFilenameCharacter(character rune) bool {
 // scheduledStateWireName reads a validated string or exactly one externally tagged null state.
 func scheduledStateWireName(data []byte, invalid error) (string, error) {
 	var name string
-	if data[0] == '"' {
+	switch data[0] {
+	case '"':
 		if json.Unmarshal(data, &name) != nil {
 			return "", invalid
 		}
-	} else if data[0] == '{' {
+	case '{':
 		decoder := json.NewDecoder(bytes.NewReader(data))
 		if _, err := decoder.Token(); err != nil {
 			return "", invalid
@@ -343,7 +344,7 @@ func scheduledStateWireName(data []byte, invalid error) (string, error) {
 		if decoder.Decode(&raw) != nil || !bytes.Equal(raw, []byte("null")) || decoder.More() {
 			return "", invalid
 		}
-	} else {
+	default:
 		return "", invalid
 	}
 	return name, nil

@@ -21,7 +21,7 @@ type AdminUserInfo struct {
 	Email         *string     `json:"email"`
 	AuthKind      string      `json:"auth_kind"`
 	IsOidcLinked  bool        `json:"is_oidc_linked"`
-	Id            identity.Id `json:"id"`
+	ID            identity.ID `json:"id"`
 	Username      string      `json:"username"`
 	IsAdmin       bool        `json:"is_admin"`
 	CreatedAt     float64     `json:"created_at"`
@@ -33,11 +33,11 @@ type AdminUserInfo struct {
 
 // AdminInviteInfo exposes authorized administrator lifecycle and first-redemption metadata.
 type AdminInviteInfo struct {
-	Id            int64        `json:"id"`
+	ID            int64        `json:"id"`
 	Code          string       `json:"code"`
-	CreatedBy     *identity.Id `json:"created_by"`
+	CreatedBy     *identity.ID `json:"created_by"`
 	CreatedByName *string      `json:"created_by_name"`
-	UsedBy        *identity.Id `json:"used_by"`
+	UsedBy        *identity.ID `json:"used_by"`
 	UsedByName    *string      `json:"used_by_name"`
 	UsedAt        *float64     `json:"used_at"`
 	Status        string       `json:"status"`
@@ -60,7 +60,7 @@ func (repository *Repository) ListUsers(ctx context.Context) ([]AdminUserInfo, e
 	}
 	result := make([]AdminUserInfo, 0, len(rows))
 	for _, row := range rows {
-		result = append(result, AdminUserInfo{Id: identity.Id(row.ID), Username: row.Username, Email: row.Email, AuthKind: row.AuthKind, IsOidcLinked: row.Exists, IsAdmin: row.IsAdmin != 0, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, FolderCount: row.Count, FavoriteCount: row.Count_2, NotifyEnabled: row.Count_3 != 0})
+		result = append(result, AdminUserInfo{ID: identity.ID(row.ID), Username: row.Username, Email: row.Email, AuthKind: row.AuthKind, IsOidcLinked: row.Exists, IsAdmin: row.IsAdmin != 0, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, FolderCount: row.Count, FavoriteCount: row.Count_2, NotifyEnabled: row.Count_3 != 0})
 	}
 	return result, nil
 }
@@ -73,7 +73,7 @@ func (repository *Repository) ListInvites(ctx context.Context, now float64) ([]A
 	}
 	result := make([]AdminInviteInfo, 0, len(rows))
 	for _, row := range rows {
-		item := AdminInviteInfo{Id: row.ID, Code: row.Code, CreatedBy: (*identity.Id)(row.CreatedBy), UsedBy: (*identity.Id)(row.UsedBy), UsedAt: row.UsedAt, CreatedAt: row.CreatedAt, CreatedByName: row.Username, UsedByName: row.Username_2, ExpiresAt: row.ExpiresAt, RevokedAt: row.RevokedAt, MaxUses: row.MaxUses, UseCount: row.UseCount}
+		item := AdminInviteInfo{ID: row.ID, Code: row.Code, CreatedBy: (*identity.ID)(row.CreatedBy), UsedBy: (*identity.ID)(row.UsedBy), UsedAt: row.UsedAt, CreatedAt: row.CreatedAt, CreatedByName: row.Username, UsedByName: row.Username_2, ExpiresAt: row.ExpiresAt, RevokedAt: row.RevokedAt, MaxUses: row.MaxUses, UseCount: row.UseCount}
 		item.Status = (domain.InviteRow{ExpiresAt: item.ExpiresAt, RevokedAt: item.RevokedAt, MaxUses: item.MaxUses, UseCount: item.UseCount}).Response(now).Status
 		result = append(result, item)
 	}
@@ -82,7 +82,7 @@ func (repository *Repository) ListInvites(ctx context.Context, now float64) ([]A
 
 // CreateAdministratorInvite issues an ownerless invite after checking the actor under the write lock.
 // A nil actor retains the trusted local administration entry point.
-func (repository *Repository) CreateAdministratorInvite(ctx context.Context, actor *identity.Id, expiresAt *float64, maxUses *int64, audit *domain.AuditEvent) (AdminInviteInfo, error) {
+func (repository *Repository) CreateAdministratorInvite(ctx context.Context, actor *identity.ID, expiresAt *float64, maxUses *int64, audit *domain.AuditEvent) (AdminInviteInfo, error) {
 	var random [8]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return AdminInviteInfo{}, domain.ErrEntropy
@@ -116,7 +116,7 @@ func (repository *Repository) CreateAdministratorInvite(ctx context.Context, act
 		if err != nil {
 			return err
 		}
-		invite = AdminInviteInfo{Id: id, Code: code, Status: "active", ExpiresAt: expires, MaxUses: uses, CreatedAt: now}
+		invite = AdminInviteInfo{ID: id, Code: code, Status: "active", ExpiresAt: expires, MaxUses: uses, CreatedAt: now}
 		if audit != nil {
 			copy := audit.WithTarget(id)
 			return InsertAudit(ctx, connection, &copy)
@@ -130,7 +130,7 @@ func (repository *Repository) CreateAdministratorInvite(ctx context.Context, act
 }
 
 // RevokeAdministratorInvite revokes an arbitrary invite only while the optional actor remains authorized.
-func (repository *Repository) RevokeAdministratorInvite(ctx context.Context, actor *identity.Id, inviteId int64, audit *domain.AuditEvent) (bool, error) {
+func (repository *Repository) RevokeAdministratorInvite(ctx context.Context, actor *identity.ID, inviteID int64, audit *domain.AuditEvent) (bool, error) {
 	var revoked bool
 	err := repository.Immediate(ctx, false, func(connection *sql.Conn) error {
 		if actor != nil {
@@ -138,7 +138,7 @@ func (repository *Repository) RevokeAdministratorInvite(ctx context.Context, act
 				return err
 			}
 		}
-		result, err := queries.RevokeAdministratorInvite(ctx, connection, authdb.RevokeAdministratorInviteParams{MAX: float64(time.Now().UnixNano()) / 1e9, ID: inviteId})
+		result, err := queries.RevokeAdministratorInvite(ctx, connection, authdb.RevokeAdministratorInviteParams{MAX: float64(time.Now().UnixNano()) / 1e9, ID: inviteID})
 		if err != nil {
 			return err
 		}
@@ -148,7 +148,7 @@ func (repository *Repository) RevokeAdministratorInvite(ctx context.Context, act
 		}
 		revoked = count > 0
 		if revoked && audit != nil {
-			copy := audit.WithTarget(inviteId)
+			copy := audit.WithTarget(inviteID)
 			return InsertAudit(ctx, connection, &copy)
 		}
 		return nil

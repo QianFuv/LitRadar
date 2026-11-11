@@ -28,8 +28,8 @@ func (failure *Error) Error() string {
 }
 func (failure *Error) Unwrap() error { return failure.Cause }
 
-// HttpStatus extracts only an explicitly classified upstream HTTP status.
-func (failure *Error) HttpStatus() (uint16, bool) {
+// HTTPStatus extracts only an explicitly classified upstream HTTP status.
+func (failure *Error) HTTPStatus() (uint16, bool) {
 	if failure.Kind != "Request" || !strings.HasPrefix(failure.Message, "domestic CNKI HTTP status ") {
 		return 0, false
 	}

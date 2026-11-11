@@ -35,7 +35,7 @@ func TestBibtexKeyAndAuthorOrderingRemainStructural(t *testing.T) {
 func TestCitationByteLimitIsInclusiveAndFailureReturnsNoPartialExport(t *testing.T) {
 	title := "中&{}"
 	articles := []domain.FavoriteCitation{{Title: &title, Authors: []string{"author"}}}
-	for _, serialize := range []func([]domain.FavoriteCitation, int) (string, error){Bibtex, Ris, EndnoteXml} {
+	for _, serialize := range []func([]domain.FavoriteCitation, int) (string, error){Bibtex, Ris, EndnoteXML} {
 		original, err := serialize(articles, 10000)
 		if err != nil {
 			t.Fatal(err)

@@ -32,7 +32,7 @@ func NormalizeEmail(email *string) (*string, error) {
 }
 
 // UpdateEmail changes a local account email with its required completion audit.
-func (service *Service) UpdateEmail(ctx context.Context, user identity.Id, email *string, audit *domain.AuditEvent) (domain.User, error) {
+func (service *Service) UpdateEmail(ctx context.Context, user identity.ID, email *string, audit *domain.AuditEvent) (domain.User, error) {
 	address, err := NormalizeEmail(email)
 	if err != nil {
 		return domain.User{}, err

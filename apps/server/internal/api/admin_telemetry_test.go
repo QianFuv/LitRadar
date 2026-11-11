@@ -31,7 +31,7 @@ func TestAdminTelemetryAuthorizationAndShape(t *testing.T) {
 	auth, _, token := authFixture(t)
 	collector := telemetry.New()
 	collector.Mcp("search_articles", false, time.Millisecond)
-	collector.Http("/api/articles/{article_id}", "GET", 404, 2*time.Millisecond)
+	collector.HTTP("/api/articles/{article_id}", "GET", 404, 2*time.Millisecond)
 	handlers := adminHandlers{auth: auth, telemetry: collector}
 	for _, scenario := range []struct {
 		query          string
@@ -69,7 +69,7 @@ func TestHttpSearchTelemetryPrivacyStoredRows(t *testing.T) {
 	if err := content.Create(filepath.Join(configuration.IndexDir, "catalog.sqlite"), 9); err != nil {
 		t.Fatal(err)
 	}
-	collector, err := telemetry.Open(context.Background(), configuration.TelemetryDbPath(), 90)
+	collector, err := telemetry.Open(context.Background(), configuration.TelemetryDBPath(), 90)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestHttpSearchTelemetryPrivacyStoredRows(t *testing.T) {
 	if err := collector.Flush(context.Background(), time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	database, err := sqlite.OpenPlain(configuration.TelemetryDbPath())
+	database, err := sqlite.OpenPlain(configuration.TelemetryDBPath())
 	if err != nil {
 		t.Fatal(err)
 	}

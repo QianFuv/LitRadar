@@ -43,7 +43,7 @@ func (source *cnkiIndexTestTransport) ResolveJournal(context.Context, cnki.Journ
 func (source *cnkiIndexTestTransport) YearIssues(context.Context, any) ([]any, error) {
 	source.state.trees.Add(1)
 	if source.state.requiresSession {
-		issues := copyCnkiJson(source.state.issues).([]any)
+		issues := copyCnkiJSON(source.state.issues).([]any)
 		for _, issue := range issues {
 			issue.(map[string]any)["year_issue"] = source.state.resets.Load()
 		}
@@ -83,7 +83,7 @@ func newCnkiIndexTest(t *testing.T, rows []any, workers int) (*CnkiIndexProvider
 }
 func cnkiTestRow(url string) any { return map[string]any{"article_url": url, "title": url} }
 func cnkiTestFetch(index *CnkiIndexProvider, checkpoint *string) (domain.ProviderBatch, error) {
-	return index.Fetch(context.Background(), domain.JournalCatalogEntry{CatalogId: "J", Title: "Journal"}, domain.IndexFetchContext{Mode: domain.Bootstrap, TraversalCheckpoint: checkpoint})
+	return index.Fetch(context.Background(), domain.JournalCatalogEntry{CatalogID: "J", Title: "Journal"}, domain.IndexFetchContext{Mode: domain.Bootstrap, TraversalCheckpoint: checkpoint})
 }
 
 // TestCnkiRetryCacheRetainsSuccessAndFilterButRefetchesMissing verifies per-invocation success and filtered caches.

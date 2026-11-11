@@ -23,7 +23,7 @@ var sentenceBoundary = regexp.MustCompile(`([.!?])[\s\p{Z}\x{85}]+([A-Z])`)
 
 // pattern checks publisher text without allocating unused capture results.
 func pattern(pattern, text string) bool { return domain.PatternMatches(pattern, text) }
-func parseHtml(text string) *goquery.Document {
+func parseHTML(text string) *goquery.Document {
 	node, err := html.Parse(strings.NewReader(text))
 	if err != nil {
 		panic(err)
@@ -132,7 +132,7 @@ func asciiLower(value string) string {
 		return character
 	}, value)
 }
-func equalAscii(first, second string) bool { return asciiLower(first) == asciiLower(second) }
+func equalASCII(first, second string) bool { return asciiLower(first) == asciiLower(second) }
 func lower(value string) string            { return cases.Lower(language.Und).String(value) }
 func matchingTitle(first, second string) bool {
 	normalize := func(value string) string {
@@ -149,7 +149,7 @@ func matchingTitle(first, second string) bool {
 
 // IsChallenge checks publisher headings plus known script challenge shells.
 func IsChallenge(document Document) bool {
-	parsed := parseHtml(document.Text)
+	parsed := parseHTML(document.Text)
 	titles := []string{}
 	for _, node := range parsed.Find("title,h1").Nodes {
 		titles = append(titles, goquery.NewDocumentFromNode(node).Text())
@@ -238,7 +238,7 @@ func record(config SourceConfig, document Document, checkedOn, title, body, stat
 	if status != "" {
 		statusText = &status
 	}
-	source := domain.Source{CatalogIds: append([]string{}, config.CatalogIds...), JournalTitle: config.JournalTitle, Title: plain(title), Scope: plain(strings.Join(scopeLines, "\n")), Requirements: requirements, TypeText: typeText, DateText: dateText, SourceUrl: document.FinalUrl, CheckedOn: checkedOn, StatusText: statusText, RawDateText: rawDateText}
+	source := domain.Source{CatalogIds: append([]string{}, config.CatalogIds...), JournalTitle: config.JournalTitle, Title: plain(title), Scope: plain(strings.Join(scopeLines, "\n")), Requirements: requirements, TypeText: typeText, DateText: dateText, SourceURL: document.FinalURL, CheckedOn: checkedOn, StatusText: statusText, RawDateText: rawDateText}
 	if domain.ParseSource(source) == nil {
 		return domain.Source{}, ErrUnrecognized
 	}
@@ -331,7 +331,7 @@ func matchesJournalIdentityText(identityText, identity string) bool {
 		segments = next
 	}
 	for _, line := range segments {
-		if equalAscii(strings.TrimSpace(strings.TrimLeft(line, "#")), identity) {
+		if equalASCII(strings.TrimSpace(strings.TrimLeft(line, "#")), identity) {
 			return true
 		}
 	}

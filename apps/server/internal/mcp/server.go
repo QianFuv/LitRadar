@@ -184,7 +184,7 @@ func (services Services) recordWork(workContext context.Context, name string, in
 	if name == "get_journal" {
 		field = "journal_id"
 	}
-	id := input.positiveId(field, input.fields[field].(string))
+	id := input.positiveID(field, input.fields[field].(string))
 	work = func() (any, error) {
 		if name == "get_article" {
 			return query.GetArticle(workContext, services.Storage, database, id)
@@ -203,7 +203,7 @@ func (services Services) favoriteWork(ctx context.Context, request *sdk.CallTool
 		return nil, &jsonrpc.Error{Code: -32603, Message: "Authenticated MCP user is missing"}
 	}
 	if name == "list_folders" {
-		work = func() (any, error) { return services.Favorites.ListFolders(workContext, principal.UserId) }
+		work = func() (any, error) { return services.Favorites.ListFolders(workContext, principal.UserID) }
 		return work, nil
 	}
 	workContext = context.WithoutCancel(ctx)
@@ -211,17 +211,17 @@ func (services Services) favoriteWork(ctx context.Context, request *sdk.CallTool
 	if folder <= 0 {
 		input.fail("folder_id must be a positive integer")
 	}
-	article := input.positiveId("article_id", input.fields["article_id"].(string))
+	article := input.positiveID("article_id", input.fields["article_id"].(string))
 	database := ""
 	if value := input.text("db_name"); value != nil {
 		database = *value
 	}
-	reference := favorites.Reference{ArticleId: identity.Id(article), DbName: database}
+	reference := favorites.Reference{ArticleID: identity.ID(article), DBName: database}
 	work = func() (any, error) {
 		if name == "add_favorite" {
-			return services.Favorites.AddFavorite(workContext, principal.UserId, folder, favorites.Add{Reference: reference})
+			return services.Favorites.AddFavorite(workContext, principal.UserID, folder, favorites.Add{Reference: reference})
 		}
-		didRemove, err := services.Favorites.RemoveFavorite(workContext, principal.UserId, folder, reference)
+		didRemove, err := services.Favorites.RemoveFavorite(workContext, principal.UserID, folder, reference)
 		if err != nil {
 			return nil, err
 		}
@@ -246,7 +246,7 @@ func encodeToolPayload(payload any) (string, error) {
 	case []favorites.Folder:
 		rows := make([]folderWire, len(value))
 		for index, folder := range value {
-			encoded, err := sources.Json(folder.CreatedAt)
+			encoded, err := sources.JSON(folder.CreatedAt)
 			if err != nil {
 				return "", err
 			}
@@ -254,13 +254,13 @@ func encodeToolPayload(payload any) (string, error) {
 		}
 		payload = rows
 	case favorites.Favorite:
-		encoded, err := sources.Json(value.CreatedAt)
+		encoded, err := sources.JSON(value.CreatedAt)
 		if err != nil {
 			return "", err
 		}
 		payload = favoriteWire{value, encoded}
 	}
-	encoded, err := jsonvalue.EncodeJson(payload)
+	encoded, err := jsonvalue.EncodeJSON(payload)
 	var pretty bytes.Buffer
 	if err == nil {
 		err = json.Indent(&pretty, []byte(encoded), "", "  ")
@@ -268,7 +268,7 @@ func encodeToolPayload(payload any) (string, error) {
 	return pretty.String(), err
 }
 
-var errFavoriteNotFound = errors.New("Favorite not found")
+var errFavoriteNotFound = errors.New("favorite not found")
 
 func toolError(message string) *sdk.CallToolResult {
 	return &sdk.CallToolResult{IsError: true, Content: []sdk.Content{&sdk.TextContent{Text: message}}}
@@ -284,7 +284,28 @@ func publicError(err error) string {
 	}
 	for _, known := range []error{config.ErrNoDatabases, config.ErrNotFound, config.ErrMultipleDatabases, config.ErrInvalidName, query.ErrInvalidCursor, query.ErrInvalidSearchExpression, query.ErrUnsupportedArticleSort, query.ErrLegacyWeeklyLimit, favorites.ErrFolderNotFound, errFavoriteNotFound} {
 		if errors.Is(err, known) {
-			return known.Error()
+			switch known.Error() {
+			case "favorite not found":
+				return "Favorite not found"
+			case "no SQLite databases found":
+				return "No SQLite databases found"
+			case "database not found":
+				return "Database not found"
+			case "multiple databases found, specify ?db=<name>":
+				return "Multiple databases found, specify ?db=<name>"
+			case "database name is not a safe catalog stem":
+				return "Database name is not a safe catalog stem"
+			case "invalid cursor":
+				return "Invalid cursor"
+			case "articles only support sort=date:desc or date:asc":
+				return "Articles only support sort=date:desc or date:asc"
+			case "invalid search expression":
+				return "Invalid search expression"
+			case "weekly updates exceed 2000 articles; use /api/weekly-updates/summary and /api/weekly-updates/articles":
+				return "Weekly updates exceed 2000 articles; use /api/weekly-updates/summary and /api/weekly-updates/articles"
+			default:
+				return known.Error()
+			}
 		}
 	}
 	return "Internal Server Error"

@@ -21,10 +21,10 @@ const MaxGraphBytes = 2 * 1024 * 1024
 
 // GraphSummary describes an owned graph without loading its snapshot.
 type GraphSummary struct {
-	Id            int64   `json:"id" nullable:"false" format:"int64"`
+	ID            int64   `json:"id" nullable:"false" format:"int64"`
 	Title         string  `json:"title" nullable:"false"`
-	DbName        string  `json:"db_name" nullable:"false"`
-	RootArticleId int64   `json:"root_article_id" nullable:"false" format:"int64"`
+	DBName        string  `json:"db_name" nullable:"false"`
+	RootArticleID int64   `json:"root_article_id" nullable:"false" format:"int64"`
 	NodeCount     int64   `json:"node_count" nullable:"false" format:"int64"`
 	CreatedAt     float64 `json:"created_at" nullable:"false" format:"double"`
 	UpdatedAt     float64 `json:"updated_at" nullable:"false" format:"double"`
@@ -39,8 +39,8 @@ type Graph struct {
 // GraphCreate supplies the immutable source and initial graph snapshot.
 type GraphCreate struct {
 	Title         string
-	DbName        string
-	RootArticleId int64
+	DBName        string
+	RootArticleID int64
 	NodeCount     int64
 	Graph         json.RawMessage
 }
@@ -85,10 +85,10 @@ func (value GraphCreate) Validate() error {
 	if err := validateGraphTitle(value.Title); err != nil {
 		return err
 	}
-	if err := characters("db_name", value.DbName, 255); err != nil {
+	if err := characters("db_name", value.DBName, 255); err != nil {
 		return err
 	}
-	if err := positive("root_article_id", value.RootArticleId); err != nil {
+	if err := positive("root_article_id", value.RootArticleID); err != nil {
 		return err
 	}
 	return validateGraphSnapshot(value.Graph, value.NodeCount)
@@ -117,14 +117,14 @@ const graphSummaryColumns = "id,title,db_name,root_article_id,node_count,created
 
 func scanGraphSummary(row scanner) (GraphSummary, error) {
 	var value GraphSummary
-	err := row.Scan(&value.Id, &value.Title, &value.DbName, &value.RootArticleId, &value.NodeCount, &value.CreatedAt, &value.UpdatedAt)
+	err := row.Scan(&value.ID, &value.Title, &value.DBName, &value.RootArticleID, &value.NodeCount, &value.CreatedAt, &value.UpdatedAt)
 	return value, err
 }
 
 func scanGraph(row scanner) (*Graph, error) {
 	var value Graph
 	var snapshot string
-	err := row.Scan(&value.Id, &value.Title, &value.DbName, &value.RootArticleId, &value.NodeCount, &value.CreatedAt, &value.UpdatedAt, &snapshot)
+	err := row.Scan(&value.ID, &value.Title, &value.DBName, &value.RootArticleID, &value.NodeCount, &value.CreatedAt, &value.UpdatedAt, &snapshot)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -136,7 +136,7 @@ func scanGraph(row scanner) (*Graph, error) {
 }
 
 // CreateGraph stores a trimmed title and the verbatim encoded snapshot.
-func (repository *Repository) CreateGraph(ctx context.Context, owner identity.Id, value GraphCreate) (*Graph, error) {
+func (repository *Repository) CreateGraph(ctx context.Context, owner identity.ID, value GraphCreate) (*Graph, error) {
 	if err := value.Validate(); err != nil {
 		return nil, err
 	}
@@ -144,7 +144,7 @@ func (repository *Repository) CreateGraph(ctx context.Context, owner identity.Id
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
 		now := nowSeconds()
 		var err error
-		row, lookup := graphQueries.CreateGraph(ctx, connection, graphsdb.CreateGraphParams{UserID: int64(owner), Title: strings.TrimSpace(value.Title), DBName: value.DbName, RootArticleID: value.RootArticleId, NodeCount: value.NodeCount, Graph: string(value.Graph), CreatedAt: now, UpdatedAt: now})
+		row, lookup := graphQueries.CreateGraph(ctx, connection, graphsdb.CreateGraphParams{UserID: int64(owner), Title: strings.TrimSpace(value.Title), DBName: value.DBName, RootArticleID: value.RootArticleID, NodeCount: value.NodeCount, Graph: string(value.Graph), CreatedAt: now, UpdatedAt: now})
 		result, err = decodeGraph(graphsdb.GraphRow(row), lookup)
 		return err
 	})
@@ -152,7 +152,7 @@ func (repository *Repository) CreateGraph(ctx context.Context, owner identity.Id
 }
 
 // GetGraph returns nil for absent graphs and graphs belonging to another owner.
-func (repository *Repository) GetGraph(ctx context.Context, owner identity.Id, id int64) (*Graph, error) {
+func (repository *Repository) GetGraph(ctx context.Context, owner identity.ID, id int64) (*Graph, error) {
 	var result *Graph
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
 		var err error
@@ -163,7 +163,7 @@ func (repository *Repository) GetGraph(ctx context.Context, owner identity.Id, i
 }
 
 // ListGraphPage orders summaries by descending update time and row ID.
-func (repository *Repository) ListGraphPage(ctx context.Context, owner identity.Id, limit int64, cursor *string) (GraphPage, error) {
+func (repository *Repository) ListGraphPage(ctx context.Context, owner identity.ID, limit int64, cursor *string) (GraphPage, error) {
 	result := GraphPage{Items: []GraphSummary{}}
 	if limit < 1 || limit > 100 {
 		return result, InvalidInput{"limit must be between 1 and 100"}
@@ -202,14 +202,14 @@ func (repository *Repository) ListGraphPage(ctx context.Context, owner identity.
 	if int64(len(result.Items)) > limit {
 		result.Items = result.Items[:limit]
 		last := result.Items[len(result.Items)-1]
-		cursor := encodeCursor(owner, Favorite{Id: last.Id, FolderId: -1, CreatedAt: last.UpdatedAt})
+		cursor := encodeCursor(owner, Favorite{ID: last.ID, FolderID: -1, CreatedAt: last.UpdatedAt})
 		result.NextCursor = &cursor
 	}
 	return result, err
 }
 
 // UpdateGraph atomically replaces supplied fields and returns the updated owned graph.
-func (repository *Repository) UpdateGraph(ctx context.Context, owner identity.Id, id int64, value GraphUpdate) (*Graph, error) {
+func (repository *Repository) UpdateGraph(ctx context.Context, owner identity.ID, id int64, value GraphUpdate) (*Graph, error) {
 	if err := value.Validate(); err != nil {
 		return nil, err
 	}
@@ -234,7 +234,7 @@ func (repository *Repository) UpdateGraph(ctx context.Context, owner identity.Id
 }
 
 // DeleteGraph removes only the owner's graph and reports whether a row existed.
-func (repository *Repository) DeleteGraph(ctx context.Context, owner identity.Id, id int64) (bool, error) {
+func (repository *Repository) DeleteGraph(ctx context.Context, owner identity.ID, id int64) (bool, error) {
 	var changed bool
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
 		result, err := graphQueries.DeleteGraph(ctx, connection, graphsdb.DeleteGraphParams{UserID: int64(owner), ID: id})

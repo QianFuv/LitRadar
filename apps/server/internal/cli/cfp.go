@@ -71,10 +71,10 @@ func importCfp(ctx context.Context, configuration config.Config, args arguments)
 	if err != nil {
 		return empty, err
 	}
-	if _, err := authmigration.Migrate(ctx, configuration.AuthDbPath); err != nil {
+	if _, err := authmigration.Migrate(ctx, configuration.AuthDBPath); err != nil {
 		return empty, err
 	}
-	repository, err := store.Open(configuration.AuthDbPath)
+	repository, err := store.Open(configuration.AuthDBPath)
 	if err != nil {
 		return empty, err
 	}
@@ -83,7 +83,7 @@ func importCfp(ctx context.Context, configuration config.Config, args arguments)
 			resultError = errors.Join(resultError, fmt.Errorf("close repository: %w", closeError))
 		}
 	}()
-	identity := assets.SeedId
+	identity := assets.SeedID
 	if !bytes.Equal(data, assets.Seed()) {
 		if _, err := cfp.EnsureSeed(ctx, repository); err != nil {
 			return empty, err
@@ -102,10 +102,10 @@ func refreshCfp(ctx context.Context, configuration config.Config, args arguments
 	if err != nil {
 		return nil, false, err
 	}
-	if _, err := authmigration.Migrate(ctx, configuration.AuthDbPath); err != nil {
+	if _, err := authmigration.Migrate(ctx, configuration.AuthDBPath); err != nil {
 		return nil, false, err
 	}
-	repository, err := store.Open(configuration.AuthDbPath)
+	repository, err := store.Open(configuration.AuthDBPath)
 	if err != nil {
 		return nil, false, err
 	}
@@ -128,11 +128,11 @@ func refreshCfp(ctx context.Context, configuration config.Config, args arguments
 	return summarizeCfpSources(results)
 }
 
-func selectCfpSources(configuration config.Config, database, catalogId *string, isAll bool) ([]cfp.SourceConfig, error) {
+func selectCfpSources(configuration config.Config, database, catalogID *string, isAll bool) ([]cfp.SourceConfig, error) {
 	if isAll {
 		return cfp.Registry(), nil
 	}
-	identities, hasDatabase, err := cfpCatalogIdentities(configuration, database, catalogId)
+	identities, hasDatabase, err := cfpCatalogIdentities(configuration, database, catalogID)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +143,7 @@ func selectCfpSources(configuration config.Config, database, catalogId *string, 
 		return nil, errors.New("CFP journal catalog member not found")
 	}
 	sources := cfpSourcesForIdentities(identities)
-	if len(sources) == 0 && catalogId != nil {
+	if len(sources) == 0 && catalogID != nil {
 		return nil, errors.New("CFP journal is not yet adapted")
 	}
 	return sources, nil
@@ -159,7 +159,7 @@ func readCfpImportSeed(args arguments) ([]byte, *store.PreparedSeed, error) {
 		return nil, nil, usageError(cfpUsage)
 	}
 	if len(args) != 0 {
-		return nil, nil, fmt.Errorf("Unexpected CFP import arguments: %s", strings.Join(args, " "))
+		return nil, nil, fmt.Errorf("unexpected CFP import arguments: %s", strings.Join(args, " "))
 	}
 	metadata, err := os.Stat(*input)
 	if err != nil {
@@ -285,7 +285,7 @@ func summarizeCfpSources(results []cfp.RefreshResult) (any, bool, error) {
 }
 
 // cfpCatalogIdentities reads selected CSV catalogs in existing storage order.
-func cfpCatalogIdentities(configuration config.Config, database, catalogId *string) (map[string]bool, bool, error) {
+func cfpCatalogIdentities(configuration config.Config, database, catalogID *string) (map[string]bool, bool, error) {
 	identities := map[string]bool{}
 	hasDatabase := database == nil
 	catalogs, err := configuration.ListProviderCatalogs()
@@ -297,7 +297,7 @@ func cfpCatalogIdentities(configuration config.Config, database, catalogId *stri
 			continue
 		}
 		hasDatabase = true
-		if err := addCfpCatalogMembers(filepath.Join(configuration.MetaDir, *catalog.CsvFilename), catalogId, identities); err != nil {
+		if err := addCfpCatalogMembers(filepath.Join(configuration.MetaDir, *catalog.CsvFilename), catalogID, identities); err != nil {
 			return nil, false, err
 		}
 	}
@@ -305,16 +305,16 @@ func cfpCatalogIdentities(configuration config.Config, database, catalogId *stri
 }
 
 // addCfpCatalogMembers preserves member and alias identities without normalizing selectors.
-func addCfpCatalogMembers(filename string, catalogId *string, identities map[string]bool) error {
+func addCfpCatalogMembers(filename string, catalogID *string, identities map[string]bool) error {
 	journals, err := index.ReadCatalogCsv(filename)
 	if err != nil {
 		return err
 	}
 	for _, journal := range journals {
-		if catalogId != nil && *catalogId != journal.CatalogId && !slices.Contains(journal.CatalogAliases, *catalogId) {
+		if catalogID != nil && *catalogID != journal.CatalogID && !slices.Contains(journal.CatalogAliases, *catalogID) {
 			continue
 		}
-		identities[journal.CatalogId] = true
+		identities[journal.CatalogID] = true
 		for _, alias := range journal.CatalogAliases {
 			identities[alias] = true
 		}

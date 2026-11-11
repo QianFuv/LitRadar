@@ -21,7 +21,7 @@ func (handlers *authHandlers) authRateLimit(request *http.Request, event *domain
 		}
 	}
 	started, _ := request.Context().Value(auditStartKey{}).(time.Time)
-	slog.WarnContext(request.Context(), "security.auth.rate_limited", "event", "security.auth.rate_limited", "component", "security", "action", event.Action, "outcome", "rate_limited", "actor_id", 0, "target_id", 0, "reason", rejection.reason, "bucket", rejection.bucket, "source_class", rejection.sourceClass, "rejected_count", rejection.rejectedCount, "request_id", event.RequestId, "retry_after_seconds", rejection.retryAfter, "duration_ms", time.Since(started).Milliseconds())
+	slog.WarnContext(request.Context(), "security.auth.rate_limited", "event", "security.auth.rate_limited", "component", "security", "action", event.Action, "outcome", "rate_limited", "actor_id", 0, "target_id", 0, "reason", rejection.reason, "bucket", rejection.bucket, "source_class", rejection.sourceClass, "rejected_count", rejection.rejectedCount, "request_id", event.RequestID, "retry_after_seconds", rejection.retryAfter, "duration_ms", time.Since(started).Milliseconds())
 	return &apiError{status: 429, detail: "Too many authentication attempts; try again later", retryAfter: &rejection.retryAfter}
 }
 

@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"net/netip"
+	"slices"
 	"strings"
 )
 
@@ -23,11 +24,11 @@ func resolveAuthClientSource(peer netip.Addr, headers http.Header, trusted []net
 		return authClientSource{peer, class}
 	}
 	client := peer
-	for index := len(chain) - 1; index >= 0; index-- {
+	for _, c := range slices.Backward(chain) {
 		if !isTrustedProxy(client, trusted) {
 			break
 		}
-		client = chain[index].Unmap()
+		client = c.Unmap()
 	}
 	return authClientSource{client, class}
 }

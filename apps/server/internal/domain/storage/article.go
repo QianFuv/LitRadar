@@ -4,9 +4,9 @@ import "github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 
 // Article retains canonical fields independently from the listing and full-text projections.
 type Article struct {
-	ArticleId       identity.Id `json:"article_id" nullable:"false"`
-	JournalId       identity.Id `json:"journal_id" nullable:"false"`
-	IssueId         *int64      `json:"issue_id" required:"false" nullable:"true" format:"int64"`
+	ArticleID       identity.ID `json:"article_id" nullable:"false"`
+	JournalID       identity.ID `json:"journal_id" nullable:"false"`
+	IssueID         *int64      `json:"issue_id" required:"false" nullable:"true" format:"int64"`
 	Title           string      `json:"title" nullable:"false"`
 	PublicationYear *int64      `json:"publication_year" required:"false" nullable:"true" format:"int64"`
 	Date            *string     `json:"date" required:"false" nullable:"true"`

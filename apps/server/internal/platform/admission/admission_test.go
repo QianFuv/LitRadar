@@ -71,18 +71,16 @@ func TestShutdownWaitRetainsCancelledWorkerOwnership(t *testing.T) {
 	})
 }
 func TestConcurrentShutdownCannotRaceNewWorkerOwnership(t *testing.T) {
-	for attempt := 0; attempt < 50; attempt++ {
+	for range 50 {
 		gate := New(4)
 		start := make(chan struct{})
 		var callers sync.WaitGroup
 		var active atomic.Int32
-		for worker := 0; worker < 12; worker++ {
-			callers.Add(1)
-			go func() {
-				defer callers.Done()
+		for range 12 {
+			callers.Go(func() {
 				<-start
 				_, _ = Run(context.Background(), gate, func() (int, error) { active.Add(1); defer active.Add(-1); time.Sleep(time.Millisecond); return 1, nil })
-			}()
+			})
 		}
 		close(start)
 		gate.Wait()

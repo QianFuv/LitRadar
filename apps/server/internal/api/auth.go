@@ -16,7 +16,7 @@ import (
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/auth"
 )
 
-type requestIdKey struct{}
+type requestIDKey struct{}
 type auditStartKey struct{}
 
 func beginAuthAudit(request *http.Request) *http.Request {
@@ -28,22 +28,22 @@ type userResponse struct {
 	Email        *string `json:"email" nullable:"true"`
 	AuthKind     string  `json:"auth_kind" nullable:"false" enum:"local,oidc"`
 	IsOidcLinked bool    `json:"is_oidc_linked" nullable:"false"`
-	Id           int64   `json:"id" nullable:"false" format:"int64"`
+	ID           int64   `json:"id" nullable:"false" format:"int64"`
 	Username     string  `json:"username" nullable:"false"`
 	IsAdmin      bool    `json:"is_admin" nullable:"false"`
 }
 
 func publicUser(user domain.User) userResponse {
-	return userResponse{Id: int64(user.Id), Username: user.Username, IsAdmin: user.IsAdmin, Email: user.Email, AuthKind: user.AuthKind, IsOidcLinked: user.IsOidcLinked}
+	return userResponse{ID: int64(user.ID), Username: user.Username, IsAdmin: user.IsAdmin, Email: user.Email, AuthKind: user.AuthKind, IsOidcLinked: user.IsOidcLinked}
 }
 
 func logAuth(request *http.Request, event domain.AuditEvent, reason string) {
 	actor, target := int64(0), int64(0)
-	if event.ActorId != nil {
-		actor = *event.ActorId
+	if event.ActorID != nil {
+		actor = *event.ActorID
 	}
-	if event.TargetId != nil {
-		target = *event.TargetId
+	if event.TargetID != nil {
+		target = *event.TargetID
 	}
 	started, _ := request.Context().Value(auditStartKey{}).(time.Time)
 	duration := int64(0)
@@ -57,8 +57,8 @@ func logAuth(request *http.Request, event domain.AuditEvent, reason string) {
 	slog.Log(request.Context(), level, name, "event", name, "component", "security", "action", event.Action, "outcome", outcome, "actor_id", actor, "target_id", target, "duration_ms", duration, "reason", reason)
 }
 
-func requestId(request *http.Request) string {
-	value, _ := request.Context().Value(requestIdKey{}).(string)
+func requestID(request *http.Request) string {
+	value, _ := request.Context().Value(requestIDKey{}).(string)
 	return value
 }
 
@@ -107,11 +107,11 @@ func (handlers *authHandlers) reject(request *http.Request, event domain.AuditEv
 
 func (handlers *authHandlers) persistAudit(request *http.Request, event domain.AuditEvent) *apiError {
 	event.OccurredAt = currentTimestamp()
-	if event.ActorId != nil && *event.ActorId <= 0 {
-		event.ActorId = nil
+	if event.ActorID != nil && *event.ActorID <= 0 {
+		event.ActorID = nil
 	}
-	if event.TargetId != nil && *event.TargetId <= 0 {
-		event.TargetId = nil
+	if event.TargetID != nil && *event.TargetID <= 0 {
+		event.TargetID = nil
 	}
 	type result struct{ err error }
 	value, err := executor.Run(request.Context(), handlers.pool, func() (result, error) {
@@ -148,14 +148,14 @@ func authOperationAction(name string) string {
 }
 
 // applyAuthAuditIdentity records the actor and operation-specific target before execution.
-func applyAuthAuditIdentity(event *domain.AuditEvent, current currentIdentity, name string, tokenId int64) {
-	actor := int64(current.authorization.User.Id)
-	event.ActorId = &actor
+func applyAuthAuditIdentity(event *domain.AuditEvent, current currentIdentity, name string, tokenID int64) {
+	actor := int64(current.authorization.User.ID)
+	event.ActorID = &actor
 	if name == "logout_all" {
-		event.TargetId = &actor
+		event.TargetID = &actor
 	}
 	if name == "delete_token" {
-		event.TargetId = &tokenId
+		event.TargetID = &tokenID
 	}
 	event.OccurredAt = currentTimestamp()
 }

@@ -54,7 +54,7 @@ func LiveCnkiAccessRegistration(captchaToken *string, proxy transport.Proxy) (*p
 }
 
 type cnkiSessionReader interface {
-	Data(context.Context, identity.Id, bool) (*authstorage.CnkiData, error)
+	Data(context.Context, identity.ID, bool) (*authstorage.CnkiData, error)
 }
 
 // ZjlibFullTextProvider resolves private documents using the requesting user's active stored session.
@@ -89,17 +89,17 @@ func (*ZjlibFullTextProvider) SupportsFullText(article domain.ArticleLocator) bo
 
 // ResolveFullText loads active session state, warms it and checks ten ordered candidates without persistence.
 func (access *ZjlibFullTextProvider) ResolveFullText(ctx context.Context, article domain.ArticleLocator, request domain.ArticleAccessContext) (domain.ArticleFullTextResolution, error) {
-	if request.UserId == nil {
+	if request.UserID == nil {
 		return domain.ArticleFullTextResolution{}, accessFailure(provider.AuthenticationRequired, "authenticated CNKI session required")
 	}
-	session, err := access.sessions.Data(ctx, *request.UserId, true)
+	session, err := access.sessions.Data(ctx, *request.UserID, true)
 	if err != nil {
 		return domain.ArticleFullTextResolution{}, accessFailure(provider.Internal, "CNKI session unavailable")
 	}
 	if session == nil {
 		return domain.ArticleFullTextResolution{}, accessFailure(provider.AuthenticationRequired, "active CNKI session required")
 	}
-	state, err := transport.ParseJson(session.SessionData)
+	state, err := transport.ParseJSON(session.SessionData)
 	if err != nil {
 		return domain.ArticleFullTextResolution{}, accessFailure(provider.Internal, "CNKI session unavailable")
 	}

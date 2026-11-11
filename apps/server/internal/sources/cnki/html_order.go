@@ -2,6 +2,7 @@ package cnki
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -52,12 +53,7 @@ func authorTreeContains(roots []*html.Node, marker string) bool {
 		}
 		return false
 	}
-	for _, root := range roots {
-		if contains(root) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(roots, contains)
 }
 func authorRanksComplete(nodes []*html.Node, ranks map[*html.Node]int) bool {
 	for _, node := range nodes {
@@ -173,9 +169,7 @@ func mergeAuthorRanks(marked string, roots []*html.Node, marker string, ranks ma
 			return
 		}
 	}
-	for node, rank := range found {
-		ranks[node] = rank
-	}
+	maps.Copy(ranks, found)
 }
 
 // completeAuthorRanks tries individual raw offsets after both tokenizer modes.

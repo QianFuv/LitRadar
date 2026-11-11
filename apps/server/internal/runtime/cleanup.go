@@ -28,7 +28,7 @@ func ProcessStorage(args []string) (config.Config, error) {
 	if value, err := processOption(args, "--auth-db"); err != nil {
 		return config.Config{}, err
 	} else if value != nil {
-		storage.AuthDbPath = *value
+		storage.AuthDBPath = *value
 	}
 	return storage, nil
 }
@@ -49,7 +49,7 @@ func cleanupPaths(args []string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	paths := []string{storage.AuthDbPath}
+	paths := []string{storage.AuthDBPath}
 	for _, directory := range []string{storage.IndexDir, storage.IndexControlDir} {
 		entries, err := os.ReadDir(directory)
 		if os.IsNotExist(err) {

@@ -222,7 +222,7 @@ func assertProxyRedaction(t *testing.T, proxy Proxy) {
 		var output strings.Builder
 		logger := slog.New(slog.NewJSONHandler(&output, nil))
 		logger.Info("proxy", slog.Any("value", value))
-		output.WriteString(fmt.Sprintf("%v %+v %#v", value, value, value))
+		fmt.Fprintf(&output, "%v %+v %#v", value, value, value)
 		if strings.Contains(output.String(), "private-") {
 			t.Fatal("proxy credentials leaked")
 		}
@@ -232,7 +232,7 @@ func assertProxyRedaction(t *testing.T, proxy Proxy) {
 // TestProxyRejectsMalformedCredentialEscapes prevents inconsistent URL and wire credentials.
 func TestProxyRejectsMalformedCredentialEscapes(t *testing.T) {
 	for _, value := range []string{"http://u%zz:p@proxy.test:80", "socks5://u:p%zz@proxy.test:1080"} {
-		if _, err := ExplicitProxy(value); err != ErrProxyUrl {
+		if _, err := ExplicitProxy(value); err != ErrProxyURL {
 			t.Fatalf("malformed proxy credential accepted: %v", err)
 		}
 	}

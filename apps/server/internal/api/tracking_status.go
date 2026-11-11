@@ -8,7 +8,7 @@ import (
 )
 
 type manualPushStatus struct {
-	JobId                 *string  `json:"job_id" required:"false" nullable:"true"`
+	JobID                 *string  `json:"job_id" required:"false" nullable:"true"`
 	Status                string   `json:"status" nullable:"false" enum:"idle,pending,running,completed,failed,cancelled,timed_out,unknown"`
 	Message               string   `json:"message" nullable:"false"`
 	StartedAt             *float64 `json:"started_at" required:"false" nullable:"true" format:"double"`
@@ -21,7 +21,7 @@ type manualPushStatus struct {
 	Selected              int64    `json:"selected" nullable:"false" format:"int64"`
 	TotalCandidates       *int64   `json:"total_candidates" required:"false" nullable:"true" format:"int64"`
 	Summary               string   `json:"summary" nullable:"false"`
-	FolderId              *int64   `json:"folder_id" required:"false" nullable:"true" format:"int64"`
+	FolderID              *int64   `json:"folder_id" required:"false" nullable:"true" format:"int64"`
 	FolderName            *string  `json:"folder_name" required:"false" nullable:"true"`
 }
 
@@ -32,7 +32,7 @@ type manualOutcomeValue struct {
 	Selected        int64   `json:"selected"`
 	TotalCandidates *int64  `json:"total_candidates"`
 	Summary         string  `json:"summary"`
-	FolderId        *int64  `json:"folder_id"`
+	FolderID        *int64  `json:"folder_id"`
 	FolderName      *string `json:"folder_name"`
 }
 
@@ -53,7 +53,7 @@ func manualStatus(run *storage.RunRecord) manualPushStatus {
 	if run == nil {
 		return result
 	}
-	result.JobId = &run.ExternalId
+	result.JobID = &run.ExternalID
 	result.Status = string(run.Status)
 	switch run.Status {
 	case storage.RunStatusQueued:
@@ -79,10 +79,10 @@ func manualStatus(run *storage.RunRecord) manualPushStatus {
 
 // applyManualOutcome projects valid metrics while limiting message overrides to completed runs.
 func applyManualOutcome(result *manualPushStatus, run *storage.RunRecord) {
-	if run.ResultJson == nil {
+	if run.ResultJSON == nil {
 		return
 	}
-	outcome := manualOutcome(*run.ResultJson)
+	outcome := manualOutcome(*run.ResultJSON)
 	if outcome == nil {
 		result.Summary = "Stored manual delivery result is invalid or obsolete"
 		return
@@ -91,7 +91,7 @@ func applyManualOutcome(result *manualPushStatus, run *storage.RunRecord) {
 		result.Message = outcome.Message
 	}
 	result.Pushed, result.Selected, result.Summary = outcome.Pushed, outcome.Selected, outcome.Summary
-	result.TotalCandidates, result.FolderId, result.FolderName = outcome.TotalCandidates, outcome.FolderId, outcome.FolderName
+	result.TotalCandidates, result.FolderID, result.FolderName = outcome.TotalCandidates, outcome.FolderID, outcome.FolderName
 }
 
 var manualErrorMessage = map[string]string{

@@ -43,7 +43,7 @@ func TestExecutableReportsSafeUsageErrors(t *testing.T) {
 				t.Fatal("stderr exposed untrusted argument or runtime error text")
 			}
 			failures := 0
-			for _, line := range strings.Split(strings.TrimSpace(stderr.String()), "\n") {
+			for line := range strings.SplitSeq(strings.TrimSpace(stderr.String()), "\n") {
 				var event map[string]any
 				if err := json.Unmarshal([]byte(line), &event); err != nil {
 					t.Fatalf("stderr is not JSON Lines: %q", line)

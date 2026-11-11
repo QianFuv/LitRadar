@@ -87,7 +87,7 @@ func cloneConfig(config LiveConfig) LiveConfig {
 	}
 	return config
 }
-func newHttpClient(proxy transport.Proxy) (*http.Client, error) {
+func newHTTPClient(proxy transport.Proxy) (*http.Client, error) {
 	wire, err := proxy.ClientTransport()
 	if err != nil {
 		return nil, &Error{Kind: "Request", Message: "domestic CNKI HTTP client initialization failed"}
@@ -97,7 +97,7 @@ func newHttpClient(proxy transport.Proxy) (*http.Client, error) {
 
 // NewLiveTransport creates an explicit-proxy client with a shared optional article deadline.
 func NewLiveTransport(config LiveConfig, proxy transport.Proxy, deadline time.Time) (*LiveTransport, error) {
-	client, err := newHttpClient(proxy)
+	client, err := newHTTPClient(proxy)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +142,7 @@ func (live *LiveTransport) ResetTransientState(ctx context.Context) error {
 		return err
 	}
 	defer leave(live.state.gate)
-	client, err := newHttpClient(live.state.proxy)
+	client, err := newHTTPClient(live.state.proxy)
 	if err != nil {
 		return err
 	}
@@ -175,9 +175,9 @@ func (live *LiveTransport) DrainAttempts() []scholarly.Attempt {
 func (live *LiveTransport) record(endpoint, method, url string, status *uint16, isSuccess, didRetry bool, message *string) {
 	live.state.attemptMutex.Lock()
 	defer live.state.attemptMutex.Unlock()
-	live.state.attempts = append(live.state.attempts, scholarly.Attempt{Service: "cnki", Endpoint: endpoint, Method: method, Url: RedactUrl(url), StatusCode: status, DidSucceed: isSuccess, DidRetry: didRetry, Error: message})
+	live.state.attempts = append(live.state.attempts, scholarly.Attempt{Service: "cnki", Endpoint: endpoint, Method: method, URL: RedactURL(url), StatusCode: status, DidSucceed: isSuccess, DidRetry: didRetry, Error: message})
 }
-func textPointer(value string) *string { return &value }
+
 func requestContext(parent context.Context, caller time.Time) (context.Context, context.CancelFunc, time.Time) {
 	deadline := transport.LogicalDeadline(caller)
 	if limit, ok := parent.Deadline(); ok && limit.Before(deadline) {
@@ -186,12 +186,12 @@ func requestContext(parent context.Context, caller time.Time) (context.Context, 
 	ctx, cancel := context.WithDeadline(parent, deadline)
 	return ctx, cancel, deadline
 }
-func (shared *sharedCaptcha) requestUrl(ctx context.Context, url string) (string, uint64, error) {
+func (shared *sharedCaptcha) requestURL(ctx context.Context, url string) (string, uint64, error) {
 	if err := enter(ctx, shared.gate); err != nil {
 		return "", 0, err
 	}
 	defer leave(shared.gate)
-	request, err := shared.session.AttachCaptchaId(url)
+	request, err := shared.session.AttachCaptchaID(url)
 	return request, shared.generation, err
 }
 func subtractElapsed(delay transport.Delay, elapsed time.Duration) transport.Delay {
@@ -257,7 +257,7 @@ func (live *LiveTransport) send(ctx context.Context, deadline time.Time, method,
 		if previousCount >= 10 {
 			return errors.New("domestic CNKI redirect limit exceeded")
 		}
-		if _, err := parseDomesticUrl(next); err != nil {
+		if _, err := parseDomesticURL(next); err != nil {
 			return errors.New("domestic CNKI redirect URL rejected")
 		}
 		return nil
@@ -280,7 +280,7 @@ func (live *LiveTransport) requestText(parent context.Context, method, url strin
 	if err != nil {
 		return "", err
 	}
-	requestUrl, generation, err := live.state.shared.requestUrl(ctx, base)
+	requestURL, generation, err := live.state.shared.requestURL(ctx, base)
 	if err != nil {
 		return "", err
 	}
@@ -289,7 +289,7 @@ func (live *LiveTransport) requestText(parent context.Context, method, url strin
 		if _, ok := budget.nextAttempt(); !ok {
 			break
 		}
-		text, finalUrl, status, shouldRetry, err := live.readTextAttempt(ctx, deadline, method, requestUrl, body, headers, endpoint, &budget)
+		text, finalURL, status, shouldRetry, err := live.readTextAttempt(ctx, deadline, method, requestURL, body, headers, endpoint, &budget)
 		if err != nil {
 			return "", err
 		}
@@ -297,22 +297,22 @@ func (live *LiveTransport) requestText(parent context.Context, method, url strin
 			continue
 		}
 		didRetry := budget.didRetry()
-		if LooksLikeCaptchaChallenge(text, finalUrl) {
-			live.record(endpoint, method, requestUrl, &status, false, didRetry, textPointer("captcha challenge"))
-			requestUrl, generation, err = live.replayTextCaptcha(ctx, text, finalUrl, base, generation, deadline, &budget)
+		if LooksLikeCaptchaChallenge(text, finalURL) {
+			live.record(endpoint, method, requestURL, &status, false, didRetry, new("captcha challenge"))
+			requestURL, generation, err = live.replayTextCaptcha(ctx, text, finalURL, base, generation, deadline, &budget)
 			if err != nil {
 				return "", err
 			}
 			continue
 		}
-		shouldRetry, err = live.validateTextAttempt(ctx, deadline, method, requestUrl, endpoint, text, status, &budget)
+		shouldRetry, err = live.validateTextAttempt(ctx, deadline, method, requestURL, endpoint, text, status, &budget)
 		if err != nil {
 			return "", err
 		}
 		if shouldRetry {
 			continue
 		}
-		live.record(endpoint, method, requestUrl, &status, true, didRetry, nil)
+		live.record(endpoint, method, requestURL, &status, true, didRetry, nil)
 		return text, nil
 	}
 	return "", &Error{Kind: "Request", Message: "domestic CNKI request retries exhausted"}
@@ -329,7 +329,7 @@ func (live *LiveTransport) ResolveJournal(ctx context.Context, locator JournalLo
 		var referer *string
 		if endpoint == "journal_search" {
 			method = "POST"
-			referer = textPointer(NaviBase + "/knavi")
+			referer = new(NaviBase + "/knavi")
 		}
 		return live.requestText(ctx, method, url, data, referer, endpoint)
 	})
@@ -339,7 +339,7 @@ func (live *LiveTransport) ResolveJournal(ctx context.Context, locator JournalLo
 func resolveJournal(locator JournalLocator, request func(string, string, []scholarly.QueryPair) (string, error)) (any, error) {
 	queries := journalResolutionQueries(locator)
 	seen := map[string]bool{}
-	for pass := 0; pass < 2; pass++ {
+	for pass := range 2 {
 		for _, query := range queries {
 			details, err := resolveJournalQuery(locator, query, seen, request)
 			if err != nil || details != nil {
@@ -370,7 +370,7 @@ func (live *LiveTransport) YearIssues(ctx context.Context, journal any) ([]any, 
 	if pykm == nil {
 		return nil, &Error{Kind: "Parse", Message: "domestic CNKI journal missing pykm"}
 	}
-	pcode := firstValue(jsonText(field(journal, "pcode")), textPointer("CJFD,CCJD"))
+	pcode := firstValue(jsonText(field(journal, "pcode")), new("CJFD,CCJD"))
 	data := []scholarly.QueryPair{{Name: "pIdx", Value: "0"}, {Name: "time", Value: stringField(journal, "time")}, {Name: "isEpublish", Value: "0"}, {Name: "pcode", Value: *pcode}}
 	text, err := live.requestText(ctx, "POST", NaviBase+"/knavi/journals/"+*pykm+"/yearList", data, jsonText(field(journal, "detail_url")), "year_issues")
 	if err != nil {
@@ -393,7 +393,7 @@ func (live *LiveTransport) IssueArticles(ctx context.Context, journal, issue any
 	if token == nil {
 		return IssueArticlePage{}, &Error{Kind: "Parse", Message: "domestic CNKI issue missing year_issue"}
 	}
-	pcode := firstValue(jsonText(field(journal, "pcode")), textPointer("CJFD,CCJD"))
+	pcode := firstValue(jsonText(field(journal, "pcode")), new("CJFD,CCJD"))
 	data := []scholarly.QueryPair{{Name: "yearIssue", Value: *token}, {Name: "pageIdx", Value: strconv.FormatUint(page, 10)}, {Name: "pcode", Value: *pcode}, {Name: "isEpublish", Value: "0"}, {Name: "language", Value: "CHS"}, {Name: "uniplatform", Value: "NZKPT"}}
 	text, err := live.requestText(ctx, "POST", NaviBase+"/knavi/journals/"+*pykm+"/papers", data, jsonText(field(journal, "detail_url")), "issue_articles")
 	if err != nil {
@@ -403,7 +403,7 @@ func (live *LiveTransport) IssueArticles(ctx context.Context, journal, issue any
 }
 
 // ArticleDetail retrieves a domestic abstract and validates its permanent-missing markers.
-func (live *LiveTransport) ArticleDetail(ctx context.Context, url string, platformId *string) (any, error) {
+func (live *LiveTransport) ArticleDetail(ctx context.Context, url string, platformID *string) (any, error) {
 	if err := enter(ctx, live.state.gate); err != nil {
 		return nil, err
 	}
@@ -446,13 +446,13 @@ func (live *LiveTransport) solveCaptcha(ctx context.Context, text, url string, g
 		if err != nil {
 			return CaptchaPuzzle{}, err
 		}
-		payload, err := live.captchaJson(ctx, deadline, "/verify-api/get", challenge, body, "captcha puzzle")
+		payload, err := live.captchaJSON(ctx, deadline, "/verify-api/get", challenge, body, "captcha puzzle")
 		if err != nil {
 			return CaptchaPuzzle{}, err
 		}
 		return ParseCaptchaPuzzle(challenge, payload)
 	}, func(ctx context.Context, puzzle CaptchaPuzzle, point string) (bool, error) {
-		payload, err := live.captchaJson(ctx, deadline, "/verify-api/web/check", puzzle.ChallengeUrl, CaptchaCheckRequestBody(puzzle, point), "captcha check")
+		payload, err := live.captchaJSON(ctx, deadline, "/verify-api/web/check", puzzle.ChallengeURL, CaptchaCheckRequestBody(puzzle, point), "captcha check")
 		if err != nil {
 			return false, err
 		}
@@ -476,7 +476,7 @@ func (live *LiveTransport) captchaRequest(ctx context.Context, deadline time.Tim
 		finish()
 		return nil, func() {}, httpStatusError(429)
 	}
-	if _, err := parseDomesticUrl(response.Request.URL.String()); err != nil {
+	if _, err := parseDomesticURL(response.Request.URL.String()); err != nil {
 		_ = response.Body.Close()
 		finish()
 		return nil, func() {}, err
@@ -488,8 +488,8 @@ func (live *LiveTransport) captchaRequest(ctx context.Context, deadline time.Tim
 	}
 	return response, finish, nil
 }
-func (live *LiveTransport) captchaJson(ctx context.Context, deadline time.Time, path, referer string, body any, endpoint string) (any, error) {
-	encoded, err := domain.Json(body)
+func (live *LiveTransport) captchaJSON(ctx context.Context, deadline time.Time, path, referer string, body any, endpoint string) (any, error) {
+	encoded, err := domain.JSON(body)
 	if err != nil {
 		return nil, &Error{Kind: "Parse", Message: "domestic CNKI " + endpoint + " request is not valid JSON"}
 	}
@@ -507,7 +507,7 @@ func (live *LiveTransport) captchaJson(ctx context.Context, deadline time.Time, 
 		}
 		return nil, &Error{Kind: kind, Message: "domestic CNKI " + endpoint + " " + message}
 	}
-	payload, err := transport.ParseJson(raw)
+	payload, err := transport.ParseJSON(raw)
 	if err != nil {
 		return nil, &Error{Kind: "Parse", Message: "domestic CNKI " + endpoint + " response is not valid JSON"}
 	}
@@ -516,14 +516,14 @@ func (live *LiveTransport) captchaJson(ctx context.Context, deadline time.Time, 
 
 // prepareTextRequest validates the URL and referer before encoding a POST body.
 func prepareTextRequest(method, url string, data []scholarly.QueryPair, referer *string) (string, http.Header, []byte, error) {
-	parsed, err := parseDomesticUrl(url)
+	parsed, err := parseDomesticURL(url)
 	if err != nil {
 		return "", nil, nil, err
 	}
 	base := parsed.Href(false)
 	headers := http.Header{"User-Agent": {browserUserAgent}}
 	if referer != nil {
-		parsed, err := parseDomesticUrl(*referer)
+		parsed, err := parseDomesticURL(*referer)
 		if err != nil {
 			return "", nil, nil, err
 		}
@@ -538,7 +538,7 @@ func prepareTextRequest(method, url string, data []scholarly.QueryPair, referer 
 }
 
 // readTextAttempt admits one request and finishes its response before captcha processing.
-func (live *LiveTransport) readTextAttempt(ctx context.Context, deadline time.Time, method, requestUrl string, body []byte, headers http.Header, endpoint string, budget *requestBudget) (string, string, uint16, bool, error) {
+func (live *LiveTransport) readTextAttempt(ctx context.Context, deadline time.Time, method, requestURL string, body []byte, headers http.Header, endpoint string, budget *requestBudget) (string, string, uint16, bool, error) {
 	if err := live.state.shared.waitCooldown(ctx, deadline); err != nil {
 		return "", "", 0, false, err
 	}
@@ -546,10 +546,10 @@ func (live *LiveTransport) readTextAttempt(ctx context.Context, deadline time.Ti
 	if ctx.Err() != nil {
 		return "", "", 0, false, deadlineError()
 	}
-	response, finish, err := live.send(ctx, deadline, method, requestUrl, body, headers)
+	response, finish, err := live.send(ctx, deadline, method, requestURL, body, headers)
 	if err != nil {
 		slog.InfoContext(ctx, "CNKI transport failed", "event", "source.cnki.transport.failed", "component", "source", "provider", "cnki", "endpoint", endpoint, "method", method, "error_kind", transportFailureKind(err), "is_retry", didRetry)
-		live.record(endpoint, method, requestUrl, nil, false, didRetry, textPointer("request failed"))
+		live.record(endpoint, method, requestURL, nil, false, didRetry, new("request failed"))
 		if budget.scheduleTransportRetry() {
 			if err := sleepRetry(ctx, budget.transportRetryDelay(), deadline); err != nil {
 				return "", "", 0, false, err
@@ -559,8 +559,8 @@ func (live *LiveTransport) readTextAttempt(ctx context.Context, deadline time.Ti
 		return "", "", 0, false, &Error{Kind: "Request", Message: "domestic CNKI request failed"}
 	}
 	status := uint16(response.StatusCode)
-	finalUrl := response.Request.URL.String()
-	shouldRetry, err := live.admitTextResponse(response, finish, deadline, method, requestUrl, endpoint, finalUrl, budget)
+	finalURL := response.Request.URL.String()
+	shouldRetry, err := live.admitTextResponse(response, finish, deadline, method, requestURL, endpoint, finalURL, budget)
 	if err != nil || shouldRetry {
 		return "", "", 0, shouldRetry, err
 	}
@@ -571,24 +571,24 @@ func (live *LiveTransport) readTextAttempt(ctx context.Context, deadline time.Ti
 		if errors.Is(err, transport.ErrTooLarge) {
 			message = "domestic CNKI response exceeded the configured size limit"
 		}
-		live.record(endpoint, method, requestUrl, &status, false, didRetry, &message)
+		live.record(endpoint, method, requestURL, &status, false, didRetry, &message)
 		return "", "", 0, false, &Error{Kind: "Request", Message: message}
 	}
-	return text, finalUrl, status, false, nil
+	return text, finalURL, status, false, nil
 }
 
 // validateTextAttempt checks overseas markers before HTTP status and endpoint structure.
-func (live *LiveTransport) validateTextAttempt(ctx context.Context, deadline time.Time, method, requestUrl, endpoint, text string, status uint16, budget *requestBudget) (bool, error) {
+func (live *LiveTransport) validateTextAttempt(ctx context.Context, deadline time.Time, method, requestURL, endpoint, text string, status uint16, budget *requestBudget) (bool, error) {
 	didRetry := budget.didRetry()
 	if ContainsOverseasHost(text) {
-		live.record(endpoint, method, requestUrl, &status, false, didRetry, textPointer("overseas host"))
+		live.record(endpoint, method, requestURL, &status, false, didRetry, new("overseas host"))
 		return false, &Error{Kind: "Request", Message: "domestic CNKI transport received overseas host"}
 	}
 	if status < 200 || status >= 300 {
-		return live.retryTextStatus(ctx, deadline, method, requestUrl, endpoint, status, budget)
+		return live.retryTextStatus(ctx, deadline, method, requestURL, endpoint, status, budget)
 	}
 	if err := validateResponse(endpoint, text); err != nil {
-		live.record(endpoint, method, requestUrl, &status, false, didRetry, textPointer("invalid response"))
+		live.record(endpoint, method, requestURL, &status, false, didRetry, new("invalid response"))
 		var failure *Error
 		if errors.As(err, &failure) && failure.Kind == "Parse" {
 			if delay, ok := budget.ordinaryRetryDelay(); ok {
@@ -604,9 +604,9 @@ func (live *LiveTransport) validateTextAttempt(ctx context.Context, deadline tim
 }
 
 // retryTextStatus preserves the terminal 404 and 410 exceptions.
-func (live *LiveTransport) retryTextStatus(ctx context.Context, deadline time.Time, method, requestUrl, endpoint string, status uint16, budget *requestBudget) (bool, error) {
+func (live *LiveTransport) retryTextStatus(ctx context.Context, deadline time.Time, method, requestURL, endpoint string, status uint16, budget *requestBudget) (bool, error) {
 	didRetry := budget.didRetry()
-	live.record(endpoint, method, requestUrl, &status, false, didRetry, textPointer("HTTP status"))
+	live.record(endpoint, method, requestURL, &status, false, didRetry, new("HTTP status"))
 	if status != 404 && status != 410 {
 		if delay, ok := budget.ordinaryRetryDelay(); ok {
 			if err := sleepRetry(ctx, delay, deadline); err != nil {
@@ -619,19 +619,19 @@ func (live *LiveTransport) retryTextStatus(ctx context.Context, deadline time.Ti
 }
 
 // admitTextResponse rejects redirected URLs and publishes 429 cooldown before body access.
-func (live *LiveTransport) admitTextResponse(response *http.Response, finish func(), deadline time.Time, method, requestUrl, endpoint, finalUrl string, budget *requestBudget) (bool, error) {
+func (live *LiveTransport) admitTextResponse(response *http.Response, finish func(), deadline time.Time, method, requestURL, endpoint, finalURL string, budget *requestBudget) (bool, error) {
 	status := uint16(response.StatusCode)
 	didRetry := budget.didRetry()
-	if _, err := parseDomesticUrl(finalUrl); err != nil {
+	if _, err := parseDomesticURL(finalURL); err != nil {
 		_ = response.Body.Close()
 		finish()
-		live.record(endpoint, method, requestUrl, &status, false, didRetry, textPointer("redirect URL rejected"))
+		live.record(endpoint, method, requestURL, &status, false, didRetry, new("redirect URL rejected"))
 		return false, &Error{Kind: "Request", Message: "domestic CNKI redirect URL is not allowed"}
 	}
 	if delay, isLimited := live.state.shared.publishRateLimit(status, response.Header, retryDelay(budget.ordinaryAttempts)); isLimited {
 		_ = response.Body.Close()
 		finish()
-		live.record(endpoint, method, requestUrl, &status, false, didRetry, textPointer("HTTP status"))
+		live.record(endpoint, method, requestURL, &status, false, didRetry, new("HTTP status"))
 		if _, ok := budget.ordinaryRetryDelay(); ok && transport.CanWait(delay.Duration(), deadline) {
 			return true, nil
 		}
@@ -716,16 +716,16 @@ func resolveJournalDetail(locator JournalLocator, url string, request func(strin
 }
 
 // replayTextCaptcha renews the request URL before admitting a captcha replay.
-func (live *LiveTransport) replayTextCaptcha(ctx context.Context, text, finalUrl, base string, generation uint64, deadline time.Time, budget *requestBudget) (string, uint64, error) {
-	if err := live.solveCaptcha(ctx, text, finalUrl, generation, deadline); err != nil {
+func (live *LiveTransport) replayTextCaptcha(ctx context.Context, text, finalURL, base string, generation uint64, deadline time.Time, budget *requestBudget) (string, uint64, error) {
+	if err := live.solveCaptcha(ctx, text, finalURL, generation, deadline); err != nil {
 		return "", 0, err
 	}
-	requestUrl, generation, err := live.state.shared.requestUrl(ctx, base)
+	requestURL, generation, err := live.state.shared.requestURL(ctx, base)
 	if err != nil {
 		return "", 0, err
 	}
 	if err := budget.scheduleCaptchaReplay(); err != nil {
 		return "", 0, err
 	}
-	return requestUrl, generation, nil
+	return requestURL, generation, nil
 }

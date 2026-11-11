@@ -1,11 +1,11 @@
 // Package auth preserves the complete versioned auth database schema.
 package auth
 
-const versionTwentyOneSql = `
+const versionTwentyOneSQL = `
 CREATE INDEX idx_access_tokens_expires ON access_tokens(expires_at);
 `
 
-const versionTwoSql = `
+const versionTwoSQL = `
         CREATE TABLE scheduled_tasks_v2 (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
             name           TEXT    NOT NULL,
@@ -37,7 +37,7 @@ const versionTwoSql = `
         CREATE INDEX idx_scheduled_tasks_enabled ON scheduled_tasks(enabled);
         `
 
-const versionThreeSql = `
+const versionThreeSQL = `
         ALTER TABLE scheduled_tasks
             ADD COLUMN timezone TEXT NOT NULL DEFAULT 'UTC';
         ALTER TABLE scheduled_tasks
@@ -85,7 +85,7 @@ const versionThreeSql = `
             ON scheduler_workers(heartbeat_at DESC);
         `
 
-const versionFourSql = `
+const versionFourSQL = `
         CREATE TABLE service_heartbeats (
             service      TEXT NOT NULL CHECK (service IN ('api', 'worker')),
             instance_id  TEXT NOT NULL,
@@ -98,7 +98,7 @@ const versionFourSql = `
             ON service_heartbeats(heartbeat_at DESC);
         `
 
-const versionFiveSql = `
+const versionFiveSQL = `
         CREATE TABLE scheduled_task_runs_v5 (
             id               INTEGER PRIMARY KEY AUTOINCREMENT,
             task_id          INTEGER NOT NULL,
@@ -135,7 +135,7 @@ const versionFiveSql = `
             ON scheduled_task_runs(status, claim_expires_at);
         `
 
-const versionSixSql = `
+const versionSixSQL = `
         CREATE TABLE managed_meta_catalogs (
             filename       TEXT PRIMARY KEY,
             bundle_version INTEGER NOT NULL CHECK (bundle_version > 0),
@@ -143,7 +143,7 @@ const versionSixSql = `
         );
         `
 
-const versionNineSql = `CREATE TABLE security_audit_events (
+const versionNineSQL = `CREATE TABLE security_audit_events (
              id                  INTEGER PRIMARY KEY AUTOINCREMENT,
              actor_id            INTEGER CHECK (actor_id IS NULL OR actor_id > 0),
              target_id           INTEGER CHECK (target_id IS NULL OR target_id > 0),
@@ -191,7 +191,7 @@ const versionNineSql = `CREATE TABLE security_audit_events (
          );
          INSERT INTO security_audit_maintenance (id, last_retention_at) VALUES (1, NULL);`
 
-const versionTenSql = `CREATE TABLE delivery_checkpoints (
+const versionTenSQL = `CREATE TABLE delivery_checkpoints (
              id                    INTEGER PRIMARY KEY AUTOINCREMENT,
              workflow              TEXT NOT NULL CHECK (workflow IN ('notify', 'push')),
              db_name               TEXT NOT NULL CHECK (length(db_name) BETWEEN 1 AND 255),
@@ -401,7 +401,7 @@ const versionTenSql = `CREATE TABLE delivery_checkpoints (
              ON delivery_leases(expires_at)
              WHERE owner_id IS NOT NULL;`
 
-const versionElevenSql = `UPDATE folders
+const versionElevenSQL = `UPDATE folders
          SET is_tracking = 0
          WHERE is_tracking = 1
            AND id NOT IN (
@@ -410,12 +410,12 @@ const versionElevenSql = `UPDATE folders
          CREATE UNIQUE INDEX idx_folders_one_tracking_per_user
              ON folders(user_id) WHERE is_tracking = 1;`
 
-const versionSixteenSql = `CREATE INDEX IF NOT EXISTS idx_favorites_cursor ON favorites(user_id, folder_id, created_at DESC, id DESC);`
+const versionSixteenSQL = `CREATE INDEX IF NOT EXISTS idx_favorites_cursor ON favorites(user_id, folder_id, created_at DESC, id DESC);`
 
-const versionSeventeenSql = `DROP INDEX IF EXISTS idx_invite_codes_code;
+const versionSeventeenSQL = `DROP INDEX IF EXISTS idx_invite_codes_code;
          DROP INDEX IF EXISTS idx_notification_settings_user;`
 
-const versionTwentySql = `
+const versionTwentySQL = `
         CREATE TABLE scheduled_task_runs_v20 (
             id               INTEGER PRIMARY KEY AUTOINCREMENT,
             task_id          INTEGER NOT NULL,
@@ -455,7 +455,7 @@ const versionTwentySql = `
             ON scheduled_task_runs(task_id, scheduled_for) WHERE trigger_kind = 'scheduled';
         `
 
-const authTablesSql = `
+const authTablesSQL = `
     CREATE TABLE IF NOT EXISTS users (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
         username      TEXT    NOT NULL UNIQUE COLLATE NOCASE,
@@ -572,7 +572,7 @@ const authTablesSql = `
     );
 `
 
-const authIndexesSql = `
+const authIndexesSQL = `
     CREATE INDEX IF NOT EXISTS idx_access_tokens_user ON access_tokens(user_id);
     CREATE INDEX IF NOT EXISTS idx_folders_user ON folders(user_id);
     CREATE INDEX IF NOT EXISTS idx_favorites_folder ON favorites(folder_id);
@@ -584,7 +584,7 @@ const authIndexesSql = `
     CREATE INDEX IF NOT EXISTS idx_announcements_enabled ON announcements(enabled);
 `
 
-const notificationSettingsV14TableSql = `
+const notificationSettingsV14TableSQL = `
     CREATE TABLE notification_settings_v14 (
         id                      INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id                 INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
@@ -627,7 +627,7 @@ const notificationSettingsV14TableSql = `
     );
 `
 
-const notificationSettingsV14TriggersSql = `
+const notificationSettingsV14TriggersSQL = `
     CREATE TRIGGER notification_settings_json_strings_insert
     AFTER INSERT ON notification_settings
     WHEN EXISTS (SELECT 1 FROM json_each(NEW.keywords) WHERE type <> 'text')
@@ -647,7 +647,7 @@ const notificationSettingsV14TriggersSql = `
     END;
 `
 
-const inviteLifecycleTablesSql = `
+const inviteLifecycleTablesSQL = `
     CREATE TABLE invite_codes_v12 (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         code        TEXT    NOT NULL UNIQUE,
@@ -672,7 +672,7 @@ const inviteLifecycleTablesSql = `
     );
 `
 
-const inviteLifecycleIndexesSql = `
+const inviteLifecycleIndexesSQL = `
     CREATE INDEX IF NOT EXISTS idx_invite_codes_code ON invite_codes(code);
     CREATE INDEX IF NOT EXISTS idx_invite_codes_created_by ON invite_codes(created_by);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_invite_codes_one_unrevoked_creator
@@ -686,7 +686,7 @@ const inviteLifecycleIndexesSql = `
         ON invite_code_uses(user_id, used_at, id);
 `
 
-const versionEighteenSql = `
+const versionEighteenSQL = `
 CREATE TABLE cfp_journals (
     journal_key TEXT PRIMARY KEY,
     title TEXT NOT NULL,
@@ -743,7 +743,7 @@ CREATE TABLE cfp_seed_imports (
 );
 `
 
-const versionTwentyTwoSql = `
+const versionTwentyTwoSQL = `
 CREATE TABLE IF NOT EXISTS relation_graph_favorites (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -759,7 +759,7 @@ CREATE INDEX IF NOT EXISTS idx_relation_graph_favorites_user_updated
     ON relation_graph_favorites(user_id, updated_at DESC, id DESC);
 `
 
-const versionTwentyThreeSql = `
+const versionTwentyThreeSQL = `
 ALTER TABLE users ADD COLUMN email TEXT;
 CREATE UNIQUE INDEX idx_users_email ON users(email) WHERE email IS NOT NULL;
 ALTER TABLE users ADD COLUMN auth_kind TEXT NOT NULL DEFAULT 'local' CHECK (auth_kind IN ('local','oidc'));

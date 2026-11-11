@@ -64,7 +64,7 @@ func (oidc *Oidc) StartNative(ctx context.Context, parameters NativeOIDCParamete
 
 // FinishNative resolves the same identity as web login without creating a browser session.
 func (oidc *Oidc) FinishNative(ctx context.Context, state OidcState, code string, audit domain.AuditEvent) (string, domain.User, error) {
-	if state.Native == nil || !state.Native.Valid() || state.UserId != 0 {
+	if state.Native == nil || !state.Native.Valid() || state.UserID != 0 {
 		return "", domain.User{}, OidcError("state")
 	}
 	authorization, err := oidc.finishIdentity(ctx, state, code, nil, audit)
@@ -106,7 +106,7 @@ func (oidc *Oidc) ExchangeNative(ctx context.Context, code, verifier, redirectUR
 	if !exists || len(code) != 43 || grant.expiresAt <= oidc.service.now() || !nativeOIDCVerifier.MatchString(verifier) || !MatchOidcState(grant.parameters.CodeChallenge, base64.RawURLEncoding.EncodeToString(digest[:])) || redirectURI != grant.parameters.RedirectURI {
 		return domain.LoginSession{}, OidcError("invalid_grant")
 	}
-	credentials, err := oidc.service.repository.CredentialsById(ctx, grant.authorization.User.Id)
+	credentials, err := oidc.service.repository.CredentialsByID(ctx, grant.authorization.User.ID)
 	if err != nil {
 		return domain.LoginSession{}, err
 	}

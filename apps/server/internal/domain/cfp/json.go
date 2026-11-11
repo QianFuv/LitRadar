@@ -11,15 +11,14 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/jsonobject"
 )
 
-var errJson = errors.New("invalid CFP payload JSON")
+var errJSON = errors.New("invalid CFP payload JSON")
 
 func decodeStruct(data []byte, target any, deniesUnknown bool) error {
 	if err := jsonobject.DecodeWithOptions(data, target, jsonobject.Options{AllowUnknown: !deniesUnknown}); err != nil {
-		return errJson
+		return errJSON
 	}
 	value := reflect.ValueOf(target).Elem()
-	for index := range value.NumField() {
-		field := value.Field(index)
+	for _, field := range value.Fields() {
 		if field.Kind() == reflect.Slice && field.IsNil() {
 			field.Set(reflect.MakeSlice(field.Type(), 0, 0))
 		}
@@ -32,16 +31,16 @@ func encodeStruct(value any) ([]byte, error) { return jsonv2.Marshal(value) }
 func decodeEnum(data []byte, allowed []string) (string, error) {
 	var value string
 	if jsonv2.Unmarshal(data, &value) != nil || !slices.Contains(allowed, value) {
-		return "", errJson
+		return "", errJSON
 	}
 	return value, nil
 }
 
 // UnmarshalJSON validates Stage before replacing the receiver.
-func (value *Stage) UnmarshalJSON(data []byte) error {
+func (stage *Stage) UnmarshalJSON(data []byte) error {
 	decoded, err := decodeEnum(data, []string{"paper", "abstract", "proposal", "opens", "revision", "decision", "publication", "event", "registration"})
 	if err == nil {
-		*value = Stage(decoded)
+		*stage = Stage(decoded)
 	}
 	return err
 }
@@ -56,10 +55,10 @@ func (value *Kind) UnmarshalJSON(data []byte) error {
 }
 
 // UnmarshalJSON validates State before replacing the receiver.
-func (value *State) UnmarshalJSON(data []byte) error {
+func (state *State) UnmarshalJSON(data []byte) error {
 	decoded, err := decodeEnum(data, []string{"open", "upcoming", "closed", "historical", "invitation_only", "undated", "uncertain"})
 	if err == nil {
-		*value = State(decoded)
+		*state = State(decoded)
 	}
 	return err
 }
@@ -110,18 +109,21 @@ func (value EmptyJournal) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON validates Notice before replacing the receiver.
-func (value *Notice) UnmarshalJSON(data []byte) error {
+func (notice *Notice) UnmarshalJSON(data []byte) error {
 	type wire Notice
 	var decoded wire
 	if err := decodeStruct(data, &decoded, false); err != nil {
 		return err
 	}
-	*value = Notice(decoded)
+	*notice = Notice(decoded)
 	return nil
 }
 
 // MarshalJSON encodes Notice using the standard JSON representation.
-func (value Notice) MarshalJSON() ([]byte, error) { type wire Notice; return encodeStruct(wire(value)) }
+func (notice Notice) MarshalJSON() ([]byte, error) {
+	type wire Notice
+	return encodeStruct(wire(notice))
+}
 
 // UnmarshalJSON validates Date before replacing the receiver.
 func (value *Date) UnmarshalJSON(data []byte) error {

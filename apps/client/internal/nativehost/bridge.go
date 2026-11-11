@@ -398,8 +398,7 @@ func (bridge *Bridge) do(ctx context.Context, method, target string, headers map
 
 // describeTransportError strips the request URL from a client error.
 func describeTransportError(err error) string {
-	var urlError *url.Error
-	if errors.As(err, &urlError) {
+	if urlError, ok := errors.AsType[*url.Error](err); ok {
 		return urlError.Err.Error()
 	}
 	return err.Error()

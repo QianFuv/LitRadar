@@ -47,14 +47,14 @@ func TestSchedulerCancelledAdmissionDoesNotSpawnOrRenew(t *testing.T) {
 }
 
 // assertEarlierScheduledAdmission checks durable counters before the failed tick advances its cursor or claims.
-func assertEarlierScheduledAdmission(t *testing.T, repository *store.Repository, taskId int64) {
+func assertEarlierScheduledAdmission(t *testing.T, repository *store.Repository, taskID int64) {
 	t.Helper()
 	status, err := repository.Status(context.Background(), 120, 90, 10)
 	if err != nil || len(status.RecentRuns) != 1 || status.LastCheckedAt != nil {
 		t.Fatal(status, err)
 	}
 	run := status.RecentRuns[0]
-	if run.TaskId != taskId || run.Status != "pending" || run.ScheduledFor != 120 || run.WorkerId != nil {
+	if run.TaskID != taskID || run.Status != "pending" || run.ScheduledFor != 120 || run.WorkerID != nil {
 		t.Fatal(run)
 	}
 }
@@ -64,10 +64,10 @@ func TestSchedulerRetainsEarlierAdmissionOnLaterEnqueueFailure(t *testing.T) {
 	repository, filename := schedulerFixture(t)
 	first := createTask(t, repository)
 	second := createTask(t, repository)
-	fixtureSql(t, filename, "UPDATE scheduled_tasks SET created_at=0")
-	fixtureSql(t, filename, fmt.Sprintf("CREATE TRIGGER fail_later_admission BEFORE INSERT ON scheduled_task_runs WHEN NEW.task_id=%d BEGIN SELECT RAISE(ABORT,'later admission failed'); END", second.Id))
+	fixtureSQL(t, filename, "UPDATE scheduled_tasks SET created_at=0")
+	fixtureSQL(t, filename, fmt.Sprintf("CREATE TRIGGER fail_later_admission BEFORE INSERT ON scheduled_task_runs WHEN NEW.task_id=%d BEGIN SELECT RAISE(ABORT,'later admission failed'); END", second.ID))
 	if _, _, err := PrepareRunsAt(context.Background(), repository, "owner", 1, 120); err == nil {
 		t.Fatal("later enqueue failure was ignored")
 	}
-	assertEarlierScheduledAdmission(t, repository, first.Id)
+	assertEarlierScheduledAdmission(t, repository, first.ID)
 }

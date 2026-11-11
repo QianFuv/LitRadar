@@ -26,10 +26,10 @@ func cfpFixture(t *testing.T) (*cfpHandlers, *http.ServeMux, string) {
 	if err := os.MkdirAll(configuration.MetaDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := migration.Migrate(context.Background(), configuration.AuthDbPath); err != nil {
+	if _, err := migration.Migrate(context.Background(), configuration.AuthDBPath); err != nil {
 		t.Fatal(err)
 	}
-	repository, err := storage.Open(configuration.AuthDbPath)
+	repository, err := storage.Open(configuration.AuthDBPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestCfpCursorBindsRevisionFilterAndTimeButNotLimit(t *testing.T) {
 
 func TestCfpSummaryKeepsSourceTiesLeaseClockAndStateOrder(t *testing.T) {
 	attempt, expired := int64(10), int64(99)
-	entry := sources.JournalCatalogEntry{CatalogId: "x", CatalogAliases: []string{}, AllIssns: []string{}, TitleAliases: []string{}}
+	entry := sources.JournalCatalogEntry{CatalogID: "x", CatalogAliases: []string{}, AllIssns: []string{}, TitleAliases: []string{}}
 	snapshot := storage.JournalSnapshot{CatalogIds: []string{"x"}, Sources: []storage.SourceStatus{{SourceKey: "first", Status: "success", LastAttempt: &attempt}, {SourceKey: "last", Status: "refreshing", LastAttempt: &attempt, LeaseExpiresAt: &expired}}}
 	value := cfpSummary(entry, &snapshot, 10, 100)
 	if value.Coverage != "adapted" || value.RefreshStatus != "failed" || value.LastError == nil || value.NoticeCount != 0 {
@@ -149,7 +149,7 @@ func TestCfpSummaryKeepsSourceTiesLeaseClockAndStateOrder(t *testing.T) {
 	if _, failure := cfpFindSnapshot(entry, []storage.JournalSnapshot{snapshot, snapshot}); failure == nil {
 		t.Fatal("ambiguous source snapshot accepted")
 	}
-	encoded, err := jsonvalue.EncodeJson(cfpStateCounts{domain.Uncertain: 1, domain.Closed: 2, domain.Open: 3})
+	encoded, err := jsonvalue.EncodeJSON(cfpStateCounts{domain.Uncertain: 1, domain.Closed: 2, domain.Open: 3})
 	if err != nil || encoded != `{"open":3,"closed":2,"uncertain":1}` {
 		t.Fatal(encoded, err)
 	}
@@ -245,7 +245,7 @@ func assertCfpCursorPositions(t *testing.T, handlers *cfpHandlers, entry sources
 	}
 	for _, position := range []uint64{2, 3, ^uint64(0)} {
 		cursor.Position = position
-		plaintext, _ := jsonvalue.EncodeJson(cursor)
+		plaintext, _ := jsonvalue.EncodeJSON(cursor)
 		ciphertext, _ := handlers.codec.Encrypt(plaintext, cfpCursorContext)
 		page, failure := cfpPage(handlers.codec, "fixture.sqlite", entry, snapshot, false, &ciphertext, 1, now)
 		if position == 2 {

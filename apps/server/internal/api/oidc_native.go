@@ -34,8 +34,8 @@ func (handlers *authHandlers) nativeOIDCExchange(ctx context.Context, input *OID
 		return nil, oidcProblem(handlers.reject(request, event, "invalid_grant", failure).problem(), nil)
 	}
 	session := result.session
-	actor := int64(session.User.Id)
-	event.ActorId = &actor
+	actor := int64(session.User.ID)
+	event.ActorID = &actor
 	logAuth(request, event, "")
 	return &oidcOutput[nativeLoginResponse]{OIDCHeaders: privateOIDCHeaders(), Body: nativeLoginResponse{Token: session.Token, ExpiresAt: session.ExpiresAt, User: publicUser(session.User)}}, nil
 }

@@ -26,9 +26,9 @@ func TestRegistryOrderingOwnershipAndDuplicates(t *testing.T) {
 		t.Fatal("unexpected capability")
 	}
 	var workers sync.WaitGroup
-	for index := 0; index < 8; index++ {
+	for range 8 {
 		workers.Go(func() {
-			for count := 0; count < 100; count++ {
+			for range 100 {
 				registry.Find("middle").Descriptor()
 				registry.ProvidersWith(domain.ArticleAbstract)
 			}
@@ -38,7 +38,7 @@ func TestRegistryOrderingOwnershipAndDuplicates(t *testing.T) {
 }
 
 func TestEmptyBatchRoundTripsThroughStrictArrays(t *testing.T) {
-	batch := domain.ProviderBatch{CatalogId: "journal.test", Journal: domain.JournalDraft{CatalogId: "journal.test"}, Progress: domain.ProviderProgress{State: domain.Complete}}
+	batch := domain.ProviderBatch{CatalogID: "journal.test", Journal: domain.JournalDraft{CatalogID: "journal.test"}, Progress: domain.ProviderProgress{State: domain.Complete}}
 	encoded, err := json.Marshal(batch)
 	if err != nil {
 		t.Fatal(err)

@@ -84,7 +84,7 @@ func (handlers *authHandlers) authProviders(ctx context.Context, input *GetAuthP
 }
 func (handlers *authHandlers) oidcAdmission(request *http.Request, action string) (*http.Request, domain.AuditEvent, error) {
 	request = beginAuthAudit(request)
-	event := domain.AuditEvent{Action: action, Outcome: "completed", RequestId: requestId(request), OccurredAt: currentTimestamp()}
+	event := domain.AuditEvent{Action: action, Outcome: "completed", RequestID: requestID(request), OccurredAt: currentTimestamp()}
 	peer, _ := netip.ParseAddrPort(request.RemoteAddr)
 	if rejection := handlers.limiter.check(oidcAttempt, resolveAuthClientSource(peer.Addr(), request.Header, handlers.trustedProxies), ""); rejection != nil {
 		return request, event, handlers.authRateLimit(request, &event, rejection).problem()
@@ -138,8 +138,8 @@ func (handlers *authHandlers) oidcLink(ctx context.Context, input *OIDCLinkInput
 	if failure != nil {
 		return nil, oidcProblem(handlers.reject(request, event, "authentication_required", failure).problem(), nil)
 	}
-	actor := int64(current.authorization.User.Id)
-	event.ActorId = &actor
+	actor := int64(current.authorization.User.ID)
+	event.ActorID = &actor
 	if current.authorization.User.AuthKind != "local" || current.authorization.User.IsOidcLinked {
 		return nil, oidcProblem(handlers.reject(request, event, "account_conflict", badRequest("account_conflict")).problem(), nil)
 	}
@@ -176,7 +176,7 @@ func (handlers *authHandlers) startOIDC(request *http.Request, next string, link
 }
 func (handlers *authHandlers) oidcUnlink(ctx context.Context, input *OIDCUnlinkInput) (*oidcOutput[userResponse], error) {
 	request := beginAuthAudit(input.request)
-	event := domain.AuditEvent{Action: "oidc_unlink", Outcome: "completed", RequestId: requestId(request), OccurredAt: currentTimestamp()}
+	event := domain.AuditEvent{Action: "oidc_unlink", Outcome: "completed", RequestID: requestID(request), OccurredAt: currentTimestamp()}
 	if handlers.oidc == nil {
 		return nil, oidcProblem(badRequest("Single sign-on is unavailable").problem(), nil)
 	}
@@ -184,8 +184,8 @@ func (handlers *authHandlers) oidcUnlink(ctx context.Context, input *OIDCUnlinkI
 	if failure != nil {
 		return nil, oidcProblem(handlers.reject(request, event, "authentication_required", failure).problem(), nil)
 	}
-	actor := int64(current.authorization.User.Id)
-	event.ActorId = &actor
+	actor := int64(current.authorization.User.ID)
+	event.ActorID = &actor
 	user, failure := runAuth(request, handlers.pool, func() (domain.User, error) {
 		return handlers.oidc.Unlink(context.WithoutCancel(ctx), current.authorization, event)
 	})
@@ -213,10 +213,10 @@ func (handlers *authHandlers) oidcCallback(ctx context.Context, input *OIDCCallb
 	if handlers.oidc == nil {
 		return redirect("/login?oidc_error=unavailable", cookies), nil
 	}
-	if state != nil && state.UserId != 0 {
+	if state != nil && state.UserID != 0 {
 		event.Action = "oidc_link"
-		actor := int64(state.UserId)
-		event.ActorId = &actor
+		actor := int64(state.UserID)
+		event.ActorID = &actor
 	}
 	fail := func(code string) (*redirectOutput, error) {
 		return handlers.oidcFailure(request, state, event, code, cookies)
@@ -234,9 +234,9 @@ func (handlers *authHandlers) oidcCallback(ctx context.Context, input *OIDCCallb
 		return fail("provider")
 	}
 	var link *domain.Authorization
-	if state.UserId != 0 {
+	if state.UserID != 0 {
 		current, failure := handlers.oidcSession(request)
-		if failure != nil || current.authorization.User.Id != state.UserId || current.authorization.TokenGeneration != state.TokenGeneration {
+		if failure != nil || current.authorization.User.ID != state.UserID || current.authorization.TokenGeneration != state.TokenGeneration {
 			return fail("expired_session")
 		}
 		link = &current.authorization
@@ -260,8 +260,8 @@ func (handlers *authHandlers) oidcCallback(ctx context.Context, input *OIDCCallb
 	if result.err != nil {
 		return fail(oidcErrorCode(result.err))
 	}
-	actor := int64(result.session.User.Id)
-	event.ActorId = &actor
+	actor := int64(result.session.User.ID)
+	event.ActorID = &actor
 	logAuth(request, event, "")
 	if state.Native != nil {
 		return redirect(state.Native.Redirect("code", result.code), cookies), nil
@@ -278,7 +278,7 @@ func (handlers *authHandlers) oidcFailure(request *http.Request, state *auth.Oid
 	}
 	logAuth(request, event, code)
 	target := "/login?oidc_error=" + code
-	if state != nil && state.UserId != 0 {
+	if state != nil && state.UserID != 0 {
 		target = "/?oidc_link=" + code
 	}
 	if state != nil && state.Native != nil && state.Native.Valid() {
@@ -297,8 +297,7 @@ func (handlers *authHandlers) oidcSession(request *http.Request) (currentIdentit
 	return handlers.authenticator.requireUser(clone)
 }
 func oidcErrorCode(err error) string {
-	var failure auth.OidcError
-	if errors.As(err, &failure) {
+	if failure, ok := errors.AsType[auth.OidcError](err); ok {
 		switch string(failure) {
 		case "unavailable", "state", "denied", "provider", "email_unverified", "email_conflict", "account_conflict", "expired_session":
 			return string(failure)

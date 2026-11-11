@@ -29,7 +29,7 @@ func (args *arguments) storage() (config.Config, error) {
 		return config.Config{}, err
 	}
 	filename, err := args.authDatabase(root)
-	return config.FromProjectRoot(root).WithAuthDbPath(filename), err
+	return config.FromProjectRoot(root).WithAuthDBPath(filename), err
 }
 
 func requireKey(key *string) (string, error) {
@@ -89,26 +89,26 @@ func runManualDelivery(ctx context.Context, values []string, output io.Writer) e
 	if err != nil {
 		return err
 	}
-	runId, owner, err := parseManualDeliveryIdentity(&args)
+	runID, owner, err := parseManualDeliveryIdentity(&args)
 	if err != nil {
 		return err
 	}
-	if _, err := authmigration.Migrate(ctx, configuration.AuthDbPath); err != nil {
+	if _, err := authmigration.Migrate(ctx, configuration.AuthDBPath); err != nil {
 		return err
 	}
-	codec, err := loadVerifiedKey(ctx, configuration.AuthDbPath, key)
+	codec, err := loadVerifiedKey(ctx, configuration.AuthDBPath, key)
 	if err != nil {
 		return err
 	}
 	defer codec.Close()
-	terminal, err := delivery.RunManualDeliveryJob(ctx, configuration, codec, runId, *owner)
+	terminal, err := delivery.RunManualDeliveryJob(ctx, configuration, codec, runID, *owner)
 	if err != nil {
 		return err
 	}
 	if !terminal.Status.IsTerminal() {
 		return errors.New("durable manual delivery job did not reach a terminal state")
 	}
-	return writeResult(output, map[string]any{"run_id": terminal.Id, "status": terminal.Status})
+	return writeResult(output, map[string]any{"run_id": terminal.ID, "status": terminal.Status})
 }
 
 // schedulerInvocation carries only the admitted command mode and task identity.
@@ -144,12 +144,12 @@ func executeSchedulerInvocation(ctx context.Context, configuration config.Config
 	if err := runtime.PreflightStorage(ctx, configuration); err != nil {
 		return err
 	}
-	codec, err := loadVerifiedKey(ctx, configuration.AuthDbPath, key)
+	codec, err := loadVerifiedKey(ctx, configuration.AuthDBPath, key)
 	if err != nil {
 		return err
 	}
 	defer codec.Close()
-	repository, err := schedulerstorage.Open(configuration.AuthDbPath)
+	repository, err := schedulerstorage.Open(configuration.AuthDBPath)
 	if err != nil {
 		return err
 	}
@@ -165,7 +165,7 @@ func executeSchedulerInvocation(ctx context.Context, configuration config.Config
 		}
 		return writeResult(output, result)
 	}
-	result, err := scheduler.RunTaskNow(ctx, repository, scheduler.ProcessConfig{ProjectRoot: configuration.ProjectRoot, AuthDatabase: configuration.AuthDbPath, Executable: executable, SecretKeyFile: key}, invocation.id, invocation.mode)
+	result, err := scheduler.RunTaskNow(ctx, repository, scheduler.ProcessConfig{ProjectRoot: configuration.ProjectRoot, AuthDatabase: configuration.AuthDBPath, Executable: executable, SecretKeyFile: key}, invocation.id, invocation.mode)
 	if err != nil {
 		return err
 	}
@@ -181,7 +181,7 @@ func parseManualDeliveryIdentity(args *arguments) (int64, *string, error) {
 	if runOption == nil {
 		return 0, nil, errors.New("--run-id is required")
 	}
-	runId, err := strconv.ParseInt(*runOption, 10, 64)
+	runID, err := strconv.ParseInt(*runOption, 10, 64)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -192,11 +192,11 @@ func parseManualDeliveryIdentity(args *arguments) (int64, *string, error) {
 	if owner == nil {
 		return 0, nil, errors.New("--owner-id is required")
 	}
-	if runId <= 0 {
+	if runID <= 0 {
 		return 0, nil, errors.New("--run-id must be a positive integer")
 	}
 	if len(*args) != 0 {
 		return 0, nil, errors.New("unexpected delivery-run arguments")
 	}
-	return runId, owner, nil
+	return runID, owner, nil
 }

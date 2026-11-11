@@ -169,14 +169,13 @@ func isPermanentCnkiArticleError(err error) bool {
 	if !errors.As(err, &failure) {
 		return false
 	}
-	status, hasStatus := failure.HttpStatus()
+	status, hasStatus := failure.HTTPStatus()
 	return failure.Kind == "PermanentArticleMissing" || hasStatus && (status == 404 || status == 410)
 }
 
 func mapCnkiProviderError(err error) error {
 	kind := provider.TemporarilyUnavailable
-	var failure *cnki.Error
-	if errors.As(err, &failure) {
+	if failure, ok := errors.AsType[*cnki.Error](err); ok {
 		switch failure.Kind {
 		case "Parse", "MissingFixture":
 			kind = provider.InvalidResponse
@@ -282,7 +281,7 @@ func cnkiAbstractDestination(detail any) (domain.ArticleRedirect, error) {
 	if location == nil {
 		return domain.ArticleRedirect{}, accessFailure(provider.InvalidResponse, "domestic CNKI detail response omitted its request-time destination")
 	}
-	if !(strings.HasPrefix(*location, "https://navi.cnki.net/") || strings.HasPrefix(*location, "https://kns.cnki.net/") || strings.HasPrefix(*location, "https://www.cnki.net/")) {
+	if !strings.HasPrefix(*location, "https://navi.cnki.net/") && !strings.HasPrefix(*location, "https://kns.cnki.net/") && !strings.HasPrefix(*location, "https://www.cnki.net/") {
 		return domain.ArticleRedirect{}, accessFailure(provider.InvalidResponse, "domestic CNKI abstract destination is outside the allowlist")
 	}
 	if strings.Contains(asciiLowerSource(*location), "oversea.cnki.net") {
@@ -295,6 +294,6 @@ func cnkiAbstractDestination(detail any) (domain.ArticleRedirect, error) {
 func logMissingCnkiArticle(ctx context.Context, ordinal int, err error) {
 	var failure *cnki.Error
 	errors.As(err, &failure)
-	status, hasStatus := failure.HttpStatus()
+	status, hasStatus := failure.HTTPStatus()
 	slog.WarnContext(ctx, "index.provider.article.skipped", "event", "index.provider.article.skipped", "component", "index", "provider", CnkiProviderName, "reason", "permanent_missing", "article_ordinal", ordinal+1, "http_status", status, "has_http_status", hasStatus)
 }

@@ -30,7 +30,7 @@ UPDATE article_listing SET doi='lookup-doi',pmid='lookup-pmid';`); err != nil {
 				}
 				for index, id := range expected {
 					page, err := ListArticles(context.Background(), configuration, nil, params)
-					if err != nil || len(page.Items) != 1 || int64(page.Items[0].ArticleId) != id {
+					if err != nil || len(page.Items) != 1 || int64(page.Items[0].ArticleID) != id {
 						t.Fatalf("page %d: %+v, %v", index, page, err)
 					}
 					if index == 0 && (page.Page.Total == nil || *page.Page.Total != 2 || page.Page.NextCursor == nil) {
@@ -56,7 +56,7 @@ UPDATE article_listing SET doi='lookup-doi',pmid='lookup-pmid';`); err != nil {
 	}
 	issue := int64(999999)
 	pmid = "lookup-pmid"
-	params.IssueId = &issue
+	params.IssueID = &issue
 	page, err = ListArticles(context.Background(), configuration, nil, params)
 	if err != nil || len(page.Items) != 0 || page.Page.Total == nil || *page.Page.Total != 0 {
 		t.Fatalf("empty issue scope changed: %+v, %v", page, err)
@@ -67,7 +67,7 @@ UPDATE article_listing SET issue_id=999999 WHERE article_id=1001;`); err != nil 
 		t.Fatal(err)
 	}
 	page, err = ListArticles(context.Background(), configuration, nil, params)
-	if err != nil || len(page.Items) != 1 || page.Items[0].ArticleId != 1001 || page.Page.Total == nil || *page.Page.Total != 1 {
+	if err != nil || len(page.Items) != 1 || page.Items[0].ArticleID != 1001 || page.Page.Total == nil || *page.Page.Total != 1 {
 		t.Fatalf("matching issue scope changed: %+v, %v", page, err)
 	}
 }

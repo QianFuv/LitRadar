@@ -76,7 +76,7 @@ func (authenticator *Authenticator) McpAuthorize(writer http.ResponseWriter, req
 		err.write(writer)
 		return mcpcompat.Principal{}, false
 	}
-	return mcpcompat.Principal{UserId: identity.authorization.User.Id}, true
+	return mcpcompat.Principal{UserID: identity.authorization.User.ID}, true
 }
 
 func resolveAuthToken(headers http.Header) (string, *apiError) {
@@ -130,11 +130,11 @@ func sessionCookieHeader(token string, expires, now float64, isSecure bool) stri
 func mapAuthError(err error) *apiError {
 	switch {
 	case errors.Is(err, domain.ErrCredentials):
-		return &apiError{status: 401, detail: domain.ErrCredentials.Error()}
-	case errors.Is(err, domain.ErrDeviceName), errors.Is(err, domain.ErrEmail), errors.Is(err, domain.ErrManagedEmail), errors.Is(err, domain.ErrOidcPassword), errors.Is(err, domain.ErrAccountConflict), errors.Is(err, domain.ErrUsername), errors.Is(err, domain.ErrPasswordShort), errors.Is(err, domain.ErrTokenNameLength), errors.Is(err, domain.ErrTokenReservedName), errors.Is(err, domain.ErrTokenTtl), errors.Is(err, domain.ErrInviteRequired), errors.Is(err, domain.ErrBootstrapRequired), errors.Is(err, domain.ErrInvite), errors.Is(err, domain.ErrActiveInvite), errors.Is(err, domain.ErrInvitePolicy):
-		return badRequest(err.Error())
+		return &apiError{status: 401, detail: publicErrorDetail(domain.ErrCredentials)}
+	case errors.Is(err, domain.ErrDeviceName), errors.Is(err, domain.ErrEmail), errors.Is(err, domain.ErrManagedEmail), errors.Is(err, domain.ErrOidcPassword), errors.Is(err, domain.ErrAccountConflict), errors.Is(err, domain.ErrUsername), errors.Is(err, domain.ErrPasswordShort), errors.Is(err, domain.ErrTokenNameLength), errors.Is(err, domain.ErrTokenReservedName), errors.Is(err, domain.ErrTokenTTL), errors.Is(err, domain.ErrInviteRequired), errors.Is(err, domain.ErrBootstrapRequired), errors.Is(err, domain.ErrInvite), errors.Is(err, domain.ErrActiveInvite), errors.Is(err, domain.ErrInvitePolicy):
+		return badRequest(publicErrorDetail(err))
 	case errors.Is(err, domain.ErrEmailExists), errors.Is(err, domain.ErrUsernameExists), errors.Is(err, domain.ErrTokenLimit):
-		return &apiError{status: 409, detail: err.Error()}
+		return &apiError{status: 409, detail: publicErrorDetail(err)}
 	case errors.Is(err, domain.ErrExpiredSession), errors.Is(err, domain.ErrStaleAuthorization):
 		return &apiError{status: 401, detail: "Authentication state changed; authenticate again"}
 	case errors.Is(err, domain.ErrAdminForbidden):

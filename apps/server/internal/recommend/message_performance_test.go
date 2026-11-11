@@ -19,21 +19,21 @@ func TestMarkdownExactByteBudget(t *testing.T) {
 			sections := []string{}
 			for index := range count {
 				id := int64(index + 1)
-				candidate := storage.ArticleCandidate{ArticleId: id, Title: "Topic", Abstract: "中文"}
+				candidate := storage.ArticleCandidate{ArticleID: id, Title: "Topic", Abstract: "中文"}
 				candidates[id] = candidate
-				selections = append(selections, domain.RankedSelection{ArticleId: id})
+				selections = append(selections, domain.RankedSelection{ArticleID: id})
 				sections = append(sections, markdownArticleSection(candidate, index+1))
 			}
 			last := candidates[int64(count)]
 			last.Abstract += strings.Repeat("x", MaxPushContentLength-len(renderContent(base, sections)))
-			candidates[last.ArticleId] = last
+			candidates[last.ArticleID] = last
 			sections[count-1] = markdownArticleSection(last, count)
 			actual := BuildMarkdownContent("db", "run", domain.Subscriber{Name: "Fixture"}, "", selections, candidates)
 			if len(actual) != MaxPushContentLength || actual != renderContent(base, sections) {
 				t.Fatal("exact byte budget rejected a complete section", len(actual))
 			}
 			last.Abstract += "x"
-			candidates[last.ArticleId] = last
+			candidates[last.ArticleID] = last
 			actual = BuildMarkdownContent("db", "run", domain.Subscriber{Name: "Fixture"}, "", selections, candidates)
 			if actual != renderContent(base, sections[:count-1]) {
 				t.Fatal("over-budget section was truncated or included", len(actual))
@@ -82,9 +82,9 @@ func FuzzMarkdownBudget(f *testing.F) {
 		sections := []string{}
 		for index := range MaxArticlesPerPush {
 			id := int64(index + 1)
-			candidate := storage.ArticleCandidate{ArticleId: id, Title: title, Abstract: strings.Repeat(abstract, copies+index)}
+			candidate := storage.ArticleCandidate{ArticleID: id, Title: title, Abstract: strings.Repeat(abstract, copies+index)}
 			candidates[id] = candidate
-			selections = append(selections, domain.RankedSelection{ArticleId: id})
+			selections = append(selections, domain.RankedSelection{ArticleID: id})
 			sections = append(sections, markdownArticleSection(candidate, index+1))
 		}
 		actual := BuildMarkdownContent("db", "run", subscriber, summary, selections, candidates)
@@ -104,15 +104,16 @@ func BenchmarkMarkdownContent(b *testing.B) {
 				for index := range MaxArticlesPerPush {
 					id := int64(index + 1)
 					abstract := strings.Repeat("Research ", 20)
-					if mode == "near-limit" {
+					switch {
+					case mode == "near-limit":
 						abstract = strings.Repeat("abstract ", 170)
-					} else if mode == "unicode" {
+					case mode == "unicode":
 						abstract = strings.Repeat("中文", 250)
-					} else if mode == "oversized-first" && index == 0 {
+					case mode == "oversized-first" && index == 0:
 						abstract = strings.Repeat("x", MaxPushContentLength)
 					}
-					candidates[id] = storage.ArticleCandidate{ArticleId: id, Title: fmt.Sprintf("Article %d", id), Abstract: abstract}
-					selections = append(selections, domain.RankedSelection{ArticleId: id})
+					candidates[id] = storage.ArticleCandidate{ArticleID: id, Title: fmt.Sprintf("Article %d", id), Abstract: abstract}
+					selections = append(selections, domain.RankedSelection{ArticleID: id})
 				}
 			}
 			var content string

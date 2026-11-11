@@ -33,7 +33,7 @@ func TestHttpCharsetPrecedenceAndUtf8Dom(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := Html(raw, response.Header.Get("Content-Type"))
+	decoded, err := HTML(raw, response.Header.Get("Content-Type"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,13 +55,13 @@ func TestHttpCharsetPrecedenceAndUtf8Dom(t *testing.T) {
 	if !found {
 		t.Fatal("decoded Chinese text missing from DOM")
 	}
-	if actual, err := Html(append([]byte{0xef, 0xbb, 0xbf}, []byte("中文�")...), "text/html;charset=unknown"); err != nil || actual != "中文�" {
+	if actual, err := HTML(append([]byte{0xef, 0xbb, 0xbf}, []byte("中文�")...), "text/html;charset=unknown"); err != nil || actual != "中文�" {
 		t.Fatalf("BOM precedence %q %v", actual, err)
 	}
-	if _, err := Html(body, "text/html;charset=utf-8"); err == nil {
+	if _, err := HTML(body, "text/html;charset=utf-8"); err == nil {
 		t.Fatal("HTTP charset did not override meta")
 	}
-	if actual, err := Html([]byte("plain"), "text/plain;charset=unknown"); err != nil || actual != "plain" {
+	if actual, err := HTML([]byte("plain"), "text/plain;charset=unknown"); err != nil || actual != "plain" {
 		t.Fatal("unknown charset did not use HTML fallback", actual, err)
 	}
 }
@@ -72,7 +72,7 @@ func TestHtmlUsesWHATWGMetaAndFallbackRules(t *testing.T) {
 		strings.Repeat(" ", 1024) + `<meta charset="utf-8">`,
 	} {
 		body := append([]byte(prefix), 0xe9)
-		value, err := Html(body, "text/html; charset=unknown")
+		value, err := HTML(body, "text/html; charset=unknown")
 		if err != nil || value != prefix+"é" {
 			t.Fatal(value, err)
 		}

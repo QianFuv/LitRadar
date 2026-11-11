@@ -143,7 +143,7 @@ func validateOutside(options RestoreOptions, selection Selection) error {
 	if err != nil {
 		return err
 	}
-	targets := []string{options.AuthDbPath}
+	targets := []string{options.AuthDBPath}
 	if selection.Metadata {
 		targets = append(targets, options.Config.MetaDir)
 	}
@@ -178,13 +178,13 @@ func restore(ctx context.Context, options RestoreOptions, now float64, beforeRep
 		return report, err
 	}
 
-	if err := requireInactiveRestoreTarget(ctx, options.AuthDbPath, now); err != nil {
+	if err := requireInactiveRestoreTarget(ctx, options.AuthDBPath, now); err != nil {
 		return report, err
 	}
 	if err := validateOutside(options, manifest.Selection); err != nil {
 		return report, err
 	}
-	parent := filepath.Dir(options.AuthDbPath)
+	parent := filepath.Dir(options.AuthDBPath)
 	if err := os.MkdirAll(parent, 0777); err != nil {
 		return report, err
 	}
@@ -262,9 +262,9 @@ func stageRestoreReplacements(options RestoreOptions, manifest Manifest, data, a
 	if err := copyFile(filepath.Join(options.BackupDir, "auth.sqlite"), stagedAuth); err != nil {
 		return nil, err
 	}
-	items := []replacement{{target: options.AuthDbPath, staged: stagedAuth, rollback: filepath.Join(authWorkspace, "rollback-auth.sqlite")}}
+	items := []replacement{{target: options.AuthDBPath, staged: stagedAuth, rollback: filepath.Join(authWorkspace, "rollback-auth.sqlite")}}
 	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
-		items = append(items, replacement{target: options.AuthDbPath + suffix, rollback: filepath.Join(authWorkspace, "rollback-auth.sqlite"+suffix)})
+		items = append(items, replacement{target: options.AuthDBPath + suffix, rollback: filepath.Join(authWorkspace, "rollback-auth.sqlite"+suffix)})
 	}
 	groups := []struct {
 		enabled                 bool
@@ -295,7 +295,7 @@ func executeRestoreReplacements(ctx context.Context, options RestoreOptions, man
 			return err
 		}
 	}
-	if err := requireInactiveRestoreTarget(ctx, options.AuthDbPath, now); err != nil {
+	if err := requireInactiveRestoreTarget(ctx, options.AuthDBPath, now); err != nil {
 		return err
 	}
 	if err := apply(items); err != nil {
@@ -318,7 +318,7 @@ func executeRestoreReplacements(ctx context.Context, options RestoreOptions, man
 
 func validateRestoredComponents(ctx context.Context, options RestoreOptions, manifest Manifest, data string) error {
 	for _, component := range manifest.Components {
-		target := options.AuthDbPath
+		target := options.AuthDBPath
 		if component.Kind != "auth_database" {
 			target = filepath.Join(data, filepath.FromSlash(component.Path))
 		}

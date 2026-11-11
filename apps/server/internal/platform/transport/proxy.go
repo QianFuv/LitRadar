@@ -16,16 +16,16 @@ import (
 
 // New creates an HTTP transport whose proxy is exclusively the supplied managed URL.
 // SOCKS5 resolves destinations locally; SOCKS5h leaves destination resolution to the proxy.
-func New(proxyUrl string) (*http.Transport, error) {
+func New(proxyURL string) (*http.Transport, error) {
 	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 	transport := &http.Transport{DialContext: dialer.DialContext, ForceAttemptHTTP2: true, MaxIdleConns: 100,
 		IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ExpectContinueTimeout: time.Second}
-	if proxyUrl == "" {
+	if proxyURL == "" {
 		return transport, nil
 	}
-	location, err := url.Parse(proxyUrl)
+	location, err := url.Parse(proxyURL)
 	invalid := errors.New("invalid proxy URL")
-	if err != nil || !validProxyLocation(location, proxyUrl) {
+	if err != nil || !validProxyLocation(location, proxyURL) {
 		return nil, invalid
 	}
 	if !validProxyPort(location.Port()) {

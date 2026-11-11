@@ -14,10 +14,10 @@ import (
 )
 
 var (
-	ErrNoDatabases       = errors.New("No SQLite databases found")
-	ErrNotFound          = errors.New("Database not found")
-	ErrMultipleDatabases = errors.New("Multiple databases found, specify ?db=<name>")
-	ErrInvalidName       = errors.New("Database name is not a safe catalog stem")
+	ErrNoDatabases       = errors.New("no SQLite databases found")
+	ErrNotFound          = errors.New("database not found")
+	ErrMultipleDatabases = errors.New("multiple databases found, specify ?db=<name>")
+	ErrInvalidName       = errors.New("database name is not a safe catalog stem")
 )
 
 // Config separates canonical content from disposable control and credential databases.
@@ -26,7 +26,7 @@ type Config struct {
 	IndexDir        string
 	IndexControlDir string
 	MetaDir         string
-	AuthDbPath      string
+	AuthDBPath      string
 }
 
 // FromProjectRoot derives the unchanged deployment data paths.
@@ -34,19 +34,19 @@ func FromProjectRoot(root string) Config {
 	return Config{root, filepath.Join(root, "data", "index"), filepath.Join(root, "data", "index-control"), filepath.Join(root, "data", "meta"), filepath.Join(root, "data", "auth.sqlite")}
 }
 
-// TelemetryDbPath locates disposable load data independently of credential overrides.
-func (config Config) TelemetryDbPath() string {
+// TelemetryDBPath locates disposable load data independently of credential overrides.
+func (config Config) TelemetryDBPath() string {
 	return filepath.Join(config.ProjectRoot, "data", "telemetry.sqlite")
 }
 
-// WithAuthDbPath overrides only the explicitly selected credential database.
-func (config Config) WithAuthDbPath(filename string) Config {
-	config.AuthDbPath = filename
+// WithAuthDBPath overrides only the explicitly selected credential database.
+func (config Config) WithAuthDBPath(filename string) Config {
+	config.AuthDBPath = filename
 	return config
 }
 
-// ResolveIndexDbPath preserves basename selection and the implicit single-database rule.
-func (config Config) ResolveIndexDbPath(name *string) (string, error) {
+// ResolveIndexDBPath preserves basename selection and the implicit single-database rule.
+func (config Config) ResolveIndexDBPath(name *string) (string, error) {
 	if name != nil {
 		if filename := databaseName(*name); filename != "" {
 			selected := filepath.Join(config.IndexDir, filename)
@@ -72,7 +72,7 @@ func (config Config) ResolveIndexDbPath(name *string) (string, error) {
 
 // ResolveIndexCatalogStem requires a canonical safe name after ordinary database selection.
 func (config Config) ResolveIndexCatalogStem(name *string) (string, error) {
-	filename, err := config.ResolveIndexDbPath(name)
+	filename, err := config.ResolveIndexDBPath(name)
 	if err != nil {
 		return "", err
 	}

@@ -13,7 +13,7 @@ import (
 
 const cacheCapacity = 64
 const cacheArticleLimit = 1000000
-const cacheTtl = 60 * time.Second
+const cacheTTL = 60 * time.Second
 
 type fileFingerprint struct {
 	length, modifiedSeconds int64
@@ -49,9 +49,9 @@ func cloneManifest(value *Manifest) *Manifest {
 	}
 	copy := *value
 	copy.ArticleIds = slices.Clone(value.ArticleIds)
-	if value.RunId != nil {
-		text := *value.RunId
-		copy.RunId = &text
+	if value.RunID != nil {
+		text := *value.RunID
+		copy.RunID = &text
 	}
 	return &copy
 }
@@ -70,7 +70,7 @@ func (cache *Cache) remove(path string) {
 }
 func (cache *Cache) prune(now time.Time) {
 	for path, entry := range cache.entries {
-		if now.Sub(entry.loadedAt) >= cacheTtl {
+		if now.Sub(entry.loadedAt) >= cacheTTL {
 			cache.remove(path)
 		}
 	}

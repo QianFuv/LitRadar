@@ -15,7 +15,7 @@ import (
 
 // preparationSource supplies a valid literal notice without normalizing its catalog or title identity.
 func preparationSource(ids []string, title string) domain.Source {
-	return domain.Source{CatalogIds: ids, JournalTitle: "Journal", Title: title, TypeText: "Special Issue", DateText: "Submission deadline: 31 December 2026", SourceUrl: "https://example.org/cfp", CheckedOn: "2026-09-15"}
+	return domain.Source{CatalogIds: ids, JournalTitle: "Journal", Title: title, TypeText: "Special Issue", DateText: "Submission deadline: 31 December 2026", SourceURL: "https://example.org/cfp", CheckedOn: "2026-09-15"}
 }
 
 // TestGenerationFenceSelectsWinningPayload protects last-good content from stale concurrent publications.
@@ -41,7 +41,7 @@ func TestGenerationFenceSelectsWinningPayload(t *testing.T) {
 		workers.Go(func() {
 			candidate := source
 			candidate.Scope = []string{"stale original", "winning original"}[index]
-			failures[index] = repository.PublishRefresh(ctx, leases[index], Publication{Capture: candidate.Scope, CaptureFormat: "html", SourceUrl: candidate.SourceUrl, Sources: []domain.Source{candidate}, ConfigVersion: 1}, 105)
+			failures[index] = repository.PublishRefresh(ctx, leases[index], Publication{Capture: candidate.Scope, CaptureFormat: "html", SourceURL: candidate.SourceURL, Sources: []domain.Source{candidate}, ConfigVersion: 1}, 105)
 		})
 	}
 	workers.Wait()
@@ -137,7 +137,7 @@ func TestPreparationDuplicateCleanTitleAndEmptyStatements(t *testing.T) {
 	if _, err := prepare(domain.Seed{FormatVersion: 1, Sources: []domain.Source{first, second}}); err == nil || err.Error() != "Duplicate CFP notice within a" {
 		t.Fatal("clean title duplicate admitted", err)
 	}
-	empty := domain.EmptyJournal{CatalogIds: []string{"a"}, JournalTitle: "Journal", CheckedOn: "2026-10-07", SourceUrl: "https://example.org/cfp", SourceStatement: "No open calls"}
+	empty := domain.EmptyJournal{CatalogIds: []string{"a"}, JournalTitle: "Journal", CheckedOn: "2026-10-07", SourceURL: "https://example.org/cfp", SourceStatement: "No open calls"}
 	if _, err := prepare(domain.Seed{FormatVersion: 1, EmptyJournals: []domain.EmptyJournal{empty, empty}}); err == nil || err.Error() != "A CFP journal cannot be both empty and populated in one source snapshot" {
 		t.Fatal("duplicate empty statement admitted", err)
 	}

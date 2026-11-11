@@ -19,7 +19,7 @@ import (
 
 // Announcement preserves numeric identifiers and fractional epoch timestamps.
 type Announcement struct {
-	Id        int64   `json:"id" nullable:"false" format:"int64"`
+	ID        int64   `json:"id" nullable:"false" format:"int64"`
 	Title     string  `json:"title" nullable:"false"`
 	Message   string  `json:"message" nullable:"false"`
 	Priority  string  `json:"priority" nullable:"false"`
@@ -149,7 +149,7 @@ func Get(ctx context.Context, repository *auth.Repository, id int64) (*Announcem
 	return result, err
 }
 
-func authorize(ctx context.Context, connection *sql.Conn, actor *identity.Id) error {
+func authorize(ctx context.Context, connection *sql.Conn, actor *identity.ID) error {
 	if actor != nil {
 		return auth.RequireAdministrator(ctx, connection, *actor)
 	}
@@ -161,12 +161,12 @@ func auditTarget(ctx context.Context, connection *sql.Conn, audit *domain.AuditE
 		return nil
 	}
 	event := *audit
-	event.TargetId = &id
+	event.TargetID = &id
 	return auth.InsertAudit(ctx, connection, &event)
 }
 
 // Create atomically persists a validated message and its required completion audit after rechecking the actor.
-func Create(ctx context.Context, repository *auth.Repository, actor *identity.Id, title, message, priority string, isEnabled bool, audit *domain.AuditEvent) (Announcement, error) {
+func Create(ctx context.Context, repository *auth.Repository, actor *identity.ID, title, message, priority string, isEnabled bool, audit *domain.AuditEvent) (Announcement, error) {
 	input, err := normalize(Update{Title: &title, Message: &message, Priority: &priority})
 	if err != nil {
 		return Announcement{}, err
@@ -202,7 +202,7 @@ func Create(ctx context.Context, repository *auth.Repository, actor *identity.Id
 }
 
 // Modify applies supplied fields and audits only an existing row in the same write transaction.
-func Modify(ctx context.Context, repository *auth.Repository, actor *identity.Id, id int64, input Update, audit *domain.AuditEvent) (*Announcement, error) {
+func Modify(ctx context.Context, repository *auth.Repository, actor *identity.ID, id int64, input Update, audit *domain.AuditEvent) (*Announcement, error) {
 	input, err := normalize(input)
 	if err != nil {
 		return nil, err
@@ -247,7 +247,7 @@ func Modify(ctx context.Context, repository *auth.Repository, actor *identity.Id
 }
 
 // Delete rechecks the actor and rolls back deletion when its required audit cannot persist.
-func Delete(ctx context.Context, repository *auth.Repository, actor *identity.Id, id int64, audit *domain.AuditEvent) (bool, error) {
+func Delete(ctx context.Context, repository *auth.Repository, actor *identity.ID, id int64, audit *domain.AuditEvent) (bool, error) {
 	wasDeleted := false
 	err := repository.Immediate(ctx, false, func(connection *sql.Conn) error {
 		if err := authorize(ctx, connection, actor); err != nil {

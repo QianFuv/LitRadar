@@ -75,7 +75,7 @@ func (fixture *FixtureTransport) StartQrLogin(context.Context) (QrLogin, error) 
 	if fixture.state.mode == StartFailure {
 		return QrLogin{}, &Error{Kind: "Request", Message: "fixture QR login start failed"}
 	}
-	return QrLogin{Uuid: "qr-live-fixture", Status: "WAITING_SCAN", QrCode: "https://qr.test/qr-live-fixture.png"}, nil
+	return QrLogin{UUID: "qr-live-fixture", Status: "WAITING_SCAN", QrCode: "https://qr.test/qr-live-fixture.png"}, nil
 }
 
 // PollQrLogin preserves timeout formatting and creates the original unsigned fixture token.
@@ -147,7 +147,7 @@ func (fixture *FixtureTransport) Search(ctx context.Context, keyword string, lim
 	if limit == 0 {
 		return []SearchResult{}, nil
 	}
-	return []SearchResult{{Index: 1, Title: keyword, DetailUrl: "https://fixture.cnki.test/detail", FileName: pointer("fixture"), DbName: pointer("CJFDLAST2026"), DbCode: pointer("CJFD"), DownloadUrl: pointer("https://fixture.cnki.test/download.aspx?dflag=pdfdown")}}, nil
+	return []SearchResult{{Index: 1, Title: keyword, DetailURL: "https://fixture.cnki.test/detail", FileName: new("fixture"), DBName: new("CJFDLAST2026"), DBCode: new("CJFD"), DownloadURL: new("https://fixture.cnki.test/download.aspx?dflag=pdfdown")}}, nil
 }
 
 // InspectResultMetadata preserves the fixture's exact identity or selected mismatch.
@@ -156,7 +156,7 @@ func (fixture *FixtureTransport) InspectResultMetadata(ctx context.Context, resu
 	if fixture.state.mode == FulltextMismatch {
 		identity = ArticleIdentity{Title: "Mismatched CNKI Article", Authors: "Different Author", JournalTitle: "Different Journal"}
 	}
-	return ArticleCandidate{Result: cloneResult(result), Identity: identity, DetailUrl: result.DetailUrl, PdfUrl: cloneString(result.DownloadUrl)}, nil
+	return ArticleCandidate{Result: cloneResult(result), Identity: identity, DetailURL: result.DetailURL, PdfURL: cloneString(result.DownloadURL)}, nil
 }
 
 // DownloadPdf returns fresh owned bytes and a title-derived filename.
@@ -169,5 +169,5 @@ func (fixture *FixtureTransport) DownloadPdf(ctx context.Context, url string, ti
 		name = *title
 	}
 	content := []byte("%PDF-1.4\n% fixture cnki pdf\n")
-	return DownloadedPdf{Filename: SafeFilename(name) + ".pdf", FinalUrl: url, ContentType: "application/pdf", ByteCount: uint64(len(content)), Content: content}, nil
+	return DownloadedPdf{Filename: SafeFilename(name) + ".pdf", FinalURL: url, ContentType: "application/pdf", ByteCount: uint64(len(content)), Content: content}, nil
 }

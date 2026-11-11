@@ -65,7 +65,7 @@ func TestSubscriberDependenciesFailClosedWithoutDroppingEnabledRows(t *testing.T
 		t.Fatal(err)
 	}
 	_, err = repository.ListSubscribers(context.Background(), codec)
-	if err == nil || err.Error() != "A tracking folder is required when delivery_method is 'folder'" {
+	if err == nil || err.Error() != "a tracking folder is required when delivery_method is 'folder'" {
 		t.Fatalf("missing folder skipped: %v", err)
 	}
 	if _, err := repository.database.Exec("UPDATE notification_settings SET delivery_method='pushplus'"); err != nil {
@@ -112,7 +112,7 @@ func prepareSubscriberCredentials(t *testing.T, repository *Repository, codec *s
 
 func assertSubscriberCredentialProjection(t *testing.T, item *domain.Subscriber) {
 	t.Helper()
-	if item == nil || item.SubscriberId != "1" || !hasExpectedSubscriberSecrets(item) || *item.AiModel != "model" || item.AiSystemPrompt != nil || !reflect.DeepEqual(item.Keywords, []string{" Rust ", "Rust"}) {
+	if item == nil || item.SubscriberID != "1" || !hasExpectedSubscriberSecrets(item) || *item.AiModel != "model" || item.AiSystemPrompt != nil || !reflect.DeepEqual(item.Keywords, []string{" Rust ", "Rust"}) {
 		t.Fatalf("projection: %+v", item)
 	}
 }
@@ -145,5 +145,5 @@ func assertSubscriberSecretContextAndDisabledAdmission(t *testing.T, repository 
 }
 
 func hasExpectedSubscriberSecrets(item *domain.Subscriber) bool {
-	return item.PushplusToken == " token " && item.AiApiKey != nil && *item.AiApiKey == "primary" && item.AiBackupApiKey != nil && *item.AiBackupApiKey == "backup"
+	return item.PushplusToken == " token " && item.AiAPIKey != nil && *item.AiAPIKey == "primary" && item.AiBackupAPIKey != nil && *item.AiBackupAPIKey == "backup"
 }

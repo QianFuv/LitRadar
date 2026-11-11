@@ -16,8 +16,8 @@ import (
 type ClientTransport struct{ *http.Transport }
 
 // ClientTransport constructs source networking without shorter implicit dial timeouts.
-func (selection Proxy) ClientTransport() (*ClientTransport, error) {
-	wire, err := selection.Transport()
+func (proxy Proxy) ClientTransport() (*ClientTransport, error) {
+	wire, err := proxy.Transport()
 	if err != nil {
 		return nil, err
 	}
@@ -25,10 +25,10 @@ func (selection Proxy) ClientTransport() (*ClientTransport, error) {
 	wire.DialContext = dialer.DialContext
 	wire.TLSHandshakeTimeout = 0
 	wire.DisableCompression = false
-	if selection.IsExplicit() {
-		location, err := url.Parse(selection.canonical)
+	if proxy.IsExplicit() {
+		location, err := url.Parse(proxy.canonical)
 		if err != nil {
-			return nil, ErrProxyUrl
+			return nil, ErrProxyURL
 		}
 		if location.Scheme == "socks5" || location.Scheme == "socks5h" {
 			if err := configureSocksDialer(wire, location, dialer); err != nil {
@@ -65,7 +65,7 @@ func configureSocksDialer(wire *http.Transport, location *url.URL, dialer *net.D
 	}
 	selected, err := proxy.SOCKS5("tcp", net.JoinHostPort(location.Hostname(), port), authentication, dialer)
 	if err != nil {
-		return ErrProxyUrl
+		return ErrProxyURL
 	}
 	contextDialer := selected.(proxy.ContextDialer)
 	wire.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {

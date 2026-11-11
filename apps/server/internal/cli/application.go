@@ -37,7 +37,7 @@ func (failure *diagnosticError) Unwrap() error { return failure.cause }
 // IsServiceCommand identifies the service after validating internal correlation arguments.
 func IsServiceCommand(values []string) bool {
 	args := arguments(slices.Clone(values))
-	_, err := parentRunId(&args)
+	_, err := parentRunID(&args)
 	return err == nil && len(args) > 0 && args[0] == "serve" && !hasHelp(args[1:])
 }
 
@@ -45,7 +45,7 @@ func IsServiceCommand(values []string) bool {
 // Logging initialization and process-boundary cleanup belong to the executable host.
 func Run(ctx context.Context, values []string, executable string, input io.Reader, output io.Writer) (result error) {
 	args := arguments(slices.Clone(values))
-	parent, parentError := parentRunId(&args)
+	parent, parentError := parentRunID(&args)
 	command := commandName(args)
 	started := time.Now()
 	fields := map[string]any{"component": "runtime", "command": command, "process_id": uint64(os.Getpid()), "version": litradar.Version(), "parent_run_id": nil}
@@ -63,8 +63,7 @@ func Run(ctx context.Context, values []string, executable string, input io.Reade
 		duration := logfilter.DebugValue(strconv.FormatInt(time.Since(started).Milliseconds(), 10))
 		if result != nil {
 			attributes := []any{"event", "process.failed", "component", "runtime", "outcome", "failure", "error_kind", "command_failed", "duration_ms", duration}
-			var failure *diagnosticError
-			if errors.As(result, &failure) {
+			if failure, ok := errors.AsType[*diagnosticError](result); ok {
 				attributes = append(attributes, "diagnostic", failure.diagnostic)
 			}
 			slog.ErrorContext(ctx, "process.failed", attributes...)

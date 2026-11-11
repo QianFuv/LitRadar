@@ -107,10 +107,10 @@ func exerciseAdditionalTrackingResponses(t *testing.T) {
 	if err := json.Unmarshal(created.Body.Bytes(), &status); err != nil {
 		t.Fatal(err)
 	}
-	if status.JobId == nil {
+	if status.JobID == nil {
 		t.Fatal("missing durable run identifier")
 	}
-	requireSuccess(t, router, "GET", "/api/tracking/push-weekly/runs/"+*status.JobId, "", token)
+	requireSuccess(t, router, "GET", "/api/tracking/push-weekly/runs/"+*status.JobID, "", token)
 	_, cnki, cnkiToken := cnkiFixture(t, zjlib.Success)
 	requireSuccess(t, cnki, "GET", "/api/cnki/session", "", cnkiToken)
 }
@@ -128,7 +128,7 @@ func exerciseArticleResponses(t *testing.T) {
 }
 
 func exerciseOIDCLinkResponses(t *testing.T) {
-	_, router, provider := nativeApiFixture(t)
+	_, router, provider := nativeAPIFixture(t)
 	login := requireSuccess(t, router, "POST", "/api/auth/login", `{"username":"api_fixture","password":"correct password long"}`, "")
 	cookies := login.Result().Cookies()
 	if len(cookies) != 1 {

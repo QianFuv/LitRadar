@@ -381,7 +381,7 @@ func TestCrossrefWorksetRejectsPathAliasesAndConcurrentRootCreation(t *testing.T
 			t.Fatal("unsafe root accepted", path)
 		}
 	}
-	for index := 0; index < 3; index++ {
+	for index := range 3 {
 		t.Run(fmt.Sprint(index), func(t *testing.T) {
 			t.Parallel()
 			state := worksetTestState()

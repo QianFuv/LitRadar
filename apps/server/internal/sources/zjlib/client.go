@@ -14,7 +14,7 @@ type Client struct{ state *clientState }
 type clientState struct {
 	gate                         *semaphore.Weighted
 	transport                    Transport
-	token, qrUuid, finalProxyUrl *string
+	token, qrUUID, finalProxyURL *string
 	warmedAt                     *int64
 	now                          func() int64
 }
@@ -39,13 +39,13 @@ func (client *Client) LoadStateData(value any) {
 	_ = client.enter(context.Background())
 	defer client.leave()
 	client.state.token = textField(value, "bff_user_token")
-	client.state.qrUuid = textField(value, "qr_uuid")
+	client.state.qrUUID = textField(value, "qr_uuid")
 	client.state.warmedAt = int64Field(field(value, "fulltext_warmed_at"))
-	client.state.finalProxyUrl = textField(value, "final_zyproxy_url")
+	client.state.finalProxyURL = textField(value, "final_zyproxy_url")
 	cookies := []Cookie{}
 	if entries, ok := field(value, "cookies").([]any); ok {
 		for _, entry := range entries {
-			if cookie := CookieFromJson(entry); cookie != nil {
+			if cookie := CookieFromJSON(entry); cookie != nil {
 				cookies = append(cookies, *cookie)
 			}
 		}
@@ -59,13 +59,13 @@ func (client *Client) StateData() map[string]any {
 	defer client.leave()
 	cookies := []any{}
 	for _, cookie := range client.state.transport.Cookies() {
-		cookies = append(cookies, cookie.Json())
+		cookies = append(cookies, cookie.JSON())
 	}
 	var warmed any
 	if client.state.warmedAt != nil {
 		warmed = *client.state.warmedAt
 	}
-	return map[string]any{"bff_user_token": optionalValue(client.state.token), "qr_uuid": optionalValue(client.state.qrUuid), "cookies": cookies, "fulltext_warmed_at": warmed, "final_zyproxy_url": optionalValue(client.state.finalProxyUrl), "saved_at": client.state.now()}
+	return map[string]any{"bff_user_token": optionalValue(client.state.token), "qr_uuid": optionalValue(client.state.qrUUID), "cookies": cookies, "fulltext_warmed_at": warmed, "final_zyproxy_url": optionalValue(client.state.finalProxyURL), "saved_at": client.state.now()}
 }
 
 // StartQrLogin changes only the retained QR id after a successful upstream response.
@@ -76,7 +76,7 @@ func (client *Client) StartQrLogin(ctx context.Context) (QrLogin, error) {
 	defer client.leave()
 	login, err := observe(ctx, "qr_login_start", 1, func() (QrLogin, error) { return client.state.transport.StartQrLogin(ctx) })
 	if err == nil {
-		client.state.qrUuid = pointer(login.Uuid)
+		client.state.qrUUID = new(login.UUID)
 	}
 	return login, err
 }
@@ -90,16 +90,16 @@ func (client *Client) PollQrLogin(ctx context.Context, timeout int64, interval f
 	return client.poll(ctx, timeout, interval)
 }
 func (client *Client) poll(ctx context.Context, timeout int64, interval float64) (string, error) {
-	if client.state.qrUuid == nil || strings.TrimSpace(*client.state.qrUuid) == "" {
+	if client.state.qrUUID == nil || strings.TrimSpace(*client.state.qrUUID) == "" {
 		return "", &Error{Kind: "Request", Message: "No QR uuid available. Run start-login first."}
 	}
 	token, err := observe(ctx, "qr_login_poll", 1, func() (string, error) {
-		return client.state.transport.PollQrLogin(ctx, *client.state.qrUuid, timeout, interval)
+		return client.state.transport.PollQrLogin(ctx, *client.state.qrUUID, timeout, interval)
 	})
 	if err != nil {
 		return "", err
 	}
-	client.state.token = pointer(token)
+	client.state.token = new(token)
 	client.state.transport.SetLoginCookie(token)
 	return token, nil
 }
@@ -137,8 +137,8 @@ func (client *Client) WarmUpFulltextSession(ctx context.Context) (string, error)
 	defer client.leave()
 	if client.isFresh(client.state.now()) {
 		slog.DebugContext(ctx, "source.session.reused", "event", "source.session.reused", "component", "source", "provider", "zjlib", "endpoint", "fulltext_session")
-		if client.state.finalProxyUrl != nil {
-			return *client.state.finalProxyUrl, nil
+		if client.state.finalProxyURL != nil {
+			return *client.state.finalProxyURL, nil
 		}
 		return ProxyBase + "/kns55/", nil
 	}
@@ -162,7 +162,7 @@ func (client *Client) WarmUpFulltextSession(ctx context.Context) (string, error)
 	}
 	now := client.state.now()
 	client.state.warmedAt = &now
-	client.state.finalProxyUrl = pointer(final)
+	client.state.finalProxyURL = new(final)
 	return final, nil
 }
 
@@ -187,7 +187,7 @@ func (client *Client) DownloadMatchingPdf(ctx context.Context, expected ArticleI
 		reason, message := "", ""
 		if !MatchesArticle(expected, candidate.Identity) {
 			reason, message = "metadata_mismatch", "metadata mismatch"
-		} else if candidate.PdfUrl == nil {
+		} else if candidate.PdfURL == nil {
 			reason, message = "pdf_link_missing", "PDF link missing"
 		}
 		if reason != "" {
@@ -196,7 +196,7 @@ func (client *Client) DownloadMatchingPdf(ctx context.Context, expected ArticleI
 			continue
 		}
 		download, err := observe(ctx, "fulltext_download", attempt, func() (DownloadedPdf, error) {
-			return client.state.transport.DownloadPdf(ctx, *candidate.PdfUrl, &candidate.Identity.Title, &candidate.DetailUrl)
+			return client.state.transport.DownloadPdf(ctx, *candidate.PdfURL, &candidate.Identity.Title, &candidate.DetailURL)
 		})
 		if err != nil {
 			return DownloadedPdf{}, err

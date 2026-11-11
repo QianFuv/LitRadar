@@ -28,7 +28,7 @@ func attrValue(tag, name string) *string {
 	} else {
 		value = strings.Fields(rest)[0]
 	}
-	value = strings.TrimSpace(decodeHtml(value))
+	value = strings.TrimSpace(decodeHTML(value))
 	if value == "" {
 		return nil
 	}
@@ -136,8 +136,8 @@ func titleText(text string) *string {
 	}
 	output := *title
 	for _, suffix := range []string{" - 中国知网", " - CNKI", " - 中国学术期刊网络出版总库"} {
-		if strings.HasSuffix(output, suffix) {
-			output = strings.TrimSpace(strings.TrimSuffix(output, suffix))
+		if before, ok := strings.CutSuffix(output, suffix); ok {
+			output = strings.TrimSpace(before)
 		}
 	}
 	return cleanText(output)
@@ -188,22 +188,22 @@ func authorBlockText(text string) *string {
 	if len(names) == 0 {
 		return cleanText(stripTags(block))
 	}
-	return pointer(strings.Join(names, "; "))
+	return new(strings.Join(names, "; "))
 }
 func labelBlock(text, label string) *string {
 	marker := "【" + label + "】"
-	start := strings.Index(text, marker)
-	if start < 0 {
+	_, after, ok := strings.Cut(text, marker)
+	if !ok {
 		return nil
 	}
-	rest := text[start+len(marker):]
+	rest := after
 	end := len(rest)
 	for _, marker := range []string{"</p>", "</li>", "</div>"} {
 		if at := strings.Index(rest, marker); at >= 0 && at < end {
 			end = at
 		}
 	}
-	return pointer(rest[:end])
+	return new(rest[:end])
 }
 func labelAuthors(text, label string) *string {
 	block := labelBlock(text, label)
@@ -219,7 +219,7 @@ func labelAuthors(text, label string) *string {
 	if len(names) == 0 {
 		return nil
 	}
-	return pointer(strings.Join(names, "; "))
+	return new(strings.Join(names, "; "))
 }
 func labelFirstAnchor(text, label string) *string {
 	block := labelBlock(text, label)

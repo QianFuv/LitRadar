@@ -274,7 +274,7 @@ func (input *toolInput) strings(name string) []string {
 	return result
 }
 
-func (input *toolInput) positiveId(name, value string) int64 {
+func (input *toolInput) positiveID(name, value string) int64 {
 	value = input.requiredText(name, value)
 	id, err := strconv.ParseInt(value, 10, 64)
 	if err != nil || id <= 0 {
@@ -313,13 +313,13 @@ func (input *toolInput) journals() (*string, query.JournalListParams) {
 // articles retains sticky first-error precedence while building partial search parameters.
 func (input *toolInput) articles() (*string, query.ArticleListParams) {
 	params := query.DefaultArticleListParams()
-	params.JournalId = []int64{}
+	params.JournalID = []int64{}
 	ids := input.strings("journal_id")
 	if len(ids) > 500 {
 		input.fail("journal_id must contain at most 500 items")
 	}
 	for _, value := range ids {
-		params.JournalId = append(params.JournalId, input.positiveId("journal_id", value))
+		params.JournalID = append(params.JournalID, input.positiveID("journal_id", value))
 	}
 	params.Area = input.strings("area")
 	if len(params.Area) > 500 {
@@ -329,7 +329,7 @@ func (input *toolInput) articles() (*string, query.ArticleListParams) {
 		params.Area[index] = input.requiredText("area", value)
 	}
 	params.Ratings = input.ratings()
-	params.IssueId, params.Year = input.nonnegative("issue_id"), input.nonnegative("year")
+	params.IssueID, params.Year = input.nonnegative("issue_id"), input.nonnegative("year")
 	params.InPress, params.OpenAccess = input.boolean("in_press"), input.boolean("open_access")
 	params.DateFrom, params.DateTo = input.text("date_from"), input.text("date_to")
 	params.Doi, params.Pmid, params.Query = input.text("doi"), input.text("pmid"), input.text("q")

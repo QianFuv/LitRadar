@@ -32,10 +32,10 @@ var dnsSlots = semaphore.NewWeighted(8)
 type Error string
 
 const (
-	InvalidUrl                 Error = "Outbound request URL is invalid"
-	HttpsRequired              Error = "Outbound requests require HTTPS"
+	InvalidURL                 Error = "Outbound request URL is invalid"
+	HTTPSRequired              Error = "Outbound requests require HTTPS"
 	HostRequired               Error = "Outbound request URL requires a host"
-	DnsResolutionFailed        Error = "Outbound endpoint DNS resolution failed"
+	DNSResolutionFailed        Error = "Outbound endpoint DNS resolution failed"
 	DisallowedAddress          Error = "Outbound endpoint resolved to a disallowed address"
 	ConnectFailed              Error = "Outbound endpoint connection failed"
 	TimedOut                   Error = "Outbound request timed out"
@@ -43,7 +43,7 @@ const (
 	UnsupportedContentEncoding Error = "Outbound response uses an unsupported content encoding"
 	UnexpectedContentType      Error = "Outbound response must use a JSON content type"
 	ResponseTooLarge           Error = "Outbound response exceeded the size limit"
-	InvalidJson                Error = "Outbound response contained invalid JSON"
+	InvalidJSON                Error = "Outbound response contained invalid JSON"
 )
 
 func (err Error) Error() string { return string(err) }
@@ -51,7 +51,7 @@ func (err Error) Error() string { return string(err) }
 // Response contains only validated success JSON and safe response metadata.
 type Response struct {
 	StatusCode        int
-	RequestId         *string
+	RequestID         *string
 	RetryAfterSeconds *uint64
 	Body              any
 }
@@ -69,7 +69,7 @@ func (response Response) LogValue() slog.Value { return slog.StringValue(respons
 type Client struct {
 	connectTimeout                  time.Duration
 	maximum                         int64
-	isHttpAllowed, isPrivateAllowed bool
+	isHTTPAllowed, isPrivateAllowed bool
 	lookup                          func(context.Context, string, string) ([]netip.Addr, error)
 	tlsConfig                       *tls.Config
 }
@@ -79,17 +79,17 @@ func New(timeout time.Duration) *Client {
 	return &Client{connectTimeout: min(10*time.Second, max(time.Second, timeout)), maximum: MaxResponseBytes, lookup: net.DefaultResolver.LookupNetIP}
 }
 
-// ValidateUrl checks parsed and raw-authority boundaries before any network operation.
-func (client *Client) ValidateUrl(value string) (*whatwg.Url, error) {
+// ValidateURL checks parsed and raw-authority boundaries before any network operation.
+func (client *Client) ValidateURL(value string) (*whatwg.Url, error) {
 	location, err := whatwg.NewParser().Parse(value)
 	if err != nil {
-		return nil, InvalidUrl
+		return nil, InvalidURL
 	}
-	if location.Scheme() != "https" && !(client.isHttpAllowed && location.Scheme() == "http") {
-		return nil, HttpsRequired
+	if location.Scheme() != "https" && (!client.isHTTPAllowed || location.Scheme() != "http") {
+		return nil, HTTPSRequired
 	}
-	if hasDisallowedUrlAuthority(value, location) {
-		return nil, InvalidUrl
+	if hasDisallowedURLAuthority(value, location) {
+		return nil, InvalidURL
 	}
 	if location.Hostname() == "" {
 		return nil, HostRequired
@@ -122,7 +122,7 @@ func (client *Client) resolve(ctx context.Context, host string) ([]netip.Addr, e
 		return nil, TimedOut
 	case result := <-completed:
 		if result.err != nil || len(result.addresses) == 0 {
-			return nil, DnsResolutionFailed
+			return nil, DNSResolutionFailed
 		}
 		if err := client.validateResolvedAddresses(result.addresses); err != nil {
 			return nil, err
@@ -131,15 +131,15 @@ func (client *Client) resolve(ctx context.Context, host string) ([]netip.Addr, e
 	}
 }
 
-// PostJson enforces a total timeout including DNS, forbids redirects and compression, and never reads non-success bodies.
-func (client *Client) PostJson(ctx context.Context, value string, headers http.Header, body any, timeout time.Duration) (Response, error) {
-	location, err := client.ValidateUrl(value)
+// PostJSON enforces a total timeout including DNS, forbids redirects and compression, and never reads non-success bodies.
+func (client *Client) PostJSON(ctx context.Context, value string, headers http.Header, body any, timeout time.Duration) (Response, error) {
+	location, err := client.ValidateURL(value)
 	if err != nil {
 		return Response{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, max(time.Millisecond, timeout))
 	defer cancel()
-	encoded, err := sources.Json(body)
+	encoded, err := sources.JSON(body)
 	if err != nil {
 		return Response{}, RequestFailed
 	}
@@ -193,13 +193,13 @@ func isHeaderText(value string) bool {
 	return true
 }
 
-func safeRequestId(headers http.Header) *string {
+func safeRequestID(headers http.Header) *string {
 	for _, name := range []string{"x-request-id", "request-id", "cf-ray"} {
 		value := headers.Get(name)
 		if value == "" || len(value) > 128 {
 			continue
 		}
-		if isSafeRequestId(value) {
+		if isSafeRequestID(value) {
 			return &value
 		}
 	}
@@ -219,7 +219,7 @@ func retryAfter(headers http.Header) *uint64 {
 	return &seconds
 }
 
-func hasDisallowedUrlAuthority(value string, location *whatwg.Url) bool {
+func hasDisallowedURLAuthority(value string, location *whatwg.Url) bool {
 	_, authority, _ := strings.Cut(value, "://")
 	if index := strings.IndexAny(authority, "/?#"); index >= 0 {
 		authority = authority[:index]
@@ -286,8 +286,7 @@ func (client *Client) newOutboundConnection(ctx context.Context) (*http.Transpor
 }
 
 func classifyOutboundRequestError(ctx context.Context, err error, hasConnection bool) error {
-	var policyError Error
-	if errors.As(err, &policyError) {
+	if policyError, ok := errors.AsType[Error](err); ok {
 		return policyError
 	}
 	if errors.Is(err, transport.ErrRequestBuild) {
@@ -307,7 +306,7 @@ func classifyOutboundRequestError(ctx context.Context, err error, hasConnection 
 }
 
 func (client *Client) readOutboundResponse(ctx context.Context, response *http.Response) (Response, error) {
-	result := Response{StatusCode: response.StatusCode, RequestId: safeRequestId(response.Header), RetryAfterSeconds: retryAfter(response.Header)}
+	result := Response{StatusCode: response.StatusCode, RequestID: safeRequestID(response.Header), RetryAfterSeconds: retryAfter(response.Header)}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return result, nil
 	}
@@ -321,18 +320,18 @@ func (client *Client) readOutboundResponse(ctx context.Context, response *http.R
 	if int64(len(data)) > client.maximum {
 		return Response{}, ResponseTooLarge
 	}
-	parsed, err := transport.ParseJson(data)
+	parsed, err := transport.ParseJSON(data)
 	if err != nil {
-		return Response{}, InvalidJson
+		return Response{}, InvalidJSON
 	}
 	result.Body = parsed
 	return result, nil
 }
 
-func isSafeRequestId(value string) bool {
+func isSafeRequestID(value string) bool {
 	isSafe := true
 	for _, character := range []byte(value) {
-		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || strings.ContainsRune("-_.:", rune(character))) {
+		if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') && (character < '0' || character > '9') && !strings.ContainsRune("-_.:", rune(character)) {
 			isSafe = false
 			break
 		}

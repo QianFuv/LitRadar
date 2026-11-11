@@ -101,7 +101,7 @@ func (transport *FixtureTransport) PrepareOpenAlexDoiBatches(dois []string, batc
 func (transport *FixtureTransport) RequestOpenAlexDoiBatches(ctx context.Context, batches [][]string) ([]any, error) {
 	results := []any{}
 	for _, batch := range batches {
-		payload, err := transport.Request(ctx, Request{Service: OpenAlex, Endpoint: "works", Method: "GET", Url: "https://api.openalex.org/works?filter=REDACTED&api_key=SECRET", Dois: batch})
+		payload, err := transport.Request(ctx, Request{Service: OpenAlex, Endpoint: "works", Method: "GET", URL: "https://api.openalex.org/works?filter=REDACTED&api_key=SECRET", Dois: batch})
 		if err != nil {
 			return nil, err
 		}
@@ -141,10 +141,10 @@ func (transport *FixtureTransport) Captures() Captures {
 }
 
 func (transport *FixtureTransport) record(request Request, status uint16, failure *string) {
-	transport.attempts = append(transport.attempts, Attempt{Service: request.Service, Endpoint: request.Endpoint, Method: request.Method, Url: request.Url, StatusCode: &status, DidSucceed: failure == nil, Error: failure})
+	transport.attempts = append(transport.attempts, Attempt{Service: request.Service, Endpoint: request.Endpoint, Method: request.Method, URL: request.URL, StatusCode: &status, DidSucceed: failure == nil, Error: failure})
 }
 func (transport *FixtureTransport) httpError(request Request, status uint16, body any) error {
-	encoded, _ := domain.Json(body)
+	encoded, _ := domain.JSON(body)
 	message := fmt.Sprintf("HTTP %d: %s", status, encoded)
 	transport.record(request, status, &message)
 	return &Error{Kind: "HttpStatus", Service: request.Service, Endpoint: request.Endpoint, StatusCode: status, Body: body}
@@ -296,7 +296,7 @@ func (transport *FixtureTransport) fixtureSourceWorks(request Request) (any, err
 	if request.FromSyncDate != nil {
 		date = *request.FromSyncDate
 	}
-	transport.captures.SourceWorkRequests = append(transport.captures.SourceWorkRequests, [2]any{request.SourceId, date})
+	transport.captures.SourceWorkRequests = append(transport.captures.SourceWorkRequests, [2]any{request.SourceID, date})
 	pageIndex := fixturePageIndex(request.Cursor)
 	threshold := transport.data.OpenAlexSourceWorksPlanRestrictedAfterPage
 	if isFixtureSourceRestricted(request.FromSyncDate, transport.data.IsOpenAlexSourceWorksPlanRestricted, threshold, pageIndex) {

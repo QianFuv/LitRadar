@@ -7,8 +7,6 @@ import (
 	"time"
 )
 
-func testPointer[T any](value T) *T { return &value }
-
 // TestStructDecodingPreservesObjectAndSequenceContracts fixes the persisted field rules.
 func TestStructDecodingPreservesObjectAndSequenceContracts(t *testing.T) {
 	type payload struct {
@@ -25,7 +23,7 @@ func TestStructDecodingPreservesObjectAndSequenceContracts(t *testing.T) {
 	}{
 		{"object defaults", `{"name":"entry"}`, true, true, payload{Name: "entry", Items: []string{}}},
 		{"nullable pointer", `{"name":"entry","optional":null}`, true, true, payload{Name: "entry", Items: []string{}}},
-		{"pointer and slice", `{"name":"entry","optional":"value","items":["one"]}`, true, true, payload{"entry", testPointer("value"), []string{"one"}}},
+		{"pointer and slice", `{"name":"entry","optional":"value","items":["one"]}`, true, true, payload{"entry", new("value"), []string{"one"}}},
 		{"positional defaults", `["entry",null]`, true, false, payload{}},
 		{"positional nullable still required", `["entry"]`, true, false, payload{}},
 		{"too many positions", `["entry",null,[],false]`, true, false, payload{}},
@@ -69,7 +67,7 @@ func TestSourceUnmarshalDoesNotReplaceValueOnFailure(t *testing.T) {
 }
 
 func sourceFixture() Source {
-	return Source{CatalogIds: []string{"journal"}, JournalTitle: "Journal", Title: "  Sample\tcall  ", TypeText: "special issue", SourceUrl: "https://example.org/call", CheckedOn: "2026-01-01"}
+	return Source{CatalogIds: []string{"journal"}, JournalTitle: "Journal", Title: "  Sample\tcall  ", TypeText: "special issue", SourceURL: "https://example.org/call", CheckedOn: "2026-01-01"}
 }
 
 // TestSourceAdmissionPreservesArchivedAmbiguity fixes validation and archive exceptions.
@@ -81,19 +79,19 @@ func TestSourceAdmissionPreservesArchivedAmbiguity(t *testing.T) {
 	}{
 		{"undated source", func(source *Source) {}, true},
 		{"unknown type", func(source *Source) { source.TypeText = "other" }, false},
-		{"editorial entry", func(source *Source) { source.EntryStage = testPointer(Revision) }, false},
-		{"credentials", func(source *Source) { source.SourceUrl = "https://user@example.org/call" }, false},
+		{"editorial entry", func(source *Source) { source.EntryStage = new(Revision) }, false},
+		{"credentials", func(source *Source) { source.SourceURL = "https://user@example.org/call" }, false},
 		{"empty catalog", func(source *Source) { source.CatalogIds = []string{" "} }, false},
 		{"no catalogs", func(source *Source) { source.CatalogIds = nil }, false},
 		{"blocked title", func(source *Source) { source.Title = "Access denied" }, false},
-		{"bad timezone", func(source *Source) { source.TimeZone = testPointer("Not/AZone") }, false},
+		{"bad timezone", func(source *Source) { source.TimeZone = new("Not/AZone") }, false},
 		{"invalid checked date", func(source *Source) { source.CheckedOn = "2026-02-30" }, false},
 		{"non padded date", func(source *Source) { source.CheckedOn = "2026-1-01" }, false},
 		{"active conflicting dates", func(source *Source) { source.DateText = "Deadline 2026-02-30" }, false},
 		{"historical conflicting dates", func(source *Source) { source.DateText = "Deadline 2026-02-30"; source.IsHistorical = true }, true},
 		{"closed conflicting dates", func(source *Source) {
 			source.DateText = "Deadline 2026-02-30"
-			source.StatusText = testPointer("closed")
+			source.StatusText = new("closed")
 		}, true},
 	}
 	for _, test := range cases {
@@ -117,9 +115,9 @@ func TestSourceNormalizationPreservesPriorityAndContent(t *testing.T) {
 	source.TypeText = "proposal conference special general"
 	source.Scope = " a\t b "
 	source.Requirements = " first\r\nsecond "
-	source.StatusText = testPointer("closed invitation only")
+	source.StatusText = new("closed invitation only")
 	source.RawDateText = " unresolved\tdate "
-	want := &Notice{Id: "https://example.org/call#Sample call", Title: "Sample call", Scope: "a b", Requirements: "first\nsecond", Kind: ProposalKind, SourceUrl: source.SourceUrl, CheckedOn: source.CheckedOn, Dates: []Date{}, EntryStage: Proposal, SourceStatus: testPointer(Closed), RawDateText: "unresolved date"}
+	want := &Notice{ID: "https://example.org/call#Sample call", Title: "Sample call", Scope: "a b", Requirements: "first\nsecond", Kind: ProposalKind, SourceURL: source.SourceURL, CheckedOn: source.CheckedOn, Dates: []Date{}, EntryStage: Proposal, SourceStatus: new(Closed), RawDateText: "unresolved date"}
 	if actual := ParseSource(source); !reflect.DeepEqual(actual, want) {
 		t.Fatalf("notice=%#v want=%#v", actual, want)
 	}
@@ -162,20 +160,20 @@ func TestNoticeStatePreservesTimezoneAndSourcePrecedence(t *testing.T) {
 		notice Notice
 		want   State
 	}{
-		{"closed overrides history", Notice{SourceStatus: testPointer(Closed), IsHistorical: true, RawDateText: "unresolved"}, Closed},
+		{"closed overrides history", Notice{SourceStatus: new(Closed), IsHistorical: true, RawDateText: "unresolved"}, Closed},
 		{"raw historical", Notice{IsHistorical: true, RawDateText: "unresolved"}, Historical},
-		{"raw invitation", Notice{SourceStatus: testPointer(InvitationOnly), RawDateText: "unresolved"}, InvitationOnly},
+		{"raw invitation", Notice{SourceStatus: new(InvitationOnly), RawDateText: "unresolved"}, InvitationOnly},
 		{"raw unknown", Notice{RawDateText: "unresolved"}, Uncertain},
 		{"unknown zone deadline", Notice{Dates: deadline, EntryStage: Paper}, Uncertain},
-		{"unknown zone empty persisted status", Notice{Dates: deadline, EntryStage: Paper, SourceStatus: testPointer(State(""))}, State("")},
+		{"unknown zone empty persisted status", Notice{Dates: deadline, EntryStage: Paper, SourceStatus: new(State(""))}, State("")},
 		{"unknown deadline historical", Notice{Dates: deadline, EntryStage: Paper, IsHistorical: true}, Historical},
 		{"unknown opening historical", Notice{Dates: opening, IsHistorical: true}, Uncertain},
-		{"known zone inclusive", Notice{Dates: deadline, EntryStage: Paper, TimeZone: testPointer("UTC")}, Open},
-		{"invalid persisted zone", Notice{Dates: deadline, EntryStage: Paper, TimeZone: testPointer("Not/AZone")}, Open},
-		{"exclusive closes today", Notice{Dates: []Date{{Date: "2026-01-10", Stage: Paper, IsExclusive: true}}, EntryStage: Paper, TimeZone: testPointer("UTC")}, Closed},
-		{"upcoming", Notice{Dates: opening, TimeZone: testPointer("UTC")}, Upcoming},
-		{"invitation before opening", Notice{Dates: opening, TimeZone: testPointer("UTC"), SourceStatus: testPointer(InvitationOnly)}, InvitationOnly},
-		{"expired topic year", Notice{TopicYear: testPointer(int32(2025)), IsHistorical: true}, Closed},
+		{"known zone inclusive", Notice{Dates: deadline, EntryStage: Paper, TimeZone: new("UTC")}, Open},
+		{"invalid persisted zone", Notice{Dates: deadline, EntryStage: Paper, TimeZone: new("Not/AZone")}, Open},
+		{"exclusive closes today", Notice{Dates: []Date{{Date: "2026-01-10", Stage: Paper, IsExclusive: true}}, EntryStage: Paper, TimeZone: new("UTC")}, Closed},
+		{"upcoming", Notice{Dates: opening, TimeZone: new("UTC")}, Upcoming},
+		{"invitation before opening", Notice{Dates: opening, TimeZone: new("UTC"), SourceStatus: new(InvitationOnly)}, InvitationOnly},
+		{"expired topic year", Notice{TopicYear: new(int32(2025)), IsHistorical: true}, Closed},
 		{"undated", Notice{}, Undated},
 	}
 	for _, test := range cases {
@@ -234,9 +232,9 @@ func TestDateClausesPreserveAmbiguityAndMetadata(t *testing.T) {
 // TestSourceReplacementClearsOmittedOptionalFields prevents stale source metadata after a successful decode.
 func TestSourceReplacementClearsOmittedOptionalFields(t *testing.T) {
 	actual := sourceFixture()
-	actual.EntryStage = testPointer(Paper)
-	actual.TimeZone = testPointer("Asia/Shanghai")
-	actual.StatusText = testPointer("open")
+	actual.EntryStage = new(Paper)
+	actual.TimeZone = new("Asia/Shanghai")
+	actual.StatusText = new("open")
 	input := `{"catalogIds":["journal"],"journalTitle":"Journal","title":"Replacement","typeText":"special issue","dateText":"","sourceUrl":"https://example.org/call","checkedOn":"2026-01-01"}`
 	if err := json.Unmarshal([]byte(input), &actual); err != nil {
 		t.Fatal(err)

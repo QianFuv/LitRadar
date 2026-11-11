@@ -73,11 +73,11 @@ func (limiter *authRateLimiter) checkAt(kind authAttempt, source authClientSourc
 	limiter.mutex.Lock()
 	defer limiter.mutex.Unlock()
 	limiter.nextSequence = saturatingIncrement(limiter.nextSequence)
-	ipPolicy := limiter.policy.LoginIp
+	ipPolicy := limiter.policy.LoginIP
 	if kind == registerAttempt {
-		ipPolicy = limiter.policy.RegisterIp
+		ipPolicy = limiter.policy.RegisterIP
 	}
-	retry := acquireTracked(limiter.ipBuckets, &limiter.ipOrder, bucketKey{kind: kind, address: source.address}, limiter.policy.IpKeyLimit, ipPolicy, now, limiter.nextSequence)
+	retry := acquireTracked(limiter.ipBuckets, &limiter.ipOrder, bucketKey{kind: kind, address: source.address}, limiter.policy.IPKeyLimit, ipPolicy, now, limiter.nextSequence)
 	if retry != 0 {
 		return limiter.rejection(kind, "client_ip", source.class, retry, now)
 	}

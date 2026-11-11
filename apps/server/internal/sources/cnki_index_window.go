@@ -55,7 +55,7 @@ func admitCnkiTraversal(fetch domain.IndexFetchContext) (*string, *cnki.Checkpoi
 		if err != nil {
 			return nil, nil, err
 		}
-		base = &anchor.YearIssueId
+		base = &anchor.YearIssueID
 	}
 	var resume *cnki.Checkpoint
 	if fetch.TraversalCheckpoint != nil {
@@ -67,7 +67,7 @@ func admitCnkiTraversal(fetch domain.IndexFetchContext) (*string, *cnki.Checkpoi
 		if !validCnkiResume(*resume) {
 			return nil, nil, accessFailure(provider.InvalidResponse, "domestic CNKI checkpoint version or issue id is invalid")
 		}
-		if !reflect.DeepEqual(resume.BaseAnchorIssueId, base) {
+		if !reflect.DeepEqual(resume.BaseAnchorIssueID, base) {
 			return nil, nil, accessFailure(provider.InvalidResponse, "domestic CNKI checkpoint does not match the frozen committed anchor")
 		}
 	}
@@ -76,12 +76,12 @@ func admitCnkiTraversal(fetch domain.IndexFetchContext) (*string, *cnki.Checkpoi
 
 // validCnkiResume admits the current checkpoint version and each supplied stable issue identity.
 func validCnkiResume(resume cnki.Checkpoint) bool {
-	return resume.Version == cnki.CheckpointVersion && (resume.BaseAnchorIssueId == nil || cnki.IsStableIssueId(*resume.BaseAnchorIssueId)) && cnki.IsStableIssueId(resume.CandidateHeadIssueId) && cnki.IsStableIssueId(resume.CurrentIssueId)
+	return resume.Version == cnki.CheckpointVersion && (resume.BaseAnchorIssueID == nil || cnki.IsStableIssueID(*resume.BaseAnchorIssueID)) && cnki.IsStableIssueID(resume.CandidateHeadIssueID) && cnki.IsStableIssueID(resume.CurrentIssueID)
 }
 
 // cnkiSnapshot owns frozen issue metadata and refreshes request handles after session resets.
 func (index *CnkiIndexProvider) cnkiSnapshot(ctx context.Context, catalog domain.JournalCatalogEntry) (cnkiJournalSnapshot, error) {
-	snapshot, exists := index.snapshots[catalog.CatalogId]
+	snapshot, exists := index.snapshots[catalog.CatalogID]
 	if !exists || snapshot.shouldRefresh {
 		issns := []string{}
 		for _, value := range []*string{catalog.Issn, catalog.Eissn} {
@@ -101,7 +101,7 @@ func (index *CnkiIndexProvider) cnkiSnapshot(ctx context.Context, catalog domain
 		if err != nil {
 			return cnkiJournalSnapshot{}, mapCnkiProviderError(err)
 		}
-		fresh := cnkiJournalSnapshot{journal: copyCnkiJson(journal), issues: copyCnkiJson(issues).([]any)}
+		fresh := cnkiJournalSnapshot{journal: copyCnkiJSON(journal), issues: copyCnkiJSON(issues).([]any)}
 		if exists {
 			fresh, err = refreshCnkiSnapshot(snapshot, fresh)
 			if err != nil {
@@ -109,7 +109,7 @@ func (index *CnkiIndexProvider) cnkiSnapshot(ctx context.Context, catalog domain
 			}
 		}
 		snapshot = fresh
-		index.snapshots[catalog.CatalogId] = snapshot
+		index.snapshots[catalog.CatalogID] = snapshot
 	}
 	return snapshot, nil
 }
@@ -134,10 +134,10 @@ func refreshCnkiSnapshot(frozen, fresh cnkiJournalSnapshot) (cnkiJournalSnapshot
 		if !exists {
 			return cnkiJournalSnapshot{}, accessFailure(provider.InvalidResponse, "domestic CNKI frozen issue is missing after session refresh")
 		}
-		issue := copyCnkiJson(frozen.issues[ordinal]).(map[string]any)
+		issue := copyCnkiJSON(frozen.issues[ordinal]).(map[string]any)
 		delete(issue, "year_issue")
 		if token, exists := current.(map[string]any)["year_issue"]; exists {
-			issue["year_issue"] = copyCnkiJson(token)
+			issue["year_issue"] = copyCnkiJSON(token)
 		}
 		issues[ordinal] = issue
 	}
@@ -150,7 +150,7 @@ func cnkiSnapshotIds(issues []any) ([]string, error) {
 	seen := map[string]bool{}
 	for ordinal, issue := range issues {
 		id := providerText(providerField(issue, "year_issue_id"))
-		if id == nil || !cnki.IsStableIssueId(*id) {
+		if id == nil || !cnki.IsStableIssueID(*id) {
 			return nil, accessFailure(provider.InvalidResponse, "domestic CNKI issue payload omitted its stable year_issue_id")
 		}
 		ids[ordinal] = *id
@@ -175,7 +175,7 @@ type cnkiTraversalWindow struct {
 func planCnkiTraversal(ids []string, base *string, resume *cnki.Checkpoint, mode domain.IndexSyncMode) (cnkiTraversalWindow, error) {
 	head := ids[0]
 	if resume != nil {
-		head = resume.CandidateHeadIssueId
+		head = resume.CandidateHeadIssueID
 	}
 	start := slices.Index(ids, head)
 	if start < 0 {
@@ -184,7 +184,7 @@ func planCnkiTraversal(ids []string, base *string, resume *cnki.Checkpoint, mode
 	end := cnkiTraversalEnd(ids, start, base, mode)
 	current, pageIndex := start, uint64(0)
 	if resume != nil {
-		current = slices.Index(ids, resume.CurrentIssueId)
+		current = slices.Index(ids, resume.CurrentIssueID)
 		pageIndex = resume.PageIndex
 		if current < start || current > end {
 			return cnkiTraversalWindow{}, missingCnkiCheckpointIssue()
@@ -218,7 +218,7 @@ func (index *CnkiIndexProvider) fetchCnkiTraversalPage(ctx context.Context, cata
 	if err := validateCnkiIssuePage(page, window.pageIndex); err != nil {
 		return domain.ProviderBatch{}, err
 	}
-	retainCnkiPage(cache, catalog.CatalogId, ids[window.current], page)
+	retainCnkiPage(cache, catalog.CatalogID, ids[window.current], page)
 	tasks, err := prepareCnkiDetailTasks(page, *cache)
 	if err != nil {
 		return domain.ProviderBatch{}, err
@@ -241,11 +241,11 @@ func (index *CnkiIndexProvider) fetchCnkiTraversalPage(ctx context.Context, cata
 }
 
 // retainCnkiPage owns an article copy so in-place upstream mutation invalidates prior successes.
-func retainCnkiPage(cache **cnkiPageCache, catalogId, issueId string, page cnki.IssueArticlePage) {
-	if *cache == nil || (*cache).catalogId != catalogId || (*cache).issueId != issueId || !reflect.DeepEqual((*cache).page, page) {
+func retainCnkiPage(cache **cnkiPageCache, catalogID, issueID string, page cnki.IssueArticlePage) {
+	if *cache == nil || (*cache).catalogID != catalogID || (*cache).issueID != issueID || !reflect.DeepEqual((*cache).page, page) {
 		ownedPage := page
-		ownedPage.Articles = copyCnkiJson(page.Articles).([]any)
-		*cache = &cnkiPageCache{catalogId, issueId, ownedPage, map[int]*domain.ArticleDraft{}}
+		ownedPage.Articles = copyCnkiJSON(page.Articles).([]any)
+		*cache = &cnkiPageCache{catalogID, issueID, ownedPage, map[int]*domain.ArticleDraft{}}
 	}
 }
 
@@ -321,15 +321,15 @@ func cnkiTraversalProgress(page cnki.IssueArticlePage, ids []string, base *strin
 	head, current, end, pageIndex := window.head, window.current, window.end, window.pageIndex
 	progress := domain.ProviderProgress{State: domain.Complete}
 	if page.HasNextPage || current < end {
-		next := cnki.Checkpoint{Version: cnki.CheckpointVersion, BaseAnchorIssueId: base, CandidateHeadIssueId: head}
+		next := cnki.Checkpoint{Version: cnki.CheckpointVersion, BaseAnchorIssueID: base, CandidateHeadIssueID: head}
 		if page.HasNextPage {
 			if pageIndex == math.MaxUint64 {
 				return domain.ProviderProgress{}, accessFailure(provider.InvalidResponse, "domestic CNKI page index overflowed")
 			}
-			next.CurrentIssueId = ids[current]
+			next.CurrentIssueID = ids[current]
 			next.PageIndex = pageIndex + 1
 		} else {
-			next.CurrentIssueId = ids[current+1]
+			next.CurrentIssueID = ids[current+1]
 		}
 		encoded, err := next.Encode()
 		if err != nil {
@@ -337,7 +337,7 @@ func cnkiTraversalProgress(page cnki.IssueArticlePage, ids []string, base *strin
 		}
 		progress = domain.ProviderProgress{State: domain.Continue, Checkpoint: &encoded}
 	} else {
-		encoded, err := (cnki.Anchor{Version: cnki.AnchorVersion, YearIssueId: head}).Encode()
+		encoded, err := (cnki.Anchor{Version: cnki.AnchorVersion, YearIssueID: head}).Encode()
 		if err != nil {
 			return domain.ProviderProgress{}, accessFailure(provider.Internal, "domestic CNKI anchor could not be encoded")
 		}
@@ -346,12 +346,12 @@ func cnkiTraversalProgress(page cnki.IssueArticlePage, ids []string, base *strin
 	return progress, nil
 }
 
-func copyCnkiJson(value any) any {
+func copyCnkiJSON(value any) any {
 	switch value := value.(type) {
 	case map[string]any:
 		copy := make(map[string]any, len(value))
 		for key, item := range value {
-			copy[key] = copyCnkiJson(item)
+			copy[key] = copyCnkiJSON(item)
 		}
 		return copy
 	case []any:
@@ -360,7 +360,7 @@ func copyCnkiJson(value any) any {
 		}
 		copy := make([]any, len(value))
 		for index, item := range value {
-			copy[index] = copyCnkiJson(item)
+			copy[index] = copyCnkiJSON(item)
 		}
 		return copy
 	default:

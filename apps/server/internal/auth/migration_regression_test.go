@@ -22,7 +22,7 @@ func observedLegacyCredentials(t *testing.T, service *Service, password string) 
 	if _, err := service.repository.Bootstrap(ctx, "legacy", cryptography.LegacyHash(password, "salt"), "salt", 100, nil); err != nil {
 		t.Fatal(err)
 	}
-	observed, err := service.repository.CredentialsById(ctx, 1)
+	observed, err := service.repository.CredentialsByID(ctx, 1)
 	if err != nil || observed == nil {
 		t.Fatal(observed, err)
 	}

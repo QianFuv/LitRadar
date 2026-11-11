@@ -15,8 +15,8 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/secretsdb"
 )
 
-var ErrAuthentication = errors.New("Stored secret authentication failed")
-var ErrLegacyPlaintext = errors.New("Legacy plaintext secret found; run `admin secrets migrate` before startup")
+var ErrAuthentication = errors.New("stored secret authentication failed")
+var ErrLegacyPlaintext = errors.New("legacy plaintext secret found; run `admin secrets migrate` before startup")
 
 // Codec adapts primitive errors to the persisted-secret application's stable diagnostics.
 type Codec struct{ primitive *cryptography.Codec }
@@ -24,7 +24,7 @@ type Codec struct{ primitive *cryptography.Codec }
 // NewCodec copies an exact raw key into the primitive's directly owned buffer.
 func NewCodec(key []byte) (*Codec, error) {
 	if len(key) != 32 {
-		return nil, fmt.Errorf("Secret key file must contain exactly 32 bytes; found %d", len(key))
+		return nil, fmt.Errorf("secret key file must contain exactly 32 bytes; found %d", len(key))
 	}
 	primitive, err := cryptography.NewCodec(key)
 	if err != nil {
@@ -68,7 +68,7 @@ func (codec *Codec) Decrypt(stored, associated string) (string, error) {
 func Load(filename string) (*Codec, error) {
 	key, err := os.ReadFile(filename)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to read the secret key file: %w", err)
+		return nil, fmt.Errorf("unable to read the secret key file: %w", err)
 	}
 	defer clear(key)
 	return NewCodec(key)

@@ -26,7 +26,7 @@ func decodeCnkiAnchor(raw string) (*cnki.Anchor, error) {
 	if json.Unmarshal([]byte(raw), &anchor) != nil {
 		return nil, accessFailure(provider.InvalidResponse, "domestic CNKI anchor is invalid")
 	}
-	if anchor.Version != cnki.AnchorVersion || !cnki.IsStableIssueId(anchor.YearIssueId) {
+	if anchor.Version != cnki.AnchorVersion || !cnki.IsStableIssueID(anchor.YearIssueID) {
 		return nil, accessFailure(provider.InvalidResponse, "domestic CNKI anchor version or issue id is invalid")
 	}
 	return &anchor, nil

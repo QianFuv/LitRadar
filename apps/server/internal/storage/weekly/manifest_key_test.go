@@ -13,12 +13,12 @@ import (
 // referenceManifestKey retains the original collision-free textual publication identity.
 func referenceManifestKey(manifest Manifest) string {
 	var result strings.Builder
-	result.WriteString(strconv.Quote(manifest.DbName))
+	result.WriteString(strconv.Quote(manifest.DBName))
 	result.WriteByte('|')
-	if manifest.RunId == nil {
+	if manifest.RunID == nil {
 		result.WriteString("null")
 	} else {
-		result.WriteString(strconv.Quote(*manifest.RunId))
+		result.WriteString(strconv.Quote(*manifest.RunID))
 	}
 	result.WriteByte('|')
 	result.WriteString(strconv.FormatInt(manifest.GeneratedAt.Seconds, 10))
@@ -33,10 +33,10 @@ func referenceManifestKey(manifest Manifest) string {
 
 // TestManifestKeyRetainsIdentityBoundaries distinguishes nullable runs, ordered IDs and extreme integers.
 func TestManifestKeyRetainsIdentityBoundaries(t *testing.T) {
-	base := Manifest{DbName: "alpha.sqlite", GeneratedAt: Timestamp{-1, math.MaxUint32}, ArticleIds: []int64{math.MinInt64, 0, math.MaxInt64}}
+	base := Manifest{DBName: "alpha.sqlite", GeneratedAt: Timestamp{-1, math.MaxUint32}, ArticleIds: []int64{math.MinInt64, 0, math.MaxInt64}}
 	variants := []Manifest{base, base, base, base, base}
-	variants[1].RunId = new("null")
-	variants[2].DbName = "alpha|\".sqlite"
+	variants[1].RunID = new("null")
+	variants[2].DBName = "alpha|\".sqlite"
 	variants[3].ArticleIds = []int64{math.MaxInt64, 0, math.MinInt64}
 	variants[4].GeneratedAt.Seconds = math.MaxInt64
 	seen := map[string]bool{}
@@ -62,9 +62,9 @@ func FuzzManifestKey(f *testing.F) {
 			ids[index] = int64(binary.LittleEndian.Uint64(data[index*8:]))
 		}
 		before := slices.Clone(ids)
-		manifest := Manifest{DbName: database, GeneratedAt: Timestamp{seconds, nanos}, ArticleIds: ids}
+		manifest := Manifest{DBName: database, GeneratedAt: Timestamp{seconds, nanos}, ArticleIds: ids}
 		if hasRun {
-			manifest.RunId = &run
+			manifest.RunID = &run
 		}
 		if actual, expected := manifestKey(manifest), referenceManifestKey(manifest); actual != expected || !slices.Equal(ids, before) {
 			t.Fatal("publication key changed or mutated membership", actual, expected)
@@ -76,7 +76,7 @@ func FuzzManifestKey(f *testing.F) {
 func BenchmarkManifestKey(b *testing.B) {
 	for _, count := range []int{1, 10000, 100000} {
 		b.Run(fmt.Sprint(count), func(b *testing.B) {
-			manifest := Manifest{DbName: "alpha.sqlite", RunId: new("run"), GeneratedAt: Timestamp{1791028800, 0}, ArticleIds: make([]int64, count)}
+			manifest := Manifest{DBName: "alpha.sqlite", RunID: new("run"), GeneratedAt: Timestamp{1791028800, 0}, ArticleIds: make([]int64, count)}
 			for index := range manifest.ArticleIds {
 				manifest.ArticleIds[index] = int64(index + 1)
 			}

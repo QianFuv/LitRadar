@@ -11,11 +11,11 @@ import (
 )
 
 // ListRunItems reads every item in durable insertion order.
-func (repository *Repository) ListRunItems(ctx context.Context, runId int64) ([]RunItemRecord, error) {
-	if err := validatePositiveId(runId, "Delivery run id is invalid"); err != nil {
+func (repository *Repository) ListRunItems(ctx context.Context, runID int64) ([]RunItemRecord, error) {
+	if err := validatePositiveID(runID, "Delivery run id is invalid"); err != nil {
 		return nil, err
 	}
-	rows, err := queries.Items(ctx, repository.database, deliverydb.ItemsParams{DeliveryRunID: sqlite.Integer(runId)})
+	rows, err := queries.Items(ctx, repository.database, deliverydb.ItemsParams{DeliveryRunID: sqlite.Integer(runID)})
 	if err != nil {
 		return nil, storageError(err)
 	}
@@ -31,18 +31,18 @@ func (repository *Repository) ListRunItems(ctx context.Context, runId int64) ([]
 }
 
 // InsertRunItems inserts unique new identities without changing the original terminal-run admission behavior.
-func (repository *Repository) InsertRunItems(ctx context.Context, runId int64, items []RunItemCreate, now float64) ([]RunItemRecord, error) {
-	return repository.insertItems(ctx, runId, items, now, false)
+func (repository *Repository) InsertRunItems(ctx context.Context, runID int64, items []RunItemCreate, now float64) ([]RunItemRecord, error) {
+	return repository.insertItems(ctx, runID, items, now, false)
 }
 
 // EnsureRunItems retains prior progress and rejects an identity whose user or article changed.
-func (repository *Repository) EnsureRunItems(ctx context.Context, runId int64, items []RunItemCreate, now float64) ([]RunItemRecord, error) {
-	return repository.insertItems(ctx, runId, items, now, true)
+func (repository *Repository) EnsureRunItems(ctx context.Context, runID int64, items []RunItemCreate, now float64) ([]RunItemRecord, error) {
+	return repository.insertItems(ctx, runID, items, now, true)
 }
 
 // insertItems preserves per-item admission and readback while reusing statements within bulk transactions.
-func (repository *Repository) insertItems(ctx context.Context, runId int64, items []RunItemCreate, now float64, shouldEnsure bool) ([]RunItemRecord, error) {
-	if err := validatePositiveId(runId, "Delivery run id is invalid"); err != nil {
+func (repository *Repository) insertItems(ctx context.Context, runID int64, items []RunItemCreate, now float64, shouldEnsure bool) ([]RunItemRecord, error) {
+	if err := validatePositiveID(runID, "Delivery run id is invalid"); err != nil {
 		return nil, err
 	}
 	if err := validateTime(now, "Delivery item creation time is invalid"); err != nil {
@@ -67,7 +67,7 @@ func (repository *Repository) insertItems(ctx context.Context, runId int64, item
 	}
 	records := []RunItemRecord{}
 	err := repository.immediate(ctx, func(connection *sql.Conn) (resultError error) {
-		run, err := loadRunRecord(ctx, connection, runId)
+		run, err := loadRunRecord(ctx, connection, runID)
 		if err != nil {
 			return err
 		}
@@ -104,18 +104,18 @@ func (repository *Repository) insertItems(ctx context.Context, runId int64, item
 		}
 		for _, item := range items {
 			if insertStatement == nil {
-				_, err = connection.ExecContext(ctx, query, runId, item.ItemKind, item.ItemKey, item.UserId, item.ArticleId, now, now)
+				_, err = connection.ExecContext(ctx, query, runID, item.ItemKind, item.ItemKey, item.UserID, item.ArticleID, now, now)
 			} else {
-				_, err = insertStatement.ExecContext(ctx, runId, item.ItemKind, item.ItemKey, item.UserId, item.ArticleId, now, now)
+				_, err = insertStatement.ExecContext(ctx, runID, item.ItemKind, item.ItemKey, item.UserID, item.ArticleID, now, now)
 			}
 			if err != nil {
 				return err
 			}
 			var row *sql.Row
 			if selectStatement == nil {
-				row = connection.QueryRowContext(ctx, deliverydb.ItemIdentity, runId, item.ItemKind, item.ItemKey)
+				row = connection.QueryRowContext(ctx, deliverydb.ItemIdentity, runID, item.ItemKind, item.ItemKey)
 			} else {
-				row = selectStatement.QueryRowContext(ctx, runId, item.ItemKind, item.ItemKey)
+				row = selectStatement.QueryRowContext(ctx, runID, item.ItemKind, item.ItemKey)
 			}
 			record, err := scanPreparedItem(row)
 			if err != nil {
@@ -124,7 +124,7 @@ func (repository *Repository) insertItems(ctx context.Context, runId int64, item
 			if record == nil {
 				return ErrNotFound
 			}
-			if shouldEnsure && (!sameOptionalId(record.UserId, item.UserId) || !sameOptionalId(record.ArticleId, item.ArticleId)) {
+			if shouldEnsure && (!sameOptionalID(record.UserID, item.UserID) || !sameOptionalID(record.ArticleID, item.ArticleID)) {
 				return ErrConflict
 			}
 			records = append(records, *record)
@@ -137,40 +137,40 @@ func (repository *Repository) insertItems(ctx context.Context, runId int64, item
 	return records, nil
 }
 
-func sameOptionalId(left, right *int64) bool {
+func sameOptionalID(left, right *int64) bool {
 	return left == nil && right == nil || left != nil && right != nil && *left == *right
 }
 
-func requireActiveRun(ctx context.Context, connection *sql.Conn, runId int64, owner string, revision int64, now float64) error {
-	run, err := loadRunRecord(ctx, connection, runId)
+func requireActiveRun(ctx context.Context, connection *sql.Conn, runID int64, owner string, revision int64, now float64) error {
+	run, err := loadRunRecord(ctx, connection, runID)
 	if err != nil {
 		return err
 	}
 	if run == nil {
 		return ErrNotFound
 	}
-	if run.Revision != revision || run.OwnerId == nil || *run.OwnerId != owner || !run.Status.IsActive() || run.LeaseExpiresAt == nil || *run.LeaseExpiresAt <= now {
+	if run.Revision != revision || run.OwnerID == nil || *run.OwnerID != owner || !run.Status.IsActive() || run.LeaseExpiresAt == nil || *run.LeaseExpiresAt <= now {
 		return ErrConflict
 	}
 	return nil
 }
 
 // ClaimNextItem selects only pending or expired pre-send work; sending items are never replayed.
-func (repository *Repository) ClaimNextItem(ctx context.Context, runId int64, runOwner string, runRevision int64, itemOwner string, now, seconds float64) (*RunItemRecord, error) {
-	return repository.claimItem(ctx, runId, runOwner, runRevision, nil, itemOwner, now, seconds)
+func (repository *Repository) ClaimNextItem(ctx context.Context, runID int64, runOwner string, runRevision int64, itemOwner string, now, seconds float64) (*RunItemRecord, error) {
+	return repository.claimItem(ctx, runID, runOwner, runRevision, nil, itemOwner, now, seconds)
 }
 
 // ClaimItem claims a specific safe item under the current unexpired run owner.
-func (repository *Repository) ClaimItem(ctx context.Context, runId int64, runOwner string, runRevision, itemId int64, itemOwner string, now, seconds float64) (*RunItemRecord, error) {
-	return repository.claimItem(ctx, runId, runOwner, runRevision, &itemId, itemOwner, now, seconds)
+func (repository *Repository) ClaimItem(ctx context.Context, runID int64, runOwner string, runRevision, itemID int64, itemOwner string, now, seconds float64) (*RunItemRecord, error) {
+	return repository.claimItem(ctx, runID, runOwner, runRevision, &itemID, itemOwner, now, seconds)
 }
 
-func (repository *Repository) claimItem(ctx context.Context, runId int64, runOwner string, runRevision int64, itemId *int64, itemOwner string, now, seconds float64) (*RunItemRecord, error) {
-	if err := validatePositiveId(runId, "Delivery run id is invalid"); err != nil {
+func (repository *Repository) claimItem(ctx context.Context, runID int64, runOwner string, runRevision int64, itemID *int64, itemOwner string, now, seconds float64) (*RunItemRecord, error) {
+	if err := validatePositiveID(runID, "Delivery run id is invalid"); err != nil {
 		return nil, err
 	}
-	if itemId != nil {
-		if err := validatePositiveId(*itemId, "Delivery item id is invalid"); err != nil {
+	if itemID != nil {
+		if err := validatePositiveID(*itemID, "Delivery item id is invalid"); err != nil {
 			return nil, err
 		}
 	}
@@ -185,14 +185,14 @@ func (repository *Repository) claimItem(ctx context.Context, runId int64, runOwn
 	}
 	var record *RunItemRecord
 	err := repository.immediate(ctx, func(connection *sql.Conn) error {
-		if err := requireActiveRun(ctx, connection, runId, runOwner, runRevision, now); err != nil {
+		if err := requireActiveRun(ctx, connection, runID, runOwner, runRevision, now); err != nil {
 			return err
 		}
 		var id int64
-		if itemId == nil {
+		if itemID == nil {
 			var selected sqlite.Integer
 			err := func() error {
-				queryResult, err := queries.ReadyItemID(ctx, connection, deliverydb.ReadyItemIDParams{DeliveryRunID: sqlite.Integer(runId), LeaseExpiresAt: new(sqlite.Number(now))})
+				queryResult, err := queries.ReadyItemID(ctx, connection, deliverydb.ReadyItemIDParams{DeliveryRunID: sqlite.Integer(runID), LeaseExpiresAt: new(sqlite.Number(now))})
 				if err != nil {
 					return err
 				}
@@ -212,7 +212,7 @@ func (repository *Repository) claimItem(ctx context.Context, runId int64, runOwn
 			record, err = requireRecord(loadRunItemRecord(ctx, connection, id))
 			return err
 		} else {
-			id = *itemId
+			id = *itemID
 		}
 		current, err := loadRunItemRecord(ctx, connection, id)
 		if err != nil {
@@ -221,10 +221,10 @@ func (repository *Repository) claimItem(ctx context.Context, runId int64, runOwn
 		if current == nil {
 			return ErrNotFound
 		}
-		if current.DeliveryRunId != runId || !(current.Status == ItemStatusPending || current.Status == ItemStatusClaimed && current.LeaseExpiresAt != nil && *current.LeaseExpiresAt <= now) {
+		if current.DeliveryRunID != runID || !(current.Status == ItemStatusPending || current.Status == ItemStatusClaimed && current.LeaseExpiresAt != nil && *current.LeaseExpiresAt <= now) {
 			return ErrConflict
 		}
-		if err := checkCAS(queries.ClaimItem(ctx, connection, deliverydb.ClaimItemParams{OwnerID: new(sqlite.Text(itemOwner)), LeaseExpiresAt: new(sqlite.Number(now + seconds)), StartedAt: new(sqlite.Number(now)), UpdatedAt: sqlite.Number(now), ID: sqlite.Integer(id), DeliveryRunID: sqlite.Integer(runId), Revision: sqlite.Integer(current.Revision)})); err != nil {
+		if err := checkCAS(queries.ClaimItem(ctx, connection, deliverydb.ClaimItemParams{OwnerID: new(sqlite.Text(itemOwner)), LeaseExpiresAt: new(sqlite.Number(now + seconds)), StartedAt: new(sqlite.Number(now)), UpdatedAt: sqlite.Number(now), ID: sqlite.Integer(id), DeliveryRunID: sqlite.Integer(runID), Revision: sqlite.Integer(current.Revision)})); err != nil {
 			return err
 		}
 		record, err = requireRecord(loadRunItemRecord(ctx, connection, id))
@@ -234,7 +234,7 @@ func (repository *Repository) claimItem(ctx context.Context, runId int64, runOwn
 }
 
 func validateItemOwner(id int64, owner string, revision int64, now float64) error {
-	if err := validatePositiveId(id, "Delivery item id is invalid"); err != nil {
+	if err := validatePositiveID(id, "Delivery item id is invalid"); err != nil {
 		return err
 	}
 	if err := validateIdentifier(owner, "Delivery item owner id is invalid"); err != nil {
@@ -272,7 +272,7 @@ func (repository *Repository) FinalizeItem(ctx context.Context, id int64, owner 
 	if !status.IsTerminal() {
 		return nil, invalid("Delivery item terminal status is invalid")
 	}
-	if err := validateOptionalJson(result); err != nil {
+	if err := validateOptionalJSON(result); err != nil {
 		return nil, err
 	}
 	if err := validateSymbol(errorCode, "Delivery item error code is invalid"); err != nil {

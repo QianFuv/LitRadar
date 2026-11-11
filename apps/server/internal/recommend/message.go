@@ -10,8 +10,8 @@ import (
 )
 
 // BuildMessageTitle retains the first ten Unicode scalar values of the run identifier.
-func BuildMessageTitle(dbName, runId string) string {
-	prefix := []rune(runId)
+func BuildMessageTitle(dbName, runID string) string {
+	prefix := []rune(runID)
 	if len(prefix) > 10 {
 		prefix = prefix[:10]
 	}
@@ -19,8 +19,8 @@ func BuildMessageTitle(dbName, runId string) string {
 }
 
 // BuildMarkdownContent preserves the original whole-section byte budget and fallback header truncation.
-func BuildMarkdownContent(dbName, runId string, subscriber domain.Subscriber, summary string, selections []domain.RankedSelection, candidates map[int64]storage.ArticleCandidate) string {
-	base := []string{"## Weekly Digest for " + subscriber.Name, "", "- Database: `" + dbName + "`", "- Run ID: `" + runId + "`"}
+func BuildMarkdownContent(dbName, runID string, subscriber domain.Subscriber, summary string, selections []domain.RankedSelection, candidates map[int64]storage.ArticleCandidate) string {
+	base := []string{"## Weekly Digest for " + subscriber.Name, "", "- Database: `" + dbName + "`", "- Run ID: `" + runID + "`"}
 	if summary = strings.TrimSpace(summary); summary != "" {
 		base = append(base, "", summary)
 	}
@@ -29,7 +29,7 @@ func BuildMarkdownContent(dbName, runId string, subscriber domain.Subscriber, su
 		if position >= MaxArticlesPerPush {
 			break
 		}
-		candidate, exists := candidates[selection.ArticleId]
+		candidate, exists := candidates[selection.ArticleID]
 		if !exists {
 			continue
 		}

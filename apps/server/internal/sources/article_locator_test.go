@@ -41,7 +41,7 @@ func locatorDatabase(t *testing.T) (config.Config, *sql.DB) {
 // TestArticleLocatorReadsOnlyCanonicalJoinedFields verifies joined identity, optional issues and exact missing-row errors.
 func TestArticleLocatorReadsOnlyCanonicalJoinedFields(t *testing.T) {
 	configuration, database := locatorDatabase(t)
-	locator, err := GetArticleLocator(context.Background(), configuration, nil, identity.Id(9007199254740993))
+	locator, err := GetArticleLocator(context.Background(), configuration, nil, identity.ID(9007199254740993))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestArticleLocatorReadsOnlyCanonicalJoinedFields(t *testing.T) {
 	if _, err := database.Exec("UPDATE articles SET issue_id=NULL"); err != nil {
 		t.Fatal(err)
 	}
-	locator, err = GetArticleLocator(context.Background(), configuration, nil, identity.Id(9007199254740993))
+	locator, err = GetArticleLocator(context.Background(), configuration, nil, identity.ID(9007199254740993))
 	if err != nil || locator.Volume != nil || locator.IssueNumber != nil {
 		t.Fatalf("optional issue lost: %#v %v", locator, err)
 	}
@@ -75,7 +75,7 @@ func TestArticleLocatorRejectsMalformedJsonAndStorageClasses(t *testing.T) {
 			if _, err := database.Exec(statement); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := GetArticleLocator(context.Background(), configuration, nil, identity.Id(9007199254740993)); err == nil {
+			if _, err := GetArticleLocator(context.Background(), configuration, nil, identity.ID(9007199254740993)); err == nil {
 				t.Fatal("malformed canonical data accepted")
 			}
 		})
@@ -85,7 +85,7 @@ func TestArticleLocatorRejectsMalformedJsonAndStorageClasses(t *testing.T) {
 // assertCanonicalLocatorIdentity checks the same captured joined bibliographic identity and author fields.
 func assertCanonicalLocatorIdentity(t *testing.T, locator domain.ArticleLocator) {
 	t.Helper()
-	if locator.ArticleId != 9007199254740993 || locator.CatalogId != "canonical" || locator.JournalTitle != "Journal" || locator.Title != "Article" || !reflect.DeepEqual(locator.JournalIssns, []string{"1234-5679"}) || !reflect.DeepEqual(locator.Authors, []string{"Alice", "Bob"}) {
+	if locator.ArticleID != 9007199254740993 || locator.CatalogID != "canonical" || locator.JournalTitle != "Journal" || locator.Title != "Article" || !reflect.DeepEqual(locator.JournalIssns, []string{"1234-5679"}) || !reflect.DeepEqual(locator.Authors, []string{"Alice", "Bob"}) {
 		t.Fatalf("%#v", locator)
 	}
 }

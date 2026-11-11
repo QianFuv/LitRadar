@@ -25,7 +25,7 @@ import (
 type AiError struct {
 	Kind              string
 	StatusCode        int
-	RequestId         *string
+	RequestID         *string
 	RetryAfterSeconds *uint64
 	message           string
 	control           error
@@ -39,8 +39,8 @@ func (err *AiError) Error() string {
 		return "AI request timed out"
 	case "http_status":
 		message := fmt.Sprintf("AI request failed with HTTP %d", err.StatusCode)
-		if err.RequestId != nil {
-			message += " (request ID: " + *err.RequestId + ")"
+		if err.RequestID != nil {
+			message += " (request ID: " + *err.RequestID + ")"
 		}
 		return message
 	default:
@@ -53,7 +53,7 @@ func (err *AiError) Unwrap() error { return err.control }
 
 // AiClient performs controlled requests against a freshly read administrator allowlist.
 type AiClient struct {
-	transport       outbound.JsonTransport
+	transport       outbound.JSONTransport
 	allowedBaseUrls func(context.Context) ([]string, error)
 	retryAttempts   int
 	temperature     float64
@@ -80,9 +80,9 @@ func (client *AiClient) SelectArticles(ctx context.Context, config AiRuntimeConf
 	items, _ := response["selected"].([]any)
 	for _, item := range items {
 		object, _ := item.(map[string]any)
-		if articleId, ok := jsonInt64(object["article_id"]); ok {
+		if articleID, ok := jsonInt64(object["article_id"]); ok {
 			score, _ := jsonFloat64(object["score"])
-			result.Selections = append(result.Selections, domain.RankedSelection{ArticleId: articleId, Score: score})
+			result.Selections = append(result.Selections, domain.RankedSelection{ArticleID: articleID, Score: score})
 		}
 	}
 	slices.SortStableFunc(result.Selections, func(first, second domain.RankedSelection) int { return cmp.Compare(second.Score, first.Score) })
@@ -115,11 +115,11 @@ func (client *AiClient) complete(ctx context.Context, config AiRuntimeConfig, na
 			logger.InfoContext(ctx, "ai.completion.completed", "event", "ai.completion.completed", "outcome", "success", "duration_ms", time.Since(started).Milliseconds())
 		}
 	}()
-	location, err := completionUrl(config.BaseUrl)
+	location, err := completionURL(config.BaseURL)
 	if err != nil {
 		return nil, err
 	}
-	encoded, err := sources.Json(payload)
+	encoded, err := sources.JSON(payload)
 	if err != nil {
 		return nil, &AiError{Kind: "transport", message: string(outbound.RequestFailed)}
 	}
@@ -140,7 +140,7 @@ func (client *AiClient) complete(ctx context.Context, config AiRuntimeConfig, na
 	return nil, &AiError{Kind: "invalid_response", message: "AI request was not attempted"}
 }
 
-func completionUrl(base string) (*whatwg.Url, error) {
+func completionURL(base string) (*whatwg.Url, error) {
 	location, err := whatwg.NewParser().ParseRef(base, "chat/completions")
 	if err != nil {
 		return nil, &AiError{Kind: "transport", message: "AI endpoint URL is invalid"}
@@ -153,12 +153,12 @@ func (client *AiClient) send(ctx context.Context, location, apiKey string, body 
 		return outbound.Response{}, &AiError{Kind: "transport", message: "AI endpoint is not approved"}
 	}
 	headers := http.Header{"Authorization": {"Bearer " + apiKey}, "Content-Type": {"application/json"}, "Http-Referer": {"https://github.com/openai/codex"}, "X-Title": {"LitRadar"}}
-	response, err := client.transport.PostJson(ctx, location, headers, body, timeout)
+	response, err := client.transport.PostJSON(ctx, location, headers, body, timeout)
 	if err != nil {
 		return outbound.Response{}, transportAiError(err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return response, &AiError{Kind: "http_status", StatusCode: response.StatusCode, RequestId: response.RequestId, RetryAfterSeconds: response.RetryAfterSeconds}
+		return response, &AiError{Kind: "http_status", StatusCode: response.StatusCode, RequestID: response.RequestID, RetryAfterSeconds: response.RetryAfterSeconds}
 	}
 	return response, nil
 }
@@ -172,8 +172,7 @@ func controlAiError(err error) *AiError {
 }
 
 func aiErrorKind(err error) string {
-	var failure *AiError
-	if errors.As(err, &failure) {
+	if failure, ok := errors.AsType[*AiError](err); ok {
 		return failure.Kind
 	}
 	return "transport"
@@ -202,7 +201,7 @@ func (client *AiClient) completeFormat(ctx context.Context, request completionRe
 		}
 		body := completionRequestBody(request.config, client.temperature, request.system, request.encoded, format, request.name, request.schema)
 		attemptStarted := time.Now()
-		response, requestError := client.send(ctx, request.location, request.config.ApiKey, body, timeout)
+		response, requestError := client.send(ctx, request.location, request.config.APIKey, body, timeout)
 		if requestError == nil {
 			result, err = ExtractResponsePayload(response.Body, request.kind)
 			if err != nil {
@@ -266,7 +265,7 @@ func (client *AiClient) isCompletionAllowed(ctx context.Context, location string
 	isAllowed := false
 	if err == nil {
 		for _, base := range allowed {
-			candidate, err := completionUrl(base)
+			candidate, err := completionURL(base)
 			if err == nil && candidate.Href(false) == location {
 				isAllowed = true
 				break
@@ -278,8 +277,7 @@ func (client *AiClient) isCompletionAllowed(ctx context.Context, location string
 
 func transportAiError(err error) *AiError {
 	kind, message := "transport", string(outbound.RequestFailed)
-	var transportError outbound.Error
-	if errors.As(err, &transportError) {
+	if transportError, ok := errors.AsType[outbound.Error](err); ok {
 		message = transportError.Error()
 	}
 	if errors.Is(err, outbound.ConnectFailed) {

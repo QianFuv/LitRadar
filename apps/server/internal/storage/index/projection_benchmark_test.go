@@ -49,7 +49,7 @@ func projectionBenchmarkFixture(test testing.TB, count, version int) (*Connectio
 // assertJournalProjection verifies canonical title, FTS membership, and unchanged durable outbox rows.
 func assertJournalProjection(test testing.TB, connection *Connection, catalog domain.JournalCatalogEntry, count int) {
 	test.Helper()
-	journal := JournalId(catalog.CatalogId)
+	journal := JournalID(catalog.CatalogID)
 	var actualTitle string
 	if err := connection.QueryRowContext(context.Background(), "SELECT title FROM journals WHERE journal_id=?", journal).Scan(&actualTitle); err != nil || actualTitle != catalog.Title {
 		test.Fatal("canonical title changed", actualTitle, err)
@@ -80,12 +80,12 @@ func TestJournalTitleRefreshPreservesCanonicalRows(t *testing.T) {
 			assertJournalProjection(t, connection, catalog, 2)
 			for query, expected := range map[string]int{"journal_title:mise": 2, "journal_title:期刊": 0} {
 				var matches int
-				if err := connection.QueryRowContext(context.Background(), "SELECT count(*) FROM article_search WHERE article_search MATCH ? AND rowid IN (SELECT article_id FROM articles WHERE journal_id=?)", query, JournalId(catalog.CatalogId)).Scan(&matches); err != nil || matches != expected {
+				if err := connection.QueryRowContext(context.Background(), "SELECT count(*) FROM article_search WHERE article_search MATCH ? AND rowid IN (SELECT article_id FROM articles WHERE journal_id=?)", query, JournalID(catalog.CatalogID)).Scan(&matches); err != nil || matches != expected {
 					t.Fatal("stored journal terms were not replaced", query, matches, expected, err)
 				}
 			}
 			var updated int
-			if err := connection.QueryRowContext(context.Background(), "SELECT count(*) FROM article_listing WHERE journal_id=? AND area='Updated area'", JournalId(catalog.CatalogId)).Scan(&updated); err != nil || updated != 2 {
+			if err := connection.QueryRowContext(context.Background(), "SELECT count(*) FROM article_listing WHERE journal_id=? AND area='Updated area'", JournalID(catalog.CatalogID)).Scan(&updated); err != nil || updated != 2 {
 				t.Fatal("area refresh changed", updated, err)
 			}
 			var storedVersion int
@@ -167,12 +167,12 @@ func TestContentBatchJournalProjectionTracksCatalogChanges(t *testing.T) {
 			}
 			for query, expected := range map[string]int{"journal_title:francaise": 2, "journal_title:suivante": 2, "journal_title:期刊": 0} {
 				var actual int
-				if err := connection.QueryRowContext(context.Background(), "SELECT count(*) FROM article_search WHERE article_search MATCH ? AND rowid IN (SELECT article_id FROM articles WHERE journal_id=?)", query, JournalId(catalog.CatalogId)).Scan(&actual); err != nil || actual != expected {
+				if err := connection.QueryRowContext(context.Background(), "SELECT count(*) FROM article_search WHERE article_search MATCH ? AND rowid IN (SELECT article_id FROM articles WHERE journal_id=?)", query, JournalID(catalog.CatalogID)).Scan(&actual); err != nil || actual != expected {
 					t.Fatal("batch retained stale journal projection", query, actual, err)
 				}
 			}
 			var title string
-			if err := connection.QueryRowContext(context.Background(), "SELECT title FROM journals WHERE journal_id=?", JournalId(catalog.CatalogId)).Scan(&title); err != nil || title != catalog.Title {
+			if err := connection.QueryRowContext(context.Background(), "SELECT title FROM journals WHERE journal_id=?", JournalID(catalog.CatalogID)).Scan(&title); err != nil || title != catalog.Title {
 				t.Fatal("batch changed canonical title", title, err)
 			}
 			outcome, err = WriteContentBatch(context.Background(), connection.Conn, catalog, batch, "replay", "epoch")

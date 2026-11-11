@@ -18,13 +18,13 @@ func TestManifestRejectsInvalidFieldTypes(t *testing.T) {
 		`{"format":"prefix","version":2,"created_at":7,"selection":{"metadata":true,"index_databases":"bad","push_state":false},"components":[]}`,
 		`{"format":"prefix","version":2,"created_at":7,"selection":{"metadata":true,"index_databases":false,"push_state":false},"components":[{"kind":"metadata","path":"meta/one","size":1,"sha256":"first"},{"kind":"metadata","path":"meta/two","size":"bad","sha256":"second"}]}`,
 	} {
-		if _, err := ParseManifest([]byte(raw)); !errors.Is(err, ErrManifestJson) {
+		if _, err := ParseManifest([]byte(raw)); !errors.Is(err, ErrManifestJSON) {
 			t.Fatalf("expected invalid manifest for %s, got %v", raw, err)
 		}
 	}
 }
 
-func executeBackupCharacterizationSql(t *testing.T, database *sql.DB, statement string) {
+func executeBackupCharacterizationSQL(t *testing.T, database *sql.DB, statement string) {
 	t.Helper()
 	if _, err := database.Exec(statement); err != nil {
 		t.Fatal(err)
@@ -41,7 +41,7 @@ func assertBackupHeartbeat(t *testing.T, filename string, want bool) {
 
 func TestActiveServiceHeartbeatPrecedesMalformedLegacyTable(t *testing.T) {
 	configuration := fixtureConfig(t)
-	database, err := storage.Open(configuration.AuthDbPath, false, 1)
+	database, err := storage.Open(configuration.AuthDBPath, false, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,14 +50,14 @@ func TestActiveServiceHeartbeatPrecedesMalformedLegacyTable(t *testing.T) {
 			t.Errorf("database.Close: %v", err)
 		}
 	}()
-	executeBackupCharacterizationSql(t, database, "DROP TABLE scheduler_workers; CREATE TABLE scheduler_workers(unrelated TEXT); DROP TABLE service_heartbeats; CREATE TABLE service_heartbeats(service TEXT,instance_id TEXT,started_at REAL,heartbeat_at REAL); INSERT INTO service_heartbeats(service,instance_id,started_at,heartbeat_at) VALUES('api','active',100,100)")
-	assertBackupHeartbeat(t, configuration.AuthDbPath, true)
-	executeBackupCharacterizationSql(t, database, "DELETE FROM service_heartbeats; INSERT INTO service_heartbeats(service,instance_id,started_at,heartbeat_at) VALUES('other','ignored',100,100)")
-	if _, err := HasRecentHeartbeat(context.Background(), configuration.AuthDbPath, 100, 90); err == nil {
+	executeBackupCharacterizationSQL(t, database, "DROP TABLE scheduler_workers; CREATE TABLE scheduler_workers(unrelated TEXT); DROP TABLE service_heartbeats; CREATE TABLE service_heartbeats(service TEXT,instance_id TEXT,started_at REAL,heartbeat_at REAL); INSERT INTO service_heartbeats(service,instance_id,started_at,heartbeat_at) VALUES('api','active',100,100)")
+	assertBackupHeartbeat(t, configuration.AuthDBPath, true)
+	executeBackupCharacterizationSQL(t, database, "DELETE FROM service_heartbeats; INSERT INTO service_heartbeats(service,instance_id,started_at,heartbeat_at) VALUES('other','ignored',100,100)")
+	if _, err := HasRecentHeartbeat(context.Background(), configuration.AuthDBPath, 100, 90); err == nil {
 		t.Fatal("unrelated service masked malformed legacy table")
 	}
-	executeBackupCharacterizationSql(t, database, "DROP TABLE scheduler_workers; CREATE TABLE scheduler_workers(heartbeat_at REAL); INSERT INTO scheduler_workers VALUES(100)")
-	assertBackupHeartbeat(t, configuration.AuthDbPath, true)
+	executeBackupCharacterizationSQL(t, database, "DROP TABLE scheduler_workers; CREATE TABLE scheduler_workers(heartbeat_at REAL); INSERT INTO scheduler_workers VALUES(100)")
+	assertBackupHeartbeat(t, configuration.AuthDBPath, true)
 }
 
 func TestCopyGroupMissingSourceCreatesEmptyDestinationAndRunsCallback(t *testing.T) {
@@ -122,13 +122,13 @@ func assertFailedReplacementTarget(t *testing.T, target string, hasOriginal bool
 
 func TestRestoreVerificationPrecedesActiveTargetAdmission(t *testing.T) {
 	configuration := fixtureConfig(t)
-	if err := RecordHeartbeat(context.Background(), configuration.AuthDbPath, Api, "active", 100); err != nil {
+	if err := RecordHeartbeat(context.Background(), configuration.AuthDBPath, API, "active", 100); err != nil {
 		t.Fatal(err)
 	}
 	directory := t.TempDir()
 	write(t, filepath.Join(directory, "manifest.json"), []byte("{"))
-	report, err := restore(context.Background(), RestoreOptions{configuration, configuration.AuthDbPath, directory}, 100, nil, nil)
-	if !errors.Is(err, ErrManifestJson) || report != (RestoreReport{}) {
+	report, err := restore(context.Background(), RestoreOptions{configuration, configuration.AuthDBPath, directory}, 100, nil, nil)
+	if !errors.Is(err, ErrManifestJSON) || report != (RestoreReport{}) {
 		t.Fatal("activity masked invalid backup", report, err)
 	}
 }

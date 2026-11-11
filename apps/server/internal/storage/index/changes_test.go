@@ -31,7 +31,7 @@ func TestPublicationFailureRetainsOutboxAndPreparedCursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	batch.Articles[0].AbstractText = ptr("Additional enrichment")
+	batch.Articles[0].AbstractText = new("Additional enrichment")
 	if _, err := WriteContentBatch(ctx, content.Conn, catalog, batch, "second", "epoch"); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestPublicationFailureRetainsOutboxAndPreparedCursor(t *testing.T) {
 	if err := PublishContentChangeManifest(current, prepared.Payload); err != nil {
 		t.Fatal(err)
 	}
-	assertPublicationCursorLeavesLateEvent(t, content, *prepared.ThroughEventId)
+	assertPublicationCursorLeavesLateEvent(t, content, *prepared.ThroughEventID)
 	assertPublicationRetryBytes(t, current, history, prepared.Payload)
 }
 

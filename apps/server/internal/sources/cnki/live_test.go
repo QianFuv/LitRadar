@@ -213,12 +213,12 @@ func TestLiveDomesticCaptchaReplayKeepsCookieAndRedactsAttempts(t *testing.T) {
 				t.Errorf("io.WriteString: %v", err)
 			}
 		case "/verify-api/get", "/verify-api/web/check":
-			serveCaptchaJson(t, writer, request)
+			serveCaptchaJSON(t, writer, request)
 		default:
 			t.Error(request.URL)
 		}
 	}, time.Now().Add(3*time.Second))
-	live.state.config.CaptchaToken = textPointer("recognition-secret")
+	live.state.config.CaptchaToken = new("recognition-secret")
 	live.state.solver = func(time.Time) (jfbym.Solver, func(), error) { return jfbym.NewFixture(10.4, 0), func() {}, nil }
 	article, err := live.ArticleDetail(context.Background(), KnsBase+"/article", nil)
 	if err != nil || field(article, "title") != "Article" {
@@ -263,7 +263,7 @@ func TestLiveDomesticResetLeavesCloneCookies(t *testing.T) {
 	location, _ := url.Parse(KnsBase)
 	live.state.client.Jar.SetCookies(location, []*http.Cookie{{Name: "session", Value: "old", Path: "/"}})
 	clone := live.Clone()
-	live.state.shared.session.state.captchaId = "private"
+	live.state.shared.session.state.captchaID = "private"
 	generation := live.state.shared.generation
 	if err := live.ResetTransientState(context.Background()); err != nil {
 		t.Fatal(err)
@@ -271,7 +271,7 @@ func TestLiveDomesticResetLeavesCloneCookies(t *testing.T) {
 	if len(live.state.client.Jar.Cookies(location)) != 0 || len(clone.state.client.Jar.Cookies(location)) != 1 {
 		t.Fatal("reset cookie ownership changed")
 	}
-	if live.state.shared.generation != generation+1 || clone.state.shared.session.state.captchaId != "" {
+	if live.state.shared.generation != generation+1 || clone.state.shared.session.state.captchaID != "" {
 		t.Fatal("captcha reset not shared")
 	}
 }
@@ -387,7 +387,7 @@ func TestLiveDomesticConcurrentClonesReuseCaptchaGeneration(t *testing.T) {
 			}
 		}
 	}, time.Now().Add(3*time.Second))
-	live.state.config.CaptchaToken = textPointer("token")
+	live.state.config.CaptchaToken = new("token")
 	live.state.solver = func(time.Time) (jfbym.Solver, func(), error) { return jfbym.NewFixture(1, 0), func() {}, nil }
 	clone := live.Clone()
 	results := make(chan error, 2)
@@ -481,16 +481,16 @@ func assertCaptchaAttemptRedaction(t *testing.T, live *LiveTransport) {
 		t.Fatal(attempts)
 	}
 	for _, attempt := range attempts {
-		if strings.Contains(attempt.Url, "solved-private-id") || strings.Contains(attempt.Url, "private-ident") {
+		if strings.Contains(attempt.URL, "solved-private-id") || strings.Contains(attempt.URL, "private-ident") {
 			t.Fatal(attempt)
 		}
 	}
 }
 
-// serveCaptchaJson checks the original puzzle and check payload contracts.
-func serveCaptchaJson(t *testing.T, writer http.ResponseWriter, request *http.Request) {
+// serveCaptchaJSON checks the original puzzle and check payload contracts.
+func serveCaptchaJSON(t *testing.T, writer http.ResponseWriter, request *http.Request) {
 	t.Helper()
-	assertCaptchaJsonHeaders(t, request)
+	assertCaptchaJSONHeaders(t, request)
 	var body map[string]any
 	if json.NewDecoder(request.Body).Decode(&body) != nil {
 		t.Error("invalid JSON")
@@ -515,8 +515,8 @@ func serveCaptchaJson(t *testing.T, writer http.ResponseWriter, request *http.Re
 	}
 }
 
-// assertCaptchaJsonHeaders preserves AJAX headers and the absent recognition user agent.
-func assertCaptchaJsonHeaders(t *testing.T, request *http.Request) {
+// assertCaptchaJSONHeaders preserves AJAX headers and the absent recognition user agent.
+func assertCaptchaJSONHeaders(t *testing.T, request *http.Request) {
 	t.Helper()
 	if request.Header.Get("Origin") != KnsBase || request.Header.Get("X-Requested-With") != "XMLHttpRequest" || request.Header.Get("Content-Type") != "application/json;charset=UTF-8" {
 		t.Error(request.Header)

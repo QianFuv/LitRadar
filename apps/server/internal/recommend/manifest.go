@@ -20,10 +20,10 @@ type ChangeManifest struct {
 	PendingIssueKeys   []string `json:"pending_issue_keys"`
 	PendingInpressKeys []string `json:"pending_inpress_keys"`
 	PendingArticleIds  []int64  `json:"pending_article_ids"`
-	RunId              *string  `json:"run_id"`
+	RunID              *string  `json:"run_id"`
 }
 
-var ErrManifestJson = errors.New("Invalid change manifest JSON")
+var ErrManifestJSON = errors.New("invalid change manifest JSON")
 
 // LoadChangeManifest reads one publication without modifying it or admitting a run.
 func LoadChangeManifest(filename, dbName string) (ChangeManifest, error) {
@@ -43,7 +43,7 @@ func LoadChangeManifest(filename, dbName string) (ChangeManifest, error) {
 func ParseChangeManifest(data []byte, dbName string) (ChangeManifest, error) {
 	data = bytes.TrimLeft(data, " \t\r\n\f")
 	if len(data) > 0 && data[0] != '{' {
-		return ChangeManifest{}, errors.New("Invalid change manifest file")
+		return ChangeManifest{}, errors.New("invalid change manifest file")
 	}
 	fields, err := manifestFields(data, map[string]bool{"db_name": true, "changed_issue_keys": true, "changed_inpress_journal_ids": true, "notifiable_article_ids": true, "run_id": true})
 	if err != nil {
@@ -53,7 +53,7 @@ func ParseChangeManifest(data []byte, dbName string) (ChangeManifest, error) {
 	if err != nil {
 		return ChangeManifest{}, err
 	}
-	runId, err := manifestOptionalString(fields, "run_id")
+	runID, err := manifestOptionalString(fields, "run_id")
 	if err != nil {
 		return ChangeManifest{}, err
 	}
@@ -67,10 +67,10 @@ func ParseChangeManifest(data []byte, dbName string) (ChangeManifest, error) {
 	if err != nil {
 		return ChangeManifest{}, err
 	}
-	if runId != nil {
-		trimmed := strings.TrimSpace(*runId)
+	if runID != nil {
+		trimmed := strings.TrimSpace(*runID)
 		if trimmed != "" {
-			result.RunId = &trimmed
+			result.RunID = &trimmed
 		}
 	}
 	return result, nil
@@ -78,12 +78,12 @@ func ParseChangeManifest(data []byte, dbName string) (ChangeManifest, error) {
 
 func manifestFields(data []byte, known map[string]bool) (map[string]any, error) {
 	if !json.Valid(data) {
-		return nil, ErrManifestJson
+		return nil, ErrManifestJSON
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	opening, err := decoder.Token()
 	if err != nil || opening != json.Delim('{') {
-		return nil, ErrManifestJson
+		return nil, ErrManifestJSON
 	}
 	fields := map[string]any{}
 	for decoder.More() {
@@ -95,11 +95,11 @@ func manifestFields(data []byte, known map[string]bool) (map[string]any, error) 
 			continue
 		}
 		if _, exists := fields[name]; exists {
-			return nil, ErrManifestJson
+			return nil, ErrManifestJSON
 		}
-		value, err := transport.ParseJson(raw)
+		value, err := transport.ParseJSON(raw)
 		if err != nil {
-			return nil, ErrManifestJson
+			return nil, ErrManifestJSON
 		}
 		fields[name] = value
 	}
@@ -138,7 +138,7 @@ func manifestOptionalString(fields map[string]any, name string) (*string, error)
 	}
 	text, ok := value.(string)
 	if !ok {
-		return nil, ErrManifestJson
+		return nil, ErrManifestJSON
 	}
 	return &text, nil
 }
@@ -175,7 +175,7 @@ func manifestArticleIds(value any) ([]int64, error) {
 	ids := []int64{}
 	articles, ok := value.([]any)
 	if !ok {
-		return nil, errors.New("Change manifest missing notifiable_article_ids")
+		return nil, errors.New("change manifest missing notifiable_article_ids")
 	}
 	seen := map[int64]bool{}
 	for _, item := range articles {
@@ -191,26 +191,26 @@ func readManifestField(data []byte, decoder *json.Decoder) (string, json.RawMess
 	start := decoder.InputOffset()
 	key, err := decoder.Token()
 	if err != nil {
-		return "", nil, ErrManifestJson
+		return "", nil, ErrManifestJSON
 	}
 	rawKey := bytes.TrimSpace(bytes.TrimPrefix(bytes.TrimSpace(data[start:decoder.InputOffset()]), []byte(",")))
-	if _, err := transport.ParseJson(rawKey); err != nil {
-		return "", nil, ErrManifestJson
+	if _, err := transport.ParseJSON(rawKey); err != nil {
+		return "", nil, ErrManifestJSON
 	}
 	name, ok := key.(string)
 	if !ok {
-		return "", nil, ErrManifestJson
+		return "", nil, ErrManifestJSON
 	}
 	var raw json.RawMessage
 	if decoder.Decode(&raw) != nil {
-		return "", nil, ErrManifestJson
+		return "", nil, ErrManifestJSON
 	}
 	return name, raw, nil
 }
 
 func validateManifestDatabase(database *string, dbName string) error {
 	if database != nil && strings.TrimSpace(*database) != "" && strings.TrimSpace(*database) != dbName {
-		return fmt.Errorf("Change manifest database mismatch: expected %s, got %s", dbName, strings.TrimSpace(*database))
+		return fmt.Errorf("change manifest database mismatch: expected %s, got %s", dbName, strings.TrimSpace(*database))
 	}
 	return nil
 }

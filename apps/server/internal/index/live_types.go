@@ -14,7 +14,7 @@ import (
 // LiveConfig receives resolved deployment settings without introducing defaults over explicit caller values.
 type LiveConfig struct {
 	ApplicationExecutable, ProjectRoot, SecretKeyFile                                                          string
-	AuthDbPath                                                                                                 string
+	AuthDBPath                                                                                                 string
 	File, StopAfter                                                                                            *string
 	WorkerCount, ProcessCount                                                                                  *uint64
 	IssueBatchSize, TimeoutSeconds                                                                             uint64
@@ -40,8 +40,8 @@ type LiveRunOutcome struct {
 // LiveCatalogOutcome combines persisted execution counters with the current invocation's paths and concurrency.
 type LiveCatalogOutcome struct {
 	CsvPath             string          `json:"csv_path"`
-	DbPath              string          `json:"db_path"`
-	RunId               string          `json:"run_id"`
+	DBPath              string          `json:"db_path"`
+	RunID               string          `json:"run_id"`
 	Status              string          `json:"status"`
 	JournalCount        uint64          `json:"journal_count"`
 	WrittenArticleCount int64           `json:"written_article_count"`
@@ -114,7 +114,7 @@ func catalogHistoryDirectory(config LiveConfig, input storage.CatalogInput) stri
 	return filepath.Join(config.ProjectRoot, "data", "push_state", "history", input.CatalogName)
 }
 func catalogOutcome(config LiveConfig, input storage.CatalogInput, persisted storage.BatchCatalogOutcome, handoff *storage.NotifyHandoffState, concurrency LiveConcurrency) LiveCatalogOutcome {
-	outcome := LiveCatalogOutcome{CsvPath: input.Path, DbPath: catalogContentPath(config, input), RunId: persisted.RunId, Status: "succeeded", JournalCount: persisted.JournalCount, WrittenArticleCount: persisted.WrittenArticleCount, SourceAttemptCount: persisted.SourceAttemptCount, Concurrency: concurrency}
+	outcome := LiveCatalogOutcome{CsvPath: input.Path, DBPath: catalogContentPath(config, input), RunID: persisted.RunID, Status: "succeeded", JournalCount: persisted.JournalCount, WrittenArticleCount: persisted.WrittenArticleCount, SourceAttemptCount: persisted.SourceAttemptCount, Concurrency: concurrency}
 	if persisted.ManifestPath != nil {
 		path := filepath.Join(config.ProjectRoot, *persisted.ManifestPath)
 		outcome.ManifestPath = &path

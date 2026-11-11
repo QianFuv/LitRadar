@@ -113,7 +113,7 @@ func articleSupports(registration *provider.Registration, article domain.Article
 	return registration.ArticleFullText() != nil && registration.ArticleFullText().SupportsFullText(article)
 }
 
-func (handlers *articleHandlers) status(ctx context.Context, article domain.ArticleLocator, user identity.Id, catalog string) (*articleAccess, *apiError) {
+func (handlers *articleHandlers) status(ctx context.Context, article domain.ArticleLocator, user identity.ID, catalog string) (*articleAccess, *apiError) {
 	orders, failure := handlers.loadOrders(ctx)
 	if failure != nil {
 		return nil, failure
@@ -194,9 +194,8 @@ func (failures *articleFailures) record(ctx context.Context, name, action string
 	slog.DebugContext(ctx, "article.access.fallback", "event", "article.access.fallback", "component", "article_access", "provider", name, "action", action, "reason", reason)
 }
 func (failures *articleFailures) providerError(ctx context.Context, name, action string, err error) {
-	var failure *provider.Error
 	kind := provider.Internal
-	if errors.As(err, &failure) {
+	if failure, ok := errors.AsType[*provider.Error](err); ok {
 		kind = failure.Kind
 	}
 	reason := map[provider.ErrorKind]string{provider.NotFound: "not_found", provider.AuthenticationRequired: "authentication_required", provider.TemporarilyUnavailable: "temporarily_unavailable", provider.InvalidResponse: "invalid_response", provider.Internal: "internal"}[kind]
@@ -221,7 +220,7 @@ func (failures articleFailures) response(action string) *apiError {
 }
 
 // resolve preserves provider order, the shared deadline and accumulated failure priority.
-func (handlers *articleHandlers) resolve(ctx context.Context, article domain.ArticleLocator, user identity.Id, catalog, action string, deadline time.Time) (domain.ArticleFullTextResolution, *apiError) {
+func (handlers *articleHandlers) resolve(ctx context.Context, article domain.ArticleLocator, user identity.ID, catalog, action string, deadline time.Time) (domain.ArticleFullTextResolution, *apiError) {
 	empty := domain.ArticleFullTextResolution{}
 	if provider.ValidateArticleLocator(article) != nil {
 		return empty, internalError()
@@ -234,7 +233,7 @@ func (handlers *articleHandlers) resolve(ctx context.Context, article domain.Art
 	if action == "fulltext" {
 		order = articleOrder(orders.fulltext, catalog)
 	}
-	request := domain.ArticleAccessContext{UserId: &user, Deadline: deadline}
+	request := domain.ArticleAccessContext{UserID: &user, Deadline: deadline}
 	failures := articleFailures{}
 	for _, name := range order {
 		registration := handlers.providers.Find(name)

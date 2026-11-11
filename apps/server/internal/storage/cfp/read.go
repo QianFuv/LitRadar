@@ -84,8 +84,8 @@ func cloneSnapshots(snapshots []JournalSnapshot) []JournalSnapshot {
 	for index := range result {
 		journal := &result[index]
 		journal.CatalogIds = slices.Clone(journal.CatalogIds)
-		if journal.SourceUrl != nil {
-			journal.SourceUrl = new(*journal.SourceUrl)
+		if journal.SourceURL != nil {
+			journal.SourceURL = new(*journal.SourceURL)
 		}
 		if journal.SourceStatement != nil {
 			journal.SourceStatement = new(*journal.SourceStatement)
@@ -171,7 +171,7 @@ func readJournals(ctx context.Context, connection *sql.Conn, catalogIds []string
 			if err := row.Scan(&key, &title, &checked, &url, &statement); err != nil {
 				return err
 			}
-			journals[string(key)] = &JournalSnapshot{JournalKey: string(key), JournalTitle: string(title), CheckedOn: string(checked), SourceUrl: url.Value, SourceStatement: statement.Value, CatalogIds: []string{}, Notices: []domain.Notice{}, Sources: []SourceStatus{}}
+			journals[string(key)] = &JournalSnapshot{JournalKey: string(key), JournalTitle: string(title), CheckedOn: string(checked), SourceURL: url.Value, SourceStatement: statement.Value, CatalogIds: []string{}, Notices: []domain.Notice{}, Sources: []SourceStatus{}}
 			return nil
 		}); err != nil {
 			return err

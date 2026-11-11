@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -21,18 +22,18 @@ import (
 )
 
 // ErrInvalidCursor rejects malformed article pagination anchors.
-var ErrInvalidCursor = errors.New("Invalid cursor")
+var ErrInvalidCursor = errors.New("invalid cursor")
 
 // ErrUnsupportedArticleSort limits article pagination to its supported date ordering.
-var ErrUnsupportedArticleSort = errors.New("Articles only support sort=date:desc or date:asc")
+var ErrUnsupportedArticleSort = errors.New("articles only support sort=date:desc or date:asc")
 
 // ErrInvalidSearchExpression hides native SQL diagnostics for invalid public FTS expressions.
-var ErrInvalidSearchExpression = errors.New("Invalid search expression")
+var ErrInvalidSearchExpression = errors.New("invalid search expression")
 
 // ArticleListParams preserves projection filters, optional counts and date/identifier keyset pagination.
 type ArticleListParams struct {
-	JournalId    []int64               `json:"journal_id"`
-	IssueId      *int64                `json:"issue_id"`
+	JournalID    []int64               `json:"journal_id"`
+	IssueID      *int64                `json:"issue_id"`
 	Year         *int64                `json:"year"`
 	Area         []string              `json:"area"`
 	Ratings      domain.JournalRatings `json:"ratings"`
@@ -70,7 +71,7 @@ func validateArticleInput(name *string, params ArticleListParams) error {
 			return err
 		}
 	}
-	count := len(params.JournalId) + len(params.Area)
+	count := len(params.JournalID) + len(params.Area)
 	for _, group := range ratingGroups(params.Ratings) {
 		count += len(group.values)
 	}
@@ -150,8 +151,7 @@ func classifySearchError(err error, params ArticleListParams) error {
 	if err == nil || params.SearchMode != domain.SearchAdvanced || params.Query == nil || strings.TrimSpace(*params.Query) == "" {
 		return err
 	}
-	var failure *native.Error
-	if errors.As(err, &failure) {
+	if failure, ok := errors.AsType[*native.Error](err); ok {
 		message := asciiLower(failure.Error())
 		if strings.Contains(message, "fts5: syntax error") || strings.Contains(message, "malformed match expression") || strings.Contains(message, "unterminated string") || strings.Contains(message, "no such column:") {
 			return ErrInvalidSearchExpression
@@ -180,15 +180,17 @@ func (filter *filter) articleCursor(cursor *string, direction string) error {
 	if err != nil {
 		return err
 	}
-	if date == "" {
+	switch {
+	case date == "":
 		if direction == "ASC" {
 			filter.add("((l.date IS NULL AND l.article_id>?) OR l.date IS NOT NULL)", id)
 		} else {
 			filter.add("(l.date IS NULL AND l.article_id<?)", id)
 		}
-	} else if direction == "ASC" {
+	case direction == "ASC":
 		filter.add("(l.date>? OR (l.date=? AND l.article_id>?))", date, date, id)
-	} else {
+	default:
+
 		filter.add("(l.date IS NULL OR l.date<? OR (l.date=? AND l.article_id<?))", date, date, id)
 	}
 	return nil
@@ -214,7 +216,7 @@ func ListArticles(ctx context.Context, configuration config.Config, name *string
 	}()
 	if params.Query != nil && strings.TrimSpace(*params.Query) != "" {
 		if collector := telemetry.FromContext(ctx); collector != nil {
-			filename, resolveError := configuration.ResolveIndexDbPath(name)
+			filename, resolveError := configuration.ResolveIndexDBPath(name)
 			if resolveError == nil {
 				started := time.Now()
 				shape := telemetry.SearchShape("articles", string(params.SearchMode), filepath.Base(filename), *params.Query)
@@ -312,7 +314,7 @@ func articleFromRow(row scanner) (domain.Article, error) {
 	if err != nil {
 		return domain.Article{}, err
 	}
-	result := domain.Article{ArticleId: identity.Id(id), JournalId: identity.Id(journal), IssueId: issue.Value, Title: string(title), PublicationYear: year.Value, Date: date.Value, Authors: names, StartPage: start.Value, EndPage: end.Value, Abstract: abstract.Value, Doi: doi.Value, Pmid: pmid.Value, InPress: optionalBoolean(inPress.Value), OpenAccess: optionalBoolean(openAccess.Value), RetractionDois: []string{}, JournalTitle: string(journalTitle), Volume: volume.Value, Number: number.Value}
+	result := domain.Article{ArticleID: identity.ID(id), JournalID: identity.ID(journal), IssueID: issue.Value, Title: string(title), PublicationYear: year.Value, Date: date.Value, Authors: names, StartPage: start.Value, EndPage: end.Value, Abstract: abstract.Value, Doi: doi.Value, Pmid: pmid.Value, InPress: optionalBoolean(inPress.Value), OpenAccess: optionalBoolean(openAccess.Value), RetractionDois: []string{}, JournalTitle: string(journalTitle), Volume: volume.Value, Number: number.Value}
 	if date.Value != nil {
 		result.DatePrecision = domain.DatePrecision(*date.Value)
 	}
@@ -329,9 +331,9 @@ func fetchArticles(ctx context.Context, database rowQuerier, ids []int64) (resul
 	if err != nil {
 		return nil, err
 	}
-	byId := make(map[int64]*domain.Article, len(items))
+	byID := make(map[int64]*domain.Article, len(items))
 	for index := range items {
-		byId[int64(items[index].ArticleId)] = &items[index]
+		byID[int64(items[index].ArticleID)] = &items[index]
 	}
 	rows, err := database.QueryContext(ctx, "SELECT article_id,retraction_doi FROM article_retraction_dois WHERE article_id IN ("+placeholders(len(ids))+") ORDER BY article_id,retraction_doi", values...)
 	if err != nil {
@@ -342,10 +344,10 @@ func fetchArticles(ctx context.Context, database rowQuerier, ids []int64) (resul
 			resultError = errors.Join(resultError, fmt.Errorf("close rows: %w", closeError))
 		}
 	}()
-	if err := appendArticleRetractions(rows, byId); err != nil {
+	if err := appendArticleRetractions(rows, byID); err != nil {
 		return nil, err
 	}
-	return orderRequestedArticles(byId, ids), nil
+	return orderRequestedArticles(byID, ids), nil
 }
 
 // articleFilters constructs rating and listing clauses in their original argument order.
@@ -354,13 +356,13 @@ func articleFilters(params ArticleListParams) (filter, filter, string, error) {
 	if err := ratings.ratings(params.Ratings); err != nil {
 		return filter{}, filter{}, "", err
 	}
-	base.list("l.journal_id", arguments(params.JournalId))
-	base.optionalInteger("l.issue_id=?", params.IssueId)
+	base.list("l.journal_id", arguments(params.JournalID))
+	base.optionalInteger("l.issue_id=?", params.IssueID)
 	if len(ratings.clauses) == 0 {
 		base.list("l.area", arguments(params.Area))
 	} else {
 		ratings.list("j.area", arguments(params.Area))
-		ratings.list("j.journal_id", arguments(params.JournalId))
+		ratings.list("j.journal_id", arguments(params.JournalID))
 	}
 	base.optionalBoolean("l.in_press=?", params.InPress)
 	base.optionalBoolean("l.open_access=?", params.OpenAccess)
@@ -443,7 +445,7 @@ func emptyRatedArticlePage(ctx context.Context, database *sql.DB, match string, 
 func articleListingSource(params ArticleListParams) string {
 	hasIdentifier := params.Doi != nil && strings.TrimSpace(*params.Doi) != "" ||
 		params.Pmid != nil && strings.TrimSpace(*params.Pmid) != ""
-	if params.IssueId != nil && hasIdentifier {
+	if params.IssueID != nil && hasIdentifier {
 		return "article_listing l INDEXED BY idx_article_listing_issue"
 	}
 	return "article_listing l"
@@ -465,7 +467,7 @@ func articleTotal(ctx context.Context, database *sql.DB, base filter, shouldCoun
 // collectArticlePositions adds cursor and pagination arguments only after optional counting.
 func collectArticlePositions(ctx context.Context, database *sql.DB, base filter, direction string, params ArticleListParams) ([]articlePosition, error) {
 	pagination := "LIMIT ?"
-	values := append(base.values, params.Limit+1)
+	values := append(slices.Clone(base.values), params.Limit+1)
 	if params.Cursor == nil {
 		pagination += " OFFSET ?"
 		values = append(values, params.Offset)
@@ -506,14 +508,14 @@ func selectArticlePage(ctx context.Context, database *sql.DB, base, ratings filt
 }
 
 // appendArticleRetractions validates every native row while the caller retains row ownership.
-func appendArticleRetractions(rows *sql.Rows, byId map[int64]*domain.Article) error {
+func appendArticleRetractions(rows *sql.Rows, byID map[int64]*domain.Article) error {
 	for rows.Next() {
 		var id storage.Integer
 		var doi storage.Text
 		if err := rows.Scan(&id, &doi); err != nil {
 			return err
 		}
-		if item := byId[int64(id)]; item != nil {
+		if item := byID[int64(id)]; item != nil {
 			item.RetractionDois = append(item.RetractionDois, string(doi))
 		}
 	}
@@ -524,12 +526,12 @@ func appendArticleRetractions(rows *sql.Rows, byId map[int64]*domain.Article) er
 }
 
 // orderRequestedArticles keeps first occurrence order while excluding absent canonical records.
-func orderRequestedArticles(byId map[int64]*domain.Article, ids []int64) []domain.Article {
+func orderRequestedArticles(byID map[int64]*domain.Article, ids []int64) []domain.Article {
 	ordered := make([]domain.Article, 0, len(ids))
 	for _, id := range ids {
-		if item := byId[id]; item != nil {
+		if item := byID[id]; item != nil {
 			ordered = append(ordered, *item)
-			delete(byId, id)
+			delete(byID, id)
 		}
 	}
 	return ordered

@@ -43,7 +43,7 @@ func run(args []string) (exitCode int) {
 		fmt.Fprintln(os.Stderr, "LitRadar runtime logging settings are unavailable")
 		return 1
 	}
-	guard, logger, err := observability.Initialize(context.Background(), storage.AuthDbPath, os.Stderr)
+	guard, logger, err := observability.Initialize(context.Background(), storage.AuthDBPath, os.Stderr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		runtime.CleanupAfterProcess(args)

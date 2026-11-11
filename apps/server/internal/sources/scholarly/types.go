@@ -19,7 +19,7 @@ type Attempt struct {
 	Service    string  `json:"service"`
 	Endpoint   string  `json:"endpoint"`
 	Method     string  `json:"method"`
-	Url        string  `json:"url"`
+	URL        string  `json:"url"`
 	StatusCode *uint16 `json:"status_code"`
 	DidSucceed bool    `json:"did_succeed"`
 	DidRetry   bool    `json:"did_retry"`
@@ -71,8 +71,8 @@ type WorksPage struct {
 
 // Request carries a logical operation; Url is the frozen attempt URL, not an authority override.
 type Request struct {
-	Service, Endpoint, Method, Url string
-	Issn, Title, SourceId          string
+	Service, Endpoint, Method, URL string
+	Issn, Title, SourceID          string
 	Query                          CrossrefQuery
 	FromSyncDate, Cursor           *string
 	Dois                           []string

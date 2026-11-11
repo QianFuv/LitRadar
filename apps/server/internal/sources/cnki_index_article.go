@@ -84,7 +84,7 @@ func cnkiIssueDraft(catalog domain.JournalCatalogEntry, payload any) domain.Issu
 			}
 		}
 	}
-	return domain.IssueDraft{CatalogId: catalog.CatalogId, PublicationYear: year, Title: providerText(providerField(payload, "title")), Volume: providerText(providerField(payload, "volume")), Number: number, Date: date}
+	return domain.IssueDraft{CatalogID: catalog.CatalogID, PublicationYear: year, Title: providerText(providerField(payload, "title")), Volume: providerText(providerField(payload, "volume")), Number: number, Date: date}
 }
 
 func firstCnkiText(values ...*string) *string {
@@ -141,7 +141,7 @@ func cnkiArticleDraft(catalog domain.JournalCatalogEntry, issue domain.IssueDraf
 			retractions = append(retractions, *normalized)
 		}
 	}
-	return domain.CanonicalArticle(domain.ArticleDraft{CatalogId: catalog.CatalogId, Title: *title, PublicationYear: year, Date: date, IssueTitle: issue.Title, Volume: issue.Volume, IssueNumber: issue.Number, Authors: authors, StartPage: start, EndPage: end, AbstractText: providerText(providerField(detail, "abstract")), Doi: doi, Pmid: pmid, OpenAccess: cnkiBool(providerField(detail, "open_access")), InPress: new(false), RetractionDois: retractions})
+	return domain.CanonicalArticle(domain.ArticleDraft{CatalogID: catalog.CatalogID, Title: *title, PublicationYear: year, Date: date, IssueTitle: issue.Title, Volume: issue.Volume, IssueNumber: issue.Number, Authors: authors, StartPage: start, EndPage: end, AbstractText: providerText(providerField(detail, "abstract")), Doi: doi, Pmid: pmid, OpenAccess: cnkiBool(providerField(detail, "open_access")), InPress: new(false), RetractionDois: retractions})
 }
 
 func cnkiLacksAuthorsAndDoi(summary, detail any) bool {
@@ -156,7 +156,7 @@ func cnkiLacksAuthorsAndDoi(summary, detail any) bool {
 func isCnkiAuthorMarker(name string) bool {
 	isMarker := true
 	for _, character := range name {
-		if !(character >= '0' && character <= '9' || character >= '①' && character <= '⑳' || strings.ContainsRune("abc†‡*", character)) {
+		if (character < '0' || character > '9') && (character < '①' || character > '⑳') && !strings.ContainsRune("abc†‡*", character) {
 			isMarker = false
 			break
 		}

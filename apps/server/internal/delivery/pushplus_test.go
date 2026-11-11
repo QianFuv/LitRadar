@@ -21,8 +21,8 @@ type pushFixture struct {
 	after     func()
 }
 
-func (fixture *pushFixture) PostJson(ctx context.Context, location string, headers http.Header, body any, timeout time.Duration) (outbound.Response, error) {
-	if _, err := sources.Json(body); err != nil {
+func (fixture *pushFixture) PostJSON(ctx context.Context, location string, headers http.Header, body any, timeout time.Duration) (outbound.Response, error) {
+	if _, err := sources.JSON(body); err != nil {
 		return outbound.Response{}, err
 	}
 	fixture.requests = append(fixture.requests, map[string]any{"url": location, "body": body})
@@ -57,7 +57,7 @@ func (fixture *pushFixture) nextResponse() (outbound.Response, error) {
 	var response struct {
 		Error      string
 		Status     int
-		RequestId  *string `json:"request_id"`
+		RequestID  *string `json:"request_id"`
 		RetryAfter *uint64 `json:"retry_after"`
 		Body       json.RawMessage
 	}
@@ -79,10 +79,10 @@ func (fixture *pushFixture) nextResponse() (outbound.Response, error) {
 	var parsed any
 	if len(response.Body) > 0 {
 		var err error
-		parsed, err = transport.ParseJson(response.Body)
+		parsed, err = transport.ParseJSON(response.Body)
 		if err != nil {
 			return outbound.Response{}, err
 		}
 	}
-	return outbound.Response{StatusCode: response.Status, RequestId: response.RequestId, RetryAfterSeconds: response.RetryAfter, Body: parsed}, nil
+	return outbound.Response{StatusCode: response.Status, RequestID: response.RequestID, RetryAfterSeconds: response.RetryAfter, Body: parsed}, nil
 }

@@ -158,7 +158,7 @@ func completeRouter(t *testing.T) (*Handler, *authHandlers, string) {
 	})
 	upstream := executor.New(4, 30*time.Second)
 	t.Cleanup(upstream.Close)
-	handler, err := New(Services{Storage: config.FromProjectRoot(t.TempDir()).WithAuthDbPath(filename), Auth: auth.repository, Cfp: notices, Delivery: push, Scheduler: tasks, Codec: codec, StoragePool: auth.pool, UpstreamPool: upstream, KdfPool: auth.kdfPool}, Options{ContentSecurityPolicy: fixtureCsp})
+	handler, err := New(Services{Storage: config.FromProjectRoot(t.TempDir()).WithAuthDBPath(filename), Auth: auth.repository, Cfp: notices, Delivery: push, Scheduler: tasks, Codec: codec, StoragePool: auth.pool, UpstreamPool: upstream, KdfPool: auth.kdfPool}, Options{ContentSecurityPolicy: fixtureCsp})
 	if err != nil {
 		t.Fatal(err)
 	}

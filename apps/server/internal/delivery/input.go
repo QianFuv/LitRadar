@@ -29,7 +29,7 @@ func (input deliveryInput) items() []store.RunItemCreate {
 		items = append(items, store.RunItemCreate{ItemKind: store.ItemKindInPress, ItemKey: key})
 	}
 	for _, id := range input.articleIds {
-		items = append(items, store.RunItemCreate{ItemKind: store.ItemKindArticle, ItemKey: strconv.FormatInt(id, 10), ArticleId: pointer(id)})
+		items = append(items, store.RunItemCreate{ItemKind: store.ItemKindArticle, ItemKey: strconv.FormatInt(id, 10), ArticleID: new(id)})
 	}
 	return items
 }
@@ -50,8 +50,8 @@ func inputFromItems(items []store.RunItemRecord) deliveryInput {
 		case store.ItemKindInPress:
 			input.inpressKeys = append(input.inpressKeys, item.ItemKey)
 		case store.ItemKindArticle:
-			if item.ArticleId != nil {
-				input.articleIds = append(input.articleIds, *item.ArticleId)
+			if item.ArticleID != nil {
+				input.articleIds = append(input.articleIds, *item.ArticleID)
 			}
 		}
 	}
@@ -80,7 +80,7 @@ func (engine *deliveryEngine) finalizeProgress(ctx context.Context, run *durable
 	if err := run.renew(ctx, engine.repository, unixNow()); err != nil {
 		return err
 	}
-	items, err := engine.repository.ListRunItems(ctx, run.run.Id)
+	items, err := engine.repository.ListRunItems(ctx, run.run.ID)
 	if err != nil {
 		return err
 	}
@@ -88,11 +88,11 @@ func (engine *deliveryEngine) finalizeProgress(ctx context.Context, run *durable
 		if item.ItemKind == store.ItemKindSubscriber || item.Status.IsTerminal() {
 			continue
 		}
-		claimed, err := engine.repository.ClaimItem(ctx, run.run.Id, run.owner, run.run.Revision, item.Id, run.owner, unixNow(), deliveryLeaseSeconds)
+		claimed, err := engine.repository.ClaimItem(ctx, run.run.ID, run.owner, run.run.Revision, item.ID, run.owner, unixNow(), deliveryLeaseSeconds)
 		if err != nil {
 			return err
 		}
-		if _, err = engine.repository.FinalizeItem(ctx, claimed.Id, run.owner, claimed.Revision, store.ItemStatusSucceeded, nil, nil, unixNow()); err != nil {
+		if _, err = engine.repository.FinalizeItem(ctx, claimed.ID, run.owner, claimed.Revision, store.ItemStatusSucceeded, nil, nil, unixNow()); err != nil {
 			return err
 		}
 	}

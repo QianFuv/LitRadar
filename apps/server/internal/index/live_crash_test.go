@@ -70,7 +70,7 @@ func runCrashFixture(root, point string) (resultError error) {
 	}
 	boundary("admitted")
 	transition := func(phase storage.CatalogPhase) error {
-		return storage.TransitionCatalogPhase(ctx, connection.Conn, batch.BatchId, batch.OwnerId, 0, phase, time.Now().Unix())
+		return storage.TransitionCatalogPhase(ctx, connection.Conn, batch.BatchID, batch.OwnerID, 0, phase, time.Now().Unix())
 	}
 	if err := transition(storage.CatalogIndexing); err != nil {
 		return err
@@ -79,7 +79,7 @@ func runCrashFixture(root, point string) (resultError error) {
 	if point == "content" {
 		return commitCrashFixtureContent(ctx, config, input, batch, boundary)
 	}
-	observed, err := runLiveCatalogWithFactory(ctx, config, input, batch.BatchId, func(WorkerRequest, WorkerBootstrap) (provider.IndexContent, func(), error) {
+	observed, err := runLiveCatalogWithFactory(ctx, config, input, batch.BatchID, func(WorkerRequest, WorkerBootstrap) (provider.IndexContent, func(), error) {
 		return workerTestProvider(func(ctx context.Context, entry domain.JournalCatalogEntry, fetch domain.IndexFetchContext) (domain.ProviderBatch, error) {
 			return liveBatch(entry), nil
 		}), nil, nil
@@ -88,8 +88,8 @@ func runCrashFixture(root, point string) (resultError error) {
 		return err
 	}
 	boundary("progress")
-	outcome := storage.BatchCatalogOutcome{RunId: observed.RunId, JournalCount: observed.JournalCount, WrittenArticleCount: observed.WrittenArticleCount, SourceAttemptCount: observed.SourceAttemptCount}
-	if err := storage.StoreCatalogOutcome(ctx, connection.Conn, batch.BatchId, batch.OwnerId, 0, outcome, time.Now().Unix()); err != nil {
+	outcome := storage.BatchCatalogOutcome{RunID: observed.RunID, JournalCount: observed.JournalCount, WrittenArticleCount: observed.WrittenArticleCount, SourceAttemptCount: observed.SourceAttemptCount}
+	if err := storage.StoreCatalogOutcome(ctx, connection.Conn, batch.BatchID, batch.OwnerID, 0, outcome, time.Now().Unix()); err != nil {
 		return err
 	}
 	boundary("outcome")
@@ -148,7 +148,7 @@ func TestActualKillRestartAtEveryIndexDurableBoundary(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = batch.Conn.ExecContext(ctx, "UPDATE index_batch_lease SET expires_at=0")
+			_, err = batch.ExecContext(ctx, "UPDATE index_batch_lease SET expires_at=0")
 			if err := batch.Close(); err != nil {
 				t.Errorf("batch.Close: %v", err)
 			}
@@ -159,7 +159,7 @@ func TestActualKillRestartAtEveryIndexDurableBoundary(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = control.Conn.ExecContext(ctx, "UPDATE provider_leases SET expires_at=0")
+			_, err = control.ExecContext(ctx, "UPDATE provider_leases SET expires_at=0")
 			if err := control.Close(); err != nil {
 				t.Errorf("control.Close: %v", err)
 			}
@@ -220,8 +220,8 @@ func commitCrashFixtureContent(ctx context.Context, config LiveConfig, input sto
 		return err
 	}
 	defer func() { resultError = errors.Join(resultError, content.Close()) }()
-	run := storage.SyncRun{Scope: storage.SyncScope{CatalogName: "alpha", ProviderName: "cnki", CatalogId: input.Entries[0].CatalogId}, BatchId: batch.BatchId, RunId: "crash-run", Mode: domain.Incremental}
-	if err := storage.AcquireLease(ctx, control.Conn, "alpha", "cnki", run.RunId, time.Now().Unix()); err != nil {
+	run := storage.SyncRun{Scope: storage.SyncScope{CatalogName: "alpha", ProviderName: "cnki", CatalogID: input.Entries[0].CatalogID}, BatchID: batch.BatchID, RunID: "crash-run", Mode: domain.Incremental}
+	if err := storage.AcquireLease(ctx, control.Conn, "alpha", "cnki", run.RunID, time.Now().Unix()); err != nil {
 		return err
 	}
 	if _, err := storage.PrepareJournalSync(ctx, control.Conn, run, true, "epoch"); err != nil {
@@ -244,13 +244,13 @@ func publishCrashFixtureManifest(ctx context.Context, connection *sql.Conn, conf
 	if err != nil {
 		return outcome, err
 	}
-	if err := storage.StoreManifestIntent(ctx, connection, batch.BatchId, batch.OwnerId, 0, intent, time.Now().Unix()); err != nil {
+	if err := storage.StoreManifestIntent(ctx, connection, batch.BatchID, batch.OwnerID, 0, intent, time.Now().Unix()); err != nil {
 		return outcome, err
 	}
 	ready.Payload = intent.Payload
 	boundary("intent")
 	outcome.ManifestPath = &intent.Path
-	if err := storage.StoreCatalogOutcome(ctx, connection, batch.BatchId, batch.OwnerId, 0, outcome, time.Now().Unix()); err != nil {
+	if err := storage.StoreCatalogOutcome(ctx, connection, batch.BatchID, batch.OwnerID, 0, outcome, time.Now().Unix()); err != nil {
 		return outcome, err
 	}
 	boundary("manifest-path")
@@ -266,7 +266,7 @@ func publishCrashFixtureManifest(ctx context.Context, connection *sql.Conn, conf
 	if err != nil {
 		return outcome, err
 	}
-	_, err = storage.AcknowledgeContentChangeEvents(ctx, content.Conn, *intent.ThroughEventId)
+	_, err = storage.AcknowledgeContentChangeEvents(ctx, content.Conn, *intent.ThroughEventID)
 	if err := content.Close(); err != nil {
 		return resultValue1, err
 	}
@@ -287,18 +287,18 @@ func completeCrashFixtureNotification(ctx context.Context, connection *sql.Conn,
 		return err
 	}
 	boundary("notifying")
-	attempt, err := storage.PrepareNotifyAttempt(ctx, connection, batch.BatchId, batch.OwnerId, 0, "durable-notification-attempt", false, time.Now().Unix())
+	attempt, err := storage.PrepareNotifyAttempt(ctx, connection, batch.BatchID, batch.OwnerID, 0, "durable-notification-attempt", false, time.Now().Unix())
 	if err != nil {
 		return err
 	}
-	ready.Attempt = attempt.State.AttemptId
+	ready.Attempt = attempt.State.AttemptID
 	boundary("notify-running")
 	zero := int32(0)
-	if _, err := storage.RecordNotifyAttemptResult(ctx, connection, batch.BatchId, batch.OwnerId, 0, ready.Attempt, storage.NotifyCompleted, &zero, time.Now().Unix()); err != nil {
+	if _, err := storage.RecordNotifyAttemptResult(ctx, connection, batch.BatchID, batch.OwnerID, 0, ready.Attempt, storage.NotifyCompleted, &zero, time.Now().Unix()); err != nil {
 		return err
 	}
 	boundary("notify-completed")
-	if err := storage.CompleteCatalog(ctx, connection, batch.BatchId, batch.OwnerId, 0, outcome, time.Now().Unix()); err != nil {
+	if err := storage.CompleteCatalog(ctx, connection, batch.BatchID, batch.OwnerID, 0, outcome, time.Now().Unix()); err != nil {
 		return err
 	}
 	boundary("catalog-completed")

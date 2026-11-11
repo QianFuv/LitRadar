@@ -63,7 +63,7 @@ type nullableBody[Body any] struct{ value *Body }
 
 // MarshalJSON emits the value or an explicit JSON null for absent resources.
 func (body nullableBody[Body]) MarshalJSON() ([]byte, error) {
-	encoded, err := jsonvalue.EncodeJson(body.value)
+	encoded, err := jsonvalue.EncodeJSON(body.value)
 	return []byte(encoded), err
 }
 

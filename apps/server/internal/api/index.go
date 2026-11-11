@@ -116,7 +116,7 @@ func (handlers *indexHandlers) routes() []route {
 				return nil, failure.problem()
 			}
 			return admitted(ctx, handlers.pool, func() (domain.Page[domain.Issue], error) {
-				params := query.IssueListParams{JournalId: input.JournalID.Pointer(), Year: input.Year.Pointer(), Sort: cleanText(input.Sort.Pointer()), Limit: numberOr(input.Limit.Pointer(), 50), Offset: numberOr(input.Offset.Pointer(), 0)}
+				params := query.IssueListParams{JournalID: input.JournalID.Pointer(), Year: input.Year.Pointer(), Sort: cleanText(input.Sort.Pointer()), Limit: numberOr(input.Limit.Pointer(), 50), Offset: numberOr(input.Offset.Pointer(), 0)}
 				return query.ListIssues(ctx, handlers.storage, cleanText(input.DB.Pointer()), params)
 			}, mapIndexError)
 		}),
@@ -126,10 +126,10 @@ func (handlers *indexHandlers) routes() []route {
 			}
 			return admitted(ctx, handlers.pool, func() (domain.Page[domain.Article], error) {
 				params := query.DefaultArticleListParams()
-				params.JournalId = input.JournalID
+				params.JournalID = input.JournalID
 				params.Area = input.Area
 				params.Ratings = domain.JournalRatings{UtdRating: input.UTDRating, AbsRating: input.ABSRating, FmsRating: input.FMSRating, FmscnRating: input.FMSCNRating}
-				params.IssueId = input.IssueID.Pointer()
+				params.IssueID = input.IssueID.Pointer()
 				params.Year = input.Year.Pointer()
 				params.InPress = input.InPress.Pointer()
 				params.OpenAccess = input.OpenAccess.Pointer()
@@ -172,7 +172,7 @@ func (handlers *indexHandlers) routes() []route {
 				return nil, failure.problem()
 			}
 			return admitted(ctx, handlers.pool, func() (domain.Page[domain.WeeklyArticle], error) {
-				params := query.WeeklyArticlePageParams{DbName: input.DB, JournalId: input.JournalID, WindowEnd: input.WindowEnd, Query: cleanText(input.Q.Pointer()), Limit: numberOr(input.Limit.Pointer(), 50), Cursor: cleanText(input.Cursor.Pointer())}
+				params := query.WeeklyArticlePageParams{DBName: input.DB, JournalID: input.JournalID, WindowEnd: input.WindowEnd, Query: cleanText(input.Q.Pointer()), Limit: numberOr(input.Limit.Pointer(), 50), Cursor: cleanText(input.Cursor.Pointer())}
 				return query.WeeklyArticles(ctx, handlers.storage, params, handlers.cache)
 			}, mapIndexError)
 		}),

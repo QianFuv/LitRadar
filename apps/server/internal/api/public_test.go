@@ -18,10 +18,10 @@ import (
 func TestPublicHealthAndAnnouncementsRemainUnauthenticated(t *testing.T) {
 	configuration := config.FromProjectRoot(t.TempDir())
 	ctx := context.Background()
-	if _, err := migration.Migrate(ctx, configuration.AuthDbPath); err != nil {
+	if _, err := migration.Migrate(ctx, configuration.AuthDBPath); err != nil {
 		t.Fatal(err)
 	}
-	scheduler, err := schedulerstorage.Open(configuration.AuthDbPath)
+	scheduler, err := schedulerstorage.Open(configuration.AuthDBPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestPublicHealthAndAnnouncementsRemainUnauthenticated(t *testing.T) {
 			t.Errorf("scheduler.Close: %v", err)
 		}
 	}()
-	repository, err := storageauth.Open(configuration.AuthDbPath)
+	repository, err := storageauth.Open(configuration.AuthDBPath)
 	if err != nil {
 		t.Fatal(err)
 	}

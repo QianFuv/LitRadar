@@ -54,7 +54,7 @@ func queryScalar[T any](t *testing.T, repository *Repository, query string, argu
 	return value
 }
 
-func runSql(t *testing.T, repository *Repository, statement string, arguments ...any) {
+func runSQL(t *testing.T, repository *Repository, statement string, arguments ...any) {
 	t.Helper()
 	if _, err := repository.database.ExecContext(context.Background(), statement, arguments...); err != nil {
 		t.Fatal(err)
@@ -95,7 +95,7 @@ func TestBootstrapHasOneConcurrentWinnerAndRegistrationCannotBootstrap(t *testin
 	}
 	results := make(chan error, 8)
 	var workers sync.WaitGroup
-	for index := 0; index < 8; index++ {
+	for index := range 8 {
 		workers.Add(1)
 		go func(index int) {
 			defer workers.Done()
@@ -127,7 +127,7 @@ func TestRegistrationErrorPriorityAndAlwaysRequiredRedemptionAudit(t *testing.T)
 	owner := testAdmin(t, repository)
 	assertRegistrationFailurePriority(t, repository)
 	code := "invite"
-	if _, err := repository.IssueInvite(context.Background(), owner.User.Id, code, 100, 200, 2, false, nil); err != nil {
+	if _, err := repository.IssueInvite(context.Background(), owner.User.ID, code, 100, 200, 2, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, username := range []string{"member", "member2"} {
@@ -153,23 +153,23 @@ func TestFinalInviteUseAndConcurrentIssuanceSerialize(t *testing.T) {
 	ctx := context.Background()
 	var workers sync.WaitGroup
 	results := make(chan error, 8)
-	for index := 0; index < 8; index++ {
+	for index := range 8 {
 		workers.Add(1)
 		go func(index int) {
 			defer workers.Done()
-			_, err := repository.IssueInvite(ctx, owner.User.Id, fmt.Sprint(index), 100, 200, 1, false, nil)
+			_, err := repository.IssueInvite(ctx, owner.User.ID, fmt.Sprint(index), 100, 200, 1, false, nil)
 			results <- err
 		}(index)
 	}
 	workers.Wait()
 	close(results)
 	assertSingleInviteIssuanceWinner(t, results)
-	invite, err := repository.Invite(ctx, owner.User.Id)
+	invite, err := repository.Invite(ctx, owner.User.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	results = make(chan error, 8)
-	for index := 0; index < 8; index++ {
+	for index := range 8 {
 		workers.Add(1)
 		go func(index int) {
 			defer workers.Done()
@@ -197,12 +197,12 @@ func TestPersonalTokenQuotaAndLoginReplacementSerialize(t *testing.T) {
 	repository := testRepository(t)
 	authorization := testAdmin(t, repository)
 	ctx := context.Background()
-	for index := 0; index < 48; index++ {
+	for index := range 48 {
 		issue(t, repository, authorization, fmt.Sprint(index), false)
 	}
 	results := make(chan error, 8)
 	var workers sync.WaitGroup
-	for index := 0; index < 8; index++ {
+	for index := range 8 {
 		workers.Add(1)
 		go func(index int) {
 			defer workers.Done()
@@ -214,7 +214,7 @@ func TestPersonalTokenQuotaAndLoginReplacementSerialize(t *testing.T) {
 	close(results)
 	assertPersonalTokenQuotaWinners(t, results)
 	results = make(chan error, 8)
-	for index := 0; index < 8; index++ {
+	for index := range 8 {
 		workers.Add(1)
 		go func(index int) {
 			defer workers.Done()
@@ -232,7 +232,7 @@ func TestPersonalTokenQuotaAndLoginReplacementSerialize(t *testing.T) {
 	if count := queryScalar[int](t, repository, "SELECT count(*) FROM access_tokens WHERE name='login'"); count != 1 {
 		t.Fatal(count)
 	}
-	tokens, err := repository.ListTokens(ctx, authorization.User.Id, 100)
+	tokens, err := repository.ListTokens(ctx, authorization.User.ID, 100)
 	if err != nil || len(tokens) != 50 {
 		t.Fatalf("%d %v", len(tokens), err)
 	}
@@ -249,14 +249,14 @@ func TestTokenExpiryAndExactAuthorizationFences(t *testing.T) {
 	if err != nil || observed == nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.RevokeTokenId(ctx, authorization.User.Id, token.Id, nil); err != nil {
+	if _, err := repository.RevokeTokenID(ctx, authorization.User.ID, token.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repository.IssueToken(ctx, *observed, "denied", "new", 1000, 100, false, nil); !errors.Is(err, domain.ErrStaleAuthorization) {
 		t.Fatal(err)
 	}
 	issue(t, repository, authorization, "new-authorizer", false)
-	if _, err := repository.RevokeAll(ctx, authorization.User.Id, testAudit("logout_all")); err != nil {
+	if _, err := repository.RevokeAll(ctx, authorization.User.ID, testAudit("logout_all")); err != nil {
 		t.Fatal(err)
 	}
 	for _, isLogin := range []bool{false, true} {
@@ -264,7 +264,7 @@ func TestTokenExpiryAndExactAuthorizationFences(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := repository.RevokeAll(ctx, authorization.User.Id, testAudit("logout_all")); err != nil {
+	if _, err := repository.RevokeAll(ctx, authorization.User.ID, testAudit("logout_all")); err != nil {
 		t.Fatal(err)
 	}
 	if generation := queryScalar[int](t, repository, "SELECT token_generation FROM users"); generation != 2 {
@@ -278,19 +278,19 @@ func TestCredentialCasHasOneWinnerAndLegacyUpgradeDoesNotRevoke(t *testing.T) {
 	authorization := testAdmin(t, repository)
 	ctx := context.Background()
 	issue(t, repository, authorization, "existing", false)
-	observed, err := repository.CredentialsById(ctx, authorization.User.Id)
+	observed, err := repository.CredentialsByID(ctx, authorization.User.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertLegacyUpgradePreservesAuthority(t, repository, ctx, observed)
-	observed, err = repository.CredentialsById(ctx, authorization.User.Id)
+	observed, err = repository.CredentialsByID(ctx, authorization.User.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var workers sync.WaitGroup
 	results := make(chan bool, 8)
 	failures := make(chan error, 8)
-	for index := 0; index < 8; index++ {
+	for index := range 8 {
 		workers.Add(1)
 		go func(index int) {
 			defer workers.Done()
@@ -323,26 +323,26 @@ func TestProtectedMutationsRollBackAuditAndTokenDeleteFailures(t *testing.T) {
 			authorization := testAdmin(t, repository)
 			ctx := context.Background()
 			issue(t, repository, authorization, "existing", false)
-			observed, err := repository.CredentialsById(ctx, authorization.User.Id)
+			observed, err := repository.CredentialsByID(ctx, authorization.User.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if failure == "audit" {
-				runSql(t, repository, `CREATE TRIGGER fail_audit BEFORE INSERT ON security_audit_events BEGIN SELECT RAISE(ABORT,'synthetic audit failure'); END`)
+				runSQL(t, repository, `CREATE TRIGGER fail_audit BEFORE INSERT ON security_audit_events BEGIN SELECT RAISE(ABORT,'synthetic audit failure'); END`)
 			} else {
-				runSql(t, repository, `CREATE TRIGGER fail_delete BEFORE DELETE ON access_tokens BEGIN SELECT RAISE(ABORT,'synthetic delete failure'); END`)
+				runSQL(t, repository, `CREATE TRIGGER fail_delete BEFORE DELETE ON access_tokens BEGIN SELECT RAISE(ABORT,'synthetic delete failure'); END`)
 			}
 			if changed, err := repository.ChangePassword(ctx, *observed, "replacement", "", 101, testAudit("password_change")); err == nil || changed {
 				t.Fatalf("%t %v", changed, err)
 			}
-			current, err := repository.CredentialsById(ctx, authorization.User.Id)
+			current, err := repository.CredentialsByID(ctx, authorization.User.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if current.PasswordHash != observed.PasswordHash || current.Salt != observed.Salt || current.TokenGeneration != 0 || queryScalar[int](t, repository, "SELECT count(*) FROM access_tokens") != 1 {
 				t.Fatal("credential change escaped rollback")
 			}
-			if _, err := repository.RevokeAll(ctx, authorization.User.Id, testAudit("logout_all")); err == nil {
+			if _, err := repository.RevokeAll(ctx, authorization.User.ID, testAudit("logout_all")); err == nil {
 				t.Fatal("logout ignored persistence failure")
 			}
 			if generation := queryScalar[int](t, repository, "SELECT token_generation FROM users"); generation != 0 {
@@ -357,15 +357,15 @@ func TestInviteAuditFailureRollsBackRedemptionAndRotation(t *testing.T) {
 	authorization := testAdmin(t, repository)
 	ctx := context.Background()
 	code := "old"
-	if _, err := repository.IssueInvite(ctx, authorization.User.Id, code, 100, 200, 1, false, nil); err != nil {
+	if _, err := repository.IssueInvite(ctx, authorization.User.ID, code, 100, 200, 1, false, nil); err != nil {
 		t.Fatal(err)
 	}
-	runSql(t, repository, `CREATE TRIGGER fail_audit BEFORE INSERT ON security_audit_events BEGIN SELECT RAISE(ABORT,'synthetic audit failure'); END`)
+	runSQL(t, repository, `CREATE TRIGGER fail_audit BEFORE INSERT ON security_audit_events BEGIN SELECT RAISE(ABORT,'synthetic audit failure'); END`)
 	if _, err := repository.Register(ctx, "member", "hash", "salt", &code, 101, nil, nil); !errors.Is(err, domain.ErrAudit) {
 		t.Fatal(err)
 	}
 	audit := testAudit("invite_rotate")
-	if _, err := repository.IssueInvite(ctx, authorization.User.Id, "replacement", 102, 202, 1, true, &audit); !errors.Is(err, domain.ErrAudit) {
+	if _, err := repository.IssueInvite(ctx, authorization.User.ID, "replacement", 102, 202, 1, true, &audit); !errors.Is(err, domain.ErrAudit) {
 		t.Fatal(err)
 	}
 	if count := queryScalar[int](t, repository, "SELECT count(*) FROM users"); count != 1 {
@@ -374,7 +374,7 @@ func TestInviteAuditFailureRollsBackRedemptionAndRotation(t *testing.T) {
 	if count := queryScalar[int](t, repository, "SELECT count(*) FROM invite_code_uses"); count != 0 {
 		t.Fatal(count)
 	}
-	invite, err := repository.Invite(ctx, authorization.User.Id)
+	invite, err := repository.Invite(ctx, authorization.User.ID)
 	if err != nil || invite.Code != code || invite.RevokedAt != nil || invite.UseCount != 0 {
 		t.Fatalf("%v %v", invite, err)
 	}
@@ -385,7 +385,7 @@ func TestRevocationAuditDistinguishesRowIdAndHashAbsence(t *testing.T) {
 	authorization := testAdmin(t, repository)
 	ctx := context.Background()
 	audit := testAudit("logout")
-	if deleted, err := repository.RevokeTokenId(ctx, authorization.User.Id, 999, &audit); err != nil || deleted {
+	if deleted, err := repository.RevokeTokenID(ctx, authorization.User.ID, 999, &audit); err != nil || deleted {
 		t.Fatalf("%t %v", deleted, err)
 	}
 	if count := queryScalar[int](t, repository, "SELECT count(*) FROM security_audit_events"); count != 0 {
@@ -403,18 +403,18 @@ func TestAdministratorMutationRechecksActorAndPreservesLastAdmin(t *testing.T) {
 	repository := testRepository(t)
 	authorization := testAdmin(t, repository)
 	ctx := context.Background()
-	if err := repository.SetAdministrator(ctx, authorization.User.Id, authorization.User.Id, false, nil); !errors.Is(err, ErrLastAdministrator) {
+	if err := repository.SetAdministrator(ctx, authorization.User.ID, authorization.User.ID, false, nil); !errors.Is(err, ErrLastAdministrator) {
 		t.Fatal(err)
 	}
-	if err := repository.DeleteUser(ctx, authorization.User.Id, authorization.User.Id, nil); !errors.Is(err, ErrLastAdministrator) {
+	if err := repository.DeleteUser(ctx, authorization.User.ID, authorization.User.ID, nil); !errors.Is(err, ErrLastAdministrator) {
 		t.Fatal(err)
 	}
-	runSql(t, repository, `INSERT INTO users(id,username,password_hash,salt,is_admin,created_at,updated_at) VALUES (2,'second','hash','salt',1,1,1)`)
+	runSQL(t, repository, `INSERT INTO users(id,username,password_hash,salt,is_admin,created_at,updated_at) VALUES (2,'second','hash','salt',1,1,1)`)
 	var workers sync.WaitGroup
 	results := make(chan error, 2)
-	for _, pair := range [][2]identity.Id{{1, 2}, {2, 1}} {
+	for _, pair := range [][2]identity.ID{{1, 2}, {2, 1}} {
 		workers.Add(1)
-		go func(pair [2]identity.Id) {
+		go func(pair [2]identity.ID) {
 			defer workers.Done()
 			results <- repository.SetAdministrator(ctx, pair[0], pair[1], false, nil)
 		}(pair)
@@ -432,9 +432,9 @@ func TestAdministratorMutationRechecksActorAndPreservesLastAdmin(t *testing.T) {
 	if successes != 1 || queryScalar[int](t, repository, "SELECT count(*) FROM users WHERE is_admin!=0") != 1 {
 		t.Fatal("last administrator lost")
 	}
-	actor := identity.Id(queryScalar[int64](t, repository, "SELECT id FROM users WHERE is_admin=0"))
+	actor := identity.ID(queryScalar[int64](t, repository, "SELECT id FROM users WHERE is_admin=0"))
 	audit := testAudit("user_password_reset")
-	if _, err := repository.ResetPassword(ctx, &actor, authorization.User.Id, "replacement", "", 200, &audit); !errors.Is(err, domain.ErrAdminForbidden) {
+	if _, err := repository.ResetPassword(ctx, &actor, authorization.User.ID, "replacement", "", 200, &audit); !errors.Is(err, domain.ErrAdminForbidden) {
 		t.Fatal(err)
 	}
 }
@@ -443,12 +443,12 @@ func TestRoleChangeKeepsTokensAndDeleteRevokesCreatorInvites(t *testing.T) {
 	repository := testRepository(t)
 	authorization := testAdmin(t, repository)
 	ctx := context.Background()
-	runSql(t, repository, `INSERT INTO users(id,username,password_hash,salt,is_admin,created_at,updated_at) VALUES (2,'second','hash','salt',1,1,1)`)
+	runSQL(t, repository, `INSERT INTO users(id,username,password_hash,salt,is_admin,created_at,updated_at) VALUES (2,'second','hash','salt',1,1,1)`)
 	issue(t, repository, authorization, "existing", false)
-	if _, err := repository.IssueInvite(ctx, authorization.User.Id, "invite", 100, 200, 1, false, nil); err != nil {
+	if _, err := repository.IssueInvite(ctx, authorization.User.ID, "invite", 100, 200, 1, false, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.SetAdministrator(ctx, 2, authorization.User.Id, false, nil); err != nil {
+	if err := repository.SetAdministrator(ctx, 2, authorization.User.ID, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	if count := queryScalar[int](t, repository, "SELECT count(*) FROM access_tokens"); count != 1 {
@@ -457,7 +457,7 @@ func TestRoleChangeKeepsTokensAndDeleteRevokesCreatorInvites(t *testing.T) {
 	if generation := queryScalar[int](t, repository, "SELECT token_generation FROM users WHERE id=1"); generation != 0 {
 		t.Fatal(generation)
 	}
-	if err := repository.DeleteUser(ctx, 2, authorization.User.Id, nil); err != nil {
+	if err := repository.DeleteUser(ctx, 2, authorization.User.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	if count := queryScalar[int](t, repository, "SELECT count(*) FROM access_tokens"); count != 0 {
@@ -472,14 +472,14 @@ func TestExpiredUnrevokedInviteRequiresRotationAndAuditsBothIds(t *testing.T) {
 	repository := testRepository(t)
 	authorization := testAdmin(t, repository)
 	ctx := context.Background()
-	if _, err := repository.IssueInvite(ctx, authorization.User.Id, "old", 100, 101, 1, false, nil); err != nil {
+	if _, err := repository.IssueInvite(ctx, authorization.User.ID, "old", 100, 101, 1, false, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.IssueInvite(ctx, authorization.User.Id, "new", 200, 300, 1, false, nil); !errors.Is(err, domain.ErrActiveInvite) {
+	if _, err := repository.IssueInvite(ctx, authorization.User.ID, "new", 200, 300, 1, false, nil); !errors.Is(err, domain.ErrActiveInvite) {
 		t.Fatal(err)
 	}
 	audit := testAudit("invite_rotate")
-	if _, err := repository.IssueInvite(ctx, authorization.User.Id, "new", 200, 300, 1, true, &audit); err != nil {
+	if _, err := repository.IssueInvite(ctx, authorization.User.ID, "new", 200, 300, 1, true, &audit); err != nil {
 		t.Fatal(err)
 	}
 	if count := queryScalar[int](t, repository, "SELECT count(DISTINCT target_id) FROM security_audit_events WHERE action='invite_rotate'"); count != 2 {
@@ -491,7 +491,7 @@ func TestAuditFailureRollsBackBootstrapAndLoginReplacement(t *testing.T) {
 	repository := testRepository(t)
 	ctx := context.Background()
 	audit := testAudit("admin_bootstrap")
-	runSql(t, repository, `CREATE TRIGGER fail_audit BEFORE INSERT ON security_audit_events BEGIN SELECT RAISE(ABORT,'synthetic audit failure'); END`)
+	runSQL(t, repository, `CREATE TRIGGER fail_audit BEFORE INSERT ON security_audit_events BEGIN SELECT RAISE(ABORT,'synthetic audit failure'); END`)
 	if _, err := repository.Bootstrap(ctx, "admin", "hash", "salt", 10, &audit); !errors.Is(err, domain.ErrAudit) {
 		t.Fatal(err)
 	}

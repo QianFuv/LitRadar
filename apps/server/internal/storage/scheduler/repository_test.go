@@ -49,7 +49,7 @@ func TestSchedulerConcurrentTaskAdmission(t *testing.T) {
 						failures <- err
 						results <- len(claims)
 					} else {
-						admission, err := repository.ClaimManual(ctx, task.Id, "manual", 100, 90)
+						admission, err := repository.ClaimManual(ctx, task.ID, "manual", 100, 90)
 						failures <- err
 						count := 0
 						if admission.Claim != nil {
@@ -76,27 +76,27 @@ func TestSchedulerConcurrentTaskAdmission(t *testing.T) {
 func TestSchedulerAuditedMutationsFailClosed(t *testing.T) {
 	repository, _ := fixture(t)
 	ctx := context.Background()
-	applyFixtureSql(t, repository, `INSERT INTO users(id,username,password_hash,salt,is_admin,created_at,updated_at) VALUES(1,'admin','hash','salt',1,1,1)`)
-	actor := identity.Id(1)
+	applyFixtureSQL(t, repository, `INSERT INTO users(id,username,password_hash,salt,is_admin,created_at,updated_at) VALUES(1,'admin','hash','salt',1,1,1)`)
+	actor := identity.ID(1)
 	actorValue := int64(1)
-	event := auditdomain.AuditEvent{ActorId: &actorValue, Action: "scheduler_create", Outcome: "completed", OccurredAt: 100}
+	event := auditdomain.AuditEvent{ActorID: &actorValue, Action: "scheduler_create", Outcome: "completed", OccurredAt: 100}
 	task, err := repository.Create(ctx, taskInput(), &actor, &event)
 	if err != nil {
 		t.Fatal(err)
 	}
 	events, err := repository.auth.ListAudit(ctx)
-	if err != nil || len(events) != 1 || events[0].TargetId == nil || *events[0].TargetId != task.Id {
+	if err != nil || len(events) != 1 || events[0].TargetID == nil || *events[0].TargetID != task.ID {
 		t.Fatalf("missing target audit %#v %v", events, err)
 	}
 	before := snapshot(t, repository)
-	applyFixtureSql(t, repository, `CREATE TRIGGER fail_audit BEFORE INSERT ON security_audit_events BEGIN SELECT RAISE(ABORT,'private audit detail');END`)
+	applyFixtureSQL(t, repository, `CREATE TRIGGER fail_audit BEFORE INSERT ON security_audit_events BEGIN SELECT RAISE(ABORT,'private audit detail');END`)
 	name := "updated"
 	operations := []func() error{func() error { _, err := repository.Create(ctx, taskInput(), &actor, &event); return err }, func() error {
-		_, err := repository.Update(ctx, domain.Update{TaskId: task.Id, Name: &name}, &actor, &event)
+		_, err := repository.Update(ctx, domain.Update{TaskID: task.ID, Name: &name}, &actor, &event)
 		return err
-	}, func() error { _, err := repository.Delete(ctx, task.Id, &actor, &event); return err }}
+	}, func() error { _, err := repository.Delete(ctx, task.ID, &actor, &event); return err }}
 	assertSchedulerAuditRollback(t, repository, before, operations)
-	applyFixtureSql(t, repository, `DROP TRIGGER fail_audit;UPDATE users SET is_admin=0 WHERE id=1`)
+	applyFixtureSQL(t, repository, `DROP TRIGGER fail_audit;UPDATE users SET is_admin=0 WHERE id=1`)
 	assertSchedulerRevokedAdminRollback(t, repository, before, operations)
 }
 
@@ -112,7 +112,7 @@ func TestSchedulerPostClaimTaskRead(t *testing.T) {
 			if _, err := repository.Enqueue(ctx, *task, []int64{60}); err != nil {
 				t.Fatal(err)
 			}
-			applyFixtureSql(t, repository, "CREATE TRIGGER change_task AFTER UPDATE OF status ON scheduled_task_runs WHEN NEW.status='claimed' BEGIN "+mutation+";END")
+			applyFixtureSQL(t, repository, "CREATE TRIGGER change_task AFTER UPDATE OF status ON scheduled_task_runs WHEN NEW.status='claimed' BEGIN "+mutation+";END")
 			claims, err := repository.ClaimReady(ctx, "worker", 100, 90, 1)
 			isCorrupt := mutation == "UPDATE scheduled_tasks SET job_spec='{}' WHERE id=NEW.task_id"
 			if (err != nil) != isCorrupt || len(claims) != 0 {

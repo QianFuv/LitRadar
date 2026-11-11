@@ -84,7 +84,7 @@ func assertMetadataPointerOwnership(t *testing.T, items []Article) {
 	if items[0].Authors != items[1].Authors || items[0].Title != items[1].Title {
 		t.Fatal("duplicate metadata stopped sharing pointers")
 	}
-	if items[0].Authors == items[2].Authors || items[0].JournalId == items[2].JournalId {
+	if items[0].Authors == items[2].Authors || items[0].JournalID == items[2].JournalID {
 		t.Fatal("distinct rows share mutable pointers")
 	}
 }
@@ -100,7 +100,7 @@ func TestLateMetadataChunkFailureDiscardsPriorGroupRows(t *testing.T) {
 	favorites := make([]Favorite, 501)
 	for index := range ids {
 		ids[index] = int64(index + 2000)
-		favorites[index] = Favorite{Reference: Reference{identity.Id(ids[index]), "metadata"}}
+		favorites[index] = Favorite{Reference: Reference{identity.ID(ids[index]), "metadata"}}
 	}
 	loaded, err := loadMetadata(context.Background(), filename, "metadata", ids)
 	if loaded != nil || !errors.Is(err, search.ErrInvalidAuthors) {

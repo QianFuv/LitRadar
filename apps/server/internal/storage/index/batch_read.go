@@ -271,8 +271,7 @@ func readNotifyHandoff(ctx context.Context, connection *sql.Conn, id string, ord
 		return nil
 	}()
 	if err != nil {
-		var rangeError *batchExitRangeError
-		if errors.As(err, &rangeError) {
+		if rangeError, ok := errors.AsType[*batchExitRangeError](err); ok {
 			return nil, rangeError
 		}
 		return nil, err
@@ -287,19 +286,19 @@ func validateManifestIntent(intent ManifestIntent) error {
 	if len(intent.Sha256) != 64 || sha256Hex(intent.Payload) != intent.Sha256 {
 		return batchState("stored manifest payload digest is invalid")
 	}
-	if intent.ThroughEventId != nil && *intent.ThroughEventId <= 0 {
+	if intent.ThroughEventID != nil && *intent.ThroughEventID <= 0 {
 		return batchState("stored manifest outbox cursor is invalid")
 	}
 	if err := validateRelativePath(intent.Path); err != nil {
 		return err
 	}
-	if err := validateIdentifier(intent.RunId, "manifest run identifier must be non-empty and bounded"); err != nil {
+	if err := validateIdentifier(intent.RunID, "manifest run identifier must be non-empty and bounded"); err != nil {
 		return err
 	}
 	return validateIdentifier(intent.GeneratedAt, "manifest timestamp must be non-empty and bounded")
 }
 func validateCatalogOutcome(outcome BatchCatalogOutcome) error {
-	if err := validateIdentifier(outcome.RunId, "catalog run identifier must be non-empty and bounded"); err != nil {
+	if err := validateIdentifier(outcome.RunID, "catalog run identifier must be non-empty and bounded"); err != nil {
 		return err
 	}
 	if outcome.WrittenArticleCount < 0 {
@@ -311,7 +310,7 @@ func validateCatalogOutcome(outcome BatchCatalogOutcome) error {
 	return nil
 }
 func validateNotifyHandoff(state NotifyHandoffState) error {
-	if err := validateIdentifier(state.AttemptId, "notification attempt identifier must be non-empty and bounded"); err != nil {
+	if err := validateIdentifier(state.AttemptID, "notification attempt identifier must be non-empty and bounded"); err != nil {
 		return err
 	}
 	hasZero := state.ExitCode != nil && *state.ExitCode == 0
@@ -430,11 +429,11 @@ func decodeStoredNotifyHandoff(attempt, status *string, code *int32, ackAttempt 
 }
 
 func validateNotifyAcknowledgement(state NotifyHandoffState) error {
-	if (state.UnknownAcknowledgedAttemptId == nil) != (state.UnknownAcknowledgedAt == nil) {
+	if (state.UnknownAcknowledgedAttemptID == nil) != (state.UnknownAcknowledgedAt == nil) {
 		return batchState("stored notification acknowledgement is incomplete")
 	}
-	if state.UnknownAcknowledgedAttemptId != nil {
-		if err := validateIdentifier(*state.UnknownAcknowledgedAttemptId, "acknowledged notification attempt identifier must be non-empty and bounded"); err != nil {
+	if state.UnknownAcknowledgedAttemptID != nil {
+		if err := validateIdentifier(*state.UnknownAcknowledgedAttemptID, "acknowledged notification attempt identifier must be non-empty and bounded"); err != nil {
 			return err
 		}
 		if *state.UnknownAcknowledgedAt < 0 {

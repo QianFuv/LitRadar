@@ -153,7 +153,7 @@ func assertArticleLookupFixture(b *testing.B, ctx context.Context, configuration
 	if err != nil || len(probe.Items) > 1 || (len(probe.Items) == 1) != hasMatch {
 		b.Fatalf("invalid lookup fixture: items=%d error=%v", len(probe.Items), err)
 	}
-	if hasMatch && int64(probe.Items[0].ArticleId) != 30001 {
+	if hasMatch && int64(probe.Items[0].ArticleID) != 30001 {
 		b.Fatal("lookup returned a different article")
 	}
 	assertArticleLookupTotal(b, probe, includesTotal)

@@ -124,12 +124,12 @@ func invalidNotifyChildFixtureArguments(options map[string]string) bool {
 
 // emitNotifyChildFixture emits the same handoff payload and mode-specific exit status.
 func emitNotifyChildFixture(mode string, options map[string]string, isDryRun bool) {
-	payload := notifyPayload{ProtocolVersion: 1, AttemptId: options["--attempt-id"], Workflow: "notify", Mode: "execute", Status: "completed", DbName: options["--db"]}
+	payload := notifyPayload{ProtocolVersion: 1, AttemptID: options["--attempt-id"], Workflow: "notify", Mode: "execute", Status: "completed", DBName: options["--db"]}
 	if isDryRun {
 		payload.Mode = "dry_run"
 	}
 	if mode == "stale" {
-		payload.AttemptId = "previous-attempt"
+		payload.AttemptID = "previous-attempt"
 	}
 	if mode == "failed" {
 		payload.Status = "failed"

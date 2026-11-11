@@ -15,15 +15,15 @@ const AnchorVersion uint32 = 1
 // Anchor identifies the newest issue covered by a successfully acknowledged run.
 type Anchor struct {
 	Version     uint32 `json:"version"`
-	YearIssueId string `json:"year_issue_id"`
+	YearIssueID string `json:"year_issue_id"`
 }
 
 // Checkpoint freezes the committed boundary, observed head and next page to acknowledge.
 type Checkpoint struct {
 	Version              uint32  `json:"version"`
-	BaseAnchorIssueId    *string `json:"base_anchor_issue_id"`
-	CandidateHeadIssueId string  `json:"candidate_head_issue_id"`
-	CurrentIssueId       string  `json:"current_issue_id"`
+	BaseAnchorIssueID    *string `json:"base_anchor_issue_id"`
+	CandidateHeadIssueID string  `json:"candidate_head_issue_id"`
+	CurrentIssueID       string  `json:"current_issue_id"`
 	PageIndex            uint64  `json:"page_index"`
 }
 
@@ -61,8 +61,8 @@ func (checkpoint Checkpoint) Encode() (string, error) {
 	return string(encoded), err
 }
 
-// IsStableIssueId checks the opaque identifier grammar without imposing calendar semantics.
-func IsStableIssueId(value string) bool {
+// IsStableIssueID checks the opaque identifier grammar without imposing calendar semantics.
+func IsStableIssueID(value string) bool {
 	if len(value) == 0 || len(value) > 64 {
 		return false
 	}

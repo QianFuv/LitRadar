@@ -12,30 +12,30 @@ import (
 
 type arguments []string
 
-func (values *arguments) take(name string) (*string, error) {
-	index := slices.Index(*values, name)
+func (args *arguments) take(name string) (*string, error) {
+	index := slices.Index(*args, name)
 	if index < 0 {
 		return nil, nil
 	}
-	if index+1 >= len(*values) {
+	if index+1 >= len(*args) {
 		return nil, fmt.Errorf("%s requires a value", name)
 	}
-	value := (*values)[index+1]
-	*values = slices.Delete(*values, index, index+2)
+	value := (*args)[index+1]
+	*args = slices.Delete(*args, index, index+2)
 	return &value, nil
 }
 
-func (values *arguments) flag(name string) bool {
-	index := slices.Index(*values, name)
+func (args *arguments) flag(name string) bool {
+	index := slices.Index(*args, name)
 	if index < 0 {
 		return false
 	}
-	*values = slices.Delete(*values, index, index+1)
+	*args = slices.Delete(*args, index, index+1)
 	return true
 }
 
-func (values *arguments) projectRoot() (string, error) {
-	value, err := values.take("--project-root")
+func (args *arguments) projectRoot() (string, error) {
+	value, err := args.take("--project-root")
 	if err != nil {
 		return "", err
 	}
@@ -45,8 +45,8 @@ func (values *arguments) projectRoot() (string, error) {
 	return os.Getwd()
 }
 
-func (values *arguments) authDatabase(root string) (string, error) {
-	value, err := values.take("--auth-db")
+func (args *arguments) authDatabase(root string) (string, error) {
+	value, err := args.take("--auth-db")
 	if err != nil {
 		return "", errors.New("--auth-db requires a path")
 	}
@@ -60,7 +60,7 @@ func hasHelp(values []string) bool {
 	return slices.Contains(values, "--help") || slices.Contains(values, "-h")
 }
 
-func parentRunId(values *arguments) (string, error) {
+func parentRunID(values *arguments) (string, error) {
 	const option = "--litradar-parent-run-id"
 	index := slices.Index(*values, option)
 	if index < 0 {

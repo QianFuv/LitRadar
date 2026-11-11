@@ -36,7 +36,7 @@ func subscriberPayload(subscriber domain.Subscriber) map[string]any {
 	for _, direction := range subscriber.Directions {
 		directions = append(directions, direction)
 	}
-	return map[string]any{"id": subscriber.SubscriberId, "name": subscriber.Name, "keywords": keywords, "directions": directions}
+	return map[string]any{"id": subscriber.SubscriberID, "name": subscriber.Name, "keywords": keywords, "directions": directions}
 }
 
 func candidatePayload(candidate storage.ArticleCandidate, isSelection bool) map[string]any {
@@ -45,13 +45,13 @@ func candidatePayload(candidate storage.ArticleCandidate, isSelection bool) map[
 	if candidate.Date != nil {
 		date = *candidate.Date
 	}
-	payload := map[string]any{"article_id": candidate.ArticleId, "title": candidate.Title, "abstract": string(abstract[:min(len(abstract), 1200)]), "journal_title": candidate.JournalTitle, "date": date}
+	payload := map[string]any{"article_id": candidate.ArticleID, "title": candidate.Title, "abstract": string(abstract[:min(len(abstract), 1200)]), "journal_title": candidate.JournalTitle, "date": date}
 	if isSelection {
 		var issue any
-		if candidate.IssueId != nil {
-			issue = *candidate.IssueId
+		if candidate.IssueID != nil {
+			issue = *candidate.IssueID
 		}
-		payload["journal_id"], payload["issue_id"] = candidate.JournalId, issue
+		payload["journal_id"], payload["issue_id"] = candidate.JournalID, issue
 		payload["open_access"], payload["in_press"] = candidate.OpenAccess, candidate.InPress
 	}
 	return payload

@@ -163,11 +163,11 @@ func verifyFixtureRenderedPage(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var page struct{ Protocol, FinalUrl, Html string }
+	var page struct{ Protocol, FinalURL, HTML string }
 	if err := json.Unmarshal(data, &page); err != nil {
 		return err
 	}
-	if page.Protocol != "litradar.cfp.page.v1" || page.FinalUrl != "http://127.0.0.1:8081/" || !strings.Contains(page.Html, ">rendered 4<") {
+	if page.Protocol != "litradar.cfp.page.v1" || page.FinalURL != "http://127.0.0.1:8081/" || !strings.Contains(page.HTML, ">rendered 4<") {
 		return fmt.Errorf("rendered HTML protocol mismatch: %s", data)
 	}
 	return nil

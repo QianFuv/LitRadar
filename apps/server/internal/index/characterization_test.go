@@ -98,7 +98,7 @@ func characterizationCatalogRow() map[string]string {
 func TestExistingManifestAdmissionCharacterization(t *testing.T) {
 	config := LiveConfig{ProjectRoot: t.TempDir()}
 	input := storage.CatalogInput{CatalogName: "catalog"}
-	intent := storage.ManifestIntent{Path: "manifest.json", RunId: "new-run"}
+	intent := storage.ManifestIntent{Path: "manifest.json", RunID: "new-run"}
 	path := filepath.Join(config.ProjectRoot, intent.Path)
 	for _, candidate := range []struct {
 		body       string
@@ -114,7 +114,7 @@ func TestExistingManifestAdmissionCharacterization(t *testing.T) {
 		if err := os.WriteFile(path, []byte(candidate.body), 0600); err != nil {
 			t.Fatal(err)
 		}
-		shouldPublish, err := shouldPublishManifest(config, input, storage.BatchCatalogOutcome{RunId: "new-run"}, intent)
+		shouldPublish, err := shouldPublishManifest(config, input, storage.BatchCatalogOutcome{RunID: "new-run"}, intent)
 		if shouldPublish || (err != nil) != candidate.shouldFail {
 			t.Fatalf("body=%s publish=%t err=%v", candidate.body, shouldPublish, err)
 		}
@@ -122,7 +122,7 @@ func TestExistingManifestAdmissionCharacterization(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"run_id":"old-run","generated_at":"100","db_name":"catalog.sqlite","summary":{}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if publish, err := shouldPublishManifest(config, input, storage.BatchCatalogOutcome{RunId: "new-run"}, intent); err != nil || !publish {
+	if publish, err := shouldPublishManifest(config, input, storage.BatchCatalogOutcome{RunID: "new-run"}, intent); err != nil || !publish {
 		t.Fatal("obsolete timestamp was not scheduled for rebuilding", publish, err)
 	}
 	assertManifestRecoveryBypassesFileAdmission(t, config, input, intent)
@@ -132,12 +132,12 @@ func TestExistingManifestAdmissionCharacterization(t *testing.T) {
 func assertManifestRecoveryBypassesFileAdmission(t *testing.T, config LiveConfig, input storage.CatalogInput, intent storage.ManifestIntent) {
 	t.Helper()
 	intent.Path = "."
-	intent.ThroughEventId = new(int64(1))
+	intent.ThroughEventID = new(int64(1))
 	shouldPublish, err := shouldPublishManifest(config, input, storage.BatchCatalogOutcome{}, intent)
 	if err != nil || !shouldPublish {
 		t.Fatal(shouldPublish, err)
 	}
-	intent.ThroughEventId = nil
+	intent.ThroughEventID = nil
 	shouldPublish, err = shouldPublishManifest(config, input, storage.BatchCatalogOutcome{ManifestPath: new("existing")}, intent)
 	if err != nil || !shouldPublish {
 		t.Fatal(shouldPublish, err)
@@ -147,7 +147,7 @@ func assertManifestRecoveryBypassesFileAdmission(t *testing.T, config LiveConfig
 // TestInlineRepeatedCheckpointRetainsCommittedMetrics pins repeat detection after the second durable page.
 func TestInlineRepeatedCheckpointRetainsCommittedMetrics(t *testing.T) {
 	writer, request, batch, content, control := parentWriterFixture(t)
-	batch.Progress = domain.ProviderProgress{State: domain.Continue, Checkpoint: testCheckpoint("repeat")}
+	batch.Progress = domain.ProviderProgress{State: domain.Continue, Checkpoint: new("repeat")}
 	calls := 0
 	implementation := workerTestProvider(func(context.Context, domain.JournalCatalogEntry, domain.IndexFetchContext) (domain.ProviderBatch, error) {
 		calls++

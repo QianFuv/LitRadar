@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -43,10 +44,8 @@ func prepareWorksetRoot(root string) (string, error) {
 	if !filepath.IsAbs(root) {
 		return "", invalidWorkset("Crossref workset root must be an absolute core-owned path")
 	}
-	for _, component := range strings.Split(filepath.ToSlash(root), "/") {
-		if component == ".." {
-			return "", invalidWorkset("Crossref workset root must be an absolute core-owned path")
-		}
+	if slices.Contains(strings.Split(filepath.ToSlash(root), "/"), "..") {
+		return "", invalidWorkset("Crossref workset root must be an absolute core-owned path")
 	}
 	var ancestors []string
 	for path := filepath.Clean(root); ; path = filepath.Dir(path) {
@@ -112,8 +111,7 @@ func removeWorksetFiles(root string, owner worksetOwner) error {
 
 // prepareWorksetAncestors creates and validates ordinary directories from the outermost ancestor inward.
 func prepareWorksetAncestors(ancestors []string) error {
-	for index := len(ancestors) - 1; index >= 0; index-- {
-		path := ancestors[index]
+	for _, path := range slices.Backward(ancestors) {
 		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
 			if err = os.Mkdir(path, 0777); err != nil && !errors.Is(err, os.ErrExist) {
 				return worksetStorageError(err)

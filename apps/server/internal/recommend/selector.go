@@ -22,7 +22,7 @@ type SelectionRequest struct {
 	Defaults           Defaults
 	OverrideModel      *string
 	CandidatesForModel []storage.ArticleCandidate
-	CandidatesById     map[int64]storage.ArticleCandidate
+	CandidatesByID     map[int64]storage.ArticleCandidate
 	Dedupe             map[string]string
 }
 
@@ -83,9 +83,9 @@ func (selector *Selector) SelectForSubscriber(ctx context.Context, request Selec
 			lastError = err
 			continue
 		}
-		accepted := ApplySelectionRules(selection, request.Subscriber, request.CandidatesById, request.Dedupe)
+		accepted := ApplySelectionRules(selection, request.Subscriber, request.CandidatesByID, request.Dedupe)
 		summary := selection.Summary
-		summary = summarizeAcceptedSelection(ctx, client, config, request.Subscriber, accepted, request.CandidatesById, summary)
+		summary = summarizeAcceptedSelection(ctx, client, config, request.Subscriber, accepted, request.CandidatesByID, summary)
 		return SelectionOutcome{Accepted: accepted, Summary: summary}, nil
 	}
 	return SelectionOutcome{}, fmt.Errorf("AI selection failed across configured endpoints: %w", lastError)
@@ -112,7 +112,7 @@ func selectRounds(ctx context.Context, client selectionClient, config AiRuntimeC
 		}
 		aggregateRoundSelections(aggregated, result.Selections)
 		merged := mergedSelection(summary, aggregated)
-		if len(ApplySelectionRules(merged, request.Subscriber, request.CandidatesById, request.Dedupe)) >= MaxArticlesPerPush {
+		if len(ApplySelectionRules(merged, request.Subscriber, request.CandidatesByID, request.Dedupe)) >= MaxArticlesPerPush {
 			return merged, nil
 		}
 		remaining = unselectedCandidates(remaining, aggregated)
@@ -122,15 +122,15 @@ func selectRounds(ctx context.Context, client selectionClient, config AiRuntimeC
 
 func mergedSelection(summary string, aggregated map[int64]domain.RankedSelection) domain.SelectionResult {
 	selections := slices.AppendSeq([]domain.RankedSelection{}, maps.Values(aggregated))
-	slices.SortFunc(selections, func(first, second domain.RankedSelection) int { return cmp.Compare(first.ArticleId, second.ArticleId) })
+	slices.SortFunc(selections, func(first, second domain.RankedSelection) int { return cmp.Compare(first.ArticleID, second.ArticleID) })
 	slices.SortStableFunc(selections, func(first, second domain.RankedSelection) int { return cmp.Compare(second.Score, first.Score) })
 	return domain.SelectionResult{Summary: summary, Selections: selections}
 }
 
-func summarizeAcceptedSelection(ctx context.Context, client selectionClient, config AiRuntimeConfig, subscriber domain.Subscriber, accepted []domain.RankedSelection, candidatesById map[int64]storage.ArticleCandidate, summary string) string {
+func summarizeAcceptedSelection(ctx context.Context, client selectionClient, config AiRuntimeConfig, subscriber domain.Subscriber, accepted []domain.RankedSelection, candidatesByID map[int64]storage.ArticleCandidate, summary string) string {
 	candidates := make([]storage.ArticleCandidate, 0, len(accepted))
 	for _, item := range accepted {
-		if candidate, exists := candidatesById[item.ArticleId]; exists {
+		if candidate, exists := candidatesByID[item.ArticleID]; exists {
 			candidates = append(candidates, candidate)
 		}
 	}
@@ -144,8 +144,8 @@ func summarizeAcceptedSelection(ctx context.Context, client selectionClient, con
 
 func aggregateRoundSelections(aggregated map[int64]domain.RankedSelection, selections []domain.RankedSelection) {
 	for _, selection := range selections {
-		if existing, exists := aggregated[selection.ArticleId]; !exists || !(existing.Score >= selection.Score) {
-			aggregated[selection.ArticleId] = selection
+		if existing, exists := aggregated[selection.ArticleID]; !exists || !(existing.Score >= selection.Score) {
+			aggregated[selection.ArticleID] = selection
 		}
 	}
 }
@@ -153,7 +153,7 @@ func aggregateRoundSelections(aggregated map[int64]domain.RankedSelection, selec
 func unselectedCandidates(remaining []storage.ArticleCandidate, aggregated map[int64]domain.RankedSelection) []storage.ArticleCandidate {
 	next := remaining[:0]
 	for _, candidate := range remaining {
-		if _, exists := aggregated[candidate.ArticleId]; !exists {
+		if _, exists := aggregated[candidate.ArticleID]; !exists {
 			next = append(next, candidate)
 		}
 	}

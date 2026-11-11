@@ -41,7 +41,7 @@ func looksLikeContent(text string) bool {
 	return containsMarker(text, "YearIssueTree", `id="pykm"`, "ChDivSummary", "/knavi/detail?", `class="row clearfix`, "param-filename", "paramfilename") || explicitEmpty(text)
 }
 func updatePlaceholder(text string) bool {
-	return strings.Contains(stripTags(decodeHtml(text)), "该刊数据正在更新中，请耐心等待")
+	return strings.Contains(stripTags(decodeHTML(text)), "该刊数据正在更新中，请耐心等待")
 }
 
 // validateResponse classifies text and deletion before endpoint structure.
@@ -80,18 +80,18 @@ func firstValue(values ...*string) *string {
 	return nil
 }
 func field(value any, key string) any { object, _ := value.(map[string]any); return object[key] }
-func cloneJson(value any) any {
+func cloneJSON(value any) any {
 	switch typed := value.(type) {
 	case map[string]any:
 		copy := make(map[string]any, len(typed))
 		for key, item := range typed {
-			copy[key] = cloneJson(item)
+			copy[key] = cloneJSON(item)
 		}
 		return copy
 	case []any:
 		copy := make([]any, len(typed))
 		for index, item := range typed {
-			copy[index] = cloneJson(item)
+			copy[index] = cloneJSON(item)
 		}
 		return copy
 	default:
@@ -199,7 +199,7 @@ func ParseYearIssues(text string) ([]any, error) {
 		}
 		label := stripTags(tag)
 		number := issueNumber(key, label)
-		issues = append(issues, map[string]any{"year": year, "number": number, "title": label, "year_issue": decodeHtml(token), "year_issue_id": key})
+		issues = append(issues, map[string]any{"year": year, "number": number, "title": label, "year_issue": decodeHTML(token), "year_issue_id": key})
 	}
 	return issues, nil
 }
@@ -262,18 +262,18 @@ func parseArticleRow(text string, issue any, section string) (any, error) {
 		if ContainsOverseasHost(url) {
 			return nil, &Error{Kind: "Parse", Message: "domestic issue article returned overseas host"}
 		}
-		platformId := articlePlatformId(text)
-		return map[string]any{"title": *title, "article_url": url, "platform_id": optional(platformId), "authors": optional(spanTitle(text, "author")), "pages": optional(spanTitle(text, "company")), "section": optional(nonEmpty(section)), "year": cloneJson(field(issue, "year")), "number": cloneJson(field(issue, "number")), "platform": "NZKPT"}, nil
+		platformID := articlePlatformID(text)
+		return map[string]any{"title": *title, "article_url": url, "platform_id": optional(platformID), "authors": optional(spanTitle(text, "author")), "pages": optional(spanTitle(text, "company")), "section": optional(nonEmpty(section)), "year": cloneJSON(field(issue, "year")), "number": cloneJSON(field(issue, "number")), "platform": "NZKPT"}, nil
 	}
 	return nil, nil
 }
 
 // ParseArticleDetail validates the document before its URL and preserves legacy fallbacks.
-func ParseArticleDetail(text, articleUrl string) (any, error) {
+func ParseArticleDetail(text, articleURL string) (any, error) {
 	if err := validateResponse("article_detail", text); err != nil {
 		return nil, err
 	}
-	parsed, err := parseDomesticUrl(articleUrl)
+	parsed, err := parseDomesticURL(articleURL)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +286,7 @@ func ParseArticleDetail(text, articleUrl string) (any, error) {
 		abstract = summaryText(text)
 	}
 	if abstract != nil {
-		abstract = nonEmpty(stripTags(decodeHtml(*abstract)))
+		abstract = nonEmpty(stripTags(decodeHTML(*abstract)))
 	}
 	online := rowValue(text, "在线公开时间")
 	if online == nil {
@@ -382,19 +382,19 @@ func nextIssueBlock(text string) (string, int, bool) {
 	return name, start, true
 }
 
-// articlePlatformId selects the first nonempty encrypted identifier.
-func articlePlatformId(text string) *string {
-	var platformId *string
+// articlePlatformID selects the first nonempty encrypted identifier.
+func articlePlatformID(text string) *string {
+	var platformID *string
 	for _, bold := range tags(text, "b") {
 		attributes := attrs(bold)
 		if attributes["name"] == "encrypt" {
-			platformId = nonEmpty(attributes["id"])
-			if platformId != nil {
+			platformID = nonEmpty(attributes["id"])
+			if platformID != nil {
 				break
 			}
 		}
 	}
-	return platformId
+	return platformID
 }
 
 // isEmptyIssuePage recognizes explicit emptiness and later-page update placeholders.

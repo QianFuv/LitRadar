@@ -34,7 +34,7 @@ func ValidateNotificationSettings(value NotificationSettingsUpdate) error {
 	fields := []struct {
 		name, text string
 		maximum    int
-	}{{"delivery_method", value.DeliveryMethod, 32}, {"pushplus_template", value.PushplusTemplate, 64}, {"pushplus_topic", value.PushplusTopic, 200}, {"pushplus_channel", value.PushplusChannel, 64}, {"ai_base_url", value.AiBaseUrl, 2048}, {"ai_backup_base_url", value.AiBackupBaseUrl, 2048}, {"ai_model", value.AiModel, 200}, {"ai_backup_model", value.AiBackupModel, 200}, {"ai_system_prompt", value.AiSystemPrompt, 10000}, {"ai_backup_system_prompt", value.AiBackupSystemPrompt, 10000}}
+	}{{"delivery_method", value.DeliveryMethod, 32}, {"pushplus_template", value.PushplusTemplate, 64}, {"pushplus_topic", value.PushplusTopic, 200}, {"pushplus_channel", value.PushplusChannel, 64}, {"ai_base_url", value.AiBaseURL, 2048}, {"ai_backup_base_url", value.AiBackupBaseURL, 2048}, {"ai_model", value.AiModel, 200}, {"ai_backup_model", value.AiBackupModel, 200}, {"ai_system_prompt", value.AiSystemPrompt, 10000}, {"ai_backup_system_prompt", value.AiBackupSystemPrompt, 10000}}
 	for _, field := range fields {
 		if err := validateNotificationText(field.name, field.text, field.maximum); err != nil {
 			return err
@@ -68,7 +68,7 @@ func validateNotificationSecrets(value NotificationSettingsUpdate) error {
 	for _, field := range []struct {
 		name   string
 		secret SecretUpdate
-	}{{"pushplus_token", value.PushplusToken}, {"ai_api_key", value.AiApiKey}, {"ai_backup_api_key", value.AiBackupApiKey}} {
+	}{{"pushplus_token", value.PushplusToken}, {"ai_api_key", value.AiAPIKey}, {"ai_backup_api_key", value.AiBackupAPIKey}} {
 		if field.secret.IsPresent && field.secret.Value != nil {
 			if err := validateNotificationText(field.name, *field.secret.Value, 4096); err != nil {
 				return err
@@ -96,12 +96,12 @@ type NotificationSettingsUpdate struct {
 	PushplusTopic        string       `json:"pushplus_topic"`
 	PushplusChannel      string       `json:"pushplus_channel"`
 	SyncToTrackingFolder bool         `json:"sync_to_tracking_folder"`
-	AiBaseUrl            string       `json:"ai_base_url"`
-	AiApiKey             SecretUpdate `json:"ai_api_key"`
+	AiBaseURL            string       `json:"ai_base_url"`
+	AiAPIKey             SecretUpdate `json:"ai_api_key"`
 	AiModel              string       `json:"ai_model"`
 	AiSystemPrompt       string       `json:"ai_system_prompt"`
-	AiBackupBaseUrl      string       `json:"ai_backup_base_url"`
-	AiBackupApiKey       SecretUpdate `json:"ai_backup_api_key"`
+	AiBackupBaseURL      string       `json:"ai_backup_base_url"`
+	AiBackupAPIKey       SecretUpdate `json:"ai_backup_api_key"`
 	AiBackupModel        string       `json:"ai_backup_model"`
 	AiBackupSystemPrompt string       `json:"ai_backup_system_prompt"`
 	AiRetryAttempts      int64        `json:"ai_retry_attempts"`
@@ -118,8 +118,8 @@ func (value NotificationSettingsUpdate) LogValue() slog.Value {
 
 // NotificationSettings preserves the notification settings contract.
 type NotificationSettings struct {
-	Id                   int64    `json:"-"`
-	UserId               int64    `json:"-"`
+	ID                   int64    `json:"-"`
+	UserID               int64    `json:"-"`
 	Keywords             []string `json:"-"`
 	Directions           []string `json:"-"`
 	SelectedDatabases    []string `json:"-"`
@@ -129,12 +129,12 @@ type NotificationSettings struct {
 	PushplusTopic        string   `json:"-"`
 	PushplusChannel      string   `json:"-"`
 	SyncToTrackingFolder bool     `json:"-"`
-	AiBaseUrl            string   `json:"-"`
-	AiApiKey             string   `json:"-"`
+	AiBaseURL            string   `json:"-"`
+	AiAPIKey             string   `json:"-"`
 	AiModel              string   `json:"-"`
 	AiSystemPrompt       string   `json:"-"`
-	AiBackupBaseUrl      string   `json:"-"`
-	AiBackupApiKey       string   `json:"-"`
+	AiBackupBaseURL      string   `json:"-"`
+	AiBackupAPIKey       string   `json:"-"`
 	AiBackupModel        string   `json:"-"`
 	AiBackupSystemPrompt string   `json:"-"`
 	AiRetryAttempts      int64    `json:"-"`
@@ -149,8 +149,8 @@ func (value NotificationSettings) LogValue() slog.Value { return slog.StringValu
 
 // NotificationSettingsResponse preserves the notification settings contract.
 type NotificationSettingsResponse struct {
-	Id                   int64    `json:"id" nullable:"false" format:"int64"`
-	UserId               int64    `json:"user_id" nullable:"false" format:"int64"`
+	ID                   int64    `json:"id" nullable:"false" format:"int64"`
+	UserID               int64    `json:"user_id" nullable:"false" format:"int64"`
 	Keywords             []string `json:"keywords" nullable:"false"`
 	Directions           []string `json:"directions" nullable:"false"`
 	SelectedDatabases    []string `json:"selected_databases" nullable:"false"`
@@ -161,14 +161,14 @@ type NotificationSettingsResponse struct {
 	PushplusTopic        string   `json:"pushplus_topic" nullable:"false"`
 	PushplusChannel      string   `json:"pushplus_channel" nullable:"false"`
 	SyncToTrackingFolder bool     `json:"sync_to_tracking_folder" nullable:"false"`
-	AiBaseUrl            string   `json:"ai_base_url" nullable:"false"`
-	HasAiApiKey          bool     `json:"has_ai_api_key" nullable:"false"`
-	AiApiKeyMask         string   `json:"ai_api_key_mask" nullable:"false"`
+	AiBaseURL            string   `json:"ai_base_url" nullable:"false"`
+	HasAiAPIKey          bool     `json:"has_ai_api_key" nullable:"false"`
+	AiAPIKeyMask         string   `json:"ai_api_key_mask" nullable:"false"`
 	AiModel              string   `json:"ai_model" nullable:"false"`
 	AiSystemPrompt       string   `json:"ai_system_prompt" nullable:"false"`
-	AiBackupBaseUrl      string   `json:"ai_backup_base_url" nullable:"false"`
-	HasAiBackupApiKey    bool     `json:"has_ai_backup_api_key" nullable:"false"`
-	AiBackupApiKeyMask   string   `json:"ai_backup_api_key_mask" nullable:"false"`
+	AiBackupBaseURL      string   `json:"ai_backup_base_url" nullable:"false"`
+	HasAiBackupAPIKey    bool     `json:"has_ai_backup_api_key" nullable:"false"`
+	AiBackupAPIKeyMask   string   `json:"ai_backup_api_key_mask" nullable:"false"`
 	AiBackupModel        string   `json:"ai_backup_model" nullable:"false"`
 	AiBackupSystemPrompt string   `json:"ai_backup_system_prompt" nullable:"false"`
 	AiRetryAttempts      int64    `json:"ai_retry_attempts" nullable:"false" format:"int64"`
@@ -194,8 +194,8 @@ func (value NotificationSettings) Public() NotificationSettingsResponse {
 		return "••••"
 	}
 	return NotificationSettingsResponse{
-		Id:                   value.Id,
-		UserId:               value.UserId,
+		ID:                   value.ID,
+		UserID:               value.UserID,
 		Keywords:             value.Keywords,
 		Directions:           value.Directions,
 		SelectedDatabases:    value.SelectedDatabases,
@@ -206,14 +206,14 @@ func (value NotificationSettings) Public() NotificationSettingsResponse {
 		PushplusTopic:        value.PushplusTopic,
 		PushplusChannel:      value.PushplusChannel,
 		SyncToTrackingFolder: value.SyncToTrackingFolder,
-		AiBaseUrl:            value.AiBaseUrl,
-		HasAiApiKey:          value.AiApiKey != "",
-		AiApiKeyMask:         mask(value.AiApiKey),
+		AiBaseURL:            value.AiBaseURL,
+		HasAiAPIKey:          value.AiAPIKey != "",
+		AiAPIKeyMask:         mask(value.AiAPIKey),
 		AiModel:              value.AiModel,
 		AiSystemPrompt:       value.AiSystemPrompt,
-		AiBackupBaseUrl:      value.AiBackupBaseUrl,
-		HasAiBackupApiKey:    value.AiBackupApiKey != "",
-		AiBackupApiKeyMask:   mask(value.AiBackupApiKey),
+		AiBackupBaseURL:      value.AiBackupBaseURL,
+		HasAiBackupAPIKey:    value.AiBackupAPIKey != "",
+		AiBackupAPIKeyMask:   mask(value.AiBackupAPIKey),
 		AiBackupModel:        value.AiBackupModel,
 		AiBackupSystemPrompt: value.AiBackupSystemPrompt,
 		AiRetryAttempts:      value.AiRetryAttempts,

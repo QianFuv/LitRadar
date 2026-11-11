@@ -58,7 +58,7 @@ func ExtractFullText(original domain.Source, document Document) (domain.Source, 
 	if len(document.Text) > MaxPageBytes || IsChallenge(document) {
 		return domain.Source{}, ErrUnrecognized
 	}
-	parsed := parseHtml(document.Text)
+	parsed := parseHTML(document.Text)
 	collection := parsed.Find("[data-test='collection-title']").First()
 	body, err := selectFullTextBody(original, document, parsed, collection)
 	if err != nil {
@@ -74,7 +74,7 @@ func ExtractFullText(original domain.Source, document Document) (domain.Source, 
 	result := original
 	result.Scope = scope
 	result.Requirements = requirements
-	result.SourceUrl = document.FinalUrl
+	result.SourceURL = document.FinalURL
 	if domain.ParseSource(result) == nil {
 		return domain.Source{}, ErrUnrecognized
 	}
@@ -130,7 +130,7 @@ func pdfBody(original domain.Source, document Document, isFamily func(string, st
 		return "", ErrUnrecognized
 	}
 	body := strings.TrimSpace(text[matched[1]:])
-	location, _ := whatwg.NewParser().Parse(document.FinalUrl)
+	location, _ := whatwg.NewParser().Parse(document.FinalURL)
 	if isFamily("www.poms.org", "/sites/default/files/callforpapers/", "issn-1059-1478") && location.Pathname() == "/sites/default/files/callforpapers/FlexMfgEcosystems-Revised_0.pdf" {
 		return pomsManufacturingBody(body)
 	}
@@ -139,7 +139,7 @@ func pdfBody(original domain.Source, document Document, isFamily func(string, st
 
 // selectFullTextBody retains ordered publisher-family precedence before PDF and generic extraction.
 func selectFullTextBody(original domain.Source, document Document, parsed *goquery.Document, collection *goquery.Selection) (string, error) {
-	location, _ := whatwg.NewParser().Parse(document.FinalUrl)
+	location, _ := whatwg.NewParser().Parse(document.FinalURL)
 	isFamily := func(host, path, id string) bool {
 		return location != nil && location.Hostname() == host && strings.HasPrefix(location.Pathname(), path) && slices.Contains(original.CatalogIds, id)
 	}
@@ -318,8 +318,8 @@ func hasDifferentOriginalLink(original domain.Source, document Document, parsed 
 		link := goquery.NewDocumentFromNode(node)
 		if matchingTitle(link.Text(), original.Title) {
 			href, _ := link.Attr("href")
-			joined, err := whatwg.NewParser().ParseRef(document.FinalUrl, href)
-			if err == nil && strings.SplitN(joined.Href(false), "#", 2)[0] != strings.SplitN(document.FinalUrl, "#", 2)[0] {
+			joined, err := whatwg.NewParser().ParseRef(document.FinalURL, href)
+			if err == nil && strings.SplitN(joined.Href(false), "#", 2)[0] != strings.SplitN(document.FinalURL, "#", 2)[0] {
 				return true
 			}
 		}
@@ -352,7 +352,7 @@ func pomsManufacturingBody(body string) (string, error) {
 	dates := firstMatch(`(?im)^Deadlines\s*$`, body)
 	requirements := firstMatch(`(?im)^Authors are encouraged to contact the editorial team`, body)
 	editors := firstMatch(`(?im)^Guest Editors\s*$`, body)
-	if scope == nil || dates == nil || requirements == nil || editors == nil || !(scope[0] < dates[0] && dates[1] <= requirements[0] && requirements[0] < editors[0]) {
+	if scope == nil || dates == nil || requirements == nil || editors == nil || (scope[0] >= dates[0] || dates[1] > requirements[0] || requirements[0] >= editors[0]) {
 		return "", ErrUnrecognized
 	}
 	return strings.TrimSpace(body[scope[0]:dates[0]]) + "\n" + strings.TrimSpace(body[requirements[0]:editors[0]]), nil

@@ -58,7 +58,7 @@ func runLiveIndex(ctx context.Context, config LiveConfig, run catalogRunner, not
 			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
 		}
 	}()
-	owner := storage.NewBatchOwnerId()
+	owner := storage.NewBatchOwnerID()
 	admission, err := storage.AdmitBatch(ctx, connection.Conn, request, config.ShouldResume, owner, time.Now().Unix())
 	if err != nil {
 		return LiveRunOutcome{}, err
@@ -214,7 +214,7 @@ func runAdmittedLiveBatch(ctx context.Context, connection *sql.Conn, config Live
 	if admission.IsAbandoning {
 		replacement, err := replaceAbandoningLiveBatch(ctx, connection, config, batch, request, owner)
 		if err != nil {
-			if err := storage.ReleaseBatchLease(context.Background(), connection, batch.BatchId, owner); err != nil {
+			if err := storage.ReleaseBatchLease(context.Background(), connection, batch.BatchID, owner); err != nil {
 				slog.Warn("cleanup.failed", "operation", "storage.ReleaseBatchLease", "error", err)
 			}
 			return LiveRunOutcome{}, err
@@ -231,7 +231,7 @@ func runAdmittedLiveBatch(ctx context.Context, connection *sql.Conn, config Live
 				resultError = errors.Join(resultError, fmt.Errorf("close separate: %w", closeError))
 			}
 		}()
-		return storage.HeartbeatBatchLease(context.Background(), separate.Conn, batch.BatchId, owner, time.Now().Unix())
+		return storage.HeartbeatBatchLease(context.Background(), separate.Conn, batch.BatchID, owner, time.Now().Unix())
 	}, "batch heartbeat thread panicked", 30*time.Second)
 	defer func() {
 		if err := heartbeat.stopAndCheck(); err != nil {
@@ -241,7 +241,7 @@ func runAdmittedLiveBatch(ctx context.Context, connection *sql.Conn, config Live
 	outcomes, executionError := executeAdmittedLiveBatch(ctx, connection, config, request, batch, stopAfter, run, notify)
 	heartbeatError := heartbeat.stopAndCheck()
 	if executionError != nil || heartbeatError != nil {
-		if err := storage.ReleaseBatchLease(context.Background(), connection, batch.BatchId, owner); err != nil {
+		if err := storage.ReleaseBatchLease(context.Background(), connection, batch.BatchID, owner); err != nil {
 			slog.Warn("cleanup.failed", "operation", "storage.ReleaseBatchLease", "error", err)
 		}
 		if executionError != nil {
@@ -259,7 +259,7 @@ func replaceAbandoningLiveBatch(ctx context.Context, connection *sql.Conn, confi
 		if err != nil {
 			return storage.IndexBatch{}, err
 		}
-		_, err = storage.AbandonBatchCheckpoints(ctx, control.Conn, batch.BatchId)
+		_, err = storage.AbandonBatchCheckpoints(ctx, control.Conn, batch.BatchID)
 		if closeError := control.Close(); closeError != nil {
 			err = errors.Join(err, fmt.Errorf("close catalog control: %w", closeError))
 		}
@@ -267,7 +267,7 @@ func replaceAbandoningLiveBatch(ctx context.Context, connection *sql.Conn, confi
 			return storage.IndexBatch{}, err
 		}
 	}
-	return storage.ReplaceAbandoningBatch(ctx, connection, batch.BatchId, request, owner, time.Now().Unix())
+	return storage.ReplaceAbandoningBatch(ctx, connection, batch.BatchID, request, owner, time.Now().Unix())
 }
 
 // executeAdmittedLiveBatch adopts legacy state for every requested catalog before any stop boundary.
@@ -278,7 +278,7 @@ func executeAdmittedLiveBatch(ctx context.Context, connection *sql.Conn, config 
 			if err != nil {
 				return nil, err
 			}
-			_, err = storage.AdoptLegacyBatchState(ctx, control.Conn, input.CatalogName, input.ProviderName, batch.BatchId, request.Mode, request.Selection == "explicit_file")
+			_, err = storage.AdoptLegacyBatchState(ctx, control.Conn, input.CatalogName, input.ProviderName, batch.BatchID, request.Mode, request.Selection == "explicit_file")
 			if closeError := control.Close(); closeError != nil {
 				err = errors.Join(err, fmt.Errorf("close catalog control: %w", closeError))
 			}
@@ -293,14 +293,14 @@ func executeAdmittedLiveBatch(ctx context.Context, connection *sql.Conn, config 
 // finishLiveBatch preserves caller-context pause release and completion-error precedence.
 func finishLiveBatch(ctx context.Context, connection *sql.Conn, batch storage.IndexBatch, owner string, outcomes []LiveCatalogOutcome) (LiveRunOutcome, error) {
 	if len(outcomes) < len(batch.Catalogs) {
-		if err := storage.ReleaseBatchLease(ctx, connection, batch.BatchId, owner); err != nil {
+		if err := storage.ReleaseBatchLease(ctx, connection, batch.BatchID, owner); err != nil {
 			return LiveRunOutcome{}, err
 		}
 		message := "Requested catalog boundary reached; resume without --stop-after to continue."
 		return LiveRunOutcome{Status: "paused", Message: &message, Csvs: outcomes}, nil
 	}
-	if err := storage.CompleteBatch(ctx, connection, batch.BatchId, owner, time.Now().Unix()); err != nil {
-		if err := storage.ReleaseBatchLease(context.Background(), connection, batch.BatchId, owner); err != nil {
+	if err := storage.CompleteBatch(ctx, connection, batch.BatchID, owner, time.Now().Unix()); err != nil {
+		if err := storage.ReleaseBatchLease(context.Background(), connection, batch.BatchID, owner); err != nil {
 			slog.Warn("cleanup.failed", "operation", "storage.ReleaseBatchLease", "error", err)
 		}
 		return LiveRunOutcome{}, err

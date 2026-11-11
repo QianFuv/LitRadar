@@ -24,7 +24,7 @@ func TestHttpPanicsCloseConnectionWithoutPayloadOrStack(t *testing.T) {
 	previous := slog.Default()
 	slog.SetDefault(logger)
 	defer slog.SetDefault(previous)
-	server := httptest.NewUnstartedServer(redactHttpPanics(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("synthetic-private-panic-sentinel") })))
+	server := httptest.NewUnstartedServer(redactHTTPPanics(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("synthetic-private-panic-sentinel") })))
 	server.Config.ErrorLog = log.New(&serverErrors, "", 0)
 	server.Start()
 	response, err := server.Client().Get(server.URL)
@@ -83,7 +83,7 @@ func TestServiceLifecycleLogsOnlySuccessfulJoinedShutdown(t *testing.T) {
 
 func TestHttpAbortHandlerStaysSilent(t *testing.T) {
 	var output bytes.Buffer
-	server := httptest.NewUnstartedServer(redactHttpPanics(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic(http.ErrAbortHandler) })))
+	server := httptest.NewUnstartedServer(redactHTTPPanics(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic(http.ErrAbortHandler) })))
 	server.Config.ErrorLog = log.New(&output, "", 0)
 	server.Start()
 	response, err := server.Client().Get(server.URL)

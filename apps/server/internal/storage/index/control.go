@@ -20,12 +20,12 @@ import (
 const ControlSchemaVersion = 5
 
 // SyncScope selects one maintained journal inside a catalog/provider namespace.
-type SyncScope struct{ CatalogName, ProviderName, CatalogId string }
+type SyncScope struct{ CatalogName, ProviderName, CatalogID string }
 
 // SyncRun binds disposable progress to the frozen owner, mode and successful base anchor.
 type SyncRun struct {
 	Scope          SyncScope
-	BatchId, RunId string
+	BatchID, RunID string
 	Mode           domain.IndexSyncMode
 	BaseAnchor     *string
 }
@@ -34,13 +34,13 @@ type SyncRun struct {
 type ProviderSyncAnchor struct {
 	CommittedAnchor  *string `json:"committed_anchor"`
 	CompletedAt      string  `json:"completed_at"`
-	CompletedBatchId *string `json:"completed_batch_id"`
+	CompletedBatchID *string `json:"completed_batch_id"`
 }
 
 // ProviderRunCheckpoint preserves the first attempt's epoch while ownership and progress advance.
 type ProviderRunCheckpoint struct {
-	BatchId             *string              `json:"batch_id"`
-	RunId               string               `json:"run_id"`
+	BatchID             *string              `json:"batch_id"`
+	RunID               string               `json:"run_id"`
 	Mode                domain.IndexSyncMode `json:"mode"`
 	BaseAnchor          *string              `json:"base_anchor"`
 	TraversalCheckpoint *string              `json:"traversal_checkpoint"`
@@ -53,17 +53,17 @@ var controlQueries controldb.Queries
 
 // Format writes checkpoint metadata without exposing persisted provider payloads.
 func (value ProviderRunCheckpoint) Format(state fmt.State, verb rune) {
-	_, _ = fmt.Fprintf(state, "ProviderRunCheckpoint{has_batch:%t run:%q mode:%s has_base:%t has_checkpoint:%t started:%q updated:%q}", value.BatchId != nil, value.RunId, value.Mode, value.BaseAnchor != nil, value.TraversalCheckpoint != nil, value.StartedAt, value.UpdatedAt)
+	_, _ = fmt.Fprintf(state, "ProviderRunCheckpoint{has_batch:%t run:%q mode:%s has_base:%t has_checkpoint:%t started:%q updated:%q}", value.BatchID != nil, value.RunID, value.Mode, value.BaseAnchor != nil, value.TraversalCheckpoint != nil, value.StartedAt, value.UpdatedAt)
 }
 
 // Format exposes only the presence of opaque completed state.
 func (value ProviderSyncAnchor) Format(state fmt.State, verb rune) {
-	_, _ = fmt.Fprintf(state, "ProviderSyncAnchor{has_anchor:%t completed:%q has_batch:%t}", value.CommittedAnchor != nil, value.CompletedAt, value.CompletedBatchId != nil)
+	_, _ = fmt.Fprintf(state, "ProviderSyncAnchor{has_anchor:%t completed:%q has_batch:%t}", value.CommittedAnchor != nil, value.CompletedAt, value.CompletedBatchID != nil)
 }
 
 // Format retains safe ownership information without exposing the frozen provider anchor.
 func (value SyncRun) Format(state fmt.State, verb rune) {
-	_, _ = fmt.Fprintf(state, "SyncRun{scope:%v batch:%q run:%q mode:%s has_base:%t}", value.Scope, value.BatchId, value.RunId, value.Mode, value.BaseAnchor != nil)
+	_, _ = fmt.Fprintf(state, "SyncRun{scope:%v batch:%q run:%q mode:%s has_base:%t}", value.Scope, value.BatchID, value.RunID, value.Mode, value.BaseAnchor != nil)
 }
 
 // JournalSyncPreparation skips only same-batch completed coverage when resume is enabled.
@@ -74,7 +74,7 @@ type JournalSyncPreparation struct {
 
 // ControlError exposes stable recovery classifications and safe orchestration metadata.
 type ControlError struct {
-	Kind, Reason, RunId     string
+	Kind, Reason, RunID     string
 	FoundVersion, ExpiresAt int64
 	Stored, Requested       domain.IndexSyncMode
 }
@@ -84,11 +84,11 @@ func (err *ControlError) Error() string {
 	case "unsupported_version":
 		return fmt.Sprintf("unsupported index control schema version %d; maximum supported is %d", err.FoundVersion, ControlSchemaVersion)
 	case "active_lease":
-		return fmt.Sprintf("index control scope is owned by active run %s until %d", err.RunId, err.ExpiresAt)
+		return fmt.Sprintf("index control scope is owned by active run %s until %d", err.RunID, err.ExpiresAt)
 	case "ownership_lost":
-		return fmt.Sprintf("index run %s no longer owns its control lease", err.RunId)
+		return fmt.Sprintf("index run %s no longer owns its control lease", err.RunID)
 	case "run_ownership_lost":
-		return fmt.Sprintf("index run %s no longer owns the frozen journal synchronization state", err.RunId)
+		return fmt.Sprintf("index run %s no longer owns the frozen journal synchronization state", err.RunID)
 	case "mode_mismatch":
 		return fmt.Sprintf("in-flight journal mode %s does not match requested mode %s; retry the original mode or disable resume", debugMode(err.Stored), debugMode(err.Requested))
 	case "batch_mismatch":
@@ -132,7 +132,7 @@ func validateRunMetadata(run, timestamp string) error {
 	}
 	return nil
 }
-func validateBatchId(value string) error {
+func validateBatchID(value string) error {
 	if value == "" || len(value) > 512 {
 		return invalidSync("batch id must be non-empty and bounded")
 	}
@@ -181,7 +181,7 @@ func ReadSyncAnchor(ctx context.Context, connection *sql.Conn, scope SyncScope) 
 	var anchor, batch sqlite.OptionalText
 	var completed sqlite.Text
 	err := func() error {
-		queryResult, err := controlQueries.SyncAnchor(ctx, connection, controldb.SyncAnchorParams{CatalogName: sqlite.Text(scope.CatalogName), ProviderName: sqlite.Text(scope.ProviderName), CatalogID: sqlite.Text(scope.CatalogId)})
+		queryResult, err := controlQueries.SyncAnchor(ctx, connection, controldb.SyncAnchorParams{CatalogName: sqlite.Text(scope.CatalogName), ProviderName: sqlite.Text(scope.ProviderName), CatalogID: sqlite.Text(scope.CatalogID)})
 		if err != nil {
 			return err
 		}
@@ -215,7 +215,7 @@ func ReadRunCheckpoint(ctx context.Context, connection *sql.Conn, scope SyncScop
 	var batch, base, checkpoint sqlite.OptionalText
 	var run, mode, started, updated sqlite.Text
 	err := func() error {
-		queryResult, err := controlQueries.RunCheckpoint(ctx, connection, controldb.RunCheckpointParams{CatalogName: sqlite.Text(scope.CatalogName), ProviderName: sqlite.Text(scope.ProviderName), CatalogID: sqlite.Text(scope.CatalogId)})
+		queryResult, err := controlQueries.RunCheckpoint(ctx, connection, controldb.RunCheckpointParams{CatalogName: sqlite.Text(scope.CatalogName), ProviderName: sqlite.Text(scope.ProviderName), CatalogID: sqlite.Text(scope.CatalogID)})
 		if err != nil {
 			return err
 		}

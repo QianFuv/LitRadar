@@ -31,7 +31,7 @@ func TestSearchTelemetryCoversMatchEntryPoints(t *testing.T) {
 	}
 	text = "shared"
 	writeQueryManifest(t, configuration, "catalog.sqlite", []int64{1001, 1012})
-	if _, err := WeeklyArticles(ctx, configuration, WeeklyArticlePageParams{WindowEnd: "2026-10-04T00:00:00Z", DbName: "catalog.sqlite", JournalId: 1, Limit: 10, Query: &text}, nil); err != nil {
+	if _, err := WeeklyArticles(ctx, configuration, WeeklyArticlePageParams{WindowEnd: "2026-10-04T00:00:00Z", DBName: "catalog.sqlite", JournalID: 1, Limit: 10, Query: &text}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := RelatedArticles(ctx, configuration, nil, 1001, 10); err != nil {

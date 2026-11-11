@@ -24,7 +24,7 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	identifier[6] = identifier[6]&0x0f | 0x40
 	identifier[8] = identifier[8]&0x3f | 0x80
 	id := fmt.Sprintf("%x-%x-%x-%x-%x", identifier[:4], identifier[4:6], identifier[6:8], identifier[8:10], identifier[10:])
-	request = withRequestId(request, id)
+	request = withRequestID(request, id)
 	selected, label, allow := handler.route(request)
 	request = request.WithContext(observability.StartSpan(request.Context(), "litradar_api::http_observability", "http.request", map[string]any{"component": "http", "request_id": id, "method": methodLabel(request.Method), "route": label}))
 	response := &policyResponse{ResponseWriter: writer, isHead: request.Method == "HEAD"}
@@ -75,7 +75,7 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	}
 	response.finish()
 	duration := time.Since(started)
-	handler.telemetry.Http(label, methodLabel(request.Method), response.status, duration)
+	handler.telemetry.HTTP(label, methodLabel(request.Method), response.status, duration)
 	logRequest(request, id, label, response.status, duration)
 }
 

@@ -36,7 +36,7 @@ func TestMalformedRedirectAndPathFailWithoutFollowing(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	for _, path := range []string{"", "/%GG"} {
-		response, err := localClient(server).PostJson(t.Context(), server.URL+path, nil, map[string]any{}, time.Second)
+		response, err := localClient(server).PostJSON(t.Context(), server.URL+path, nil, map[string]any{}, time.Second)
 		if !errors.Is(err, RequestFailed) || response.StatusCode != 0 {
 			t.Fatalf("malformed request succeeded: %+v %v", response, err)
 		}
@@ -53,7 +53,7 @@ func TestInvalidHeadersFailBeforeDnsAndNeverBecomeRetryableTimeout(t *testing.T)
 		lookups.Add(1)
 		return nil, errors.New("must not resolve")
 	}
-	_, err := client.PostJson(context.Background(), "https://invalid-header.example", http.Header{"Authorization": {"Bearer\nsecret"}}, map[string]any{}, time.Second)
+	_, err := client.PostJSON(context.Background(), "https://invalid-header.example", http.Header{"Authorization": {"Bearer\nsecret"}}, map[string]any{}, time.Second)
 	if err != RequestFailed || lookups.Load() != 0 {
 		t.Fatalf("builder error reached network: %v %d", err, lookups.Load())
 	}
@@ -68,7 +68,7 @@ func TestConnectionDeadlineIncludesDnsAndDoesNotLimitResponseBody(t *testing.T) 
 		return nil, errors.New("released")
 	}
 	started := time.Now()
-	_, err := client.PostJson(context.Background(), "https://slow-dns.example", nil, map[string]any{}, time.Second)
+	_, err := client.PostJSON(context.Background(), "https://slow-dns.example", nil, map[string]any{}, time.Second)
 	close(finished)
 	if err != TimedOut || time.Since(started) > 500*time.Millisecond {
 		t.Fatalf("DNS escaped connect deadline: %v %v", err, time.Since(started))
@@ -83,7 +83,7 @@ func TestConnectionDeadlineIncludesDnsAndDoesNotLimitResponseBody(t *testing.T) 
 	defer server.Close()
 	client = localClient(server)
 	client.connectTimeout = 70 * time.Millisecond
-	if _, err := client.PostJson(context.Background(), server.URL, nil, map[string]any{}, time.Second); err != nil {
+	if _, err := client.PostJSON(context.Background(), server.URL, nil, map[string]any{}, time.Second); err != nil {
 		t.Fatalf("connect deadline leaked into response: %v", err)
 	}
 }
@@ -158,8 +158,8 @@ func TestOutboundKeepsStatusWithoutReadingErrorBodyOrFollowingRedirect(t *testin
 			}))
 			defer server.Close()
 			started := time.Now()
-			result, err := localClient(server).PostJson(context.Background(), server.URL, nil, map[string]any{}, time.Second)
-			if err != nil || result.StatusCode != status || result.Body != nil || result.RequestId == nil || *result.RequestId != "safe:1" || result.RetryAfterSeconds == nil || *result.RetryAfterSeconds != 7 {
+			result, err := localClient(server).PostJSON(context.Background(), server.URL, nil, map[string]any{}, time.Second)
+			if err != nil || result.StatusCode != status || result.Body != nil || result.RequestID == nil || *result.RequestID != "safe:1" || result.RetryAfterSeconds == nil || *result.RetryAfterSeconds != 7 {
 				t.Fatalf("status metadata: %+v %v", result, err)
 			}
 			if time.Since(started) > 500*time.Millisecond || requests.Load() != 1 {
@@ -177,7 +177,7 @@ func TestSuccessBodyTimeoutIsNotRetryableRequestTimeout(t *testing.T) {
 		<-request.Context().Done()
 	}))
 	defer server.Close()
-	_, err := localClient(server).PostJson(context.Background(), server.URL, nil, map[string]any{}, 80*time.Millisecond)
+	_, err := localClient(server).PostJSON(context.Background(), server.URL, nil, map[string]any{}, 80*time.Millisecond)
 	if err != RequestFailed {
 		t.Fatalf("body timeout classification: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestOutboundSuccessHeaderAndBodyBoundaries(t *testing.T) {
 		{"missing-type", "", "", "{}", "", UnexpectedContentType},
 		{"declared-size", "", "application/json", "{}", "1000", ResponseTooLarge},
 		{"stream-size", "", "application/json", strings.Repeat(" ", 65), "", ResponseTooLarge},
-		{"invalid-json", "", "application/json", "private-sentinel", "", InvalidJson},
+		{"invalid-json", "", "application/json", "private-sentinel", "", InvalidJSON},
 		{"identity", "identity", "application/vendor+json; charset=utf-8", `{"id":9223372036854775807}`, "", nil},
 	}
 	for _, test := range tests {
@@ -218,7 +218,7 @@ func TestOutboundSuccessHeaderAndBodyBoundaries(t *testing.T) {
 			defer server.Close()
 			client := localClient(server)
 			client.maximum = 64
-			_, err := client.PostJson(context.Background(), server.URL, nil, map[string]any{}, time.Second)
+			_, err := client.PostJSON(context.Background(), server.URL, nil, map[string]any{}, time.Second)
 			if err != test.expected {
 				t.Fatalf("got %v want %v", err, test.expected)
 			}
@@ -229,7 +229,7 @@ func TestOutboundSuccessHeaderAndBodyBoundaries(t *testing.T) {
 func TestUrlAndAddressPolicyRejectBeforeDial(t *testing.T) {
 	client := New(time.Second)
 	for _, value := range []string{"http://example.com/", "https://@example.com/", "https://user:secret@example.com/", "https://example.com:0/", "https://example.com/?", "https://example.com/#", "https://127.0.0.1/", "https://2130706433/", "https://[::ffff:127.0.0.1]/"} {
-		if _, err := client.ValidateUrl(value); err == nil {
+		if _, err := client.ValidateURL(value); err == nil {
 			t.Errorf("accepted %s", value)
 		}
 	}
@@ -246,7 +246,7 @@ func TestUrlAndAddressPolicyRejectBeforeDial(t *testing.T) {
 	client.lookup = func(context.Context, string, string) ([]netip.Addr, error) {
 		return []netip.Addr{netip.MustParseAddr("8.8.8.8"), netip.MustParseAddr("127.0.0.1")}, nil
 	}
-	if _, err := client.PostJson(context.Background(), "https://mixed.example/", nil, map[string]any{}, time.Second); err != DisallowedAddress {
+	if _, err := client.PostJSON(context.Background(), "https://mixed.example/", nil, map[string]any{}, time.Second); err != DisallowedAddress {
 		t.Fatalf("mixed DNS: %v", err)
 	}
 }
@@ -266,15 +266,13 @@ func TestTimedOutDnsStillHoldsOneOfEightLookupSlots(t *testing.T) {
 			return []netip.Addr{netip.MustParseAddr("8.8.8.8")}, nil
 		}
 		for range 20 {
-			workers.Add(1)
-			go func() {
-				defer workers.Done()
+			workers.Go(func() {
 				ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 				defer cancel()
 				if _, err := client.resolve(ctx, "slow.example"); err != TimedOut {
 					t.Error(err)
 				}
-			}()
+			})
 		}
 		workers.Wait()
 		if maximum.Load() != 8 || active.Load() != 8 {

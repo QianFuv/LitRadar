@@ -14,27 +14,27 @@ type DedupeOutcome struct {
 	Record *DedupeRecord `json:"record"`
 }
 
-func validateDedupeScope(dbName string, userId, articleId int64) error {
-	if err := validateDbName(dbName); err != nil {
+func validateDedupeScope(dbName string, userID, articleID int64) error {
+	if err := validateDBName(dbName); err != nil {
 		return err
 	}
-	if err := validatePositiveId(userId, "Delivery dedupe user id is invalid"); err != nil {
+	if err := validatePositiveID(userID, "Delivery dedupe user id is invalid"); err != nil {
 		return err
 	}
-	return validatePositiveId(articleId, "Delivery dedupe article id is invalid")
+	return validatePositiveID(articleID, "Delivery dedupe article id is invalid")
 }
 
 // LoadDedupe returns any prior reservation or terminal outcome for an article.
-func (repository *Repository) LoadDedupe(ctx context.Context, workflow Workflow, dbName string, userId, articleId int64) (*DedupeRecord, error) {
-	if err := validateDedupeScope(dbName, userId, articleId); err != nil {
+func (repository *Repository) LoadDedupe(ctx context.Context, workflow Workflow, dbName string, userID, articleID int64) (*DedupeRecord, error) {
+	if err := validateDedupeScope(dbName, userID, articleID); err != nil {
 		return nil, err
 	}
-	return decodeDedupeRecord(queries.Dedupe(ctx, repository.database, deliverydb.DedupeParams{Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName), UserID: sqlite.Integer(userId), ArticleID: sqlite.Integer(articleId)}))
+	return decodeDedupeRecord(queries.Dedupe(ctx, repository.database, deliverydb.DedupeParams{Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName), UserID: sqlite.Integer(userID), ArticleID: sqlite.Integer(articleID)}))
 }
 
 // ListDedupe returns the workflow's reservations in stable user/article order.
 func (repository *Repository) ListDedupe(ctx context.Context, workflow Workflow, dbName string) ([]DedupeRecord, error) {
-	if err := validateDbName(dbName); err != nil {
+	if err := validateDBName(dbName); err != nil {
 		return nil, err
 	}
 	rows, err := queries.DedupeList(ctx, repository.database, deliverydb.DedupeListParams{Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName)})
@@ -54,7 +54,7 @@ func (repository *Repository) ListDedupe(ctx context.Context, workflow Workflow,
 
 // CleanupConfirmedDedupe never removes ambiguous or pending delivery protection.
 func (repository *Repository) CleanupConfirmedDedupe(ctx context.Context, workflow Workflow, dbName string, before float64) (int, error) {
-	if err := validateDbName(dbName); err != nil {
+	if err := validateDBName(dbName); err != nil {
 		return 0, err
 	}
 	if err := validateTime(before, "Delivery dedupe retention cutoff is invalid"); err != nil {
@@ -69,11 +69,11 @@ func (repository *Repository) CleanupConfirmedDedupe(ctx context.Context, workfl
 }
 
 // ReserveDedupe inserts a unique identity after validating its run scope.
-func (repository *Repository) ReserveDedupe(ctx context.Context, workflow Workflow, dbName string, userId, articleId, runId int64, owner string, now float64) (DedupeOutcome, error) {
-	if err := validateDedupeScope(dbName, userId, articleId); err != nil {
+func (repository *Repository) ReserveDedupe(ctx context.Context, workflow Workflow, dbName string, userID, articleID, runID int64, owner string, now float64) (DedupeOutcome, error) {
+	if err := validateDedupeScope(dbName, userID, articleID); err != nil {
 		return DedupeOutcome{}, err
 	}
-	if err := validatePositiveId(runId, "Delivery run id is invalid"); err != nil {
+	if err := validatePositiveID(runID, "Delivery run id is invalid"); err != nil {
 		return DedupeOutcome{}, err
 	}
 	if err := validateIdentifier(owner, "Delivery dedupe owner id is invalid"); err != nil {
@@ -84,17 +84,17 @@ func (repository *Repository) ReserveDedupe(ctx context.Context, workflow Workfl
 	}
 	var outcome DedupeOutcome
 	err := repository.immediate(ctx, func(connection *sql.Conn) error {
-		run, err := loadRunRecord(ctx, connection, runId)
+		run, err := loadRunRecord(ctx, connection, runID)
 		if err != nil {
 			return err
 		}
 		if run == nil {
 			return ErrNotFound
 		}
-		if run.Workflow != workflow || run.DbName == nil || *run.DbName != dbName {
+		if run.Workflow != workflow || run.DBName == nil || *run.DBName != dbName {
 			return invalid("Delivery dedupe scope does not match its run")
 		}
-		result, err := queries.ReserveDedupe(ctx, connection, deliverydb.ReserveDedupeParams{Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName), UserID: sqlite.Integer(userId), ArticleID: sqlite.Integer(articleId), DeliveryRunID: new(sqlite.Integer(runId)), ReservationOwner: new(sqlite.Text(owner)), ReservedAt: sqlite.Number(now), UpdatedAt: sqlite.Number(now)})
+		result, err := queries.ReserveDedupe(ctx, connection, deliverydb.ReserveDedupeParams{Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName), UserID: sqlite.Integer(userID), ArticleID: sqlite.Integer(articleID), DeliveryRunID: new(sqlite.Integer(runID)), ReservationOwner: new(sqlite.Text(owner)), ReservedAt: sqlite.Number(now), UpdatedAt: sqlite.Number(now)})
 		if err != nil {
 			return err
 		}
@@ -102,7 +102,7 @@ func (repository *Repository) ReserveDedupe(ctx context.Context, workflow Workfl
 		if err != nil {
 			return err
 		}
-		record, err := decodeDedupeRecord(queries.Dedupe(ctx, connection, deliverydb.DedupeParams{Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName), UserID: sqlite.Integer(userId), ArticleID: sqlite.Integer(articleId)}))
+		record, err := decodeDedupeRecord(queries.Dedupe(ctx, connection, deliverydb.DedupeParams{Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName), UserID: sqlite.Integer(userID), ArticleID: sqlite.Integer(articleID)}))
 		if err != nil {
 			return err
 		}
@@ -119,16 +119,16 @@ func (repository *Repository) ReserveDedupe(ctx context.Context, workflow Workfl
 	return outcome, err
 }
 
-func resolveDedupe(ctx context.Context, connection *sql.Conn, id, runId int64, owner string, revision int64, status DedupeStatus, message *string, now float64) error {
-	return checkCAS(queries.ResolveDedupe(ctx, connection, deliverydb.ResolveDedupeParams{Status: sqlite.Text(status), MessageID: (*sqlite.Text)(message), DeliveredAt: new(sqlite.Number(now)), UpdatedAt: sqlite.Number(now), ID: sqlite.Integer(id), DeliveryRunID: new(sqlite.Integer(runId)), ReservationOwner: new(sqlite.Text(owner)), Revision: sqlite.Integer(revision)}))
+func resolveDedupe(ctx context.Context, connection *sql.Conn, id, runID int64, owner string, revision int64, status DedupeStatus, message *string, now float64) error {
+	return checkCAS(queries.ResolveDedupe(ctx, connection, deliverydb.ResolveDedupeParams{Status: sqlite.Text(status), MessageID: (*sqlite.Text)(message), DeliveredAt: new(sqlite.Number(now)), UpdatedAt: sqlite.Number(now), ID: sqlite.Integer(id), DeliveryRunID: new(sqlite.Integer(runID)), ReservationOwner: new(sqlite.Text(owner)), Revision: sqlite.Integer(revision)}))
 }
 
 // ResolveDedupe finalizes one reservation using owner and revision CAS.
-func (repository *Repository) ResolveDedupe(ctx context.Context, id, runId int64, owner string, revision int64, status DedupeStatus, message *string, now float64) (*DedupeRecord, error) {
-	if err := validatePositiveId(id, "Delivery dedupe id is invalid"); err != nil {
+func (repository *Repository) ResolveDedupe(ctx context.Context, id, runID int64, owner string, revision int64, status DedupeStatus, message *string, now float64) (*DedupeRecord, error) {
+	if err := validatePositiveID(id, "Delivery dedupe id is invalid"); err != nil {
 		return nil, err
 	}
-	if err := validatePositiveId(runId, "Delivery run id is invalid"); err != nil {
+	if err := validatePositiveID(runID, "Delivery run id is invalid"); err != nil {
 		return nil, err
 	}
 	if err := validateIdentifier(owner, "Delivery dedupe owner id is invalid"); err != nil {
@@ -145,7 +145,7 @@ func (repository *Repository) ResolveDedupe(ctx context.Context, id, runId int64
 	}
 	var record *DedupeRecord
 	err := repository.immediate(ctx, func(connection *sql.Conn) error {
-		if err := resolveDedupe(ctx, connection, id, runId, owner, revision, status, message, now); err != nil {
+		if err := resolveDedupe(ctx, connection, id, runID, owner, revision, status, message, now); err != nil {
 			return err
 		}
 		var err error
@@ -156,8 +156,8 @@ func (repository *Repository) ResolveDedupe(ctx context.Context, id, runId int64
 }
 
 // ReleaseReservations atomically releases only the exact pre-send identities owned by this attempt.
-func (repository *Repository) ReleaseReservations(ctx context.Context, runId int64, owner string, reservations []DedupeResolution) (int, error) {
-	if err := validatePositiveId(runId, "Delivery run id is invalid"); err != nil {
+func (repository *Repository) ReleaseReservations(ctx context.Context, runID int64, owner string, reservations []DedupeResolution) (int, error) {
+	if err := validatePositiveID(runID, "Delivery run id is invalid"); err != nil {
 		return 0, err
 	}
 	if err := validateIdentifier(owner, "Delivery dedupe owner id is invalid"); err != nil {
@@ -168,7 +168,7 @@ func (repository *Repository) ReleaseReservations(ctx context.Context, runId int
 	}
 	err := repository.immediate(ctx, func(connection *sql.Conn) error {
 		for _, reservation := range reservations {
-			if err := checkCAS(queries.ReleaseReservation(ctx, connection, deliverydb.ReleaseReservationParams{ID: sqlite.Integer(reservation.Id), DeliveryRunID: new(sqlite.Integer(runId)), ReservationOwner: new(sqlite.Text(owner)), Revision: sqlite.Integer(reservation.ExpectedRevision)})); err != nil {
+			if err := checkCAS(queries.ReleaseReservation(ctx, connection, deliverydb.ReleaseReservationParams{ID: sqlite.Integer(reservation.ID), DeliveryRunID: new(sqlite.Integer(runID)), ReservationOwner: new(sqlite.Text(owner)), Revision: sqlite.Integer(reservation.ExpectedRevision)})); err != nil {
 				return err
 			}
 		}

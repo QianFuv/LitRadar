@@ -39,12 +39,12 @@ func TestWeeklyBucketsRetainPrivateMembership(t *testing.T) {
 				t.Fatal("single publication changed", buckets, err)
 			}
 			bucket := buckets["alpha.sqlite"]
-			if bucket == nil || !reflect.DeepEqual(bucket.ids, []int64{3, 1, 2}) || bucket.runId == nil || *bucket.runId != "latest" || bucket.generated.Format(false) != "2026-10-03T12:00:00Z" {
+			if bucket == nil || !reflect.DeepEqual(bucket.ids, []int64{3, 1, 2}) || bucket.runID == nil || *bucket.runID != "latest" || bucket.generated.Format(false) != "2026-10-03T12:00:00Z" {
 				t.Fatal("publication identity or membership changed", iteration, bucket)
 			}
 			bucket.ids[0] = 99
 			bucket.ids = append(bucket.ids, 100)
-			*bucket.runId = "mutated"
+			*bucket.runID = "mutated"
 		}
 		if cache != nil && cache.Stats().ParseAttempts != 1 {
 			t.Fatal("ownership check did not exercise cached clones", cache.Stats())
@@ -68,10 +68,10 @@ func TestWeeklyBucketsMergeInPublicationOrder(t *testing.T) {
 			t.Fatal("overlapping publication set changed", buckets, err)
 		}
 		first, other := buckets["alpha.sqlite"], buckets["beta.sqlite"]
-		if first == nil || other == nil || !reflect.DeepEqual(first.ids, []int64{5, 1, 2, 9, 4}) || !reflect.DeepEqual(other.ids, []int64{1, 0, -1}) || first.runId == nil || *first.runId != "latest" {
+		if first == nil || other == nil || !reflect.DeepEqual(first.ids, []int64{5, 1, 2, 9, 4}) || !reflect.DeepEqual(other.ids, []int64{1, 0, -1}) || first.runID == nil || *first.runID != "latest" {
 			t.Fatal("publication merge order or identity changed", iteration, first, other)
 		}
 		first.ids[0], other.ids[0] = 99, 100
-		*first.runId = "mutated"
+		*first.runID = "mutated"
 	}
 }

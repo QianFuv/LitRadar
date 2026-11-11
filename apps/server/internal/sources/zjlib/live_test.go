@@ -30,7 +30,7 @@ func loopbackLive(t *testing.T, handler http.Handler, config LiveConfig, deadlin
 
 // TestLiveFullLoginSearchAndDownload verifies ordered login, reuse, search and document contracts.
 func TestLiveFullLoginSearchAndDownload(t *testing.T) {
-	var serverUrl string
+	var serverURL string
 	var mutex sync.Mutex
 	paths := []string{}
 	polls := 0
@@ -41,16 +41,16 @@ func TestLiveFullLoginSearchAndDownload(t *testing.T) {
 		if request.Header.Get("User-Agent") != browserUserAgent || request.Header.Get("Accept-Language") != "zh-CN;q=0.9" {
 			t.Error("browser headers missing")
 		}
-		if serveLoginChallenge(t, writer, request, serverUrl, &polls) {
+		if serveLoginChallenge(t, writer, request, serverURL, &polls) {
 			return
 		}
-		if serveShareProtocol(t, writer, request, serverUrl) {
+		if serveShareProtocol(t, writer, request, serverURL) {
 			return
 		}
-		if serveProxyLogin(t, writer, request, serverUrl) {
+		if serveProxyLogin(t, writer, request, serverURL) {
 			return
 		}
-		if serveProxySearch(t, writer, request, serverUrl) {
+		if serveProxySearch(t, writer, request, serverURL) {
 			return
 		}
 		if serveFulltextDocument(t, writer, request) {
@@ -59,7 +59,7 @@ func TestLiveFullLoginSearchAndDownload(t *testing.T) {
 		t.Errorf("unexpected network request %s", request.URL.Path)
 		writer.WriteHeader(500)
 	}), DefaultLiveConfig(), time.Time{})
-	serverUrl = server.URL
+	serverURL = server.URL
 	client := NewClient(live)
 	if _, err := client.StartQrLogin(context.Background()); err != nil {
 		t.Fatal(err)
@@ -148,7 +148,7 @@ func TestLiveRejectsRedirectBeforeCrossFamilyTransmission(t *testing.T) {
 	var requests atomic.Int32
 	live, server := loopbackLive(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		requests.Add(1)
-		http.Redirect(writer, request, "/share/stolen", 302)
+		http.Redirect(writer, request, "/share/stolen", http.StatusFound)
 	}), DefaultLiveConfig(), time.Time{})
 	_, err := live.DownloadPdf(context.Background(), server.URL+"/proxy/download.aspx?token=private", nil, nil)
 	if err == nil || requests.Load() != 1 {
@@ -235,7 +235,7 @@ func TestLiveRedirectAndTruncatedPdfClassification(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			live, server := loopbackLive(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				if test.name == "redirect" {
-					http.Redirect(writer, request, "/share/no", 302)
+					http.Redirect(writer, request, "/share/no", http.StatusFound)
 					return
 				}
 				writer.Header().Set("Content-Type", "application/pdf")
@@ -280,13 +280,13 @@ func TestLiveProxyLoginRetriesOnlyRecognizedLoop(t *testing.T) {
 				case "/share/sso", "/share/entry/area/35594/2120", "/share/engine2/header/user-info":
 				case "/share/sso/api/auth/library/vpn358":
 					attempts.Add(1)
-					http.Redirect(writer, request, "/login/index.php?enc=sensitive", 302)
+					http.Redirect(writer, request, "/login/index.php?enc=sensitive", http.StatusFound)
 				case "/login/index.php":
 					switch mode {
 					case "self":
-						http.Redirect(writer, request, "/login/INDEX.php?changed=yes", 302)
+						http.Redirect(writer, request, "/login/INDEX.php?changed=yes", http.StatusFound)
 					case "foreign":
-						http.Redirect(writer, request, "https://example.com/private", 302)
+						http.Redirect(writer, request, "https://example.com/private", http.StatusFound)
 					case "wrong-host":
 						if _, err := fmt.Fprint(writer, "login page"); err != nil {
 							t.Errorf("fmt.Fprint: %v", err)
@@ -294,25 +294,25 @@ func TestLiveProxyLoginRetriesOnlyRecognizedLoop(t *testing.T) {
 					case "missing-location":
 						writer.WriteHeader(302)
 					case "hop-limit":
-						http.Redirect(writer, request, "/login/hop1", 302)
+						http.Redirect(writer, request, "/login/hop1", http.StatusFound)
 					default:
 						if mode == "recover" && attempts.Load() == 2 {
 							http.SetCookie(writer, &http.Cookie{Name: "vpn358_sid", Value: "session", Path: "/"})
 						}
-						http.Redirect(writer, request, "/proxy/kns55/", 302)
+						http.Redirect(writer, request, "/proxy/kns55/", http.StatusFound)
 					}
 				case "/proxy/kns55/":
 					if mode == "exhaust" || mode == "recover" && attempts.Load() == 1 {
-						http.Redirect(writer, request, "/login/index.php?enc=rotated", 302)
+						http.Redirect(writer, request, "/login/index.php?enc=rotated", http.StatusFound)
 					}
 				case "/login/hop1":
-					http.Redirect(writer, request, "/login/hop2", 302)
+					http.Redirect(writer, request, "/login/hop2", http.StatusFound)
 				case "/login/hop2":
-					http.Redirect(writer, request, "/login/hop3", 302)
+					http.Redirect(writer, request, "/login/hop3", http.StatusFound)
 				case "/login/hop3":
-					http.Redirect(writer, request, "/login/hop4", 302)
+					http.Redirect(writer, request, "/login/hop4", http.StatusFound)
 				case "/login/hop4":
-					http.Redirect(writer, request, "/login/hop5", 302)
+					http.Redirect(writer, request, "/login/hop5", http.StatusFound)
 				default:
 					t.Errorf("unexpected proxy request %s", request.URL.Path)
 					writer.WriteHeader(500)
@@ -355,11 +355,11 @@ func TestLiveSharedDeadlineStopsProxyRetrySleep(t *testing.T) {
 		case "/share/sso", "/share/entry/area/35594/2120", "/share/engine2/header/user-info":
 		case "/share/sso/api/auth/library/vpn358":
 			attempts.Add(1)
-			http.Redirect(writer, request, "/login/index.php", 302)
+			http.Redirect(writer, request, "/login/index.php", http.StatusFound)
 		case "/login/index.php":
-			http.Redirect(writer, request, "/proxy/kns55/", 302)
+			http.Redirect(writer, request, "/proxy/kns55/", http.StatusFound)
 		case "/proxy/kns55/":
-			http.Redirect(writer, request, "/login/index.php", 302)
+			http.Redirect(writer, request, "/login/index.php", http.StatusFound)
 		}
 	}), DefaultLiveConfig(), time.Now().Add(150*time.Millisecond))
 	_, err := live.WarmUpFulltextSession(context.Background(), "token")
@@ -396,7 +396,7 @@ func TestLiveHttpRedirectUsesStandardParsingBeforeFamilyValidation(t *testing.T)
 }
 
 // serveLoginChallenge verifies its ordered protocol phase without changing the handler mutex owner.
-func serveLoginChallenge(t *testing.T, writer http.ResponseWriter, request *http.Request, serverUrl string, polls *int) bool {
+func serveLoginChallenge(t *testing.T, writer http.ResponseWriter, request *http.Request, serverURL string, polls *int) bool {
 	t.Helper()
 	switch request.URL.Path {
 	case "/www/bff-api/reader-sso-service/portal-pc-api/login/zfb-qr":
@@ -424,10 +424,10 @@ func serveLoginChallenge(t *testing.T, writer http.ResponseWriter, request *http
 		if request.Header.Get("Bff-User-Token") != "private-token" || !strings.Contains(request.Header.Get("Cookie"), "userToken=private-token") {
 			t.Error("login token did not reach SSO")
 		}
-		if request.URL.Query().Get("referURL") != serverUrl+"/share/entry/area/35594/2120" {
+		if request.URL.Query().Get("referURL") != serverURL+"/share/entry/area/35594/2120" {
 			t.Error("wrong SSO entry")
 		}
-		if _, err := fmt.Fprintf(writer, `{"data":%q}`, serverUrl+"/share/protocolAuth"); err != nil {
+		if _, err := fmt.Fprintf(writer, `{"data":%q}`, serverURL+"/share/protocolAuth"); err != nil {
 			t.Fatalf("fmt.Fprintf: %v", err)
 		}
 	default:
@@ -437,22 +437,22 @@ func serveLoginChallenge(t *testing.T, writer http.ResponseWriter, request *http
 }
 
 // serveShareProtocol verifies its ordered protocol phase without changing the handler mutex owner.
-func serveShareProtocol(t *testing.T, writer http.ResponseWriter, request *http.Request, serverUrl string) bool {
+func serveShareProtocol(t *testing.T, writer http.ResponseWriter, request *http.Request, serverURL string) bool {
 	t.Helper()
 	switch request.URL.Path {
 	case "/share/protocolAuth":
-		if _, err := fmt.Fprintf(writer, `var sign='sync-sign';var url='/share/callback';var domainUrl='%s';var portalContextPath='/share/entry';sso-login/cookie/sync`, serverUrl); err != nil {
+		if _, err := fmt.Fprintf(writer, `var sign='sync-sign';var url='/share/callback';var domainUrl='%s';var portalContextPath='/share/entry';sso-login/cookie/sync`, serverURL); err != nil {
 			t.Fatalf("fmt.Fprintf: %v", err)
 		}
 	case "/share/entry/sso-login/cookie/sync":
 		if err := request.ParseForm(); err != nil {
 			t.Fatalf("request.ParseForm: %v", err)
 		}
-		assertShareSyncForm(t, request, serverUrl)
+		assertShareSyncForm(t, request, serverURL)
 		http.SetCookie(writer, &http.Cookie{Name: "share", Value: "yes", Path: "/"})
 		http.Redirect(writer, request, "/share/synced", http.StatusFound)
 	case "/share/synced":
-		assertShareSyncRedirect(t, request, serverUrl)
+		assertShareSyncRedirect(t, request, serverURL)
 	case "/share/entry/area/35594/2120":
 		if !strings.Contains(request.Header.Get("Cookie"), "share=yes") {
 			t.Error("share cookie missing")
@@ -468,18 +468,18 @@ func serveShareProtocol(t *testing.T, writer http.ResponseWriter, request *http.
 }
 
 // serveProxyLogin verifies its ordered protocol phase without changing the handler mutex owner.
-func serveProxyLogin(t *testing.T, writer http.ResponseWriter, request *http.Request, serverUrl string) bool {
+func serveProxyLogin(t *testing.T, writer http.ResponseWriter, request *http.Request, serverURL string) bool {
 	t.Helper()
 	switch request.URL.Path {
 	case "/share/sso/api/auth/library/vpn358":
 		if request.URL.Query().Get("wfwfid") != "2120" {
 			t.Error("proxy library id missing")
 		}
-		writer.Header().Set("Location", serverUrl+"/login/index.php?enc=private")
+		writer.Header().Set("Location", serverURL+"/login/index.php?enc=private")
 		writer.WriteHeader(302)
 	case "/login/index.php":
 		http.SetCookie(writer, &http.Cookie{Name: "vpn358_sid", Value: "private-session", Path: "/"})
-		http.Redirect(writer, request, "/proxy/kns55/", 302)
+		http.Redirect(writer, request, "/proxy/kns55/", http.StatusFound)
 	case "/proxy/kns55/":
 		if !strings.Contains(request.Header.Get("Cookie"), "vpn358_sid=private-session") {
 			t.Error("proxy session missing")
@@ -491,14 +491,14 @@ func serveProxyLogin(t *testing.T, writer http.ResponseWriter, request *http.Req
 }
 
 // serveProxySearch verifies its ordered protocol phase without changing the handler mutex owner.
-func serveProxySearch(t *testing.T, writer http.ResponseWriter, request *http.Request, serverUrl string) bool {
+func serveProxySearch(t *testing.T, writer http.ResponseWriter, request *http.Request, serverURL string) bool {
 	t.Helper()
 	switch request.URL.Path {
 	case "/proxy/kns55/brief/result.aspx":
 		if err := request.ParseForm(); err != nil {
 			t.Fatalf("request.ParseForm: %v", err)
 		}
-		assertSearchResultForm(t, request, serverUrl)
+		assertSearchResultForm(t, request, serverURL)
 	case "/proxy/kns55/request/SearchHandler.ashx":
 		if err := request.ParseForm(); err != nil {
 			t.Fatalf("request.ParseForm: %v", err)
@@ -557,25 +557,25 @@ func assertFulltextSessionRoundTrip(t *testing.T, live *LiveTransport, client *C
 }
 
 // assertShareSyncForm retains all assertions for the corresponding protocol request.
-func assertShareSyncForm(t *testing.T, request *http.Request, serverUrl string) {
+func assertShareSyncForm(t *testing.T, request *http.Request, serverURL string) {
 	t.Helper()
-	if request.PostForm.Get("sign") != "sync-sign" || request.PostForm.Get("url") != serverUrl+"/share/callback" || request.Header.Get("Origin") != serverUrl {
+	if request.PostForm.Get("sign") != "sync-sign" || request.PostForm.Get("url") != serverURL+"/share/callback" || request.Header.Get("Origin") != serverURL {
 		t.Error("sync form/origin mismatch")
 	}
 }
 
 // assertShareSyncRedirect retains all assertions for the corresponding protocol request.
-func assertShareSyncRedirect(t *testing.T, request *http.Request, serverUrl string) {
+func assertShareSyncRedirect(t *testing.T, request *http.Request, serverURL string) {
 	t.Helper()
-	if request.Method != "GET" || request.Header.Get("Referer") != serverUrl+"/share/protocolAuth" {
+	if request.Method != "GET" || request.Header.Get("Referer") != serverURL+"/share/protocolAuth" {
 		t.Error("redirect method/referer mismatch")
 	}
 }
 
 // assertSearchResultForm retains all assertions for the corresponding protocol request.
-func assertSearchResultForm(t *testing.T, request *http.Request, serverUrl string) {
+func assertSearchResultForm(t *testing.T, request *http.Request, serverURL string) {
 	t.Helper()
-	if request.Method != "POST" || request.PostForm.Get("txt_1_value1") != "Study & Methods" || request.PostForm.Get("{key}_logical") != "and" || request.Header.Get("Origin") != serverUrl {
+	if request.Method != "POST" || request.PostForm.Get("txt_1_value1") != "Study & Methods" || request.PostForm.Get("{key}_logical") != "and" || request.Header.Get("Origin") != serverURL {
 		t.Error("result form mismatch")
 	}
 }

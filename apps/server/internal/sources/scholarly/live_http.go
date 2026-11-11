@@ -50,12 +50,12 @@ func (live *LiveTransport) buildRequest(ctx context.Context, deadline time.Time,
 	}
 	return request, cancel, nil
 }
-func responseJson(response *http.Response) (any, error) {
+func responseJSON(response *http.Response) (any, error) {
 	body, err := transport.BoundedBytes(response, scholarlyMaximumBytes)
 	if err != nil {
 		return nil, err
 	}
-	return transport.ParseJson(body)
+	return transport.ParseJSON(body)
 }
 func retryHeader(headers http.Header) *scheduleTime {
 	delay, ok := transport.RetryAfter(headers)
@@ -143,10 +143,10 @@ func safeSemanticBody(status uint16, payload any) any {
 
 func (live *LiveTransport) executeOpenAlex(ctx context.Context, endpoint, url string, baseQuery []QueryPair) sourceExecution {
 	deadline := live.logicalDeadline(ctx)
-	maximum := max(len(live.config.OpenAlexApiKeys), 1) + 2
+	maximum := max(len(live.config.OpenAlexAPIKeys), 1) + 2
 	excluded := []int{}
 	execution := sourceExecution{attempts: []executionAttempt{}}
-	for index := 0; index < maximum; index++ {
+	for index := range maximum {
 		lease, err := live.openAlex.reserve(ctx, excluded, deadline)
 		if err != nil {
 			if execution.err == nil {
@@ -177,7 +177,7 @@ func (live *LiveTransport) openAlexAttempt(ctx context.Context, lease *openAlexL
 	delay := seconds(1 << min(number-1, 5))
 	isSearch := endpoint == "source_search"
 	slot := lease.slot.Slot
-	query := append(append([]QueryPair{}, baseQuery...), QueryPair{"api_key", live.config.OpenAlexApiKeys[slot]})
+	query := append(append([]QueryPair{}, baseQuery...), QueryPair{"api_key", live.config.OpenAlexAPIKeys[slot]})
 	if _, hasTime := transport.Remaining(deadline); !hasTime || ctx.Err() != nil {
 		result.execution.err = sourceDeadlineError(OpenAlex)
 		return result
@@ -206,8 +206,8 @@ func (live *LiveTransport) openAlexAttempt(ctx context.Context, lease *openAlexL
 	status := uint16(response.StatusCode)
 	headers := openAlexHeaders(response.Header)
 	observeOpenAlexResponseThrottle(lease, status, &headers, delay)
-	payload, bodyError := responseJson(response)
-	if errors.Is(bodyError, transport.ErrInvalidJson) {
+	payload, bodyError := responseJSON(response)
+	if errors.Is(bodyError, transport.ErrInvalidJSON) {
 		payload = map[string]any{"error": "OpenAlex returned invalid JSON"}
 		bodyError = nil
 	}
@@ -220,15 +220,15 @@ func (live *LiveTransport) openAlexAttempt(ctx context.Context, lease *openAlexL
 		result.execution.attempts = []executionAttempt{newAttempt(OpenAlex, endpoint, "GET", request.URL.String(), number, slot, &status, true, false, "none", started)}
 		return result
 	}
-	return openAlexHttpFailure(lease, headers, delay, isSearch, endpoint, request.URL.String(), query, number, maximum, status, started, payload)
+	return openAlexHTTPFailure(lease, headers, delay, isSearch, endpoint, request.URL.String(), query, number, maximum, status, started, payload)
 }
 
 func (live *LiveTransport) executeSemantic(ctx context.Context, url string, query []QueryPair, body any) (any, error) {
 	deadline := live.logicalDeadline(ctx)
-	maximum := max(len(live.config.SemanticScholarApiKeys), 1) + 2
+	maximum := max(len(live.config.SemanticScholarAPIKeys), 1) + 2
 	excluded := []int{}
 	var lastError error
-	for index := 0; index < maximum; index++ {
+	for index := range maximum {
 		reserved, err := reserveSemantic(ctx, live.semantic, excluded, deadline)
 		if err != nil {
 			if lastError != nil {
@@ -255,7 +255,7 @@ func (live *LiveTransport) semanticAttempt(ctx context.Context, reserved reserva
 		result.execution.err = sourceDeadlineError(SemanticScholar)
 		return result
 	}
-	key := live.config.SemanticScholarApiKeys[slot]
+	key := live.config.SemanticScholarAPIKeys[slot]
 	request, cancel, err := live.buildRequest(ctx, deadline, "POST", url, query, body, &key)
 	if err != nil {
 		live.semantic.finish(reserved, unixScheduleTime(), healthTerminal, scheduleTime{})
@@ -275,8 +275,8 @@ func (live *LiveTransport) semanticAttempt(ctx context.Context, reserved reserva
 	status := uint16(response.StatusCode)
 	retry := retryHeader(response.Header)
 	isSuccess := status >= 200 && status < 300
-	payload, bodyError := responseJson(response)
-	if errors.Is(bodyError, transport.ErrInvalidJson) {
+	payload, bodyError := responseJSON(response)
+	if errors.Is(bodyError, transport.ErrInvalidJSON) {
 		if isSuccess {
 			result.shouldRetry = number < maximum
 			live.semantic.finish(reserved, unixScheduleTime(), healthTransient, delay)
@@ -296,7 +296,7 @@ func (live *LiveTransport) semanticAttempt(ctx context.Context, reserved reserva
 		result.execution.attempts = []executionAttempt{newAttempt(SemanticScholar, endpoint, "POST", request.URL.String(), number, slot, &status, true, false, "none", started)}
 		return result
 	}
-	return live.semanticHttpFailure(reserved, delay, retry, request.URL.String(), number, maximum, status, started, payload)
+	return live.semanticHTTPFailure(reserved, delay, retry, request.URL.String(), number, maximum, status, started, payload)
 }
 
 // validateSourceHeaderKey checks raw header bytes after URL and body validation.
@@ -316,7 +316,7 @@ func encodeSourceRequestBody(body any) ([]byte, error) {
 	if body == nil {
 		return nil, nil
 	}
-	return domain.Json(body)
+	return domain.JSON(body)
 }
 
 // redactSourceQueryValues replaces nonempty raw query values in their existing order.
@@ -377,8 +377,8 @@ func openAlexBodyFailure(lease *openAlexLease, headers rateHeaders, delay schedu
 	return result
 }
 
-// openAlexHttpFailure maps upstream health to the reserved key and returns a redacted terminal body.
-func openAlexHttpFailure(lease *openAlexLease, headers rateHeaders, delay scheduleTime, isSearch bool, endpoint, address string, query []QueryPair, number, maximum int, status uint16, started time.Time, payload any) attemptResult {
+// openAlexHTTPFailure maps upstream health to the reserved key and returns a redacted terminal body.
+func openAlexHTTPFailure(lease *openAlexLease, headers rateHeaders, delay scheduleTime, isSearch bool, endpoint, address string, query []QueryPair, number, maximum int, status uint16, started time.Time, payload any) attemptResult {
 	result := attemptResult{}
 	slot := lease.slot.Slot
 	outcome := openAlexHealth(status, payload)
@@ -414,8 +414,8 @@ func (live *LiveTransport) semanticBodyFailure(reserved reservation, delay sched
 	return result
 }
 
-// semanticHttpFailure applies retry-header cooldown only for transient or rate-limited outcomes.
-func (live *LiveTransport) semanticHttpFailure(reserved reservation, delay scheduleTime, retry *scheduleTime, address string, number, maximum int, status uint16, started time.Time, payload any) attemptResult {
+// semanticHTTPFailure applies retry-header cooldown only for transient or rate-limited outcomes.
+func (live *LiveTransport) semanticHTTPFailure(reserved reservation, delay scheduleTime, retry *scheduleTime, address string, number, maximum int, status uint16, started time.Time, payload any) attemptResult {
 	const endpoint = "paper_batch"
 	result := attemptResult{}
 	slot := reserved.Slot

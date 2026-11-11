@@ -61,7 +61,7 @@ func articleFixture(t *testing.T) (*articleHandlers, *authHandlers, *http.ServeM
 	return handlers, auth, router, token
 }
 func articleLocatorFixture() domain.ArticleLocator {
-	return domain.ArticleLocator{ArticleId: 1, CatalogId: "fixture-journal", JournalTitle: "Fixture Journal", Title: "Fixture article", Authors: []string{"Author"}, JournalIssns: []string{}}
+	return domain.ArticleLocator{ArticleID: 1, CatalogID: "fixture-journal", JournalTitle: "Fixture Journal", Title: "Fixture article", Authors: []string{"Author"}, JournalIssns: []string{}}
 }
 func registerArticleFixture(t *testing.T, handlers *articleHandlers, name string, fixture articleFixtureProvider) {
 	t.Helper()

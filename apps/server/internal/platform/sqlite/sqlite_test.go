@@ -191,7 +191,7 @@ func TestTransactionsAndBackupPreserveCommittedState(t *testing.T) {
 func TestFileUriPreservesNamesAndReadModes(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "literal#% &中文.sqlite")
-	encoded, err := FileUri(filename, "rwc")
+	encoded, err := FileURI(filename, "rwc")
 	if err != nil || !strings.Contains(encoded, "%23%25") || strings.Contains(encoded, "#") {
 		t.Fatalf("Unsafe URI %s %v", encoded, err)
 	}
@@ -317,7 +317,7 @@ func seedBackupSource(t *testing.T, database *sql.DB) {
 // backupPhysicalConnections keeps the source borrowed while modernc owns the destination.
 func backupPhysicalConnections(t *testing.T, source *sql.Conn, destination string) error {
 	t.Helper()
-	uri, err := FileUri(destination, "rwc")
+	uri, err := FileURI(destination, "rwc")
 	if err != nil {
 		return err
 	}

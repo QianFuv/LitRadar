@@ -16,8 +16,8 @@ import (
 
 // TestDiscoveryAmbiguityRejectsWholePage protects complete-snapshot admission with a valid neighboring card.
 func TestDiscoveryAmbiguityRejectsWholePage(t *testing.T) {
-	config := SourceConfig{Adapter: SpringerCollections, CatalogIds: []string{"a"}, JournalTitle: "Journal", IdentityTexts: []string{"Journal"}, AllowedUrls: []UrlRule{{Host: "publisher.example", PathPrefix: "/"}}}
-	document := Document{FinalUrl: "https://publisher.example/calls", Format: "html", Text: `<h1>Journal</h1><h2>Valid special issue</h2><p>Submission deadline: 31 December 2026</p><p>Submission status: Open for submissions</p><p>Research scope.</p>`}
+	config := SourceConfig{Adapter: SpringerCollections, CatalogIds: []string{"a"}, JournalTitle: "Journal", IdentityTexts: []string{"Journal"}, AllowedUrls: []URLRule{{Host: "publisher.example", PathPrefix: "/"}}}
+	document := Document{FinalURL: "https://publisher.example/calls", Format: "html", Text: `<h1>Journal</h1><h2>Valid special issue</h2><p>Submission deadline: 31 December 2026</p><p>Submission status: Open for submissions</p><p>Research scope.</p>`}
 	if parsed, err := ParsePage(config, document, "2026-10-07", true); err != nil || len(parsed.Sources) != 1 {
 		t.Fatal("valid neighboring card rejected", parsed, err)
 	}
@@ -29,8 +29,8 @@ func TestDiscoveryAmbiguityRejectsWholePage(t *testing.T) {
 
 // TestFirstTitleAnchorCannotBeReplacedByLaterValidAnchor protects first-match publisher link semantics.
 func TestFirstTitleAnchorCannotBeReplacedByLaterValidAnchor(t *testing.T) {
-	config := SourceConfig{Adapter: ElsevierCalls, CatalogIds: []string{"a"}, JournalTitle: "Journal", IdentityTexts: []string{"Journal"}, AllowedUrls: []UrlRule{{Host: "publisher.example", PathPrefix: "/"}}}
-	document := Document{FinalUrl: "https://publisher.example/calls", Format: "html", Text: `<a href="https://disallowed.example/topic">Topic</a><a href="/topic">Topic</a><h1>Journal</h1><h2>Call for papers</h2><h3>Topic</h3>`}
+	config := SourceConfig{Adapter: ElsevierCalls, CatalogIds: []string{"a"}, JournalTitle: "Journal", IdentityTexts: []string{"Journal"}, AllowedUrls: []URLRule{{Host: "publisher.example", PathPrefix: "/"}}}
+	document := Document{FinalURL: "https://publisher.example/calls", Format: "html", Text: `<a href="https://disallowed.example/topic">Topic</a><a href="/topic">Topic</a><h1>Journal</h1><h2>Call for papers</h2><h3>Topic</h3>`}
 	if _, err := ParsePage(config, document, "2026-10-07", true); !errors.Is(err, ErrUnrecognized) {
 		t.Fatal("later anchor replaced first", err)
 	}
@@ -38,7 +38,7 @@ func TestFirstTitleAnchorCannotBeReplacedByLaterValidAnchor(t *testing.T) {
 
 // TestOriginalNavigationLimitPrecedesDeduplication protects the three encountered-navigation budget.
 func TestOriginalNavigationLimitPrecedesDeduplication(t *testing.T) {
-	document := Document{FinalUrl: "https://publisher.example/start", Format: "html", Text: `<a href="/topic">Topic</a><a rel="next" href="/next">next</a><a rel="next" href="/next">next</a><a rel="next" href="/next">next</a><a rel="next" href="/fourth">next</a>`}
+	document := Document{FinalURL: "https://publisher.example/start", Format: "html", Text: `<a href="/topic">Topic</a><a rel="next" href="/next">next</a><a rel="next" href="/next">next</a><a rel="next" href="/next">next</a><a rel="next" href="/fourth">next</a>`}
 	links := OriginalLinks(domain.Source{Title: "Topic"}, document)
 	if !reflect.DeepEqual(links, []string{"https://publisher.example/topic", "https://publisher.example/next"}) {
 		t.Fatal("navigation admission changed", links)
@@ -51,7 +51,7 @@ func TestPdfTitleRuneBoundary(t *testing.T) {
 		prefix   int
 		expected error
 	}{{600, nil}, {601, ErrUnrecognized}} {
-		document := Document{FinalUrl: "https://publisher.example/original.pdf", Format: "pdf_text", Text: strings.Repeat("界", scenario.prefix) + "Topic\nOriginal scope"}
+		document := Document{FinalURL: "https://publisher.example/original.pdf", Format: "pdf_text", Text: strings.Repeat("界", scenario.prefix) + "Topic\nOriginal scope"}
 		body, err := pdfBody(domain.Source{Title: "Topic"}, document, func(string, string, string) bool { return false })
 		if !errors.Is(err, scenario.expected) || err == nil && body != "Original scope" {
 			t.Fatal("PDF title boundary changed", scenario.prefix, body, err)
@@ -62,7 +62,7 @@ func TestPdfTitleRuneBoundary(t *testing.T) {
 // TestCachedCapturePrecedesExpiredAdmission protects successful raw-key cache hits from later cancellation.
 func TestCachedCapturePrecedesExpiredAdmission(t *testing.T) {
 	cache := newCaptureCache()
-	document := Document{FinalUrl: "https://publisher.example/original", Text: "original", Format: "html"}
+	document := Document{FinalURL: "https://publisher.example/original", Text: "original", Format: "html"}
 	cache.documents["raw key"] = capturedDocument{document: document}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

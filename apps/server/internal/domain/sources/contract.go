@@ -23,7 +23,7 @@ type JournalRankings struct {
 
 // JournalCatalogEntry is the maintained provider-independent identity of one journal.
 type JournalCatalogEntry struct {
-	CatalogId      string          `json:"catalog_id"`
+	CatalogID      string          `json:"catalog_id"`
 	CatalogAliases []string        `json:"catalog_aliases"`
 	Title          string          `json:"title"`
 	Issn           *string         `json:"issn"`
@@ -36,7 +36,7 @@ type JournalCatalogEntry struct {
 
 // JournalDraft records only observed bibliographic identity, never provider URLs.
 type JournalDraft struct {
-	CatalogId            string   `json:"catalog_id"`
+	CatalogID            string   `json:"catalog_id"`
 	ObservedTitle        *string  `json:"observed_title"`
 	ObservedIssns        []string `json:"observed_issns"`
 	ObservedTitleAliases []string `json:"observed_title_aliases"`
@@ -44,7 +44,7 @@ type JournalDraft struct {
 
 // IssueDraft describes a canonical issue without a durable database identity.
 type IssueDraft struct {
-	CatalogId       string  `json:"catalog_id"`
+	CatalogID       string  `json:"catalog_id"`
 	PublicationYear *int64  `json:"publication_year"`
 	Title           *string `json:"title"`
 	Volume          *string `json:"volume"`
@@ -59,7 +59,7 @@ type ArticleAuthorDraft struct {
 
 // ArticleDraft carries provider-neutral content without durable identifiers or links.
 type ArticleDraft struct {
-	CatalogId       string               `json:"catalog_id"`
+	CatalogID       string               `json:"catalog_id"`
 	Title           string               `json:"title"`
 	PublicationYear *int64               `json:"publication_year"`
 	Date            *string              `json:"date"`
@@ -110,7 +110,7 @@ type ProviderProgress struct {
 
 // ProviderBatch returns one canonical content page and its provider-owned progress.
 type ProviderBatch struct {
-	CatalogId string           `json:"catalog_id"`
+	CatalogID string           `json:"catalog_id"`
 	Journal   JournalDraft     `json:"journal"`
 	Issues    []IssueDraft     `json:"issues"`
 	Articles  []ArticleDraft   `json:"articles"`
@@ -119,8 +119,8 @@ type ProviderBatch struct {
 
 // ArticleLocator contains the local metadata needed to resolve an ephemeral destination.
 type ArticleLocator struct {
-	ArticleId       identity.Id
-	CatalogId       string
+	ArticleID       identity.ID
+	CatalogID       string
 	JournalTitle    string
 	JournalIssns    []string
 	Title           string
@@ -146,7 +146,7 @@ const (
 
 // ArticleAccessContext carries the requesting user and shared monotonic deadline.
 type ArticleAccessContext struct {
-	UserId   *identity.Id
+	UserID   *identity.ID
 	Deadline time.Time
 }
 

@@ -33,7 +33,7 @@ func TestBundledSeedResumesHistoricalLineEndings(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			original, err := repository.ImportPrepared(context.Background(), assets.SeedId, seed)
+			original, err := repository.ImportPrepared(context.Background(), assets.SeedID, seed)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -45,7 +45,7 @@ func TestBundledSeedResumesHistoricalLineEndings(t *testing.T) {
 			} else if err == nil {
 				t.Fatal("arbitrary changed bytes accepted")
 			}
-			repeated, err := repository.ImportPrepared(context.Background(), assets.SeedId, seed)
+			repeated, err := repository.ImportPrepared(context.Background(), assets.SeedID, seed)
 			if err != nil || repeated.DidImport || repeated.ContentHash != original.ContentHash {
 				t.Fatal("historical marker rewritten", repeated, err)
 			}
@@ -84,7 +84,7 @@ func TestEvidenceFailurePreservesPublishedResult(t *testing.T) {
 	path := helperExecutable(t, "success", string(payload))
 	options := DefaultRefreshOptions()
 	options.ObscuraPath = &path
-	config := SourceConfig{SourceKey: "journal:a", CatalogIds: []string{"a"}, DiscoveryUrl: "https://link.springer.com/collections/a", ConfigVersion: 1, Adapter: SnapshotOnly}
+	config := SourceConfig{SourceKey: "journal:a", CatalogIds: []string{"a"}, DiscoveryURL: "https://link.springer.com/collections/a", ConfigVersion: 1, Adapter: SnapshotOnly}
 	directory := t.TempDir()
 	if err := os.Mkdir(filepath.Join(directory, "journal_a.json"), 0700); err != nil {
 		t.Fatal(err)

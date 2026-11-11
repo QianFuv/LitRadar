@@ -17,7 +17,7 @@ import (
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
-func testRepository(t *testing.T) (*auth.Repository, identity.Id) {
+func testRepository(t *testing.T) (*auth.Repository, identity.ID) {
 	t.Helper()
 	filename := filepath.Join(t.TempDir(), "auth.sqlite")
 	if _, err := migration.Migrate(context.Background(), filename); err != nil {
@@ -36,7 +36,7 @@ func testRepository(t *testing.T) (*auth.Repository, identity.Id) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return repository, admin.Id
+	return repository, admin.ID
 }
 
 func execute(t *testing.T, repository *auth.Repository, statement string) {
@@ -114,7 +114,7 @@ func TestAuditedCrudNormalizesFieldsAndRetainsCreation(t *testing.T) {
 	repository, actor := testRepository(t)
 	ctx := context.Background()
 	actorValue := int64(actor)
-	audit := domain.AuditEvent{ActorId: &actorValue, Action: "announcement_create", Outcome: "completed", OccurredAt: 100.5}
+	audit := domain.AuditEvent{ActorID: &actorValue, Action: "announcement_create", Outcome: "completed", OccurredAt: 100.5}
 	created := createNormalizedAnnouncement(t, ctx, repository, &actor, &audit)
 	assertAnnouncementUpdateRetainsCreation(t, ctx, repository, &actor, created, &audit)
 	audit.Action = "announcement_delete"
@@ -133,7 +133,7 @@ func TestAuditFailureRollsBackEveryAnnouncementMutation(t *testing.T) {
 	execute(t, repository, `CREATE TRIGGER reject_announcement_audit BEFORE INSERT ON security_audit_events BEGIN SELECT RAISE(ABORT,'private diagnostic'); END;`)
 	audit := domain.AuditEvent{Action: "announcement_update", Outcome: "completed", OccurredAt: 100}
 	assertAnnouncementAuditCreateAndUpdateFailures(t, ctx, repository, &actor, created, &audit)
-	if deleted, err := Delete(ctx, repository, &actor, created.Id, &audit); !errors.Is(err, domain.ErrAudit) || deleted {
+	if deleted, err := Delete(ctx, repository, &actor, created.ID, &audit); !errors.Is(err, domain.ErrAudit) || deleted {
 		t.Fatalf("delete failure=%t %v", deleted, err)
 	}
 	items, err := ListAll(ctx, repository)
@@ -153,16 +153,16 @@ func TestRevokedActorCannotMutateAndValidationPrecedesAuthority(t *testing.T) {
 	if _, err := Create(ctx, repository, &actor, "New", "Body", "normal", true, nil); !errors.Is(err, domain.ErrAdminForbidden) {
 		t.Fatal(err)
 	}
-	if _, err := Modify(ctx, repository, &actor, created.Id, Update{}, nil); !errors.Is(err, domain.ErrAdminForbidden) {
+	if _, err := Modify(ctx, repository, &actor, created.ID, Update{}, nil); !errors.Is(err, domain.ErrAdminForbidden) {
 		t.Fatal(err)
 	}
-	if _, err := Delete(ctx, repository, &actor, created.Id, nil); !errors.Is(err, domain.ErrAdminForbidden) {
+	if _, err := Delete(ctx, repository, &actor, created.ID, nil); !errors.Is(err, domain.ErrAdminForbidden) {
 		t.Fatal(err)
 	}
 	if _, err := Create(ctx, repository, &actor, " ", "Body", "normal", true, nil); err == nil || err.Error() != "Title must be 1-200 characters" {
 		t.Fatal(err)
 	}
-	if item, err := Get(ctx, repository, created.Id); err != nil || item == nil || item.Title != "Original" {
+	if item, err := Get(ctx, repository, created.ID); err != nil || item == nil || item.Title != "Original" {
 		t.Fatal("revoked actor changed announcement")
 	}
 }
@@ -185,7 +185,7 @@ func TestUnicodeFieldLimitsApplyAfterTrim(t *testing.T) {
 }
 
 // createNormalizedAnnouncement checks normalized fields and equal initial timestamps.
-func createNormalizedAnnouncement(t *testing.T, ctx context.Context, repository *auth.Repository, actor *identity.Id, audit *domain.AuditEvent) Announcement {
+func createNormalizedAnnouncement(t *testing.T, ctx context.Context, repository *auth.Repository, actor *identity.ID, audit *domain.AuditEvent) Announcement {
 	t.Helper()
 	created, err := Create(ctx, repository, actor, "  公告  ", " body ", " HIGH ", true, audit)
 	if err != nil {
@@ -198,12 +198,12 @@ func createNormalizedAnnouncement(t *testing.T, ctx context.Context, repository 
 }
 
 // assertAnnouncementUpdateRetainsCreation checks explicit field updates without replacing creation time.
-func assertAnnouncementUpdateRetainsCreation(t *testing.T, ctx context.Context, repository *auth.Repository, actor *identity.Id, created Announcement, audit *domain.AuditEvent) {
+func assertAnnouncementUpdateRetainsCreation(t *testing.T, ctx context.Context, repository *auth.Repository, actor *identity.ID, created Announcement, audit *domain.AuditEvent) {
 	t.Helper()
 	title := " changed "
 	isEnabled := false
 	audit.Action = "announcement_update"
-	updated, err := Modify(ctx, repository, actor, created.Id, Update{Title: &title, Enabled: &isEnabled}, audit)
+	updated, err := Modify(ctx, repository, actor, created.ID, Update{Title: &title, Enabled: &isEnabled}, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,19 +213,19 @@ func assertAnnouncementUpdateRetainsCreation(t *testing.T, ctx context.Context, 
 }
 
 // assertDeletedAnnouncementStaysMissing checks deletion and subsequent absent reads and mutations.
-func assertDeletedAnnouncementStaysMissing(t *testing.T, ctx context.Context, repository *auth.Repository, actor *identity.Id, created Announcement, audit *domain.AuditEvent) {
+func assertDeletedAnnouncementStaysMissing(t *testing.T, ctx context.Context, repository *auth.Repository, actor *identity.ID, created Announcement, audit *domain.AuditEvent) {
 	t.Helper()
-	deleted, err := Delete(ctx, repository, actor, created.Id, audit)
+	deleted, err := Delete(ctx, repository, actor, created.ID, audit)
 	if err != nil || !deleted {
 		t.Fatalf("delete=%t %v", deleted, err)
 	}
-	if item, err := Get(ctx, repository, created.Id); err != nil || item != nil {
+	if item, err := Get(ctx, repository, created.ID); err != nil || item != nil {
 		t.Fatalf("deleted record=%+v %v", item, err)
 	}
-	if item, err := Modify(ctx, repository, actor, created.Id, Update{}, audit); err != nil || item != nil {
+	if item, err := Modify(ctx, repository, actor, created.ID, Update{}, audit); err != nil || item != nil {
 		t.Fatalf("missing update=%+v %v", item, err)
 	}
-	if deleted, err := Delete(ctx, repository, actor, created.Id, audit); err != nil || deleted {
+	if deleted, err := Delete(ctx, repository, actor, created.ID, audit); err != nil || deleted {
 		t.Fatalf("missing delete=%t %v", deleted, err)
 	}
 }
@@ -241,23 +241,23 @@ func assertAnnouncementAuditTargets(t *testing.T, ctx context.Context, repositor
 		t.Fatalf("audit count=%d", len(events))
 	}
 	for _, event := range events {
-		if event.TargetId == nil || *event.TargetId != created.Id || event.ActorId == nil || *event.ActorId != actorValue {
+		if event.TargetID == nil || *event.TargetID != created.ID || event.ActorID == nil || *event.ActorID != actorValue {
 			t.Fatalf("audit=%+v", event)
 		}
 	}
-	if audit.TargetId != nil {
+	if audit.TargetID != nil {
 		t.Fatal("caller audit template mutated")
 	}
 }
 
 // assertAnnouncementAuditCreateAndUpdateFailures checks failed create and update with sanitized diagnostics.
-func assertAnnouncementAuditCreateAndUpdateFailures(t *testing.T, ctx context.Context, repository *auth.Repository, actor *identity.Id, created Announcement, audit *domain.AuditEvent) {
+func assertAnnouncementAuditCreateAndUpdateFailures(t *testing.T, ctx context.Context, repository *auth.Repository, actor *identity.ID, created Announcement, audit *domain.AuditEvent) {
 	t.Helper()
 	title := "Changed"
-	if result, err := Create(ctx, repository, actor, "New", "Body", "normal", true, audit); !errors.Is(err, domain.ErrAudit) || result.Id != 0 || strings.Contains(err.Error(), "private") {
+	if result, err := Create(ctx, repository, actor, "New", "Body", "normal", true, audit); !errors.Is(err, domain.ErrAudit) || result.ID != 0 || strings.Contains(err.Error(), "private") {
 		t.Fatalf("create failure=%+v %v", result, err)
 	}
-	if result, err := Modify(ctx, repository, actor, created.Id, Update{Title: &title}, audit); !errors.Is(err, domain.ErrAudit) || result != nil {
+	if result, err := Modify(ctx, repository, actor, created.ID, Update{Title: &title}, audit); !errors.Is(err, domain.ErrAudit) || result != nil {
 		t.Fatalf("update failure=%+v %v", result, err)
 	}
 }

@@ -56,7 +56,7 @@ func TestRollbackFailurePreservesRecoveryWorkspaces(t *testing.T) {
 	}
 	target := fixtureConfig(t)
 	var recovery string
-	_, err := restore(ctx, RestoreOptions{target, target.AuthDbPath, options.OutputDir}, 1000, nil, func() error {
+	_, err := restore(ctx, RestoreOptions{target, target.AuthDBPath, options.OutputDir}, 1000, nil, func() error {
 		matches, err := filepath.Glob(filepath.Join(target.ProjectRoot, "data", ".litradar-data-restore-*"))
 		if err != nil {
 			return err

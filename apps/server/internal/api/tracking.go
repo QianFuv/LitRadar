@@ -36,21 +36,21 @@ func newManualRun(user int64) (storage.RunCreate, error) {
 	}
 	now := currentTimestamp()
 	deadline := now + 600
-	return storage.RunCreate{ExternalId: hex.EncodeToString(entropy[:]), Workflow: storage.WorkflowPush, ScopeKey: fmt.Sprintf("manual-user-%d", user), TriggerKind: storage.TriggerKindManual, Mode: storage.RunModeExecute, UserId: &user, DeadlineAt: &deadline, CreatedAt: now}, nil
+	return storage.RunCreate{ExternalID: hex.EncodeToString(entropy[:]), Workflow: storage.WorkflowPush, ScopeKey: fmt.Sprintf("manual-user-%d", user), TriggerKind: storage.TriggerKindManual, Mode: storage.RunModeExecute, UserID: &user, DeadlineAt: &deadline, CreatedAt: now}, nil
 }
 
 // trackingStatus loads folders and settings before computing available weekly articles.
 func (handlers *trackingHandlers) trackingStatus(ctx context.Context, user auth.User) (trackingStatusResponse, *apiError) {
-	userId := int64(user.Id)
-	folder, err := handlers.favorites.TrackingFolder(ctx, user.Id)
+	userID := int64(user.ID)
+	folder, err := handlers.favorites.TrackingFolder(ctx, user.ID)
 	if err != nil {
 		return trackingStatusResponse{}, internalError()
 	}
-	folders, err := handlers.favorites.ListFolders(ctx, user.Id)
+	folders, err := handlers.favorites.ListFolders(ctx, user.ID)
 	if err != nil {
 		return trackingStatusResponse{}, internalError()
 	}
-	settings, err := handlers.repository.GetNotificationSettings(ctx, handlers.codec, userId)
+	settings, err := handlers.repository.GetNotificationSettings(ctx, handlers.codec, userID)
 	if err != nil {
 		return trackingStatusResponse{}, internalError()
 	}
@@ -65,19 +65,19 @@ func (handlers *trackingHandlers) trackingStatus(ctx context.Context, user auth.
 
 	var tracking *folderSummary
 	if folder != nil {
-		tracking = &folderSummary{folder.Id, folder.Name}
+		tracking = &folderSummary{folder.ID, folder.Name}
 	}
 	return trackingStatusResponse{tracking, len(folders), count, settings != nil}, nil
 }
 
 // admitManualRun creates the replacement identity before acknowledgement or regular admission.
-func (handlers *trackingHandlers) admitManualRun(ctx context.Context, operation string, userId int64, externalId, requestId string) (manualPushStatus, *apiError) {
-	run, err := newManualRun(userId)
+func (handlers *trackingHandlers) admitManualRun(ctx context.Context, operation string, userID int64, externalID, requestID string) (manualPushStatus, *apiError) {
+	run, err := newManualRun(userID)
 	if err != nil {
 		return manualPushStatus{}, internalError()
 	}
 	if operation == "acknowledge_unknown_push_weekly_run" {
-		return handlers.acknowledgeManualRun(ctx, userId, externalId, requestId, run)
+		return handlers.acknowledgeManualRun(ctx, userID, externalID, requestID, run)
 	}
 	outcome, err := handlers.repository.AdmitManualRun(ctx, run)
 	if err != nil {
@@ -90,9 +90,9 @@ func (handlers *trackingHandlers) admitManualRun(ctx context.Context, operation 
 }
 
 // acknowledgeManualRun keeps audit identity and replacement admission atomic in storage.
-func (handlers *trackingHandlers) acknowledgeManualRun(ctx context.Context, userId int64, externalId, requestId string, run storage.RunCreate) (manualPushStatus, *apiError) {
-	event := auth.AuditEvent{Action: "manual_push_unknown_acknowledge", Outcome: "completed", RequestId: requestId, OccurredAt: currentTimestamp()}
-	record, err := handlers.repository.AcknowledgeUnknownManualRun(ctx, userId, externalId, run, &event)
+func (handlers *trackingHandlers) acknowledgeManualRun(ctx context.Context, userID int64, externalID, requestID string, run storage.RunCreate) (manualPushStatus, *apiError) {
+	event := auth.AuditEvent{Action: "manual_push_unknown_acknowledge", Outcome: "completed", RequestID: requestID, OccurredAt: currentTimestamp()}
+	record, err := handlers.repository.AcknowledgeUnknownManualRun(ctx, userID, externalID, run, &event)
 	if errors.Is(err, storage.ErrNotFound) {
 		return manualPushStatus{}, manualRunMissing()
 	}
@@ -106,14 +106,14 @@ func (handlers *trackingHandlers) acknowledgeManualRun(ctx context.Context, user
 }
 
 // performManualRun uses admin visibility only for inspection and cancellation.
-func (handlers *trackingHandlers) performManualRun(ctx context.Context, operation string, user auth.User, externalId string) (manualPushStatus, *apiError) {
-	userId := int64(user.Id)
+func (handlers *trackingHandlers) performManualRun(ctx context.Context, operation string, user auth.User, externalID string) (manualPushStatus, *apiError) {
+	userID := int64(user.ID)
 	var record *storage.RunRecord
 	var err error
 	if user.IsAdmin {
-		record, err = handlers.repository.LoadManualRunForAdmin(ctx, externalId)
+		record, err = handlers.repository.LoadManualRunForAdmin(ctx, externalID)
 	} else {
-		record, err = handlers.repository.LoadManualRun(ctx, userId, externalId)
+		record, err = handlers.repository.LoadManualRun(ctx, userID, externalID)
 	}
 	if err != nil {
 		return manualPushStatus{}, internalError()
@@ -135,9 +135,9 @@ func (handlers *trackingHandlers) performManualRun(ctx context.Context, operatio
 
 // cancelManualRun reloads the actual record after an optimistic concurrency conflict.
 func (handlers *trackingHandlers) cancelManualRun(ctx context.Context, record *storage.RunRecord) (*storage.RunRecord, *apiError) {
-	changed, err := handlers.repository.CancelRun(ctx, record.Id, record.Revision, currentTimestamp())
+	changed, err := handlers.repository.CancelRun(ctx, record.ID, record.Revision, currentTimestamp())
 	if errors.Is(err, storage.ErrConflict) {
-		changed, err = handlers.repository.LoadRun(ctx, record.Id)
+		changed, err = handlers.repository.LoadRun(ctx, record.ID)
 	}
 	if err != nil {
 		return nil, internalError()

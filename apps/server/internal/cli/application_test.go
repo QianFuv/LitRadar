@@ -40,9 +40,9 @@ func TestIndexAndDeliveryPreservePathComponents(t *testing.T) {
 	if err != nil || len(targets) != 1 || targets[0].name != "visible.sqlite" {
 		t.Fatal("delivery selected extensionless dotfile", targets, err)
 	}
-	for input, expected := range map[string]string{"known/.": "known.sqlite", "known/./": "known.sqlite", "known/..": "known/...sqlite", " .sqlite ": ".sqlite", "": ".sqlite"} {
-		if actual := normalizeDatabase(input); actual != expected {
-			t.Errorf("%q: got %q, want %q", input, actual, expected)
+	for _, scenario := range []struct{ input, expected string }{{"known/.", "known.sqlite"}, {"known/./", "known.sqlite"}, {"known/..", "known/...sqlite"}, {" .sqlite ", ".sqlite"}, {"", ".sqlite"}} {
+		if actual := normalizeDatabase(scenario.input); actual != scenario.expected {
+			t.Errorf("%q: got %q, want %q", scenario.input, actual, scenario.expected)
 		}
 	}
 }

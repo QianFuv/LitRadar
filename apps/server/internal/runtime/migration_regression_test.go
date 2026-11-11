@@ -92,7 +92,7 @@ func TestAuditRetentionImmediateBacklogErrorAndDailyDelay(t *testing.T) {
 			t.Fatal(err)
 		}
 		var timestamps []time.Time
-		for _, line := range strings.Split(strings.TrimSpace(output.String()), "\n") {
+		for line := range strings.SplitSeq(strings.TrimSpace(output.String()), "\n") {
 			var event struct {
 				Time  time.Time
 				Event string
@@ -125,19 +125,19 @@ func TestManualDeadlineAndCancellationReapChildBeforeTerminalState(t *testing.T)
 			ctx := context.Background()
 			owner := "stop-owner"
 			if scenario != "queued-deadline" {
-				claimed, err := prepared.services.Delivery.ClaimRun(ctx, run.Id, owner, run.Revision, unixTime(), 300)
+				claimed, err := prepared.services.Delivery.ClaimRun(ctx, run.ID, owner, run.Revision, unixTime(), 300)
 				if err != nil {
 					t.Fatal(err)
 				}
-				run, err = prepared.services.Delivery.StartRun(ctx, run.Id, owner, claimed.Run.Revision, unixTime())
+				run, err = prepared.services.Delivery.StartRun(ctx, run.ID, owner, claimed.Run.Revision, unixTime())
 				if err != nil {
 					t.Fatal(err)
 				}
 			}
 			child, address := runtimeChild(t)
-			dispatcher := manualDispatcher{repository: prepared.services.Delivery, children: []*manualChild{{runId: run.Id, ownerId: owner, child: child}}}
+			dispatcher := manualDispatcher{repository: prepared.services.Delivery, children: []*manualChild{{runID: run.ID, ownerID: owner, child: child}}}
 			if scenario == "running-cancellation" {
-				if _, err := prepared.services.Delivery.CancelRun(ctx, run.Id, run.Revision, unixTime()); err != nil {
+				if _, err := prepared.services.Delivery.CancelRun(ctx, run.ID, run.Revision, unixTime()); err != nil {
 					t.Fatal(err)
 				}
 				if err := dispatcher.enforceStops(); err != nil {
@@ -152,7 +152,7 @@ func TestManualDeadlineAndCancellationReapChildBeforeTerminalState(t *testing.T)
 				time.Sleep(cooperativeGrace + 20*time.Millisecond)
 			} else {
 				if err := prepared.services.Auth.Immediate(ctx, false, func(connection *sql.Conn) error {
-					_, err := connection.ExecContext(ctx, "UPDATE delivery_runs SET created_at=?,deadline_at=? WHERE id=?", unixTime()-10, unixTime()-1, run.Id)
+					_, err := connection.ExecContext(ctx, "UPDATE delivery_runs SET created_at=?,deadline_at=? WHERE id=?", unixTime()-10, unixTime()-1, run.ID)
 					return err
 				}); err != nil {
 					t.Fatal(err)
@@ -171,7 +171,7 @@ func TestManualDeadlineAndCancellationReapChildBeforeTerminalState(t *testing.T)
 				}
 				t.Fatal("terminal child remains alive")
 			}
-			stored, err := dispatcher.repository.LoadRun(ctx, run.Id)
+			stored, err := dispatcher.repository.LoadRun(ctx, run.ID)
 			status, code := delivery.RunStatusUnknown, "forced_deadline_unknown"
 			if scenario == "queued-deadline" {
 				status, code = delivery.RunStatusTimedOut, "deadline_exceeded"

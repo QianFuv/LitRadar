@@ -23,7 +23,7 @@ func TestNativeLoginPreservesWebSessionAndSupportsBearerLifecycle(t *testing.T) 
 	}
 	cookie := web.Result().Cookies()[0]
 	var tokens []string
-	for attempt := 0; attempt < 2; attempt++ {
+	for range 2 {
 		started := float64(time.Now().UnixNano()) / 1e9
 		response := authRequest(router, "POST", "/api/auth/native/login", `{"username":"api_fixture","password":"correct password long","device_name":"  Windows 电脑  "}`, "")
 		var result struct {
@@ -31,7 +31,7 @@ func TestNativeLoginPreservesWebSessionAndSupportsBearerLifecycle(t *testing.T) 
 			ExpiresAt float64      `json:"expires_at"`
 			User      userResponse `json:"user"`
 		}
-		if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &result) != nil || result.Token == "" || result.User.Id != 1 || len(response.Header().Values("Set-Cookie")) != 0 {
+		if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &result) != nil || result.Token == "" || result.User.ID != 1 || len(response.Header().Values("Set-Cookie")) != 0 {
 			t.Fatal(response.Code, response.Header(), response.Body.String())
 		}
 		expires := started + 90*24*60*60
@@ -56,7 +56,7 @@ func TestNativeLoginPreservesWebSessionAndSupportsBearerLifecycle(t *testing.T) 
 	for _, token := range listed {
 		if token.Name == "device:Windows 电脑" {
 			devices++
-			deviceID = token.Id
+			deviceID = token.ID
 			if token.ExpiresAt-token.CreatedAt != 90*24*60*60 {
 				t.Fatal(token)
 			}
@@ -103,7 +103,7 @@ func TestNativeLoginPreservesWebSessionAndSupportsBearerLifecycle(t *testing.T) 
 	for _, event := range events {
 		if event.Action == "native_login" && event.Outcome == "completed" {
 			completed++
-			if event.ActorId == nil || *event.ActorId != 1 || event.TargetId == nil {
+			if event.ActorID == nil || *event.ActorID != 1 || event.TargetID == nil {
 				t.Fatal(event)
 			}
 		}
@@ -132,7 +132,7 @@ func TestNativeLoginUsesPasswordFailuresAndSharedLockout(t *testing.T) {
 			}
 			body := fmt.Sprintf(`{"username":"api_fixture","password":%q,"device_name":"Android"}`, password)
 			var previous string
-			for attempt := 0; attempt < 6; attempt++ {
+			for attempt := range 6 {
 				path := "/api/auth/native/login"
 				if attempt%2 == 1 && attempt < 5 {
 					path = "/api/auth/login"
@@ -184,7 +184,7 @@ func TestNativeLoginValidatesDeviceNameAndReusesQuota(t *testing.T) {
 		t.Fatal(response.Code, response.Body.String())
 	}
 	handlers.limiter = newAuthRateLimiter(handlers.limiter.policy)
-	for ordinal := 0; ordinal < 49; ordinal++ {
+	for ordinal := range 49 {
 		if _, err := handlers.service.CreateTrustedToken(context.Background(), 1, fmt.Sprint(ordinal), 3600, nil); err != nil {
 			t.Fatal(err)
 		}

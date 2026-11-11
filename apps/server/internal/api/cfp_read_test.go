@@ -18,7 +18,7 @@ import (
 func TestCfpOptimizedResponsesMatchFullSnapshots(t *testing.T) {
 	handlers, router, token := cfpFixture(t)
 	ctx := context.Background()
-	baseline, err := storage.Open(handlers.storage.AuthDbPath)
+	baseline, err := storage.Open(handlers.storage.AuthDBPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestCfpRoutesObserveExternalRefresh(t *testing.T) {
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &first) != nil || first.Page.NextCursor == nil {
 		t.Fatal(response.Code, response.Body.String())
 	}
-	writer, err := storage.Open(handlers.storage.AuthDbPath)
+	writer, err := storage.Open(handlers.storage.AuthDBPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,8 +136,8 @@ func TestCfpRoutesObserveExternalRefresh(t *testing.T) {
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &catalog) != nil || len(catalog.Items) != 1 || catalog.Items[0].RefreshStatus != "refreshing" {
 		t.Fatal("lease status not visible", response.Code, response.Body.String())
 	}
-	source := domain.Source{CatalogIds: []string{"cfp-fixture", "cfp-alias"}, JournalTitle: "Example Journal", Title: "Updated call", TypeText: "Special Issue", DateText: "Submission deadline: 31 December 2000", SourceUrl: "https://example.org/calls", CheckedOn: "2026-10-20"}
-	if err := writer.PublishRefresh(ctx, lease, storage.Publication{Capture: "updated capture", CaptureFormat: "html", SourceUrl: source.SourceUrl, Sources: []domain.Source{source}, ConfigVersion: 1}, first.EvaluatedAt); err != nil {
+	source := domain.Source{CatalogIds: []string{"cfp-fixture", "cfp-alias"}, JournalTitle: "Example Journal", Title: "Updated call", TypeText: "Special Issue", DateText: "Submission deadline: 31 December 2000", SourceURL: "https://example.org/calls", CheckedOn: "2026-10-20"}
+	if err := writer.PublishRefresh(ctx, lease, storage.Publication{Capture: "updated capture", CaptureFormat: "html", SourceURL: source.SourceURL, Sources: []domain.Source{source}, ConfigVersion: 1}, first.EvaluatedAt); err != nil {
 		t.Fatal(err)
 	}
 	response = authRequest(router, "GET", "/api/cfp/journals?db=fixture.sqlite&q=Example", "", token)
@@ -153,7 +153,7 @@ func TestCfpRoutesObserveExternalRefresh(t *testing.T) {
 // TestCfpSelectedReadRetainsConflictingAliasFailure rejects distinct owners even when only one is canonical.
 func TestCfpSelectedReadRetainsConflictingAliasFailure(t *testing.T) {
 	handlers, router, token := cfpFixture(t)
-	seed := domain.Seed{FormatVersion: 1, Sources: []domain.Source{{CatalogIds: []string{"other"}, JournalTitle: "Other Journal", Title: "Other call", TypeText: "Special Issue", DateText: "Submission deadline: 31 December 2099", SourceUrl: "https://example.org/other", CheckedOn: "2026-09-15"}}}
+	seed := domain.Seed{FormatVersion: 1, Sources: []domain.Source{{CatalogIds: []string{"other"}, JournalTitle: "Other Journal", Title: "Other call", TypeText: "Special Issue", DateText: "Submission deadline: 31 December 2099", SourceURL: "https://example.org/other", CheckedOn: "2026-09-15"}}}
 	encoded, err := json.Marshal(seed)
 	if err != nil {
 		t.Fatal(err)

@@ -8,7 +8,7 @@ import (
 
 // TestProjectionAsciiSeparators pins every ASCII byte in fast-path and normalized text.
 func TestProjectionAsciiSeparators(t *testing.T) {
-	for character := rune(0); character < 128; character++ {
+	for character := range rune(128) {
 		t.Run(fmt.Sprintf("%02x", character), func(t *testing.T) {
 			value := string(character)
 			expected := " "

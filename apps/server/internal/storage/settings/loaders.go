@@ -61,7 +61,7 @@ func LoadLogging(ctx context.Context, filename string) (resultValue1 LoggingSett
 
 // openLoggingDatabase removes write-related pragmas from the read-only startup URI.
 func openLoggingDatabase(filename string) (*sql.DB, error) {
-	dsn, err := platformsqlite.FileUri(filename, "ro")
+	dsn, err := platformsqlite.FileURI(filename, "ro")
 	if err != nil {
 		return nil, err
 	}

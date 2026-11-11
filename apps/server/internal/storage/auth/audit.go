@@ -13,13 +13,13 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
-var ErrAuditEvent = errors.New("Security audit event is invalid")
-var ErrAuditRetention = errors.New("Security audit retention days are invalid")
+var ErrAuditEvent = errors.New("security audit event is invalid")
+var ErrAuditRetention = errors.New("security audit retention days are invalid")
 var auditFailureCount atomic.Uint64
 
 // AuditRecord is an ordered offline projection of persisted fixed-schema metadata.
 type AuditRecord struct {
-	Id int64
+	ID int64
 	domain.AuditEvent
 }
 
@@ -94,7 +94,7 @@ func (repository *Repository) ListAudit(ctx context.Context) ([]AuditRecord, err
 	}
 	result := make([]AuditRecord, 0, len(rows))
 	for _, row := range rows {
-		result = append(result, AuditRecord{Id: row.ID, AuditEvent: domain.AuditEvent{ActorId: row.ActorID, TargetId: row.TargetID, Action: row.Action, Outcome: row.Outcome, Reason: row.Reason, RequestId: row.RequestID, SourceClass: row.SourceClass, Bucket: row.Bucket, RejectedCount: row.RejectedCount, RetryAfterSeconds: row.RetryAfterSeconds, OccurredAt: row.OccurredAt}})
+		result = append(result, AuditRecord{ID: row.ID, AuditEvent: domain.AuditEvent{ActorID: row.ActorID, TargetID: row.TargetID, Action: row.Action, Outcome: row.Outcome, Reason: row.Reason, RequestID: row.RequestID, SourceClass: row.SourceClass, Bucket: row.Bucket, RejectedCount: row.RejectedCount, RetryAfterSeconds: row.RetryAfterSeconds, OccurredAt: row.OccurredAt}})
 	}
 	return result, nil
 }

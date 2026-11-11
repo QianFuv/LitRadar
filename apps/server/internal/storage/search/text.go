@@ -21,8 +21,8 @@ func Tokenize(value string) []string {
 		}
 		start := position
 		switch {
-		case isAsciiLetter(character):
-			for position < len(value) && isAsciiLetter(value[position]) {
+		case isASCIILetter(character):
+			for position < len(value) && isASCIILetter(value[position]) {
 				position++
 			}
 			tokens = append(tokens, strings.ToLower(value[start:position]))
@@ -46,7 +46,7 @@ func Tokenize(value string) []string {
 	return tokens
 }
 
-func isAsciiLetter(character byte) bool {
+func isASCIILetter(character byte) bool {
 	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z'
 }
 
@@ -55,20 +55,20 @@ func asciiSpace(character byte) bool {
 	return character == ' ' || character == '\t' || character == '\n' || character == '\r' || character == '\f'
 }
 func asciiAlphanumeric(character byte) bool {
-	return character < 128 && (isAsciiLetter(character) || character >= '0' && character <= '9')
+	return character < 128 && (isASCIILetter(character) || character >= '0' && character <= '9')
 }
 
 // FoldText preserves the legacy search projection before byte tokenization or related-term extraction.
 func FoldText(value string) string {
-	if isAsciiProjection(value) {
+	if isASCIIProjection(value) {
 		return value
 	}
 	decomposed := strings.TrimLeftFunc(norm.NFD.String(value), unicode.IsMark)
 	return strings.Map(projectionRune, decomposed)
 }
 
-// isAsciiProjection admits only the original ASCII alphanumeric and whitespace fast path.
-func isAsciiProjection(value string) bool {
+// isASCIIProjection admits only the original ASCII alphanumeric and whitespace fast path.
+func isASCIIProjection(value string) bool {
 	for _, character := range value {
 		if character > 127 || !asciiAlphanumeric(byte(character)) && !asciiSpace(byte(character)) {
 			return false
@@ -210,13 +210,15 @@ func prepareAdvancedQuery(value string) string {
 	for query.position < len(query.characters) {
 		character := query.characters[query.position]
 		query.position++
-		if character == '"' {
+		switch {
+		case character == '"':
 			if !query.writeQuotedOperand() {
 				return value
 			}
-		} else if isAdvancedOperand(character) {
+		case isAdvancedOperand(character):
 			query.writeBareOperand()
-		} else {
+		default:
+
 			if character == '{' {
 				query.isColumnSet = true
 			}

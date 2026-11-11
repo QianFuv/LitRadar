@@ -42,7 +42,7 @@ func TestNoFollowVfsRejectsLinks(t *testing.T) {
 	for _, filename := range []string{link, filepath.Join(parent, "target.sqlite"), dangling} {
 		for _, mode := range []string{"ro", "rw", "rwc"} {
 			t.Run(filepath.Base(filename)+"/"+mode, func(t *testing.T) {
-				dsn, err := FileUri(filename, mode)
+				dsn, err := FileURI(filename, mode)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -71,7 +71,7 @@ func TestNoFollowVfsRejectsLinks(t *testing.T) {
 	if _, err := os.Stat(missing); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("dangling link created its target: %v", err)
 	}
-	dsn, err := FileUri(link, "ro")
+	dsn, err := FileURI(link, "ro")
 	if err != nil {
 		t.Fatal(err)
 	}

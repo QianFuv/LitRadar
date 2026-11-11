@@ -55,7 +55,7 @@ func (handlers *trackingHandlers) routes() []route {
 			}
 			workContext := context.WithoutCancel(ctx)
 			value, err := admitted(ctx, handlers.pool, func() (*domain.NotificationSettingsResponse, error) {
-				value, err := handlers.repository.GetNotificationSettings(workContext, handlers.codec, int64(current.authorization.User.Id))
+				value, err := handlers.repository.GetNotificationSettings(workContext, handlers.codec, int64(current.authorization.User.ID))
 				if err != nil {
 					return nil, err
 				}
@@ -77,7 +77,7 @@ func (handlers *trackingHandlers) routes() []route {
 			}
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (manualPushStatus, error) {
-				record, err := handlers.repository.LoadLatestManualRun(workContext, int64(current.authorization.User.Id))
+				record, err := handlers.repository.LoadLatestManualRun(workContext, int64(current.authorization.User.ID))
 				if err != nil {
 					return manualPushStatus{}, err
 				}
@@ -91,7 +91,7 @@ func (handlers *trackingHandlers) routes() []route {
 			}
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (manualPushStatus, error) {
-				value, failure := handlers.admitManualRun(workContext, "push_weekly_to_tracking", int64(current.authorization.User.Id), "", requestId(input.request))
+				value, failure := handlers.admitManualRun(workContext, "push_weekly_to_tracking", int64(current.authorization.User.ID), "", requestID(input.request))
 				if failure != nil {
 					return value, failure
 				}
@@ -133,7 +133,7 @@ func (handlers *trackingHandlers) routes() []route {
 			}
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (manualPushStatus, error) {
-				value, failure := handlers.admitManualRun(workContext, "acknowledge_unknown_push_weekly_run", int64(current.authorization.User.Id), input.RunID, requestId(input.request))
+				value, failure := handlers.admitManualRun(workContext, "acknowledge_unknown_push_weekly_run", int64(current.authorization.User.ID), input.RunID, requestID(input.request))
 				if failure != nil {
 					return value, failure
 				}
@@ -145,14 +145,14 @@ func (handlers *trackingHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			update := domain.NotificationSettingsUpdate{Keywords: input.Body.Keywords, Directions: input.Body.Directions, SelectedDatabases: input.Body.SelectedDatabases, DeliveryMethod: input.Body.DeliveryMethod, PushplusToken: input.Body.PushplusToken, PushplusTemplate: input.Body.PushplusTemplate, PushplusTopic: input.Body.PushplusTopic, PushplusChannel: input.Body.PushplusChannel, SyncToTrackingFolder: input.Body.SyncToTrackingFolder, AiBaseUrl: input.Body.AIBaseURL, AiApiKey: input.Body.AIAPIKey, AiModel: input.Body.AIModel, AiSystemPrompt: input.Body.AISystemPrompt, AiBackupBaseUrl: input.Body.AIBackupBaseURL, AiBackupApiKey: input.Body.AIBackupAPIKey, AiBackupModel: input.Body.AIBackupModel, AiBackupSystemPrompt: input.Body.AIBackupSystemPrompt, AiRetryAttempts: *input.Body.AIRetryAttempts, Enabled: *input.Body.Enabled}
+			update := domain.NotificationSettingsUpdate{Keywords: input.Body.Keywords, Directions: input.Body.Directions, SelectedDatabases: input.Body.SelectedDatabases, DeliveryMethod: input.Body.DeliveryMethod, PushplusToken: input.Body.PushplusToken, PushplusTemplate: input.Body.PushplusTemplate, PushplusTopic: input.Body.PushplusTopic, PushplusChannel: input.Body.PushplusChannel, SyncToTrackingFolder: input.Body.SyncToTrackingFolder, AiBaseURL: input.Body.AIBaseURL, AiAPIKey: input.Body.AIAPIKey, AiModel: input.Body.AIModel, AiSystemPrompt: input.Body.AISystemPrompt, AiBackupBaseURL: input.Body.AIBackupBaseURL, AiBackupAPIKey: input.Body.AIBackupAPIKey, AiBackupModel: input.Body.AIBackupModel, AiBackupSystemPrompt: input.Body.AIBackupSystemPrompt, AiRetryAttempts: *input.Body.AIRetryAttempts, Enabled: *input.Body.Enabled}
 			if err := domain.ValidateNotificationSettings(update); err != nil {
 				return nil, badRequest(err.Error()).problem()
 			}
 			if update.AiRetryAttempts < 1 || update.AiRetryAttempts > 10 {
 				return nil, badRequest("ai_retry_attempts must be between 1 and 10").problem()
 			}
-			value, failure := handlers.updateNotification(ctx, int64(current.authorization.User.Id), update)
+			value, failure := handlers.updateNotification(ctx, int64(current.authorization.User.ID), update)
 			if failure != nil {
 				return nil, failure.problem()
 			}

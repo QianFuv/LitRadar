@@ -88,18 +88,18 @@ func TestNativeOidcKeepsWebSessionAndIssuesDeviceToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, user, parameters, verifier := nativeGrant(t, oidc, provider)
-	before, err := oidc.service.ListTokens(ctx, user.Id)
+	before, err := oidc.service.ListTokens(ctx, user.ID)
 	if err != nil || len(before) != 0 {
 		t.Fatal("callback created a personal token", before, err)
 	}
 	result, err := oidc.ExchangeNative(ctx, code, verifier, parameters.RedirectURI, "  Windows 电脑  ", domain.AuditEvent{Outcome: "completed"})
-	if err != nil || result.User.Id != user.Id || result.Token == "" || result.ExpiresAt != oidc.service.now()+90*24*60*60 {
+	if err != nil || result.User.ID != user.ID || result.Token == "" || result.ExpiresAt != oidc.service.now()+90*24*60*60 {
 		t.Fatal(result, err)
 	}
 	if authorization, err := oidc.service.VerifyToken(ctx, web.Token); err != nil || authorization == nil {
 		t.Fatal("native sign-in replaced the web session", err)
 	}
-	tokens, err := oidc.service.ListTokens(ctx, user.Id)
+	tokens, err := oidc.service.ListTokens(ctx, user.ID)
 	if err != nil || len(tokens) != 1 || tokens[0].Name != "device:Windows 电脑" {
 		t.Fatal(tokens, err)
 	}
@@ -109,7 +109,7 @@ func TestNativeOidcKeepsWebSessionAndIssuesDeviceToken(t *testing.T) {
 	}
 	found := false
 	for _, event := range events {
-		if event.Action == "oidc_native_exchange" && event.Outcome == "completed" && event.ActorId != nil && *event.ActorId == int64(user.Id) && event.TargetId != nil && *event.TargetId == tokens[0].Id {
+		if event.Action == "oidc_native_exchange" && event.Outcome == "completed" && event.ActorID != nil && *event.ActorID == int64(user.ID) && event.TargetID != nil && *event.TargetID == tokens[0].ID {
 			found = true
 		}
 	}
@@ -144,7 +144,7 @@ func TestNativeOidcInvalidGrants(t *testing.T) {
 					if scenario == "deleted" {
 						statement = "DELETE FROM users WHERE id=?"
 					}
-					_, err := connection.ExecContext(t.Context(), statement, user.Id)
+					_, err := connection.ExecContext(t.Context(), statement, user.ID)
 					return err
 				}); err != nil {
 					t.Fatal(err)
@@ -208,7 +208,7 @@ func TestNativeOidcSharesIdentityPolicy(t *testing.T) {
 					t.Fatal(err)
 				}
 				email := provider.email
-				if _, err := oidc.service.UpdateEmail(t.Context(), user.Id, &email, nil); err != nil {
+				if _, err := oidc.service.UpdateEmail(t.Context(), user.ID, &email, nil); err != nil {
 					t.Fatal(err)
 				}
 			case "nonce":
@@ -234,7 +234,7 @@ func TestNativeOidcDeviceValidationAndQuota(t *testing.T) {
 	}
 	code, user, parameters, verifier := nativeGrant(t, oidc, provider)
 	for range 50 {
-		if _, err := oidc.service.CreateTrustedToken(ctx, user.Id, "existing", 3600, nil); err != nil {
+		if _, err := oidc.service.CreateTrustedToken(ctx, user.ID, "existing", 3600, nil); err != nil {
 			t.Fatal(err)
 		}
 	}

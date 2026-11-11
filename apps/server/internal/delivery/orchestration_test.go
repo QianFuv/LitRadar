@@ -43,8 +43,8 @@ func workflowFixture(t *testing.T, workflow store.Workflow) (*deliveryEngine, *s
 	if _, err = database.Exec(`INSERT INTO folders(id,user_id,name,is_tracking,created_at,updated_at) VALUES(1,1,'tracking',1,1,1); INSERT INTO notification_settings(user_id,keywords,delivery_method,pushplus_token,sync_to_tracking_folder,created_at,updated_at) VALUES(1,'["science"]',?,?,1,1,1)`, method, token); err != nil {
 		t.Fatal(err)
 	}
-	config.IndexDbPath = filepath.Join(t.TempDir(), "index.sqlite")
-	index, err := platform.Open(platform.Config{Filename: config.IndexDbPath, Mode: "rwc", MaxConnections: 1})
+	config.IndexDBPath = filepath.Join(t.TempDir(), "index.sqlite")
+	index, err := platform.Open(platform.Config{Filename: config.IndexDBPath, Mode: "rwc", MaxConnections: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func workflowFixture(t *testing.T, workflow store.Workflow) (*deliveryEngine, *s
 	if err != nil {
 		t.Fatal(err)
 	}
-	accounts, err := auth.Open(config.AuthDbPath)
+	accounts, err := auth.Open(config.AuthDBPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,8 +68,8 @@ func workflowFixture(t *testing.T, workflow store.Workflow) (*deliveryEngine, *s
 	engine := &deliveryEngine{repository: repository, settings: settings.New(accounts, codec), selectArticles: func(_ context.Context, request recommend.SelectionRequest) (recommend.SelectionOutcome, error) {
 		accepted := []domain.RankedSelection{}
 		for _, candidate := range request.CandidatesForModel {
-			if _, exists := request.Dedupe[recommend.DeliveryKey(request.Subscriber, candidate.ArticleId)]; !exists {
-				accepted = append(accepted, domain.RankedSelection{ArticleId: candidate.ArticleId, Score: 1})
+			if _, exists := request.Dedupe[recommend.DeliveryKey(request.Subscriber, candidate.ArticleID)]; !exists {
+				accepted = append(accepted, domain.RankedSelection{ArticleID: candidate.ArticleID, Score: 1})
 			}
 		}
 		return recommend.SelectionOutcome{Accepted: accepted}, nil
@@ -80,7 +80,7 @@ func workflowFixture(t *testing.T, workflow store.Workflow) (*deliveryEngine, *s
 }
 
 func manifestFor(label string, ids ...int64) *recommend.ChangeManifest {
-	return &recommend.ChangeManifest{RunId: &label, PendingArticleIds: ids}
+	return &recommend.ChangeManifest{RunID: &label, PendingArticleIds: ids}
 }
 func countRows(t *testing.T, database *sql.DB, table string) int {
 	t.Helper()
@@ -119,7 +119,7 @@ func TestWorkflowTerminalIdentityAndDedupePreventRepeatedEffects(t *testing.T) {
 				t.Fatal(err)
 			}
 			replay, err := engine.execute(context.Background(), config, nil, manifestFor("first", 7, 8))
-			if err != nil || replay.DeliveryRunId != first.DeliveryRunId || len(replay.Subscribers) != 0 {
+			if err != nil || replay.DeliveryRunID != first.DeliveryRunID || len(replay.Subscribers) != 0 {
 				t.Fatal("terminal rerun", err)
 			}
 			next, err := engine.execute(context.Background(), config, nil, manifestFor("next", 7))
@@ -129,7 +129,7 @@ func TestWorkflowTerminalIdentityAndDedupePreventRepeatedEffects(t *testing.T) {
 			wantSent := 0
 			if workflow == store.WorkflowNotify {
 				wantSent = 1
-				if first.Subscribers[0].MessageId == nil || *first.Subscribers[0].MessageId != "message" {
+				if first.Subscribers[0].MessageID == nil || *first.Subscribers[0].MessageID != "message" {
 					t.Fatal("successful message ID lost")
 				}
 			}
@@ -161,7 +161,7 @@ func TestWorkflowAmbiguousSendQuarantinesAllReservationsAndPreservesCheckpoint(t
 func TestWorkflowReservationConflictReleasesOnlyNewReservations(t *testing.T) {
 	engine, database, config := workflowFixture(t, store.WorkflowPush)
 	engine.selectArticles = func(ctx context.Context, request recommend.SelectionRequest) (recommend.SelectionOutcome, error) {
-		return recommend.SelectionOutcome{Accepted: []domain.RankedSelection{{ArticleId: 7}, {ArticleId: 8}, {ArticleId: 7}}}, nil
+		return recommend.SelectionOutcome{Accepted: []domain.RankedSelection{{ArticleID: 7}, {ArticleID: 8}, {ArticleID: 7}}}, nil
 	}
 	outcome, err := engine.execute(context.Background(), config, nil, manifestFor("duplicates", 7, 8))
 	if err != nil || outcome.Subscribers[0].Status != "skipped" || countRows(t, database, "delivery_dedupe") != 0 || countRows(t, database, "favorites") != 0 {
@@ -199,7 +199,7 @@ func TestWorkflowRecoversSendingItemFromDurableInputsWithoutCallingProviders(t *
 		return "", nil
 	}
 	outcome, err := engine.execute(ctx, config, nil, manifestFor("new", 8))
-	if err != nil || outcome.DeliveryRunId != run.run.Id || outcome.Status != "unknown" || !reflect.DeepEqual(outcome.CandidateArticleIds, []int64{7}) || !reflect.DeepEqual(outcome.Subscribers[0].SelectedArticleIds, []int64{7}) || outcome.Subscribers[0].WouldSendPushplus || countRows(t, database, "favorites") != 0 {
+	if err != nil || outcome.DeliveryRunID != run.run.ID || outcome.Status != "unknown" || !reflect.DeepEqual(outcome.CandidateArticleIds, []int64{7}) || !reflect.DeepEqual(outcome.Subscribers[0].SelectedArticleIds, []int64{7}) || outcome.Subscribers[0].WouldSendPushplus || countRows(t, database, "favorites") != 0 {
 		t.Fatalf("recovery: %v %v", outcome, err)
 	}
 }
@@ -217,7 +217,7 @@ func TestWorkflowPostSendCommitFailureCannotCauseReplay(t *testing.T) {
 	if _, err := engine.execute(context.Background(), config, nil, manifestFor("commit-failure", 7)); err == nil {
 		t.Fatal("finalizer failure hidden")
 	}
-	records, err := engine.repository.ListDedupe(context.Background(), config.Workflow, config.DbName)
+	records, err := engine.repository.ListDedupe(context.Background(), config.Workflow, config.DBName)
 	if err != nil || len(records) != 1 || records[0].Status != store.DedupeStatusUnknown {
 		t.Fatal("sent but uncommitted was not quarantined", err)
 	}
@@ -264,7 +264,7 @@ func TestWorkflowSelectionFailurePreservesProgressAndRetriesWithoutReplay(t *tes
 	if err != nil || first.Status != "completed" || sent != 1 {
 		t.Fatalf("initial delivery: %+v %v", first, err)
 	}
-	previous, err := engine.repository.LoadCheckpoint(ctx, config.Workflow, config.DbName)
+	previous, err := engine.repository.LoadCheckpoint(ctx, config.Workflow, config.DBName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,8 +290,8 @@ func TestWorkflowMalformedManifestPrecedesFilesystemAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	authDirectory := filepath.Join(root, "missing")
-	_, err := RunRecommendationDelivery(context.Background(), RunConfig{ChangesFile: &filename, AuthDbPath: filepath.Join(authDirectory, "auth.sqlite"), DbName: "fixture.sqlite"})
-	if !errors.Is(err, recommend.ErrManifestJson) {
+	_, err := RunRecommendationDelivery(context.Background(), RunConfig{ChangesFile: &filename, AuthDBPath: filepath.Join(authDirectory, "auth.sqlite"), DBName: "fixture.sqlite"})
+	if !errors.Is(err, recommend.ErrManifestJSON) {
 		t.Fatal("manifest error was displaced", err)
 	}
 	if _, err := os.Stat(authDirectory); !errors.Is(err, os.ErrNotExist) {
@@ -312,7 +312,7 @@ func TestWorkflowFailureLogsExcludeProviderAndSubscriberPayloads(t *testing.T) {
 	if err != nil || outcome.Status != "unknown" {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"private-provider-response-marker", "private-run-marker", "synthetic-token", "science title", "abstract", config.AuthDbPath} {
+	for _, secret := range []string{"private-provider-response-marker", "private-run-marker", "synthetic-token", "science title", "abstract", config.AuthDBPath} {
 		if strings.Contains(output.String(), secret) {
 			t.Fatal("workflow log exposed private input")
 		}
@@ -328,7 +328,7 @@ func TestWorkflowEmptyUpstreamMessageIdRetainsOriginalStorageRejection(t *testin
 	if _, err := engine.execute(context.Background(), config, nil, manifestFor("empty-message", 7)); err == nil || err.Error() != "Delivery message id is invalid" {
 		t.Fatal("empty message ID finalization changed", err)
 	}
-	record, err := engine.repository.LoadDedupe(context.Background(), config.Workflow, config.DbName, 1, 7)
+	record, err := engine.repository.LoadDedupe(context.Background(), config.Workflow, config.DBName, 1, 7)
 	if err != nil || record.Status != store.DedupeStatusUnknown {
 		t.Fatal("uncommitted successful send was not quarantined", err)
 	}
@@ -336,11 +336,11 @@ func TestWorkflowEmptyUpstreamMessageIdRetainsOriginalStorageRejection(t *testin
 
 func assertAmbiguousWorkflowState(t *testing.T, engine *deliveryEngine, config RunConfig) {
 	t.Helper()
-	checkpoint, err := engine.repository.LoadCheckpoint(context.Background(), config.Workflow, config.DbName)
-	if err != nil || checkpoint.Status != store.CheckpointStatusUnknown || checkpoint.SnapshotJson != `{"issue_article_counts":{},"inpress_article_counts":{}}` {
+	checkpoint, err := engine.repository.LoadCheckpoint(context.Background(), config.Workflow, config.DBName)
+	if err != nil || checkpoint.Status != store.CheckpointStatusUnknown || checkpoint.SnapshotJSON != `{"issue_article_counts":{},"inpress_article_counts":{}}` {
 		t.Fatal("ambiguous checkpoint advanced", err)
 	}
-	dedupe, err := engine.repository.LoadDedupe(context.Background(), config.Workflow, config.DbName, 1, 7)
+	dedupe, err := engine.repository.LoadDedupe(context.Background(), config.Workflow, config.DBName, 1, 7)
 	if err != nil || dedupe.Status != store.DedupeStatusUnknown {
 		t.Fatal("reservation not quarantined", err)
 	}
@@ -348,33 +348,33 @@ func assertAmbiguousWorkflowState(t *testing.T, engine *deliveryEngine, config R
 
 func prepareAmbiguousWorkflowItem(t *testing.T, engine *deliveryEngine, config RunConfig, run *durableRun, ctx context.Context) {
 	t.Helper()
-	items, err := engine.repository.EnsureRunItems(ctx, run.run.Id, []store.RunItemCreate{{ItemKind: store.ItemKindArticle, ItemKey: "7", ArticleId: pointer(int64(7))}, {ItemKind: store.ItemKindSubscriber, ItemKey: "1", UserId: pointer(int64(1))}}, 100)
+	items, err := engine.repository.EnsureRunItems(ctx, run.run.ID, []store.RunItemCreate{{ItemKind: store.ItemKindArticle, ItemKey: "7", ArticleID: new(int64(7))}, {ItemKind: store.ItemKindSubscriber, ItemKey: "1", UserID: new(int64(1))}}, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := engine.repository.ClaimItem(ctx, run.run.Id, run.owner, run.run.Revision, items[1].Id, run.owner, 100, 3600)
+	item, err := engine.repository.ClaimItem(ctx, run.run.ID, run.owner, run.run.Revision, items[1].ID, run.owner, 100, 3600)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = engine.repository.ReserveDedupe(ctx, config.Workflow, config.DbName, 1, 7, run.run.Id, run.owner, 100); err != nil {
+	if _, err = engine.repository.ReserveDedupe(ctx, config.Workflow, config.DBName, 1, 7, run.run.ID, run.owner, 100); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = engine.repository.MarkItemSending(ctx, item.Id, run.owner, item.Revision, 100); err != nil {
+	if _, err = engine.repository.MarkItemSending(ctx, item.ID, run.owner, item.Revision, 100); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func assertUnconsumedWorkflowSnapshot(t *testing.T, engine *deliveryEngine, config RunConfig) {
 	t.Helper()
-	checkpoint, err := engine.repository.LoadCheckpoint(context.Background(), config.Workflow, config.DbName)
-	if err != nil || checkpoint.SnapshotJson != `{"issue_article_counts":{},"inpress_article_counts":{}}` {
+	checkpoint, err := engine.repository.LoadCheckpoint(context.Background(), config.Workflow, config.DBName)
+	if err != nil || checkpoint.SnapshotJSON != `{"issue_article_counts":{},"inpress_article_counts":{}}` {
 		t.Fatal("snapshot consumed without subscribers", err)
 	}
 }
 
 func insertWorkflowRetryArticle(t *testing.T, config RunConfig) {
 	t.Helper()
-	index, err := platform.Open(platform.Config{Filename: config.IndexDbPath, Mode: "rwc", MaxConnections: 1})
+	index, err := platform.Open(platform.Config{Filename: config.IndexDBPath, Mode: "rwc", MaxConnections: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,8 +389,8 @@ func insertWorkflowRetryArticle(t *testing.T, config RunConfig) {
 
 func assertFailedWorkflowProgress(t *testing.T, engine *deliveryEngine, database *sql.DB, config RunConfig, previous *store.CheckpointRecord, failed RunOutcome, sent int, ctx context.Context) {
 	t.Helper()
-	checkpoint, err := engine.repository.LoadCheckpoint(ctx, config.Workflow, config.DbName)
-	if err != nil || checkpoint.Status != store.CheckpointStatusFailed || checkpoint.SnapshotJson != previous.SnapshotJson || !reflect.DeepEqual(checkpoint.LastCompletedRunAt, previous.LastCompletedRunAt) {
+	checkpoint, err := engine.repository.LoadCheckpoint(ctx, config.Workflow, config.DBName)
+	if err != nil || checkpoint.Status != store.CheckpointStatusFailed || checkpoint.SnapshotJSON != previous.SnapshotJSON || !reflect.DeepEqual(checkpoint.LastCompletedRunAt, previous.LastCompletedRunAt) {
 		t.Fatal("failed selection advanced progress", err)
 	}
 	hasFailedSubscriber := hasSelectionFailureItem(t, engine, failed, ctx)
@@ -411,7 +411,7 @@ func assertWorkflowRetryWithoutReplay(t *testing.T, engine *deliveryEngine, data
 
 func hasSelectionFailureItem(t *testing.T, engine *deliveryEngine, failed RunOutcome, ctx context.Context) bool {
 	t.Helper()
-	items, err := engine.repository.ListRunItems(ctx, failed.DeliveryRunId)
+	items, err := engine.repository.ListRunItems(ctx, failed.DeliveryRunID)
 	if err != nil {
 		t.Fatal(err)
 	}

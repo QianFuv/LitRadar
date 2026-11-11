@@ -11,7 +11,7 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
-func updateEmail(ctx context.Context, connection *sql.Conn, user identity.Id, email *string, now float64) error {
+func updateEmail(ctx context.Context, connection *sql.Conn, user identity.ID, email *string, now float64) error {
 	_, err := queries.UpdateEmail(ctx, connection, authdb.UpdateEmailParams{Email: email, UpdatedAt: now, ID: int64(user)})
 	var failure interface{ Code() int }
 	if errors.As(err, &failure) && failure.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE {
@@ -21,7 +21,7 @@ func updateEmail(ctx context.Context, connection *sql.Conn, user identity.Id, em
 }
 
 // UpdateEmail changes only local accounts and commits the audit with the mutation.
-func (repository *Repository) UpdateEmail(ctx context.Context, user identity.Id, email *string, now float64, audit *domain.AuditEvent) (domain.User, error) {
+func (repository *Repository) UpdateEmail(ctx context.Context, user identity.ID, email *string, now float64, audit *domain.AuditEvent) (domain.User, error) {
 	var credentials *domain.Credentials
 	err := repository.Immediate(ctx, false, func(connection *sql.Conn) error {
 		var err error

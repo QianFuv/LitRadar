@@ -37,7 +37,7 @@ func BenchmarkIdentifierWorkloads(b *testing.B) {
 				source := "article_listing l"
 				if strategy.name == "Ordered" && scenario.scope != "" {
 					issue := int64(999999)
-					source = articleListingSource(ArticleListParams{IssueId: &issue, Doi: &scenario.value})
+					source = articleListingSource(ArticleListParams{IssueID: &issue, Doi: &scenario.value})
 				}
 				statement := "SELECT l.article_id FROM " + source + " WHERE " + strategy.condition + scenario.scope + " ORDER BY l.date DESC,l.article_id DESC LIMIT 51"
 				b.ReportAllocs()

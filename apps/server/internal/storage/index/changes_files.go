@@ -171,15 +171,12 @@ func isManagedHistoryName(name string) bool {
 	}
 	isManaged := true
 	for _, character := range []byte(digest) {
-		if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f') {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
 			isManaged = false
 			break
 		}
 	}
-	if !isManaged {
-		return false
-	}
-	return true
+	return isManaged
 }
 
 func pruneHistoryEntry(root *os.Root, entry os.DirEntry, cutoff int64) (bool, error) {
@@ -195,7 +192,7 @@ func pruneHistoryEntry(root *os.Root, entry os.DirEntry, cutoff int64) (bool, er
 	if err != nil {
 		return false, err
 	}
-	if !jsonvalue.ValidJson(string(body)) {
+	if !jsonvalue.ValidJSON(string(body)) {
 		return false, errors.New("invalid change history JSON")
 	}
 	epoch, isCanonical := historyEpoch(body)

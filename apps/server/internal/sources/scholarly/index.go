@@ -83,8 +83,7 @@ func (index *IndexProvider) frozenEpoch() (int64, error) {
 
 func mapIndexSourceError(err error) error {
 	kind := provider.TemporarilyUnavailable
-	var failure *Error
-	if errors.As(err, &failure) {
+	if failure, ok := errors.AsType[*Error](err); ok {
 		switch failure.Kind {
 		case "HttpStatus":
 			if failure.StatusCode == 404 {
@@ -220,7 +219,7 @@ func crossrefMissingMetadataDois(works []any, semantic map[string]any) []string 
 			hasAbstract = stripMarkup(*text) != nil
 		}
 		hasAccess := strictBool(field(semantic[*doi], "isOpenAccess")) != nil
-		if !(hasTitle && hasAbstract && hasAccess) {
+		if !hasTitle || !hasAbstract || !hasAccess {
 			openAlexDois = append(openAlexDois, *doi)
 		}
 	}

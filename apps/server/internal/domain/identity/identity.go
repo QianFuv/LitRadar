@@ -10,16 +10,16 @@ import (
 	"strconv"
 )
 
-// Id is an exact signed SQLite integer serialized as a decimal JSON string.
-type Id int64
+// ID is an exact signed SQLite integer serialized as a decimal JSON string.
+type ID int64
 
 // MarshalJSON retains precision for JavaScript clients.
-func (value Id) MarshalJSON() ([]byte, error) {
+func (value ID) MarshalJSON() ([]byte, error) {
 	return json.Marshal(strconv.FormatInt(int64(value), 10))
 }
 
 // UnmarshalJSON accepts decimal strings and integral JSON numbers without float conversion.
-func (value *Id) UnmarshalJSON(input []byte) error {
+func (value *ID) UnmarshalJSON(input []byte) error {
 	var text string
 	if len(input) > 0 && input[0] == '"' {
 		if err := json.Unmarshal(input, &text); err != nil {
@@ -42,19 +42,19 @@ func (value *Id) UnmarshalJSON(input []byte) error {
 	if err != nil {
 		return fmt.Errorf("invalid SQLite identifier: %w", err)
 	}
-	*value = Id(parsed)
+	*value = ID(parsed)
 	return nil
 }
 
 // Stable returns an existing integer or the baseline SHA-256-derived positive identifier.
-func Stable(value, prefix string) Id {
+func Stable(value, prefix string) ID {
 	if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
-		return Id(parsed)
+		return ID(parsed)
 	}
 	digest := sha256.Sum256([]byte(prefix + ":" + value))
 	result := binary.BigEndian.Uint64(digest[:8]) & 0x7fffffffffffffff
 	if result == 0 {
 		return 1
 	}
-	return Id(result)
+	return ID(result)
 }

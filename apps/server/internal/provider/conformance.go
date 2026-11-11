@@ -73,7 +73,7 @@ func violation(message string) error         { return &ContractViolation{message
 
 // ValidateCatalogEntry verifies maintained identity, canonical aliases and rankings in source order.
 func ValidateCatalogEntry(entry domain.JournalCatalogEntry) error {
-	if err := validateCatalogId(entry.CatalogId); err != nil {
+	if err := validateCatalogID(entry.CatalogID); err != nil {
 		return err
 	}
 	if err := validateCatalogAliases(entry); err != nil {
@@ -96,10 +96,10 @@ func ValidateCatalogEntry(entry domain.JournalCatalogEntry) error {
 
 // ValidateArticleLocator validates local metadata before any provider supports/resolve calls.
 func ValidateArticleLocator(article domain.ArticleLocator) error {
-	if article.ArticleId <= 0 {
+	if article.ArticleID <= 0 {
 		return violation("article locator must contain a positive internal ID")
 	}
-	if err := validateCatalogId(article.CatalogId); err != nil {
+	if err := validateCatalogID(article.CatalogID); err != nil {
 		return err
 	}
 	if err := requireText(article.JournalTitle, "locator journal title"); err != nil {
@@ -163,7 +163,7 @@ func ValidateProviderBatch(catalog domain.JournalCatalogEntry, batch domain.Prov
 	if err := ValidateCatalogEntry(catalog); err != nil {
 		return err
 	}
-	if batch.CatalogId != catalog.CatalogId || batch.Journal.CatalogId != catalog.CatalogId {
+	if batch.CatalogID != catalog.CatalogID || batch.Journal.CatalogID != catalog.CatalogID {
 		return violation("provider batch must echo the requested catalog_id")
 	}
 	if err := validateJournal(catalog, batch.Journal); err != nil {
@@ -212,7 +212,7 @@ func validateJournal(catalog domain.JournalCatalogEntry, journal domain.JournalD
 
 // validateArticle preserves ordered typed content and identity admission.
 func validateArticle(catalog domain.JournalCatalogEntry, article domain.ArticleDraft) error {
-	if article.CatalogId != catalog.CatalogId {
+	if article.CatalogID != catalog.CatalogID {
 		return violation("article must echo the requested catalog_id")
 	}
 	if err := requireArticleTitle(article.Title, article.Doi, "article title"); err != nil {
@@ -249,7 +249,7 @@ func validateIssue(issue domain.IssueDraft) error {
 			return err
 		}
 	}
-	if !(issue.PublicationYear != nil && (issue.Volume != nil || issue.Number != nil)) && issue.Date == nil && issue.Title == nil {
+	if (issue.PublicationYear == nil || issue.Volume == nil && issue.Number == nil) && issue.Date == nil && issue.Title == nil {
 		return violation("issue needs year plus volume/number, or a date/title fallback")
 	}
 	return nil
@@ -313,11 +313,11 @@ func asciiLower(value string) string {
 	}, value)
 }
 
-// validateCatalogId requires bounded position-sensitive ASCII catalog identity.
-func validateCatalogId(value string) error {
+// validateCatalogID requires bounded position-sensitive ASCII catalog identity.
+func validateCatalogID(value string) error {
 	isValid := len(value) >= 3 && len(value) <= 128
 	for index, character := range []byte(value) {
-		if !validCatalogIdByte(character, index) {
+		if !validCatalogIDByte(character, index) {
 			isValid = false
 			break
 		}
@@ -348,8 +348,7 @@ func optionalDate(value *string) error {
 }
 
 func failureKind(err error) ErrorKind {
-	var providerError *Error
-	if errors.As(err, &providerError) {
+	if providerError, ok := errors.AsType[*Error](err); ok {
 		return providerError.Kind
 	}
 	return Internal
@@ -357,9 +356,9 @@ func failureKind(err error) ErrorKind {
 
 // validateCatalogAliases validates every alias before checking identity uniqueness.
 func validateCatalogAliases(entry domain.JournalCatalogEntry) error {
-	ids := []string{entry.CatalogId}
+	ids := []string{entry.CatalogID}
 	for _, alias := range entry.CatalogAliases {
-		if err := validateCatalogId(alias); err != nil {
+		if err := validateCatalogID(alias); err != nil {
 			return err
 		}
 		if slices.Contains(ids, alias) {
@@ -470,7 +469,7 @@ func validateFullTextDocument(document *domain.ArticleFullTextDocument, maximum 
 // validateBatchContent validates all issues before all articles without deduplicating observations.
 func validateBatchContent(catalog domain.JournalCatalogEntry, batch domain.ProviderBatch) error {
 	for _, issue := range batch.Issues {
-		if issue.CatalogId != catalog.CatalogId {
+		if issue.CatalogID != catalog.CatalogID {
 			return violation("issue must echo the requested catalog_id")
 		}
 		if err := validateIssue(issue); err != nil {
@@ -529,7 +528,7 @@ func validatePublicationDate(year *int64, date *string, field, agreement string)
 
 // hasArticleIdentity accepts external identity or a temporal bibliographic boundary.
 func hasArticleIdentity(article domain.ArticleDraft) bool {
-	return !(article.Doi == nil && article.Pmid == nil && !((article.PublicationYear != nil || article.Date != nil) && (article.Volume != nil || article.IssueNumber != nil || article.StartPage != nil)))
+	return article.Doi != nil || article.Pmid != nil || (article.PublicationYear != nil || article.Date != nil) && (article.Volume != nil || article.IssueNumber != nil || article.StartPage != nil)
 }
 
 // validateBatchProgress enforces variant-exclusive opaque state after content admission.
@@ -579,8 +578,8 @@ func validateObservedIssns(catalog domain.JournalCatalogEntry, journal domain.Jo
 	return nil
 }
 
-// validCatalogIdByte admits lowercase ASCII identity characters and noninitial separators.
-func validCatalogIdByte(character byte, index int) bool {
+// validCatalogIDByte admits lowercase ASCII identity characters and noninitial separators.
+func validCatalogIDByte(character byte, index int) bool {
 	return character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || index > 0 && (character == '.' || character == '_' || character == '-')
 }
 

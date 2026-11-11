@@ -18,7 +18,7 @@ func TestProxySelectionValidationAndPrecedence(t *testing.T) {
 		{"", `{}`, nil}, {"", `null`, ErrProxyPolicy}, {"", `[]`, ErrProxyPolicy}, {"", `{"cnki":null}`, ErrProxyPolicy},
 		{"", `{"cnki":"bad","cnki":true}`, ErrProxyPolicy}, {"", `{"cnki":null,"cnki":false}`, ErrProxyPolicy},
 		{"", `{"unknown":false}`, ErrUnknownProxyProvider}, {"bad", `{"unknown":false}`, ErrUnknownProxyProvider},
-		{"bad", `{}`, transport.ErrProxyUrl}, {"", `{"cnki":true}`, ErrMissingProxyUrl}, {" \t", `{"cnki":true}`, ErrMissingProxyUrl},
+		{"bad", `{}`, transport.ErrProxyURL}, {"", `{"cnki":true}`, ErrMissingProxyURL}, {" \t", `{"cnki":true}`, ErrMissingProxyURL},
 		{"http://localhost:8080", `{"cnki":true,"cnki":false}`, ErrProxyPolicy}, {"http://localhost:8080", `{"cnki":false,"cnki":true}`, ErrProxyPolicy},
 	} {
 		t.Run(test.policy+test.url, func(t *testing.T) {
@@ -37,14 +37,14 @@ func TestProxySelectionValidationAndPrecedence(t *testing.T) {
 			t.Fatal(name)
 		}
 	}
-	if value, exists := selection.ProxyUrlForProvider("cnki"); !exists || !strings.Contains(value, "private-password") {
+	if value, exists := selection.ProxyURLForProvider("cnki"); !exists || !strings.Contains(value, "private-password") {
 		t.Fatal("explicit bootstrap lost")
 	}
 	for _, value := range []any{selection, &selection} {
 		var output strings.Builder
 		logger := slog.New(slog.NewJSONHandler(&output, nil))
 		logger.Info("selection", slog.Any("value", value))
-		output.WriteString(fmt.Sprintf("%v %+v %#v", value, value, value))
+		fmt.Fprintf(&output, "%v %+v %#v", value, value, value)
 		if strings.Contains(output.String(), "private-") {
 			t.Fatal("credentials leaked")
 		}

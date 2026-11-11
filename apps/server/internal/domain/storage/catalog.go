@@ -12,8 +12,8 @@ type ProviderCatalog struct {
 
 // FavoriteCitation retains absent metadata separately from a known empty article title.
 type FavoriteCitation struct {
-	ArticleId    identity.Id `json:"article_id"`
-	DbName       string      `json:"db_name"`
+	ArticleID    identity.ID `json:"article_id"`
+	DBName       string      `json:"db_name"`
 	Title        *string     `json:"title"`
 	Authors      []string    `json:"authors"`
 	JournalTitle *string     `json:"journal_title"`

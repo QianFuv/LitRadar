@@ -139,8 +139,7 @@ func TestCancellationAfterLeaderExitStillOwnsDescendants(t *testing.T) {
 		t.Fatal("cancel did not close tree ownership")
 	}
 	if err := child.Close(); err != nil {
-		var failure *SupervisorError
-		if errors.As(err, &failure) {
+		if failure, ok := errors.AsType[*SupervisorError](err); ok {
 			t.Fatalf("cleanup failed: %v (cause: %v)", err, failure.cause)
 		}
 		t.Fatal(err)
@@ -596,8 +595,7 @@ func TestOwnerDeathCleansBlockedTree(t *testing.T) {
 			t.Errorf("owner.Process.Kill: %v", err)
 		}
 		if err := owner.Wait(); err != nil {
-			var exitError *exec.ExitError
-			if !errors.As(err, &exitError) {
+			if _, ok := errors.AsType[*exec.ExitError](err); !ok {
 				t.Error(err)
 			}
 		}
@@ -627,7 +625,7 @@ func ExampleConfig() {
 func runImmediateProcessFixture(mode, directory string) bool {
 	switch mode {
 	case "inherit-stdout":
-		runInheritedProcessFixture(directory)
+		os.Exit(runInheritedProcessFixture(directory))
 	case "stderr-flood":
 		if _, err := os.Stderr.Write(bytes.Repeat([]byte("e"), 8192)); err != nil {
 			return false
@@ -639,7 +637,7 @@ func runImmediateProcessFixture(mode, directory string) bool {
 	case "output":
 		runOutputProcessFixture()
 	case "owner", "owner-late-guard", "owner-stopped-guard":
-		runOwnerProcessFixture(mode, directory)
+		os.Exit(runOwnerProcessFixture(mode, directory))
 	default:
 		return false
 	}
@@ -647,29 +645,29 @@ func runImmediateProcessFixture(mode, directory string) bool {
 }
 
 // runInheritedProcessFixture owns and joins the inherited stdout child.
-func runInheritedProcessFixture(directory string) {
+func runInheritedProcessFixture(directory string) int {
 	config := fixtureConfig("stderr-flood", directory)
 	config.InheritStdout = true
 	child, err := Start(context.Background(), config)
 	if err != nil {
-		os.Exit(10)
+		return 10
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := child.Wait(ctx); err != nil {
 		if err := child.Close(); err != nil {
-			os.Exit(99)
+			return 99
 		}
-		os.Exit(11)
+		return 11
 	}
 	if err := child.Close(); err != nil {
-		os.Exit(12)
+		return 12
 	}
 	output, _ := child.Output()
 	if len(output) != 0 {
-		os.Exit(13)
+		return 13
 	}
-	os.Exit(0)
+	return 0
 }
 
 // runProtocolProcessFixture exchanges a ready frame and acknowledgment independently of diagnostics.
@@ -686,7 +684,7 @@ func runProtocolProcessFixture() {
 
 // runOutputProcessFixture writes beyond the retention limit before exiting.
 func runOutputProcessFixture() {
-	for count := 0; count < 256; count++ {
+	for range 256 {
 		if _, err := os.Stdout.Write(bytes.Repeat([]byte("x"), 8192)); err != nil {
 			os.Exit(3)
 		}
@@ -695,7 +693,7 @@ func runOutputProcessFixture() {
 }
 
 // runOwnerProcessFixture retains child ownership while its owner remains blocked.
-func runOwnerProcessFixture(mode, directory string) {
+func runOwnerProcessFixture(mode, directory string) (exitCode int) {
 	workerMode := "parent"
 	if mode == "owner-late-guard" {
 		workerMode = "late-guard"
@@ -711,11 +709,11 @@ func runOwnerProcessFixture(mode, directory string) {
 	}
 	defer func() {
 		if err := child.Close(); err != nil {
-			os.Exit(99)
+			exitCode = 99
 		}
 	}()
 	if err := os.WriteFile(filepath.Join(directory, "owner.ready"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
-		os.Exit(99)
+		return 99
 	}
 	select {}
 }

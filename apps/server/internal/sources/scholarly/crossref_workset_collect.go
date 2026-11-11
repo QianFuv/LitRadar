@@ -270,7 +270,7 @@ func (workset *CrossrefWorkset) prepareCollectionWork(work any, phase CrossrefPh
 		return preparedWork{}, true, workset.retryLeaf(phase.Partition, phase.Retry, "work moved outside its creation partition")
 	}
 	payload := consumedPayload(work)
-	serialized, err := domain.Json(payload)
+	serialized, err := domain.JSON(payload)
 	if err != nil {
 		return preparedWork{}, false, worksetStorageError(err)
 	}

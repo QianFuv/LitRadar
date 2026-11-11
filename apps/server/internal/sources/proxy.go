@@ -38,9 +38,9 @@ func (info CapabilityInfo) Capabilities() provider.Capabilities {
 }
 
 var (
-	ErrProxyPolicy          = errors.New("Invalid Provider proxy policy")
-	ErrUnknownProxyProvider = errors.New("Unknown Provider proxy policy name")
-	ErrMissingProxyUrl      = errors.New("Provider proxy URL is required when a Provider proxy is enabled")
+	ErrProxyPolicy          = errors.New("invalid Provider proxy policy")
+	ErrUnknownProxyProvider = errors.New("unknown Provider proxy policy name")
+	ErrMissingProxyURL      = errors.New("provider proxy URL is required when a Provider proxy is enabled")
 )
 
 // ProxySelection applies one validated URL only to explicitly enabled logical providers.
@@ -50,7 +50,7 @@ type ProxySelection struct {
 }
 
 // NewProxySelection validates policy shape and names before the URL, even for a disabled policy.
-func NewProxySelection(proxyUrl, policy string) (ProxySelection, error) {
+func NewProxySelection(proxyURL, policy string) (ProxySelection, error) {
 	object, err := decodeProxyPolicy(policy)
 	if err != nil {
 		return ProxySelection{}, err
@@ -62,33 +62,33 @@ func NewProxySelection(proxyUrl, policy string) (ProxySelection, error) {
 		}
 	}
 	var global transport.Proxy
-	if proxyUrl = strings.TrimSpace(proxyUrl); proxyUrl != "" {
-		global, err = transport.ExplicitProxy(proxyUrl)
+	if proxyURL = strings.TrimSpace(proxyURL); proxyURL != "" {
+		global, err = transport.ExplicitProxy(proxyURL)
 		if err != nil {
 			return ProxySelection{}, err
 		}
 	}
 	if len(enabled) > 0 && !global.IsExplicit() {
-		return ProxySelection{}, ErrMissingProxyUrl
+		return ProxySelection{}, ErrMissingProxyURL
 	}
 	return ProxySelection{global, enabled}, nil
 }
 
 // ProxySelectionFromRuntime preserves the first occurrence of each managed setting key.
 func ProxySelectionFromRuntime(values []settings.Value) (ProxySelection, error) {
-	proxyUrl, policy := "", "{}"
-	hasUrl, hasPolicy := false, false
+	proxyURL, policy := "", "{}"
+	hasURL, hasPolicy := false, false
 	for _, value := range values {
-		if value.Field == "provider_proxy_url" && !hasUrl {
-			proxyUrl = value.Value
-			hasUrl = true
+		if value.Field == "provider_proxy_url" && !hasURL {
+			proxyURL = value.Value
+			hasURL = true
 		}
 		if value.Field == "provider_proxy_policy" && !hasPolicy {
 			policy = value.Value
 			hasPolicy = true
 		}
 	}
-	return NewProxySelection(proxyUrl, policy)
+	return NewProxySelection(proxyURL, policy)
 }
 
 // ForProvider selects direct networking when a name is absent or disabled.
@@ -99,9 +99,9 @@ func (selection ProxySelection) ForProvider(name string) transport.Proxy {
 	return transport.Proxy{}
 }
 
-// ProxyUrlForProvider explicitly exposes the selected bootstrap URL to its intended child.
-func (selection ProxySelection) ProxyUrlForProvider(name string) (string, bool) {
-	return selection.ForProvider(name).Url()
+// ProxyURLForProvider explicitly exposes the selected bootstrap URL to its intended child.
+func (selection ProxySelection) ProxyURLForProvider(name string) (string, bool) {
+	return selection.ForProvider(name).URL()
 }
 
 func (selection ProxySelection) String() string {
@@ -118,7 +118,7 @@ func (selection ProxySelection) LogValue() slog.Value { return slog.StringValue(
 
 // decodeProxyPolicy validates complete JSON, every value occurrence and known names before URL parsing.
 func decodeProxyPolicy(policy string) (map[string]any, error) {
-	value, err := transport.ParseJson([]byte(policy))
+	value, err := transport.ParseJSON([]byte(policy))
 	if err != nil {
 		return nil, ErrProxyPolicy
 	}

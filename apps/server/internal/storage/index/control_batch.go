@@ -47,7 +47,7 @@ func HasCatalogAliasSyncState(ctx context.Context, connection *sql.Conn, catalog
 // ReadBatchJournalState counts completion and in-flight work without extrapolating failures.
 func ReadBatchJournalState(ctx context.Context, connection *sql.Conn, catalog, provider, batch string) (BatchJournalState, error) {
 	var result BatchJournalState
-	if err := validateBatchId(batch); err != nil {
+	if err := validateBatchID(batch); err != nil {
 		return result, err
 	}
 	var completed, inFlight sqlite.Integer
@@ -77,7 +77,7 @@ func ReadBatchJournalState(ctx context.Context, connection *sql.Conn, catalog, p
 // AdoptLegacyBatchState requires explicit single-catalog selection and an entirely unleased coherent epoch.
 func AdoptLegacyBatchState(ctx context.Context, connection *sql.Conn, catalog, provider, batch string, mode domain.IndexSyncMode, canAdopt bool) (LegacyBatchAdoption, error) {
 	var outcome LegacyBatchAdoption
-	if err := validateBatchId(batch); err != nil {
+	if err := validateBatchID(batch); err != nil {
 		return outcome, err
 	}
 	err := immediate(ctx, connection, func() error {
@@ -142,7 +142,7 @@ func AdoptLegacyBatchState(ctx context.Context, connection *sql.Conn, catalog, p
 
 // AbandonBatchCheckpoints removes only the abandoned batch's traversal positions, retaining anchors and leases.
 func AbandonBatchCheckpoints(ctx context.Context, connection *sql.Conn, batch string) (uint64, error) {
-	if err := validateBatchId(batch); err != nil {
+	if err := validateBatchID(batch); err != nil {
 		return 0, err
 	}
 	result, err := controlQueries.AbandonBatchCheckpoints(ctx, connection, controldb.AbandonBatchCheckpointsParams{BatchID: new(sqlite.Text(batch))})

@@ -117,7 +117,7 @@ func prepareSourceJournal(journals map[string]*preparedJournal, source domain.So
 	}
 	journal.aliases = append(journal.aliases, source.CatalogIds...)
 	for _, existing := range journal.notices {
-		if existing.notice.Id == notice.Id {
+		if existing.notice.ID == notice.ID {
 			return invalid("Duplicate CFP notice within " + key)
 		}
 	}
@@ -129,7 +129,7 @@ func prepareSourceJournal(journals map[string]*preparedJournal, source domain.So
 // prepareEmptyJournal preserves empty-statement validation before checking populated/empty conflicts.
 func prepareEmptyJournal(journals map[string]*preparedJournal, empty domain.EmptyJournal) error {
 	isValidDate := validEmptyDate(empty.CheckedOn)
-	if len(empty.CatalogIds) == 0 || slices.ContainsFunc(empty.CatalogIds, func(id string) bool { return strings.TrimSpace(id) == "" }) || strings.TrimSpace(empty.JournalTitle) == "" || strings.TrimSpace(empty.SourceStatement) == "" || len(empty.Notices) != 0 || !domain.IsSourceUrl(empty.SourceUrl) || !isValidDate {
+	if len(empty.CatalogIds) == 0 || slices.ContainsFunc(empty.CatalogIds, func(id string) bool { return strings.TrimSpace(id) == "" }) || strings.TrimSpace(empty.JournalTitle) == "" || strings.TrimSpace(empty.SourceStatement) == "" || len(empty.Notices) != 0 || !domain.IsSourceURL(empty.SourceURL) || !isValidDate {
 		return invalid("Invalid verified-empty CFP statement")
 	}
 	key := empty.CatalogIds[0]

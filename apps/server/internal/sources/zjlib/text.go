@@ -10,7 +10,7 @@ import (
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
 )
 
-func decodeHtml(value string) string {
+func decodeHTML(value string) string {
 	var output strings.Builder
 	for {
 		start := strings.IndexByte(value, '&')
@@ -66,10 +66,10 @@ func stripTags(value string) string {
 			}
 		}
 	}
-	return decodeHtml(output.String())
+	return decodeHTML(output.String())
 }
 func cleanText(value string) *string {
-	text := strings.Join(strings.Fields(decodeHtml(value)), " ")
+	text := strings.Join(strings.Fields(decodeHTML(value)), " ")
 	if text == "" {
 		return nil
 	}
@@ -81,10 +81,10 @@ func normalizeExact(value string) string {
 			return character
 		}
 		return -1
-	}, domain.Lowercase(decodeHtml(value)))
+	}, domain.Lowercase(decodeHTML(value)))
 }
 func splitAuthors(value string) []string {
-	decoded := decodeHtml(value)
+	decoded := decodeHTML(value)
 	names := []string{}
 	for _, part := range strings.FieldsFunc(decoded, func(character rune) bool { return strings.ContainsRune(";；,，、", character) }) {
 		if name := normalizeExact(part); name != "" {
@@ -138,12 +138,14 @@ func SafeFilename(value string) string {
 func decodeNumericEntity(entity string) (string, bool) {
 	base := 10
 	digits := ""
-	if strings.HasPrefix(entity, "#x") || strings.HasPrefix(entity, "#X") {
+	switch {
+	case strings.HasPrefix(entity, "#x") || strings.HasPrefix(entity, "#X"):
 		base = 16
 		digits = entity[2:]
-	} else if strings.HasPrefix(entity, "#") {
+	case strings.HasPrefix(entity, "#"):
 		digits = entity[1:]
-	} else {
+	default:
+
 		return "", false
 	}
 	digits = strings.TrimPrefix(digits, "+")

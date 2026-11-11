@@ -34,7 +34,7 @@ UPDATE articles SET title='RESUME ETUDES',abstract_text='ÉMILE' WHERE article_i
 		}
 		hasAccentedSource := false
 		for _, article := range page.Items {
-			if article.ArticleId == 1001 {
+			if article.ArticleID == 1001 {
 				hasAccentedSource = true
 				if article.Title != "Résumé Études" {
 					t.Fatalf("canonical title changed: %q", article.Title)
@@ -48,13 +48,13 @@ UPDATE articles SET title='RESUME ETUDES',abstract_text='ÉMILE' WHERE article_i
 	query := "RÉSUMÉ"
 	writeQueryManifest(t, configuration, "catalog.sqlite", []int64{1001, 1012})
 	page, err := WeeklyArticles(ctx, configuration, WeeklyArticlePageParams{
-		WindowEnd: "2026-10-04T00:00:00Z", DbName: "catalog.sqlite", JournalId: 1, Limit: 10, Query: &query,
+		WindowEnd: "2026-10-04T00:00:00Z", DBName: "catalog.sqlite", JournalID: 1, Limit: 10, Query: &query,
 	}, nil)
-	if err != nil || len(page.Items) != 1 || page.Items[0].ArticleId != 1001 {
+	if err != nil || len(page.Items) != 1 || page.Items[0].ArticleID != 1001 {
 		t.Fatalf("weekly accent search: %#v %v", page, err)
 	}
 	related, err := RelatedArticles(ctx, configuration, nil, 1001, 10)
-	if err != nil || len(related) != 1 || related[0].ArticleId != 1012 {
+	if err != nil || len(related) != 1 || related[0].ArticleID != 1012 {
 		t.Fatalf("related accent search: %#v %v", related, err)
 	}
 }

@@ -33,7 +33,7 @@ func Open(path string) (*Repository, error) {
 func (repository *Repository) Close() error { return repository.auth.Close() }
 
 func nowSeconds() float64 { return float64(time.Now().UnixNano()) / 1e9 }
-func authorize(ctx context.Context, connection *sql.Conn, actor *identity.Id) error {
+func authorize(ctx context.Context, connection *sql.Conn, actor *identity.ID) error {
 	if actor == nil {
 		return nil
 	}
@@ -44,7 +44,7 @@ func auditTarget(ctx context.Context, connection *sql.Conn, event *auditdomain.A
 		return nil
 	}
 	copy := *event
-	copy.TargetId = &id
+	copy.TargetID = &id
 	return auth.InsertAudit(ctx, connection, &copy)
 }
 
@@ -61,7 +61,7 @@ func decodeTask(row schedulerdb.TaskRow) (*domain.Task, error) {
 	if row.TimeoutSeconds < 0 {
 		return nil, errors.New("invalid SQLite unsigned integer column")
 	}
-	return &domain.Task{Id: int64(row.ID), Name: string(row.Name), Job: job, LegacyCommand: (*string)(row.LegacyCommand), Cron: string(row.Cron), Timezone: string(row.Timezone), TimeoutSeconds: uint64(row.TimeoutSeconds), Coalesce: row.Coalesce != 0, Enabled: row.Enabled != 0, LastRunAt: (*float64)(row.LastRunAt), LastStatus: domain.PersistedState(string(row.LastStatus)), CreatedAt: float64(row.CreatedAt), UpdatedAt: float64(row.UpdatedAt)}, nil
+	return &domain.Task{ID: int64(row.ID), Name: string(row.Name), Job: job, LegacyCommand: (*string)(row.LegacyCommand), Cron: string(row.Cron), Timezone: string(row.Timezone), TimeoutSeconds: uint64(row.TimeoutSeconds), Coalesce: row.Coalesce != 0, Enabled: row.Enabled != 0, LastRunAt: (*float64)(row.LastRunAt), LastStatus: domain.PersistedState(string(row.LastStatus)), CreatedAt: float64(row.CreatedAt), UpdatedAt: float64(row.UpdatedAt)}, nil
 }
 
 func getTask(ctx context.Context, connection *sql.Conn, id int64) (*domain.Task, error) {
@@ -103,7 +103,7 @@ func (repository *Repository) List(ctx context.Context) ([]domain.Task, error) {
 }
 
 // Create validates typed arguments before atomically checking authority, inserting and auditing.
-func (repository *Repository) Create(ctx context.Context, input domain.Create, actor *identity.Id, audit *auditdomain.AuditEvent) (*domain.Task, error) {
+func (repository *Repository) Create(ctx context.Context, input domain.Create, actor *identity.ID, audit *auditdomain.AuditEvent) (*domain.Task, error) {
 	if err := input.Job.Validate(); err != nil {
 		return nil, err
 	}
@@ -141,13 +141,13 @@ func (repository *Repository) Create(ctx context.Context, input domain.Create, a
 }
 
 // Update merges fields within the write transaction and clears legacy text only for a replacement job.
-func (repository *Repository) Update(ctx context.Context, input domain.Update, actor *identity.Id, audit *auditdomain.AuditEvent) (*domain.Task, error) {
+func (repository *Repository) Update(ctx context.Context, input domain.Update, actor *identity.ID, audit *auditdomain.AuditEvent) (*domain.Task, error) {
 	var task *domain.Task
 	err := repository.auth.Immediate(ctx, false, func(connection *sql.Conn) error {
 		if err := authorize(ctx, connection, actor); err != nil {
 			return err
 		}
-		current, err := getTask(ctx, connection, input.TaskId)
+		current, err := getTask(ctx, connection, input.TaskID)
 		if err != nil || current == nil {
 			return err
 		}
@@ -192,15 +192,15 @@ func (repository *Repository) Update(ctx context.Context, input domain.Update, a
 			}
 			encoded = new(sqlite.Text(string(value)))
 		}
-		if _, err := queries.UpdateTask(ctx, connection, schedulerdb.UpdateTaskParams{Name: sqlite.Text(current.Name), JobSpec: encoded, LegacyCommand: (*sqlite.Text)(current.LegacyCommand), Cron: sqlite.Text(current.Cron), Timezone: sqlite.Text(current.Timezone), TimeoutSeconds: sqlite.Integer(current.TimeoutSeconds), Coalesce: sqlite.Integer(dbtypes.Boolean(current.Coalesce)), Enabled: sqlite.Integer(dbtypes.Boolean(current.Enabled)), UpdatedAt: sqlite.Number(nowSeconds()), ID: sqlite.Integer(input.TaskId)}); err != nil {
+		if _, err := queries.UpdateTask(ctx, connection, schedulerdb.UpdateTaskParams{Name: sqlite.Text(current.Name), JobSpec: encoded, LegacyCommand: (*sqlite.Text)(current.LegacyCommand), Cron: sqlite.Text(current.Cron), Timezone: sqlite.Text(current.Timezone), TimeoutSeconds: sqlite.Integer(current.TimeoutSeconds), Coalesce: sqlite.Integer(dbtypes.Boolean(current.Coalesce)), Enabled: sqlite.Integer(dbtypes.Boolean(current.Enabled)), UpdatedAt: sqlite.Number(nowSeconds()), ID: sqlite.Integer(input.TaskID)}); err != nil {
 			return err
 		}
-		task, err = getTask(ctx, connection, input.TaskId)
+		task, err = getTask(ctx, connection, input.TaskID)
 		if err != nil {
 			return err
 		}
 		if task != nil {
-			return auditTarget(ctx, connection, audit, input.TaskId)
+			return auditTarget(ctx, connection, audit, input.TaskID)
 		}
 		return nil
 	})
@@ -208,7 +208,7 @@ func (repository *Repository) Update(ctx context.Context, input domain.Update, a
 }
 
 // Delete preserves run history and audits only an actual deletion after live administrator validation.
-func (repository *Repository) Delete(ctx context.Context, id int64, actor *identity.Id, audit *auditdomain.AuditEvent) (bool, error) {
+func (repository *Repository) Delete(ctx context.Context, id int64, actor *identity.ID, audit *auditdomain.AuditEvent) (bool, error) {
 	var didDelete bool
 	err := repository.auth.Immediate(ctx, false, func(connection *sql.Conn) error {
 		if err := authorize(ctx, connection, actor); err != nil {

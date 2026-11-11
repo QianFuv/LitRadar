@@ -66,10 +66,10 @@ func TestConfirmationAndEmptyNoopPrecedeActivityChecks(t *testing.T) {
 	} else {
 		assertCode(t, err, "confirmation_required")
 	}
-	if err := os.MkdirAll(filepath.Dir(configuration.AuthDbPath), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(configuration.AuthDBPath), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(configuration.AuthDbPath, []byte("not SQLite"), 0600); err != nil {
+	if err := os.WriteFile(configuration.AuthDBPath, []byte("not SQLite"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	report, err := Optimize(context.Background(), Options{configuration, true})

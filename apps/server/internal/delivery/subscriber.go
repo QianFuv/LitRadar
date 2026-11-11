@@ -14,48 +14,48 @@ import (
 )
 
 func emptyPlan(subscriber domain.Subscriber, status, reason string) SubscriberPlan {
-	return SubscriberPlan{SubscriberId: subscriber.SubscriberId, DeliveryMethod: subscriber.DeliveryMethod, Status: status, Error: &reason, SelectedArticleIds: []int64{}, FavoriteWrites: []FavoriteWritePlan{}}
+	return SubscriberPlan{SubscriberID: subscriber.SubscriberID, DeliveryMethod: subscriber.DeliveryMethod, Status: status, Error: &reason, SelectedArticleIds: []int64{}, FavoriteWrites: []FavoriteWritePlan{}}
 }
 
 func favoriteWrites(config RunConfig, subscriber domain.Subscriber, ids []int64) []FavoriteWritePlan {
 	writes := []FavoriteWritePlan{}
-	if config.Workflow == store.WorkflowNotify && !subscriber.SyncToTrackingFolder || subscriber.TrackingFolderId == nil {
+	if config.Workflow == store.WorkflowNotify && !subscriber.SyncToTrackingFolder || subscriber.TrackingFolderID == nil {
 		return writes
 	}
 	for _, id := range ids {
-		writes = append(writes, FavoriteWritePlan{subscriber.UserId, *subscriber.TrackingFolderId, id, config.DbName})
+		writes = append(writes, FavoriteWritePlan{subscriber.UserID, *subscriber.TrackingFolderID, id, config.DBName})
 	}
 	return writes
 }
 
 func executeFavoriteWrites(ctx context.Context, repository *favorites.Repository, writes []FavoriteWritePlan) error {
-	type destination struct{ userId, folderId int64 }
+	type destination struct{ userID, folderID int64 }
 	groups := map[destination][]favorites.Add{}
 	keys := []destination{}
 	for _, write := range writes {
-		key := destination{write.UserId, write.FolderId}
+		key := destination{write.UserID, write.FolderID}
 		if _, exists := groups[key]; !exists {
 			keys = append(keys, key)
 		}
-		groups[key] = append(groups[key], favorites.Add{Reference: favorites.Reference{ArticleId: identity.Id(write.ArticleId), DbName: write.DbName}})
+		groups[key] = append(groups[key], favorites.Add{Reference: favorites.Reference{ArticleID: identity.ID(write.ArticleID), DBName: write.DBName}})
 	}
 	slices.SortFunc(keys, func(left, right destination) int {
-		if left.userId < right.userId {
+		if left.userID < right.userID {
 			return -1
 		}
-		if left.userId > right.userId {
+		if left.userID > right.userID {
 			return 1
 		}
-		if left.folderId < right.folderId {
+		if left.folderID < right.folderID {
 			return -1
 		}
-		if left.folderId > right.folderId {
+		if left.folderID > right.folderID {
 			return 1
 		}
 		return 0
 	})
 	for _, key := range keys {
-		if _, err := repository.BulkAdd(ctx, identity.Id(key.userId), key.folderId, groups[key]); err != nil {
+		if _, err := repository.BulkAdd(ctx, identity.ID(key.userID), key.folderID, groups[key]); err != nil {
 			return err
 		}
 	}
@@ -75,31 +75,31 @@ func (engine *deliveryEngine) buildPlan(ctx context.Context, config RunConfig, l
 	}
 	ids := make([]int64, 0, len(selection.Accepted))
 	for _, selected := range selection.Accepted {
-		ids = append(ids, selected.ArticleId)
+		ids = append(ids, selected.ArticleID)
 	}
 	writes := favoriteWrites(config, request.Subscriber, ids)
-	plan := SubscriberPlan{SubscriberId: request.Subscriber.SubscriberId, DeliveryMethod: request.Subscriber.DeliveryMethod, Status: "ok", SelectedArticleIds: ids, FavoriteWrites: writes, FolderSyncedCount: uint64(len(writes))}
+	plan := SubscriberPlan{SubscriberID: request.Subscriber.SubscriberID, DeliveryMethod: request.Subscriber.DeliveryMethod, Status: "ok", SelectedArticleIds: ids, FavoriteWrites: writes, FolderSyncedCount: uint64(len(writes))}
 	if config.Workflow == store.WorkflowNotify {
-		plan.MessageTitle = pointer(recommend.BuildMessageTitle(config.DbName, label))
-		plan.MessageContent = pointer(recommend.BuildMarkdownContent(config.DbName, label, request.Subscriber, selection.Summary, selection.Accepted, request.CandidatesById))
+		plan.MessageTitle = new(recommend.BuildMessageTitle(config.DBName, label))
+		plan.MessageContent = new(recommend.BuildMarkdownContent(config.DBName, label, request.Subscriber, selection.Summary, selection.Accepted, request.CandidatesByID))
 		plan.WouldSendPushplus = true
 	}
 	return plan, nil
 }
 
-func subscriberResultJson(plan SubscriberPlan) string {
-	value, _ := resultJson(map[string]any{"selected_article_ids": plan.SelectedArticleIds, "folder_synced_count": plan.FolderSyncedCount, "message_id": plan.MessageId})
+func subscriberResultJSON(plan SubscriberPlan) string {
+	value, _ := resultJSON(map[string]any{"selected_article_ids": plan.SelectedArticleIds, "folder_synced_count": plan.FolderSyncedCount, "message_id": plan.MessageID})
 	return value
 }
 
 func (engine *deliveryEngine) processSubscriber(ctx context.Context, config RunConfig, run *durableRun, item store.RunItemRecord, request recommend.SelectionRequest) (SubscriberPlan, error) {
 	finish := func(plan SubscriberPlan, status store.ItemStatus, code *string) (SubscriberPlan, error) {
-		_, err := engine.repository.FinalizeItem(ctx, item.Id, run.owner, item.Revision, status, pointer(subscriberResultJson(plan)), code, unixNow())
+		_, err := engine.repository.FinalizeItem(ctx, item.ID, run.owner, item.Revision, status, new(subscriberResultJSON(plan)), code, unixNow())
 		return plan, err
 	}
-	plan, err := engine.buildPlan(ctx, config, run.run.ExternalId, request)
+	plan, err := engine.buildPlan(ctx, config, run.run.ExternalID, request)
 	if err != nil {
-		return finish(emptyPlan(request.Subscriber, "error", err.Error()), store.ItemStatusFailed, pointer("selection_failed"))
+		return finish(emptyPlan(request.Subscriber, "error", err.Error()), store.ItemStatusFailed, new("selection_failed"))
 	}
 	if plan.Status == "skipped" {
 		return finish(plan, store.ItemStatusSkipped, nil)
@@ -126,8 +126,8 @@ func pushplusMessage(subscriber domain.Subscriber, global recommend.GlobalConfig
 
 func (engine *deliveryEngine) terminalPlan(ctx context.Context, config RunConfig, subscriber domain.Subscriber, item store.RunItemRecord) (SubscriberPlan, error) {
 	result := store.SubscriberResult{SelectedArticleIds: []int64{}}
-	if item.ResultJson != nil {
-		parsed, err := store.ParseSubscriberResult([]byte(*item.ResultJson))
+	if item.ResultJSON != nil {
+		parsed, err := store.ParseSubscriberResult([]byte(*item.ResultJSON))
 		if err != nil {
 			return SubscriberPlan{}, err
 		}
@@ -143,20 +143,20 @@ func (engine *deliveryEngine) terminalPlan(ctx context.Context, config RunConfig
 	return terminalSubscriberPlan(config, subscriber, item, result)
 }
 
-func (engine *deliveryEngine) reserveSubscriberArticles(ctx context.Context, config RunConfig, run *durableRun, userId int64, ids []int64) ([]store.DedupeResolution, bool, error) {
+func (engine *deliveryEngine) reserveSubscriberArticles(ctx context.Context, config RunConfig, run *durableRun, userID int64, ids []int64) ([]store.DedupeResolution, bool, error) {
 	reservations := []store.DedupeResolution{}
 	for _, id := range ids {
-		reserved, err := engine.repository.ReserveDedupe(ctx, config.Workflow, config.DbName, userId, id, run.run.Id, run.owner, unixNow())
+		reserved, err := engine.repository.ReserveDedupe(ctx, config.Workflow, config.DBName, userID, id, run.run.ID, run.owner, unixNow())
 		if err != nil {
 			return nil, false, err
 		}
 		if reserved.Kind == "existing" {
-			if _, err := engine.repository.ReleaseReservations(ctx, run.run.Id, run.owner, reservations); err != nil {
+			if _, err := engine.repository.ReleaseReservations(ctx, run.run.ID, run.owner, reservations); err != nil {
 				return nil, false, err
 			}
 			return reservations, true, nil
 		}
-		reservations = append(reservations, store.DedupeResolution{Id: reserved.Record.Id, ExpectedRevision: reserved.Record.Revision})
+		reservations = append(reservations, store.DedupeResolution{ID: reserved.Record.ID, ExpectedRevision: reserved.Record.Revision})
 	}
 	return reservations, false, nil
 }
@@ -167,7 +167,7 @@ func (engine *deliveryEngine) sendSubscriberPlan(ctx context.Context, config Run
 		return SubscriberPlan{}, false, err
 	}
 	var sending *store.RunItemRecord
-	sending, err = engine.repository.MarkItemSending(ctx, item.Id, run.owner, item.Revision, unixNow())
+	sending, err = engine.repository.MarkItemSending(ctx, item.ID, run.owner, item.Revision, unixNow())
 	if err != nil {
 		return SubscriberPlan{}, false, err
 	}
@@ -177,15 +177,15 @@ func (engine *deliveryEngine) sendSubscriberPlan(ctx context.Context, config Run
 	if plan.MessageContent == nil {
 		return SubscriberPlan{}, false, classified("pushplus", errors.New("PushPlus content is unavailable"))
 	}
-	messageId, sendError := engine.send(ctx, pushplusMessage(request.Subscriber, request.Global, *plan.MessageTitle, *plan.MessageContent))
+	messageID, sendError := engine.send(ctx, pushplusMessage(request.Subscriber, request.Global, *plan.MessageTitle, *plan.MessageContent))
 	if sendError != nil {
-		_, err = engine.repository.FinalizeAttempt(ctx, sending.Id, run.owner, sending.Revision, store.ItemStatusUnknown, pointer(subscriberResultJson(plan)), pointer("ambiguous_delivery"), run.run.Id, reservations, store.DedupeStatusUnknown, nil, unixNow())
+		_, err = engine.repository.FinalizeAttempt(ctx, sending.ID, run.owner, sending.Revision, store.ItemStatusUnknown, new(subscriberResultJSON(plan)), new("ambiguous_delivery"), run.run.ID, reservations, store.DedupeStatusUnknown, nil, unixNow())
 		plan.Status = "unknown"
-		plan.Error = pointer(sendError.Error())
+		plan.Error = new(sendError.Error())
 		return plan, false, err
 	}
-	plan.MessageId = &messageId
-	_, err = engine.repository.FinalizeAttempt(ctx, sending.Id, run.owner, sending.Revision, store.ItemStatusSucceeded, pointer(subscriberResultJson(plan)), nil, run.run.Id, reservations, store.DedupeStatusConfirmed, &messageId, unixNow())
+	plan.MessageID = &messageID
+	_, err = engine.repository.FinalizeAttempt(ctx, sending.ID, run.owner, sending.Revision, store.ItemStatusSucceeded, new(subscriberResultJSON(plan)), nil, run.run.ID, reservations, store.DedupeStatusConfirmed, &messageID, unixNow())
 	if err != nil {
 		return SubscriberPlan{}, false, err
 	}
@@ -193,11 +193,11 @@ func (engine *deliveryEngine) sendSubscriberPlan(ctx context.Context, config Run
 }
 
 func (engine *deliveryEngine) executeSubscriberPlan(ctx context.Context, config RunConfig, run *durableRun, item store.RunItemRecord, request recommend.SelectionRequest, plan SubscriberPlan, finish func(SubscriberPlan, store.ItemStatus, *string) (SubscriberPlan, error)) (SubscriberPlan, error) {
-	userId, err := admitSubscriberExecution(config, request.Subscriber)
+	userID, err := admitSubscriberExecution(config, request.Subscriber)
 	if err != nil {
 		return SubscriberPlan{}, err
 	}
-	reservations, isExisting, err := engine.reserveSubscriberArticles(ctx, config, run, userId, plan.SelectedArticleIds)
+	reservations, isExisting, err := engine.reserveSubscriberArticles(ctx, config, run, userID, plan.SelectedArticleIds)
 	if err != nil {
 		return SubscriberPlan{}, err
 	}
@@ -205,7 +205,7 @@ func (engine *deliveryEngine) executeSubscriberPlan(ctx context.Context, config 
 		return finish(emptyPlan(request.Subscriber, "skipped", "Articles were already delivered"), store.ItemStatusSkipped, nil)
 	}
 	release := func() error {
-		_, err := engine.repository.ReleaseReservations(ctx, run.run.Id, run.owner, reservations)
+		_, err := engine.repository.ReleaseReservations(ctx, run.run.ID, run.owner, reservations)
 		return err
 	}
 	if err = engine.writeFavorites(ctx, plan.FavoriteWrites); err != nil {
@@ -213,8 +213,8 @@ func (engine *deliveryEngine) executeSubscriberPlan(ctx context.Context, config 
 			return SubscriberPlan{}, releaseError
 		}
 		plan.Status = "error"
-		plan.Error = pointer(err.Error())
-		return finish(plan, store.ItemStatusFailed, pointer("favorite_write_failed"))
+		plan.Error = new(err.Error())
+		return finish(plan, store.ItemStatusFailed, new("favorite_write_failed"))
 	}
 	if config.Workflow == store.WorkflowNotify {
 		var shouldAdvance bool
@@ -223,7 +223,7 @@ func (engine *deliveryEngine) executeSubscriberPlan(ctx context.Context, config 
 			return plan, err
 		}
 	} else {
-		_, err = engine.repository.FinalizeAttempt(ctx, item.Id, run.owner, item.Revision, store.ItemStatusSucceeded, pointer(subscriberResultJson(plan)), nil, run.run.Id, reservations, store.DedupeStatusConfirmed, nil, unixNow())
+		_, err = engine.repository.FinalizeAttempt(ctx, item.ID, run.owner, item.Revision, store.ItemStatusSucceeded, new(subscriberResultJSON(plan)), nil, run.run.ID, reservations, store.DedupeStatusConfirmed, nil, unixNow())
 	}
 	if err != nil {
 		return SubscriberPlan{}, err
@@ -235,20 +235,20 @@ func (engine *deliveryEngine) executeSubscriberPlan(ctx context.Context, config 
 }
 
 func (engine *deliveryEngine) recoverUnknownSubscriber(ctx context.Context, config RunConfig, item store.RunItemRecord, result store.SubscriberResult) (store.SubscriberResult, error) {
-	records, err := engine.repository.ListDedupe(ctx, config.Workflow, config.DbName)
+	records, err := engine.repository.ListDedupe(ctx, config.Workflow, config.DBName)
 	if err != nil {
 		return result, err
 	}
-	userId := int64(0)
-	if item.UserId != nil {
-		userId = *item.UserId
+	userID := int64(0)
+	if item.UserID != nil {
+		userID = *item.UserID
 	}
-	result.MessageId = nil
+	result.MessageID = nil
 	for _, record := range records {
-		if record.DeliveryRunId != nil && *record.DeliveryRunId == item.DeliveryRunId && record.UserId == userId {
-			result.SelectedArticleIds = append(result.SelectedArticleIds, record.ArticleId)
-			if result.MessageId == nil && record.MessageId != nil {
-				result.MessageId = record.MessageId
+		if record.DeliveryRunID != nil && *record.DeliveryRunID == item.DeliveryRunID && record.UserID == userID {
+			result.SelectedArticleIds = append(result.SelectedArticleIds, record.ArticleID)
+			if result.MessageID == nil && record.MessageID != nil {
+				result.MessageID = record.MessageID
 			}
 		}
 	}
@@ -269,22 +269,22 @@ func terminalSubscriberPlan(config RunConfig, subscriber domain.Subscriber, item
 	case store.ItemStatusFailed, store.ItemStatusCancelled:
 		status = "error"
 	default:
-		return SubscriberPlan{}, errors.New("Subscriber item is not terminal")
+		return SubscriberPlan{}, errors.New("subscriber item is not terminal")
 	}
 	writes := favoriteWrites(config, subscriber, result.SelectedArticleIds)
 	if result.FolderSyncedCount == 0 && item.Status == store.ItemStatusUnknown {
 		result.FolderSyncedCount = uint64(len(writes))
 	}
-	return SubscriberPlan{SubscriberId: subscriber.SubscriberId, DeliveryMethod: subscriber.DeliveryMethod, Status: status, Error: item.ErrorCode, SelectedArticleIds: result.SelectedArticleIds, MessageId: result.MessageId, FavoriteWrites: writes, FolderSyncedCount: result.FolderSyncedCount}, nil
+	return SubscriberPlan{SubscriberID: subscriber.SubscriberID, DeliveryMethod: subscriber.DeliveryMethod, Status: status, Error: item.ErrorCode, SelectedArticleIds: result.SelectedArticleIds, MessageID: result.MessageID, FavoriteWrites: writes, FolderSyncedCount: result.FolderSyncedCount}, nil
 }
 
 func admitSubscriberExecution(config RunConfig, subscriber domain.Subscriber) (int64, error) {
 	if err := checkExecution(config); err != nil {
 		return 0, err
 	}
-	userId, err := subscriberId(subscriber)
+	userID, err := subscriberID(subscriber)
 	if err != nil {
 		return 0, err
 	}
-	return userId, nil
+	return userID, nil
 }

@@ -62,7 +62,7 @@ func managedHistoryName(name string) bool {
 		return false
 	}
 	for _, character := range digest {
-		if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f') {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
 			return false
 		}
 	}
@@ -135,10 +135,10 @@ func LoadManifests(configuration config.Config, start, end Timestamp, cache *Cac
 		if order := second.GeneratedAt.Compare(first.GeneratedAt); order != 0 {
 			return order
 		}
-		if order := strings.Compare(first.DbName, second.DbName); order != 0 {
+		if order := strings.Compare(first.DBName, second.DBName); order != 0 {
 			return order
 		}
-		if order := compareRun(first.RunId, second.RunId); order != 0 {
+		if order := compareRun(first.RunID, second.RunID); order != 0 {
 			return order
 		}
 		return slices.Compare(first.ArticleIds, second.ArticleIds)
@@ -150,12 +150,12 @@ func LoadManifests(configuration config.Config, start, end Timestamp, cache *Cac
 func manifestKey(manifest Manifest) string {
 	var result strings.Builder
 	var numberBuffer [20]byte
-	result.WriteString(strconv.Quote(manifest.DbName))
+	result.WriteString(strconv.Quote(manifest.DBName))
 	result.WriteByte('|')
-	if manifest.RunId == nil {
+	if manifest.RunID == nil {
 		result.WriteString("null")
 	} else {
-		result.WriteString(strconv.Quote(*manifest.RunId))
+		result.WriteString(strconv.Quote(*manifest.RunID))
 	}
 	result.WriteByte('|')
 	result.Write(strconv.AppendInt(numberBuffer[:0], manifest.GeneratedAt.Seconds, 10))

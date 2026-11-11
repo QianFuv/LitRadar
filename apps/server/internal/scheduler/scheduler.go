@@ -30,8 +30,8 @@ const (
 
 // Job is validated runnable metadata with the task-wide single-instance bound.
 type Job struct {
-	Id             int64      `json:"id"`
-	JobId          string     `json:"job_id"`
+	ID             int64      `json:"id"`
+	JobID          string     `json:"job_id"`
 	Name           string     `json:"name"`
 	Job            domain.Job `json:"job"`
 	Cron           string     `json:"cron"`
@@ -43,7 +43,7 @@ type Job struct {
 
 // SkippedTask explains why an enabled task cannot be admitted.
 type SkippedTask struct {
-	Id     int64  `json:"id"`
+	ID     int64  `json:"id"`
 	Name   string `json:"name"`
 	Cron   string `json:"cron"`
 	Reason string `json:"reason"`
@@ -57,8 +57,8 @@ type LoadResult struct {
 
 // TaskExecution reports a durable task result after child cleanup.
 type TaskExecution struct {
-	TaskId int64        `json:"task_id"`
-	JobId  string       `json:"job_id"`
+	TaskID int64        `json:"task_id"`
+	JobID  string       `json:"job_id"`
 	Name   string       `json:"name"`
 	Status domain.State `json:"status"`
 }
@@ -87,16 +87,16 @@ type ManualOutcome struct {
 	Message    *string       `json:"message"`
 }
 
-var ErrHeartbeatLost = errors.New("Scheduled run heartbeat was lost")
+var ErrHeartbeatLost = errors.New("scheduled run heartbeat was lost")
 
 func currentTime() float64  { return float64(time.Now().UnixNano()) / 1e9 }
-func jobId(id int64) string { return fmt.Sprintf("scheduled-task-%d", id) }
+func jobID(id int64) string { return fmt.Sprintf("scheduled-task-%d", id) }
 func validateTask(task domain.Task) error {
 	if _, err := cron.Parse(task.Cron); err != nil {
 		return err
 	}
 	if task.Job == nil {
-		return errors.New("Legacy task requires a typed job")
+		return errors.New("legacy task requires a typed job")
 	}
 	if err := task.Job.Validate(); err != nil {
 		return err
@@ -116,10 +116,10 @@ func LoadJobs(ctx context.Context, repository *store.Repository) (LoadResult, er
 			continue
 		}
 		if err := validateTask(task); err != nil {
-			result.Skipped = append(result.Skipped, SkippedTask{task.Id, task.Name, task.Cron, err.Error()})
+			result.Skipped = append(result.Skipped, SkippedTask{task.ID, task.Name, task.Cron, err.Error()})
 			continue
 		}
-		result.Jobs = append(result.Jobs, Job{task.Id, jobId(task.Id), task.Name, *task.Job, task.Cron, task.Timezone, task.TimeoutSeconds, task.Coalesce, 1})
+		result.Jobs = append(result.Jobs, Job{task.ID, jobID(task.ID), task.Name, *task.Job, task.Cron, task.Timezone, task.TimeoutSeconds, task.Coalesce, 1})
 	}
 	return result, nil
 }
@@ -171,7 +171,7 @@ func enqueueScheduledTask(ctx context.Context, repository *store.Repository, tas
 		return nil
 	}
 	if err := validateTask(task); err != nil {
-		result.Skipped = append(result.Skipped, SkippedTask{task.Id, task.Name, task.Cron, err.Error()})
+		result.Skipped = append(result.Skipped, SkippedTask{task.ID, task.Name, task.Cron, err.Error()})
 		return nil
 	}
 	result.Jobs++
@@ -219,16 +219,16 @@ func RunClaim(ctx context.Context, repository *store.Repository, config ProcessC
 }
 
 func runClaim(ctx context.Context, repository *store.Repository, claim store.Claim, runner jobRunner) (TaskExecution, bool, error) {
-	ctx = observability.StartSpan(ctx, "litradar_worker::scheduler", "scheduler.claim", map[string]any{"component": "scheduler", "worker_id": claim.WorkerId, "task_id": claim.Task.Id, "run_id": fmt.Sprint(claim.RunId), "job_id": jobId(claim.Task.Id)})
-	result := TaskExecution{claim.Task.Id, jobId(claim.Task.Id), claim.Task.Name, domain.Unknown}
+	ctx = observability.StartSpan(ctx, "litradar_worker::scheduler", "scheduler.claim", map[string]any{"component": "scheduler", "worker_id": claim.WorkerID, "task_id": claim.Task.ID, "run_id": fmt.Sprint(claim.RunID), "job_id": jobID(claim.Task.ID)})
+	result := TaskExecution{claim.Task.ID, jobID(claim.Task.ID), claim.Task.Name, domain.Unknown}
 	started := time.Now()
-	fields := []any{"component", "scheduler", "worker_id", claim.WorkerId, "task_id", claim.Task.Id, "run_id", fmt.Sprint(claim.RunId), "job_id", result.JobId}
+	fields := []any{"component", "scheduler", "worker_id", claim.WorkerID, "task_id", claim.Task.ID, "run_id", fmt.Sprint(claim.RunID), "job_id", result.JobID}
 	slog.InfoContext(ctx, "scheduler.claim.started", append(fields, "event", "scheduler.claim.started", "outcome", "started")...)
 	failure := func(kind string) {
 		slog.ErrorContext(ctx, "scheduler.claim.failed", append(fields, "event", "scheduler.claim.failed", "outcome", "failure", "status", "error", "error_kind", kind, "duration_ms", time.Since(started).Milliseconds())...)
 	}
 	storageContext := context.WithoutCancel(ctx)
-	didStart, err := repository.StartRun(storageContext, claim.RunId, claim.WorkerId, currentTime(), runLeaseSeconds)
+	didStart, err := repository.StartRun(storageContext, claim.RunID, claim.WorkerID, currentTime(), runLeaseSeconds)
 	if err != nil {
 		failure("storage_error")
 		return result, false, err
@@ -244,7 +244,7 @@ func runClaim(ctx context.Context, repository *store.Repository, claim store.Cla
 			return false
 		}
 		var didRenew bool
-		didRenew, heartbeatError = repository.HeartbeatRun(storageContext, claim.RunId, claim.WorkerId, currentTime(), runLeaseSeconds)
+		didRenew, heartbeatError = repository.HeartbeatRun(storageContext, claim.RunID, claim.WorkerID, currentTime(), runLeaseSeconds)
 		if heartbeatError == nil && !didRenew {
 			isHeartbeatLost = true
 		}

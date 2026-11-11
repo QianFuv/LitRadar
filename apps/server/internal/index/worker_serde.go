@@ -12,7 +12,7 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/jsonobject"
 )
 
-var errWorkerJson = errors.New("invalid worker protocol JSON")
+var errWorkerJSON = errors.New("invalid worker protocol JSON")
 
 func decodeWorkerStruct(body []byte, target any, defaultTail int) error {
 	return decodeWorkerFields(body, target, defaultTail, false)
@@ -20,7 +20,7 @@ func decodeWorkerStruct(body []byte, target any, defaultTail int) error {
 
 func decodeWorkerFields(body []byte, target any, defaultTail int, shouldIgnoreUnknown bool) error {
 	if jsonobject.DecodeWithOptions(body, target, jsonobject.Options{AllowUnknown: shouldIgnoreUnknown, OptionalTail: defaultTail}) != nil {
-		return errWorkerJson
+		return errWorkerJSON
 	}
 	return nil
 }
@@ -72,7 +72,7 @@ func (value *WorkerFailure) UnmarshalJSON(body []byte) error {
 func decodeWorkerEnum(body []byte, variants []string) (string, error) {
 	var value string
 	if jsonv2.Unmarshal(body, &value) != nil || !slices.Contains(variants, value) {
-		return "", errWorkerJson
+		return "", errWorkerJSON
 	}
 	return value, nil
 }
@@ -98,11 +98,11 @@ func (value *WorkerOperation) UnmarshalJSON(body []byte) error {
 func workerVariant(body []byte) (string, []byte, error) {
 	var fields map[string]json.RawMessage
 	if jsonv2.Unmarshal(body, &fields) != nil || fields == nil {
-		return "", nil, errWorkerJson
+		return "", nil, errWorkerJSON
 	}
 	var tag string
 	if jsonv2.Unmarshal(fields["type"], &tag) != nil {
-		return "", nil, errWorkerJson
+		return "", nil, errWorkerJSON
 	}
 	delete(fields, "type")
 	encoded, err := jsonv2.Marshal(fields)
@@ -130,7 +130,7 @@ func (value *WorkerMessage) UnmarshalJSON(body []byte) error {
 			return err
 		}
 		decoded.ProtocolVersion = fields.Version
-		decoded.WorkerId = fields.Worker
+		decoded.WorkerID = fields.Worker
 		decoded.Sequence = fields.Sequence
 		decoded.JournalOrdinal = fields.Ordinal
 		decoded.PageIndex = fields.Page
@@ -145,7 +145,7 @@ func (value *WorkerMessage) UnmarshalJSON(body []byte) error {
 			return err
 		}
 		decoded.ProtocolVersion = fields.Version
-		decoded.WorkerId = fields.Worker
+		decoded.WorkerID = fields.Worker
 		decoded.Sequence = fields.Sequence
 	case "failed":
 		var fields struct {
@@ -158,11 +158,11 @@ func (value *WorkerMessage) UnmarshalJSON(body []byte) error {
 			return err
 		}
 		decoded.ProtocolVersion = fields.Version
-		decoded.WorkerId = fields.Worker
+		decoded.WorkerID = fields.Worker
 		decoded.Sequence = fields.Sequence
 		decoded.Failure = &fields.Failure
 	default:
-		return errWorkerJson
+		return errWorkerJSON
 	}
 	*value = decoded
 	return nil
@@ -172,7 +172,7 @@ func (value *WorkerMessage) UnmarshalJSON(body []byte) error {
 func (value *ParentMessage) UnmarshalJSON(body []byte) error {
 	tag, body, err := workerVariant(body)
 	if err != nil || tag != "committed" {
-		return errWorkerJson
+		return errWorkerJSON
 	}
 	var fields struct {
 		Version  uint32 `json:"protocol_version"`

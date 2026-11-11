@@ -27,7 +27,7 @@ var ErrIdentityState = errors.New("index journal identity state is invalid for m
 var ErrIdentityConflict = errors.New("index journal identity ownership conflicts across legacy journal rows")
 
 // ErrInvalidQuery preserves the original invalid-schema and author-rebuild diagnostic.
-var ErrInvalidQuery = errors.New("Query is not read-only")
+var ErrInvalidQuery = errors.New("query is not read-only")
 
 // UnsupportedVersion identifies a future content database without admitting a write.
 type UnsupportedVersion struct{ Found int }
@@ -106,8 +106,7 @@ func validate(ctx context.Context, connection *sql.Conn, version int, isFull boo
 	} else {
 		err = indexschema.ValidateStructure(ctx, connection, version)
 	}
-	var structure indexschema.InvalidStructure
-	if errors.As(err, &structure) {
+	if _, ok := errors.AsType[indexschema.InvalidStructure](err); ok {
 		return ErrInvalidQuery
 	}
 	return err
@@ -310,7 +309,7 @@ func createContentSchema(ctx context.Context, connection *sql.Conn) error {
 
 // versionSix rebuilds historical article tables before checking their foreign keys.
 func versionSix(ctx context.Context, connection *sql.Conn) error {
-	if _, err := connection.ExecContext(ctx, versionSixSql); err != nil {
+	if _, err := connection.ExecContext(ctx, versionSixSQL); err != nil {
 		return err
 	}
 	var violations int64
@@ -331,7 +330,7 @@ type legacyJournalIdentity struct {
 
 // versionFive reads every typed row before validating and persisting identity ownership.
 func versionFive(ctx context.Context, connection *sql.Conn) error {
-	if _, err := connection.ExecContext(ctx, versionFiveSql); err != nil {
+	if _, err := connection.ExecContext(ctx, versionFiveSQL); err != nil {
 		return err
 	}
 	journals, err := readLegacyJournalIdentities(ctx, connection)
@@ -421,7 +420,7 @@ func registerLegacyJournalIdentity(owners map[string]string, journal legacyJourn
 
 // legacyJournalIssns decodes every JSON string before appending nullable legacy columns.
 func legacyJournalIssns(journal legacyJournalIdentity) ([]string, error) {
-	if !jsonvalue.ValidJson(string(journal.payload)) || !strings.HasPrefix(strings.TrimSpace(string(journal.payload)), "[") {
+	if !jsonvalue.ValidJSON(string(journal.payload)) || !strings.HasPrefix(strings.TrimSpace(string(journal.payload)), "[") {
 		return nil, ErrIdentityState
 	}
 	var raw []json.RawMessage
@@ -466,7 +465,7 @@ func canonicalIssn(value string) bool {
 	}
 	compact := value[:4] + value[5:]
 	total := 0
-	for index := 0; index < 7; index++ {
+	for index := range 7 {
 		if compact[index] < '0' || compact[index] > '9' {
 			return false
 		}

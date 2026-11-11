@@ -46,8 +46,8 @@ func readConnection(ctx context.Context, filename string, read func(*sql.Conn) e
 	}
 	return read(connection)
 }
-func sourceUri(filename string) (string, error) {
-	value, err := platform.FileUri(filename, "ro")
+func sourceURI(filename string) (string, error) {
+	value, err := platform.FileURI(filename, "ro")
 	if err != nil {
 		return "", invalid("SQLite source path cannot be represented as a file URI")
 	}
@@ -259,7 +259,7 @@ func prepareCanonicalIndexes(ctx context.Context, connection *sql.Conn) ([][2]st
 
 // attachCanonicalSource attaches the immutable source and starts the copy transaction.
 func attachCanonicalSource(ctx context.Context, connection *sql.Conn, filename string) error {
-	uri, err := sourceUri(filename)
+	uri, err := sourceURI(filename)
 	if err != nil {
 		return err
 	}
@@ -322,7 +322,7 @@ func validateRebuilt(ctx context.Context, source sourceDatabase, candidate strin
 		if err := validateIntegrity(ctx, connection, source.name); err != nil {
 			return err
 		}
-		uri, err := sourceUri(source.path)
+		uri, err := sourceURI(source.path)
 		if err != nil {
 			return err
 		}

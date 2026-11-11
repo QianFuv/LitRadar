@@ -34,9 +34,8 @@ func workerContentFixture(t *testing.T) (domain.JournalCatalogEntry, domain.Prov
 func workerFixtureRequest(t *testing.T) (WorkerRequest, domain.ProviderBatch) {
 	t.Helper()
 	entry, batch := workerContentFixture(t)
-	return WorkerRequest{ProtocolVersion: 8, CatalogName: "catalog", ProviderName: "cnki", RunId: "run", WorkerId: 0, ProcessCount: 1, SourceWorkerCount: 1, TimeoutSeconds: 30, Assignments: []WorkerAssignment{{JournalOrdinal: 4, Entry: entry, Mode: domain.Incremental}}}, batch
+	return WorkerRequest{ProtocolVersion: 8, CatalogName: "catalog", ProviderName: "cnki", RunID: "run", WorkerID: 0, ProcessCount: 1, SourceWorkerCount: 1, TimeoutSeconds: 30, Assignments: []WorkerAssignment{{JournalOrdinal: 4, Entry: entry, Mode: domain.Incremental}}}, batch
 }
-func testCheckpoint(value string) *string { return &value }
 
 // TestFetchWorkerWaitsForExactDurableAck verifies each fetch waits for its correlated durable ACK.
 func TestFetchWorkerWaitsForExactDurableAck(t *testing.T) {
@@ -74,7 +73,7 @@ func TestFetchWorkerWaitsForExactDurableAck(t *testing.T) {
 		call := calls.Add(1)
 		result := batch
 		if call == 1 {
-			result.Progress = domain.ProviderProgress{State: domain.Continue, Checkpoint: testCheckpoint("next")}
+			result.Progress = domain.ProviderProgress{State: domain.Continue, Checkpoint: new("next")}
 		} else {
 			if fetch.TraversalCheckpoint == nil || *fetch.TraversalCheckpoint != "next" {
 				return domain.ProviderBatch{}, errors.New("wrong resumed checkpoint")
@@ -92,11 +91,11 @@ func TestFetchWorkerWaitsForExactDurableAck(t *testing.T) {
 			t.Errorf("outputWriter.Close: %v", err)
 		}
 	}()
-	if err := WriteProtocol(input, WorkerBootstrap{ProtocolVersion: 8, WorkerId: 0}); err != nil {
+	if err := WriteProtocol(input, WorkerBootstrap{ProtocolVersion: 8, WorkerID: 0}); err != nil {
 		t.Fatal(err)
 	}
 	reader := NewProtocolReader(outputReader)
-	for page := uint64(0); page < 2; page++ {
+	for page := range uint64(2) {
 		var message WorkerMessage
 		if err := reader.Read(&message); err != nil {
 			t.Fatal(err)
@@ -120,7 +119,7 @@ func TestFetchWorkerRejectsEveryAckCorrelationMismatch(t *testing.T) {
 			case "version":
 				ack.ProtocolVersion++
 			case "worker":
-				ack.WorkerId++
+				ack.WorkerID++
 			case "sequence":
 				ack.Sequence++
 			case "ordinal":
@@ -158,8 +157,8 @@ func TestFetchWorkerRejectsEveryAckCorrelationMismatch(t *testing.T) {
 
 func TestRepeatedCheckpointFailsOnlyAfterAck(t *testing.T) {
 	request, batch := workerFixtureRequest(t)
-	request.Assignments[0].TraversalCheckpoint = testCheckpoint("repeat")
-	batch.Progress = domain.ProviderProgress{State: domain.Continue, Checkpoint: testCheckpoint("repeat")}
+	request.Assignments[0].TraversalCheckpoint = new("repeat")
+	batch.Progress = domain.ProviderProgress{State: domain.Continue, Checkpoint: new("repeat")}
 	var input, output bytes.Buffer
 	if err := WriteProtocol(&input, WorkerBootstrap{ProtocolVersion: 8}); err != nil {
 		t.Fatalf("WriteProtocol: %v", err)
@@ -183,7 +182,7 @@ func TestRepeatedCheckpointFailsOnlyAfterAck(t *testing.T) {
 
 func TestWorkerBootstrapValidationPrecedesProviderConstruction(t *testing.T) {
 	request, _ := workerFixtureRequest(t)
-	for _, bootstrap := range []WorkerBootstrap{{ProtocolVersion: 7}, {ProtocolVersion: 8, WorkerId: 2}, {ProtocolVersion: 8, ProviderProxyUrl: testCheckpoint("http://user:password@bad/path")}, {ProtocolVersion: 8, ScholarlyWorksetDir: testCheckpoint("relative")}} {
+	for _, bootstrap := range []WorkerBootstrap{{ProtocolVersion: 7}, {ProtocolVersion: 8, WorkerID: 2}, {ProtocolVersion: 8, ProviderProxyURL: new("http://user:password@bad/path")}, {ProtocolVersion: 8, ScholarlyWorksetDir: new("relative")}} {
 		var input, output bytes.Buffer
 		if err := WriteProtocol(&input, bootstrap); err != nil {
 			t.Fatalf("WriteProtocol: %v", err)
@@ -247,11 +246,11 @@ func (rejectedAck) Write([]byte) (int, error) { return 0, errors.New("closed ACK
 func TestParentNeverAcknowledgesFailedCheckpoint(t *testing.T) {
 	writer, _, batch, content, control := parentWriterFixture(t)
 	ctx := context.Background()
-	batch.Progress = domain.ProviderProgress{State: domain.Continue, Checkpoint: testCheckpoint("next")}
+	batch.Progress = domain.ProviderProgress{State: domain.Continue, Checkpoint: new("next")}
 	if _, err := control.ExecContext(ctx, `CREATE TRIGGER reject_progress BEFORE UPDATE OF traversal_checkpoint ON provider_run_checkpoints BEGIN SELECT RAISE(FAIL,'injected checkpoint failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	message := WorkerMessage{Type: "batch", ProtocolVersion: 8, WorkerId: 0, Sequence: 0, JournalOrdinal: 4, PageIndex: 0, Batch: &batch}
+	message := WorkerMessage{Type: "batch", ProtocolVersion: 8, WorkerID: 0, Sequence: 0, JournalOrdinal: 4, PageIndex: 0, Batch: &batch}
 	var acknowledgements bytes.Buffer
 	if err := writer.Handle(ctx, 0, message, &acknowledgements); err == nil {
 		t.Fatal("failed checkpoint acknowledged")
@@ -265,12 +264,12 @@ func TestParentNeverAcknowledgesFailedCheckpoint(t *testing.T) {
 func TestParentAckFailureKeepsMemoryBehindDurableProgress(t *testing.T) {
 	writer, _, batch, _, control := parentWriterFixture(t)
 	ctx := context.Background()
-	batch.Progress = domain.ProviderProgress{State: domain.Continue, Checkpoint: testCheckpoint("next")}
-	message := WorkerMessage{Type: "batch", ProtocolVersion: 8, WorkerId: 0, Sequence: 0, JournalOrdinal: 4, PageIndex: 0, Batch: &batch}
+	batch.Progress = domain.ProviderProgress{State: domain.Continue, Checkpoint: new("next")}
+	message := WorkerMessage{Type: "batch", ProtocolVersion: 8, WorkerID: 0, Sequence: 0, JournalOrdinal: 4, PageIndex: 0, Batch: &batch}
 	if err := writer.Handle(ctx, 0, message, rejectedAck{}); err == nil {
 		t.Fatal("closed ACK succeeded")
 	}
-	checkpoint, err := storage.ReadRunCheckpoint(ctx, control.Conn, storage.SyncScope{CatalogName: "catalog", ProviderName: "cnki", CatalogId: batch.CatalogId})
+	checkpoint, err := storage.ReadRunCheckpoint(ctx, control.Conn, storage.SyncScope{CatalogName: "catalog", ProviderName: "cnki", CatalogID: batch.CatalogID})
 	if err != nil || checkpoint.TraversalCheckpoint == nil || *checkpoint.TraversalCheckpoint != "next" || writer.progress[0].nextSequence != 0 || writer.Metrics.PagesCommitted != 1 {
 		t.Fatalf("checkpoint=%+v metrics=%+v err=%v", checkpoint, writer.Metrics, err)
 	}
@@ -283,7 +282,7 @@ func TestParentPipeIdentityAndTerminalRules(t *testing.T) {
 			message := WorkerMessage{Type: "batch", ProtocolVersion: 8, JournalOrdinal: 4, Batch: &batch}
 			switch field {
 			case "worker":
-				message.WorkerId++
+				message.WorkerID++
 			case "sequence":
 				message.Sequence++
 			case "ordinal":
@@ -291,7 +290,7 @@ func TestParentPipeIdentityAndTerminalRules(t *testing.T) {
 			case "page":
 				message.PageIndex++
 			case "catalog":
-				batch.CatalogId = "wrong"
+				batch.CatalogID = "wrong"
 			case "version":
 				message.ProtocolVersion++
 			}
@@ -335,8 +334,8 @@ func TestWorkerPartitionSkipsCompletedBeforeRoundRobin(t *testing.T) {
 	writerContext := WriterContext{"catalog", "cnki", "batch", "run", "epoch"}
 	first := request.Assignments[0].Entry
 	entries := []domain.JournalCatalogEntry{first, first, first}
-	entries[1].CatalogId = "journal-second"
-	entries[2].CatalogId = "journal-third"
+	entries[1].CatalogID = "journal-second"
+	entries[2].CatalogID = "journal-third"
 	if err := storage.CompleteSyncRun(ctx, control.Conn, writerContext.syncRun(request.Assignments[0]), nil, "epoch"); err != nil {
 		t.Fatal(err)
 	}

@@ -13,7 +13,7 @@ func (handlers *favoriteHandlers) graphRoutes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (favorites.GraphPage, error) {
 				return handlers.repository.ListGraphPage(workContext, owner, input.Limit, cleanText(input.Cursor.Pointer()))
@@ -27,10 +27,10 @@ func (handlers *favoriteHandlers) graphRoutes() []route {
 			if len(input.Body.Graph) > favorites.MaxGraphBytes {
 				return nil, (&apiError{status: 413, detail: "graph must be at most 2 MiB"}).problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (*favorites.Graph, error) {
-				return handlers.repository.CreateGraph(workContext, owner, favorites.GraphCreate{Title: input.Body.Title, DbName: input.Body.DBName, RootArticleId: input.Body.RootArticleID, NodeCount: input.Body.NodeCount, Graph: input.Body.Graph})
+				return handlers.repository.CreateGraph(workContext, owner, favorites.GraphCreate{Title: input.Body.Title, DBName: input.Body.DBName, RootArticleID: input.Body.RootArticleID, NodeCount: input.Body.NodeCount, Graph: input.Body.Graph})
 			}, mapBusinessError)
 		}),
 		typedRoute(openapi.Operation{Method: "GET", Path: "/api/favorites/graphs/{graph_id}", ID: "get_relation_graph_favorite"}, func(ctx context.Context, input *GetRelationGraphFavoriteInput) (*output[*favorites.Graph], error) {
@@ -38,7 +38,7 @@ func (handlers *favoriteHandlers) graphRoutes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (*favorites.Graph, error) {
 				graph, err := handlers.repository.GetGraph(workContext, owner, input.GraphID)
@@ -59,7 +59,7 @@ func (handlers *favoriteHandlers) graphRoutes() []route {
 			if len(input.Body.Graph) > favorites.MaxGraphBytes {
 				return nil, (&apiError{status: 413, detail: "graph must be at most 2 MiB"}).problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (*favorites.Graph, error) {
 				graph, err := handlers.repository.UpdateGraph(workContext, owner, input.GraphID, favorites.GraphUpdate{Title: input.Body.Title, NodeCount: input.Body.NodeCount, Graph: input.Body.Graph})
@@ -77,7 +77,7 @@ func (handlers *favoriteHandlers) graphRoutes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			owner := current.authorization.User.Id
+			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (okResponse, error) {
 				changed, err := handlers.repository.DeleteGraph(workContext, owner, input.GraphID)

@@ -4,8 +4,8 @@ package sources
 
 import json "encoding/json/v2"
 
-// Json encodes typed source values with encoding/json.
-func Json(value any) ([]byte, error) {
+// JSON encodes typed source values with encoding/json.
+func JSON(value any) ([]byte, error) {
 	encoded, err := json.Marshal(value, json.Deterministic(true))
 	if err != nil {
 		return nil, err

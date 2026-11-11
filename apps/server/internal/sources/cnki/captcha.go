@@ -22,22 +22,22 @@ const CaptchaSolveBudget = 5
 
 // CaptchaPuzzle carries memory-only challenge data with secret-safe formatting.
 type CaptchaPuzzle struct {
-	ChallengeUrl, CaptchaType, Ident, CaptchaId, ReturnUrl   string
+	ChallengeURL, CaptchaType, Ident, CaptchaID, ReturnURL   string
 	SecretKey, Token, OriginalImageBase64, JigsawImageBase64 string
 }
 
 func (puzzle CaptchaPuzzle) String() string {
-	return fmt.Sprintf("DomesticCaptchaPuzzle { captcha_type_len: %d, captcha_id_len: %d, secret_key_len: %d, token_len: %d, original_len: %d, jigsaw_len: %d }", len(puzzle.CaptchaType), len(puzzle.CaptchaId), len(puzzle.SecretKey), len(puzzle.Token), len(puzzle.OriginalImageBase64), len(puzzle.JigsawImageBase64))
+	return fmt.Sprintf("DomesticCaptchaPuzzle { captcha_type_len: %d, captcha_id_len: %d, secret_key_len: %d, token_len: %d, original_len: %d, jigsaw_len: %d }", len(puzzle.CaptchaType), len(puzzle.CaptchaID), len(puzzle.SecretKey), len(puzzle.Token), len(puzzle.OriginalImageBase64), len(puzzle.JigsawImageBase64))
 }
 func (puzzle CaptchaPuzzle) GoString() string     { return puzzle.String() }
 func (puzzle CaptchaPuzzle) LogValue() slog.Value { return slog.StringValue(puzzle.String()) }
 
-func parseChallengeUrl(value string) (string, error) {
-	decoded := decodeHtml(value)
+func parseChallengeURL(value string) (string, error) {
+	decoded := decodeHTML(value)
 	if strings.HasPrefix(decoded, "/verify/home") {
 		decoded = KnsBase + decoded
 	}
-	parsed, err := parseDomesticUrl(decoded)
+	parsed, err := parseDomesticURL(decoded)
 	if err != nil {
 		return "", err
 	}
@@ -59,10 +59,10 @@ func LooksLikeCaptchaChallenge(text, url string) bool {
 	return containsMarker(domain.Lowercase(text), "captcha") || containsMarker(text, "访问异常", "安全验证", `"code":-403`, "/verify/home") || strings.Contains(domain.Lowercase(urlPath), "/verify/home")
 }
 
-// ExtractChallengeUrl accepts only the domestic verification endpoint, without executing scripts.
-func ExtractChallengeUrl(text, url string) (*string, error) {
+// ExtractChallengeURL accepts only the domestic verification endpoint, without executing scripts.
+func ExtractChallengeURL(text, url string) (*string, error) {
 	parse := func(value string) (*string, error) {
-		parsed, err := parseChallengeUrl(value)
+		parsed, err := parseChallengeURL(value)
 		if err != nil {
 			return nil, err
 		}
@@ -71,7 +71,7 @@ func ExtractChallengeUrl(text, url string) (*string, error) {
 	if strings.Contains(url, "/verify/home") {
 		return parse(url)
 	}
-	if payload, err := transport.ParseJson([]byte(text)); err == nil {
+	if payload, err := transport.ParseJSON([]byte(text)); err == nil {
 		if message, ok := field(payload, "message").(string); ok && strings.Contains(message, "/verify/home") {
 			return parse(message)
 		}
@@ -88,7 +88,7 @@ func ExtractChallengeUrl(text, url string) (*string, error) {
 	return nil, nil
 }
 func queryMap(url string) (map[string]string, error) {
-	parsed, err := parseDomesticUrl(decodeHtml(url))
+	parsed, err := parseDomesticURL(decodeHTML(url))
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +144,7 @@ func puzzleContainer(body any) any {
 	return nil
 }
 func validatePuzzle(puzzle CaptchaPuzzle) error {
-	if puzzle.OriginalImageBase64 == "" || puzzle.JigsawImageBase64 == "" || puzzle.SecretKey == "" || puzzle.Token == "" || puzzle.CaptchaId == "" {
+	if puzzle.OriginalImageBase64 == "" || puzzle.JigsawImageBase64 == "" || puzzle.SecretKey == "" || puzzle.Token == "" || puzzle.CaptchaID == "" {
 		return &Error{Kind: "Parse", Message: "domestic captcha puzzle missing required fields"}
 	}
 	if len(puzzle.SecretKey) != 16 {
@@ -154,8 +154,8 @@ func validatePuzzle(puzzle CaptchaPuzzle) error {
 }
 
 // ParseCaptchaPuzzle preserves container precedence, decoded query overrides and byte-length validation.
-func ParseCaptchaPuzzle(challengeUrl string, body any) (CaptchaPuzzle, error) {
-	challenge, err := parseChallengeUrl(challengeUrl)
+func ParseCaptchaPuzzle(challengeURL string, body any) (CaptchaPuzzle, error) {
+	challenge, err := parseChallengeURL(challengeURL)
 	if err != nil {
 		return CaptchaPuzzle{}, err
 	}
@@ -178,13 +178,13 @@ func ParseCaptchaPuzzle(challengeUrl string, body any) (CaptchaPuzzle, error) {
 	if !exists {
 		id = stringField(container, "captchaId")
 	}
-	puzzle := CaptchaPuzzle{ChallengeUrl: challenge, CaptchaType: kind, Ident: query["ident"], CaptchaId: id, ReturnUrl: query["returnUrl"], SecretKey: stringField(container, "secretKey"), Token: stringField(container, "token"), OriginalImageBase64: jfbym.StripDataUrlBase64(stringField(container, "originalImageBase64")), JigsawImageBase64: jfbym.StripDataUrlBase64(stringField(container, "jigsawImageBase64"))}
+	puzzle := CaptchaPuzzle{ChallengeURL: challenge, CaptchaType: kind, Ident: query["ident"], CaptchaID: id, ReturnURL: query["returnUrl"], SecretKey: stringField(container, "secretKey"), Token: stringField(container, "token"), OriginalImageBase64: jfbym.StripDataURLBase64(stringField(container, "originalImageBase64")), JigsawImageBase64: jfbym.StripDataURLBase64(stringField(container, "jigsawImageBase64"))}
 	return puzzle, validatePuzzle(puzzle)
 }
 
 // CaptchaGetRequestBody generates the timestamp-based request identity used by the upstream client.
-func CaptchaGetRequestBody(challengeUrl string) (map[string]any, error) {
-	query, err := queryMap(challengeUrl)
+func CaptchaGetRequestBody(challengeURL string) (map[string]any, error) {
+	query, err := queryMap(challengeURL)
 	if err != nil {
 		return nil, err
 	}
@@ -199,8 +199,8 @@ func CaptchaGetRequestBody(challengeUrl string) (map[string]any, error) {
 }
 
 // CaptchaCheckRequestBody submits the encrypted point with the original five-field shape.
-func CaptchaCheckRequestBody(puzzle CaptchaPuzzle, pointJson string) map[string]any {
-	return map[string]any{"captchaType": puzzle.CaptchaType, "pointJson": pointJson, "token": puzzle.Token, "ident": puzzle.Ident, "returnUrl": puzzle.ReturnUrl}
+func CaptchaCheckRequestBody(puzzle CaptchaPuzzle, pointJSON string) map[string]any {
+	return map[string]any{"captchaType": puzzle.CaptchaType, "pointJson": pointJSON, "token": puzzle.Token, "ident": puzzle.Ident, "returnUrl": puzzle.ReturnURL}
 }
 
 // successValue accepts only exact boolean, text and supported integer markers.
@@ -241,7 +241,7 @@ type CaptchaSession struct{ state *captchaState }
 type captchaState struct {
 	mutex                      *sync.Mutex
 	solveGate                  *semaphore.Weighted
-	captchaId                  string
+	captchaID                  string
 	solveAttempts, solveBudget uint64
 }
 
@@ -252,7 +252,7 @@ func NewCaptchaSession(budget uint64) *CaptchaSession {
 func (session CaptchaSession) String() string {
 	session.state.mutex.Lock()
 	defer session.state.mutex.Unlock()
-	return fmt.Sprintf("DomesticCaptchaSession { has_captcha_id: %t, captcha_id_len: %d, solve_attempts: %d, solve_budget: %d }", session.state.captchaId != "", len(session.state.captchaId), session.state.solveAttempts, session.state.solveBudget)
+	return fmt.Sprintf("DomesticCaptchaSession { has_captcha_id: %t, captcha_id_len: %d, solve_attempts: %d, solve_budget: %d }", session.state.captchaID != "", len(session.state.captchaID), session.state.solveAttempts, session.state.solveBudget)
 }
 func (session CaptchaSession) GoString() string     { return session.String() }
 func (session CaptchaSession) LogValue() slog.Value { return slog.StringValue(session.String()) }
@@ -268,17 +268,17 @@ func (session *CaptchaSession) RemainingBudget() uint64 {
 func (session *CaptchaSession) Clone() *CaptchaSession {
 	session.state.mutex.Lock()
 	defer session.state.mutex.Unlock()
-	return &CaptchaSession{state: &captchaState{mutex: &sync.Mutex{}, solveGate: semaphore.NewWeighted(1), captchaId: session.state.captchaId, solveAttempts: session.state.solveAttempts, solveBudget: session.state.solveBudget}}
+	return &CaptchaSession{state: &captchaState{mutex: &sync.Mutex{}, solveGate: semaphore.NewWeighted(1), captchaID: session.state.captchaID, solveAttempts: session.state.solveAttempts, solveBudget: session.state.solveBudget}}
 }
 
-// AttachCaptchaId preserves an existing exact captchaId key and untouched URL query encoding.
-func (session *CaptchaSession) AttachCaptchaId(url string) (string, error) {
-	parsed, err := parseDomesticUrl(url)
+// AttachCaptchaID preserves an existing exact captchaId key and untouched URL query encoding.
+func (session *CaptchaSession) AttachCaptchaID(url string) (string, error) {
+	parsed, err := parseDomesticURL(url)
 	if err != nil {
 		return "", err
 	}
 	session.state.mutex.Lock()
-	id := session.state.captchaId
+	id := session.state.captchaID
 	session.state.mutex.Unlock()
 	if id == "" {
 		return parsed.Href(false), nil
@@ -306,7 +306,7 @@ func (session *CaptchaSession) EnsureAccess(ctx context.Context, text, url strin
 	if !LooksLikeCaptchaChallenge(text, url) {
 		return nil
 	}
-	challenge, err := ExtractChallengeUrl(text, url)
+	challenge, err := ExtractChallengeURL(text, url)
 	if err != nil {
 		return err
 	}
@@ -330,13 +330,13 @@ func (session *CaptchaSession) SolveChallenge(ctx context.Context, url string, s
 		if err != nil {
 			return err
 		}
-		captchaId, accepted, err := solveFreshPuzzle(ctx, url, solver, fetch, submit, attempt)
+		captchaID, accepted, err := solveFreshPuzzle(ctx, url, solver, fetch, submit, attempt)
 		if err != nil {
 			return err
 		}
 		if accepted {
 			session.state.mutex.Lock()
-			session.state.captchaId = captchaId
+			session.state.captchaID = captchaID
 			session.state.mutex.Unlock()
 			return nil
 		}
@@ -384,7 +384,7 @@ func solvePuzzlePoint(ctx context.Context, puzzle CaptchaPuzzle, solver jfbym.So
 	if err != nil {
 		return "", &Error{Kind: "Request", Message: err.Error()}
 	}
-	point, err := jfbym.EncryptPointJson(puzzle.SecretKey, candidates[(attempt-1)%uint64(len(candidates))], 5)
+	point, err := jfbym.EncryptPointJSON(puzzle.SecretKey, candidates[(attempt-1)%uint64(len(candidates))], 5)
 	if err != nil {
 		return "", &Error{Kind: "Request", Message: err.Error()}
 	}
@@ -408,5 +408,5 @@ func solveFreshPuzzle(ctx context.Context, url string, solver jfbym.Solver, fetc
 	if err != nil {
 		return "", false, err
 	}
-	return puzzle.CaptchaId, accepted, nil
+	return puzzle.CaptchaID, accepted, nil
 }

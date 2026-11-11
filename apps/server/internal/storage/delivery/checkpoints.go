@@ -10,7 +10,7 @@ import (
 
 // LoadCheckpoint returns the existing workflow checkpoint without admitting work.
 func (repository *Repository) LoadCheckpoint(ctx context.Context, workflow Workflow, dbName string) (*CheckpointRecord, error) {
-	if err := validateDbName(dbName); err != nil {
+	if err := validateDBName(dbName); err != nil {
 		return nil, err
 	}
 	return decodeCheckpointRecord(queries.Checkpoint(ctx, repository.database, deliverydb.CheckpointParams{Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName)}))
@@ -18,10 +18,10 @@ func (repository *Repository) LoadCheckpoint(ctx context.Context, workflow Workf
 
 // CompareAndSwapCheckpoint creates the first snapshot or replaces exactly its observed revision.
 func (repository *Repository) CompareAndSwapCheckpoint(ctx context.Context, workflow Workflow, dbName string, expected *int64, update CheckpointUpdate) (*CheckpointRecord, error) {
-	if err := validateDbName(dbName); err != nil {
+	if err := validateDBName(dbName); err != nil {
 		return nil, err
 	}
-	if err := validateJson(update.SnapshotJson); err != nil {
+	if err := validateJSON(update.SnapshotJSON); err != nil {
 		return nil, err
 	}
 	if err := validateTime(update.UpdatedAt, "Checkpoint update time is invalid"); err != nil {
@@ -52,9 +52,9 @@ func writeCheckpoint(ctx context.Context, connection *sql.Conn, workflow Workflo
 	}
 	var err error
 	if expected == nil {
-		err = checkCAS(queries.CreateCheckpoint(ctx, connection, deliverydb.CreateCheckpointParams{Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName), Status: sqlite.Text(update.Status), SnapshotJSON: sqlite.Text(update.SnapshotJson), LastCompletedRunAt: (*sqlite.Text)(update.LastCompletedRunAt), CreatedAt: sqlite.Number(update.UpdatedAt), UpdatedAt: sqlite.Number(update.UpdatedAt)}))
+		err = checkCAS(queries.CreateCheckpoint(ctx, connection, deliverydb.CreateCheckpointParams{Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName), Status: sqlite.Text(update.Status), SnapshotJSON: sqlite.Text(update.SnapshotJSON), LastCompletedRunAt: (*sqlite.Text)(update.LastCompletedRunAt), CreatedAt: sqlite.Number(update.UpdatedAt), UpdatedAt: sqlite.Number(update.UpdatedAt)}))
 	} else {
-		err = checkCAS(queries.UpdateCheckpoint(ctx, connection, deliverydb.UpdateCheckpointParams{Status: sqlite.Text(update.Status), SnapshotJSON: sqlite.Text(update.SnapshotJson), LastCompletedRunAt: (*sqlite.Text)(update.LastCompletedRunAt), UpdatedAt: sqlite.Number(update.UpdatedAt), Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName), Revision: sqlite.Integer(*expected)}))
+		err = checkCAS(queries.UpdateCheckpoint(ctx, connection, deliverydb.UpdateCheckpointParams{Status: sqlite.Text(update.Status), SnapshotJSON: sqlite.Text(update.SnapshotJSON), LastCompletedRunAt: (*sqlite.Text)(update.LastCompletedRunAt), UpdatedAt: sqlite.Number(update.UpdatedAt), Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName), Revision: sqlite.Integer(*expected)}))
 	}
 	return err
 }

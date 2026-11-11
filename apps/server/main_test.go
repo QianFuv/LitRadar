@@ -58,8 +58,7 @@ func TestServerProductionWithoutUI(t *testing.T) {
 			t.Errorf("command.Process.Kill: %v", err)
 		}
 		if err := command.Wait(); err != nil {
-			var exitError *exec.ExitError
-			if !errors.As(err, &exitError) {
+			if _, ok := errors.AsType[*exec.ExitError](err); !ok {
 				t.Error(err)
 			}
 		}
@@ -390,8 +389,7 @@ func verifyBlockedSignalTrial(t *testing.T, ctx context.Context, binary, working
 			t.Fatalf("command.Process.Kill: %v", err)
 		}
 		if err := <-finished; err != nil {
-			var exitError *exec.ExitError
-			if !errors.As(err, &exitError) {
+			if _, ok := errors.AsType[*exec.ExitError](err); !ok {
 				t.Error(err)
 			}
 		}
@@ -408,8 +406,7 @@ func verifyBlockedSignalTrial(t *testing.T, ctx context.Context, binary, working
 			t.Fatalf("command.Process.Kill: %v", err)
 		}
 		if err := <-finished; err != nil {
-			var exitError *exec.ExitError
-			if !errors.As(err, &exitError) {
+			if _, ok := errors.AsType[*exec.ExitError](err); !ok {
 				t.Error(err)
 			}
 		}
@@ -432,8 +429,7 @@ func verifyBlockedSignalTrial(t *testing.T, ctx context.Context, binary, working
 			t.Fatalf("command.Process.Kill: %v", err)
 		}
 		if err := <-finished; err != nil {
-			var exitError *exec.ExitError
-			if !errors.As(err, &exitError) {
+			if _, ok := errors.AsType[*exec.ExitError](err); !ok {
 				t.Error(err)
 			}
 		}
@@ -467,7 +463,7 @@ func readServiceListenerPort(logfile *os.File, deadline time.Time) int {
 	port := 0
 	for time.Now().Before(deadline) && port == 0 {
 		data, _ := os.ReadFile(logfile.Name())
-		for _, line := range bytes.Split(data, []byte{'\n'}) {
+		for line := range bytes.SplitSeq(data, []byte{'\n'}) {
 			var event struct {
 				Event string
 				Port  int

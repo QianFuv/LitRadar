@@ -46,11 +46,11 @@ func preparePageParser(config SourceConfig, document Document, checkedOn string,
 	if len(document.Text) > MaxPageBytes {
 		return nil, "", ErrTooLarge
 	}
-	location, err := whatwg.NewParser().Parse(document.FinalUrl)
-	if err != nil || !config.PermitsUrl(location) {
-		return nil, "", ErrDisallowedUrl
+	location, err := whatwg.NewParser().Parse(document.FinalURL)
+	if err != nil || !config.PermitsURL(location) {
+		return nil, "", ErrDisallowedURL
 	}
-	parsed := parseHtml(document.Text)
+	parsed := parseHTML(document.Text)
 	text := document.Text
 	if document.Format == "html" {
 		text = visible(parsed, "")
@@ -85,7 +85,7 @@ func pageCallBlocks(config SourceConfig, text string, isDiscovery bool) ([]headi
 		callBlocks = blocks(strings.SplitN(text, "\n## Journal navigation", 2)[0], 2, 3)
 	case (config.Adapter == ElsevierCalls || config.Adapter == KeaiCalls) && isDiscovery:
 		for _, block := range blocks(text, 1, 2) {
-			if equalAscii(block.title, "Call for papers") {
+			if equalASCII(block.title, "Call for papers") {
 				callBlocks = blocks(block.body, 3, 3)
 				break
 			}
@@ -114,7 +114,7 @@ func (parser *pageParser) parseCard(block headingBlock) error {
 	if parser.ignoresCard(title) || parser.skipsSpringerCard(block) {
 		return nil
 	}
-	link := firstCardLink(parser.parsed, parser.document.FinalUrl, title)
+	link := firstCardLink(parser.parsed, parser.document.FinalURL, title)
 	if parser.handlesBlankCard(title, body, link) {
 		return nil
 	}
@@ -175,7 +175,7 @@ func firstCardLink(parsed *goquery.Document, base, title string) *whatwg.Url {
 
 // handlesBlankCard routes blank discovery cards to details before marking incomplete cards ambiguous.
 func (parser *pageParser) handlesBlankCard(title, body string, link *whatwg.Url) bool {
-	if strings.TrimSpace(body) == "" && parser.isDiscovery && parser.config.PermitsUrl(link) {
+	if strings.TrimSpace(body) == "" && parser.isDiscovery && parser.config.PermitsURL(link) {
 		parser.addDetail(link, title)
 		return true
 	}
@@ -202,7 +202,7 @@ func linksUndatedPdf(parsed *goquery.Document, source domain.Source, body string
 // handlesIncompleteCard defers non-Springer discovery cards with no date or scope to permitted details.
 func (parser *pageParser) handlesIncompleteCard(source domain.Source, link *whatwg.Url, title string) bool {
 	if parser.isDiscovery && parser.config.Adapter != SpringerCollections && source.DateText == "" && source.RawDateText == "" && source.Scope == "" {
-		if parser.config.PermitsUrl(link) {
+		if parser.config.PermitsURL(link) {
 			parser.addDetail(link, title)
 			return true
 		}
@@ -220,7 +220,7 @@ func (parser *pageParser) complete(text string) (ParsedPage, error) {
 	if len(parser.result.Sources) == 0 && len(parser.result.DetailUrls) == 0 {
 		for _, statement := range parser.config.EmptyStatements {
 			if strings.Contains(text, statement) {
-				parser.result.EmptyJournals = append(parser.result.EmptyJournals, domain.EmptyJournal{CatalogIds: append([]string{}, parser.config.CatalogIds...), JournalTitle: parser.config.JournalTitle, CheckedOn: parser.checkedOn, SourceUrl: parser.document.FinalUrl, SourceStatement: statement, Notices: []domain.Notice{}})
+				parser.result.EmptyJournals = append(parser.result.EmptyJournals, domain.EmptyJournal{CatalogIds: append([]string{}, parser.config.CatalogIds...), JournalTitle: parser.config.JournalTitle, CheckedOn: parser.checkedOn, SourceURL: parser.document.FinalURL, SourceStatement: statement, Notices: []domain.Notice{}})
 				break
 			}
 		}
@@ -237,7 +237,7 @@ func Acquire(ctx context.Context, transport Transport, config SourceConfig, chec
 	if !config.CanRefresh() {
 		return Acquisition{}, ErrUnsupported
 	}
-	document, err := transport.Fetch(ctx, config, config.DiscoveryUrl, deadline)
+	document, err := transport.Fetch(ctx, config, config.DiscoveryURL, deadline)
 	if err != nil {
 		return Acquisition{}, err
 	}
@@ -291,7 +291,7 @@ func parseLinkedDetail(config SourceConfig, parsingDocument Document, checkedOn 
 	if len(detail.Sources) == 0 {
 		return nil, ErrUnrecognized
 	}
-	if title, has := titles[url]; has && !slices.ContainsFunc(detail.Sources, func(source domain.Source) bool { return equalAscii(source.Title, title) }) {
+	if title, has := titles[url]; has && !slices.ContainsFunc(detail.Sources, func(source domain.Source) bool { return equalASCII(source.Title, title) }) {
 		return nil, ErrUnrecognized
 	}
 	return detail.Sources, nil
@@ -321,8 +321,8 @@ func capturedCardStatus(body string) string {
 
 // addSource preserves the original URL unless a permitted title anchor has a different pathname.
 func (parser *pageParser) addSource(source domain.Source, link *whatwg.Url) {
-	if parser.config.PermitsUrl(link) && link.Pathname() != parser.location.Pathname() {
-		source.SourceUrl = link.Href(false)
+	if parser.config.PermitsURL(link) && link.Pathname() != parser.location.Pathname() {
+		source.SourceURL = link.Href(false)
 	}
 	parser.result.Sources = append(parser.result.Sources, source)
 }

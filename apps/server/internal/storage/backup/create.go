@@ -64,14 +64,14 @@ func copyDatabase(ctx context.Context, source, destination string) (resultError 
 			resultError = errors.Join(resultError, fmt.Errorf("close sourceConnection: %w", closeError))
 		}
 	}()
-	destinationUri, err := backupDestinationUri(destination)
+	destinationURI, err := backupDestinationURI(destination)
 	if err != nil {
 		return err
 	}
 	err = sourceConnection.Raw(func(source any) error {
 		backup, err := source.(interface {
 			NewBackup(string) (*native.Backup, error)
-		}).NewBackup(destinationUri)
+		}).NewBackup(destinationURI)
 		if err != nil {
 			return err
 		}
@@ -93,9 +93,9 @@ func copyDatabase(ctx context.Context, source, destination string) (resultError 
 	return err
 }
 
-// backupDestinationUri retains the plain destination policy on modernc's internally owned connection.
-func backupDestinationUri(filename string) (string, error) {
-	dsn, err := platform.FileUri(filename, "rwc")
+// backupDestinationURI retains the plain destination policy on modernc's internally owned connection.
+func backupDestinationURI(filename string) (string, error) {
+	dsn, err := platform.FileURI(filename, "rwc")
 	if err != nil {
 		return "", err
 	}
@@ -310,7 +310,7 @@ func prepareBackupStage(options CreateOptions) (string, error) {
 	if fileExists(options.OutputDir) {
 		return "", failure("input", "output directory already exists")
 	}
-	info, err := os.Stat(options.AuthDbPath)
+	info, err := os.Stat(options.AuthDBPath)
 	if err != nil || !info.Mode().IsRegular() {
 		return "", failure("input", "auth database does not exist")
 	}
@@ -335,9 +335,9 @@ func prepareBackupStage(options CreateOptions) (string, error) {
 
 func copyInitialBackupComponents(ctx context.Context, options CreateOptions, stage string, afterMetaCopy func(string) error) ([]Component, error) {
 	components := []Component{}
-	err := withAuthGate(ctx, options.AuthDbPath, func(_ *sql.Conn) error {
+	err := withAuthGate(ctx, options.AuthDBPath, func(_ *sql.Conn) error {
 		destination := filepath.Join(stage, "auth.sqlite")
-		if err := backupDatabase(ctx, options.AuthDbPath, destination); err != nil {
+		if err := backupDatabase(ctx, options.AuthDBPath, destination); err != nil {
 			return err
 		}
 		component, err := databaseComponent(ctx, "auth_database", "auth.sqlite", destination)

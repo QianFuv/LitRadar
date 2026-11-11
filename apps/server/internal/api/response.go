@@ -76,11 +76,11 @@ func mapIndexError(err error) *apiError {
 	var sort query.UnsupportedSortField
 	switch {
 	case errors.Is(err, config.ErrNotFound), errors.Is(err, config.ErrNoDatabases), errors.As(err, &missing):
-		return &apiError{status: 404, detail: err.Error()}
+		return &apiError{status: 404, detail: publicErrorDetail(err)}
 	case errors.Is(err, config.ErrMultipleDatabases), errors.Is(err, config.ErrInvalidName), errors.As(err, &invalid), errors.As(err, &sort), errors.Is(err, query.ErrUnsupportedArticleSort), errors.Is(err, query.ErrInvalidCursor), errors.Is(err, query.ErrInvalidSearchExpression):
-		return badRequest(err.Error())
+		return badRequest(publicErrorDetail(err))
 	case errors.Is(err, query.ErrLegacyWeeklyLimit):
-		return &apiError{status: 413, detail: err.Error()}
+		return &apiError{status: 413, detail: publicErrorDetail(err)}
 	default:
 		return internalError()
 	}

@@ -23,7 +23,7 @@ func TestConcurrentCloseJoinsTheSameActiveSession(t *testing.T) {
 		<-release
 		return &mcp.CallToolResult{}, nil
 	})
-	handler := New(server, func(http.ResponseWriter, *http.Request) (Principal, bool) { return Principal{UserId: 1}, true })
+	handler := New(server, func(http.ResponseWriter, *http.Request) (Principal, bool) { return Principal{UserID: 1}, true })
 	initial := httptest.NewRecorder()
 	handler.ServeHTTP(initial, bodyRequest(strings.NewReader(initializeBody)))
 	session := initial.Header().Get("Mcp-Session-Id")

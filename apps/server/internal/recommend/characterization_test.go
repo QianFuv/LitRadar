@@ -22,7 +22,7 @@ func TestManifestKeepsNumericSpellingOrderAndUnknownValueLeniency(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(value.PendingIssueKeys, []string{"1:2", "01:2", "1:2"}) || !reflect.DeepEqual(value.PendingInpressKeys, []string{"2"}) || !reflect.DeepEqual(value.PendingArticleIds, []int64{2, 1}) || value.RunId == nil || *value.RunId != "run" {
+	if !reflect.DeepEqual(value.PendingIssueKeys, []string{"1:2", "01:2", "1:2"}) || !reflect.DeepEqual(value.PendingInpressKeys, []string{"2"}) || !reflect.DeepEqual(value.PendingArticleIds, []int64{2, 1}) || value.RunID == nil || *value.RunID != "run" {
 		t.Fatal("manifest spelling/coercion order changed", value)
 	}
 }
@@ -57,7 +57,7 @@ func TestAiBudgetRejectionEmitsNoRequestFailure(t *testing.T) {
 	fixture := &aiFixture{}
 	control := domain.NewExecutionControl(float64(time.Now().Unix()+60), 0, func() (bool, error) { return false, nil })
 	client := &AiClient{transport: fixture, control: control, timeout: time.Second}
-	_, err := client.complete(ctx, AiRuntimeConfig{BaseUrl: "https://example.test/v1/"}, "fixture", nil, "", nil, SelectionPayload)
+	_, err := client.complete(ctx, AiRuntimeConfig{BaseURL: "https://example.test/v1/"}, "fixture", nil, "", nil, SelectionPayload)
 	events := finish()
 	if !errors.Is(err, domain.ControlBudgetExhausted) || len(fixture.requests) != 0 {
 		t.Fatal("budget admission changed", err)
@@ -70,8 +70,8 @@ func TestAiBudgetRejectionEmitsNoRequestFailure(t *testing.T) {
 func TestAiRetryCounterRestartsAfterResponseFormatFallback(t *testing.T) {
 	ctx, finish := testlog.Capture(t)
 	fixture := &aiFixture{responses: []json.RawMessage{json.RawMessage(`{"body":null}`), json.RawMessage(`{"status":503}`), json.RawMessage(`{"body":{"choices":[{"message":{"parsed":{"selected":[]}}}]}}`)}}
-	config := AiRuntimeConfig{BaseUrl: "https://example.test/v1/"}
-	client := &AiClient{transport: fixture, allowedBaseUrls: func(context.Context) ([]string, error) { return []string{config.BaseUrl}, nil }, retryAttempts: 1, timeout: time.Second, wait: func(context.Context, time.Duration) error { return nil }}
+	config := AiRuntimeConfig{BaseURL: "https://example.test/v1/"}
+	client := &AiClient{transport: fixture, allowedBaseUrls: func(context.Context) ([]string, error) { return []string{config.BaseURL}, nil }, retryAttempts: 1, timeout: time.Second, wait: func(context.Context, time.Duration) error { return nil }}
 	_, err := client.complete(ctx, config, "fixture", nil, "", nil, SelectionPayload)
 	events := finish()
 	if err != nil || len(fixture.requests) != 3 {
@@ -86,7 +86,7 @@ func TestAiRetryCounterRestartsAfterResponseFormatFallback(t *testing.T) {
 }
 
 func TestSelectionRoundNaNReplacementKeepsSourceSliceOwnership(t *testing.T) {
-	client := &scriptedSelection{selections: []domain.SelectionResult{{Selections: []domain.RankedSelection{{ArticleId: 1, Score: math.NaN()}}}, {Selections: []domain.RankedSelection{{ArticleId: 1, Score: 3}}}}}
+	client := &scriptedSelection{selections: []domain.SelectionResult{{Selections: []domain.RankedSelection{{ArticleID: 1, Score: math.NaN()}}}, {Selections: []domain.RankedSelection{{ArticleID: 1, Score: 3}}}}}
 	_, request, _ := selectorFixture(client)
 	original := append([]storage.ArticleCandidate(nil), request.CandidatesForModel...)
 	result, err := selectRounds(context.Background(), client, AiRuntimeConfig{}, request, 2)
@@ -107,14 +107,14 @@ func TestMarkdownHeaderFallbackKeepsRuneBudget(t *testing.T) {
 
 func TestMarkdownMissingPositionsAndOversizeSectionsRetainOrdering(t *testing.T) {
 	selections := make([]domain.RankedSelection, 21)
-	selections[20].ArticleId = 1
-	candidates := map[int64]storage.ArticleCandidate{1: {ArticleId: 1, Title: "visible"}}
+	selections[20].ArticleID = 1
+	candidates := map[int64]storage.ArticleCandidate{1: {ArticleID: 1, Title: "visible"}}
 	content := BuildMarkdownContent("db", "run", domain.Subscriber{}, "", selections, candidates)
 	if strings.Contains(content, "visible") {
 		t.Fatal("selection position cap changed")
 	}
-	candidates[2] = storage.ArticleCandidate{ArticleId: 2, Title: strings.Repeat("x", MaxPushContentLength)}
-	content = BuildMarkdownContent("db", "run", domain.Subscriber{}, "", []domain.RankedSelection{{ArticleId: 2}, {ArticleId: 1}}, candidates)
+	candidates[2] = storage.ArticleCandidate{ArticleID: 2, Title: strings.Repeat("x", MaxPushContentLength)}
+	content = BuildMarkdownContent("db", "run", domain.Subscriber{}, "", []domain.RankedSelection{{ArticleID: 2}, {ArticleID: 1}}, candidates)
 	if !strings.Contains(content, "### 2. visible") || !strings.Contains(content, "Selected Articles: 1") {
 		t.Fatal("whole section skipping/numbering changed")
 	}

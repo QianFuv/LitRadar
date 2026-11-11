@@ -24,11 +24,11 @@ type Transport interface {
 
 // FixtureData stores independent upstream response bodies and explicit failure controls.
 type FixtureData struct {
-	JournalSearchHtml        string              `json:"journal_search_html"`
-	JournalDetailHtml        string              `json:"journal_detail_html"`
-	YearIssuesHtml           string              `json:"year_issues_html"`
+	JournalSearchHTML        string              `json:"journal_search_html"`
+	JournalDetailHTML        string              `json:"journal_detail_html"`
+	YearIssuesHTML           string              `json:"year_issues_html"`
 	IssueArticlePages        map[string][]string `json:"issue_article_pages"`
-	ArticleDetailHtml        map[string]string   `json:"article_detail_html"`
+	ArticleDetailHTML        map[string]string   `json:"article_detail_html"`
 	ArticleDetailStatusCodes map[string]uint16   `json:"article_detail_status_codes"`
 	FailEndpoint             *string             `json:"fail_endpoint"`
 }
@@ -46,7 +46,7 @@ func NewFixtureTransport(data FixtureData) *FixtureTransport {
 	for key, pages := range data.IssueArticlePages {
 		data.IssueArticlePages[key] = slices.Clone(pages)
 	}
-	data.ArticleDetailHtml = maps.Clone(data.ArticleDetailHtml)
+	data.ArticleDetailHTML = maps.Clone(data.ArticleDetailHTML)
 	data.ArticleDetailStatusCodes = maps.Clone(data.ArticleDetailStatusCodes)
 	if data.FailEndpoint != nil {
 		endpoint := *data.FailEndpoint
@@ -66,7 +66,7 @@ func (fixture *FixtureTransport) Clone() *FixtureTransport {
 
 // ResetTransientState is intentionally inert for deterministic fixtures.
 func (fixture *FixtureTransport) ResetTransientState(context.Context) error { return nil }
-func fixtureUrl(endpoint string, key *string) string {
+func fixtureURL(endpoint string, key *string) string {
 	switch endpoint {
 	case "journal_detail":
 		return NaviBase + "/knavi/detail"
@@ -92,7 +92,7 @@ func (fixture *FixtureTransport) record(endpoint string, key *string, isSuccess 
 	if endpoint == "journal_detail" || endpoint == "article_detail" {
 		method = "GET"
 	}
-	fixture.attempts = append(fixture.attempts, scholarly.Attempt{Service: "cnki", Endpoint: endpoint, Method: method, Url: fixtureUrl(endpoint, key), StatusCode: &status, DidSucceed: isSuccess, Error: message})
+	fixture.attempts = append(fixture.attempts, scholarly.Attempt{Service: "cnki", Endpoint: endpoint, Method: method, URL: fixtureURL(endpoint, key), StatusCode: &status, DidSucceed: isSuccess, Error: message})
 }
 func (fixture *FixtureTransport) forced(endpoint string, key *string) error {
 	if fixture.data.FailEndpoint == nil || *fixture.data.FailEndpoint != endpoint {
@@ -110,11 +110,11 @@ func (fixture *FixtureTransport) ResolveJournal(ctx context.Context, locator Jou
 	if err := fixture.forced("journal_detail", nil); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(fixture.data.JournalDetailHtml) == "" {
+	if strings.TrimSpace(fixture.data.JournalDetailHTML) == "" {
 		fixture.record("journal_detail", nil, true, nil)
 		return nil, nil
 	}
-	detail, err := ParseJournalDetail(fixture.data.JournalDetailHtml)
+	detail, err := ParseJournalDetail(fixture.data.JournalDetailHTML)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +132,7 @@ func (fixture *FixtureTransport) YearIssues(ctx context.Context, journal any) ([
 	if err := fixture.forced("year_issues", nil); err != nil {
 		return nil, err
 	}
-	issues, err := ParseYearIssues(fixture.data.YearIssuesHtml)
+	issues, err := ParseYearIssues(fixture.data.YearIssuesHTML)
 	if err != nil {
 		return nil, err
 	}
@@ -172,22 +172,22 @@ func (fixture *FixtureTransport) IssueArticles(ctx context.Context, journal, iss
 }
 
 // ArticleDetail applies explicit status overrides before forced errors or missing content.
-func (fixture *FixtureTransport) ArticleDetail(ctx context.Context, url string, platformId *string) (any, error) {
+func (fixture *FixtureTransport) ArticleDetail(ctx context.Context, url string, platformID *string) (any, error) {
 	fixture.mutex.Lock()
 	defer fixture.mutex.Unlock()
 	key := url
-	if platformId != nil {
-		key = *platformId
+	if platformID != nil {
+		key = *platformID
 	}
 	if status, exists := fixture.data.ArticleDetailStatusCodes[key]; exists {
 		message := "HTTP status"
-		fixture.attempts = append(fixture.attempts, scholarly.Attempt{Service: "cnki", Endpoint: "article_detail", Method: "GET", Url: fixtureUrl("article_detail", &key), StatusCode: &status, Error: &message})
+		fixture.attempts = append(fixture.attempts, scholarly.Attempt{Service: "cnki", Endpoint: "article_detail", Method: "GET", URL: fixtureURL("article_detail", &key), StatusCode: &status, Error: &message})
 		return nil, httpStatusError(status)
 	}
 	if err := fixture.forced("article_detail", &key); err != nil {
 		return nil, err
 	}
-	text, exists := fixture.data.ArticleDetailHtml[key]
+	text, exists := fixture.data.ArticleDetailHTML[key]
 	if !exists {
 		return nil, &Error{Kind: "MissingFixture", Message: "domestic CNKI fixture missing article_detail for " + key}
 	}

@@ -53,7 +53,7 @@ func (handlers *cfpHandlers) routes() []route {
 				}
 				var entry *sources.JournalCatalogEntry
 				for index := range entries {
-					if entries[index].CatalogId == input.CatalogID || slices.Contains(entries[index].CatalogAliases, input.CatalogID) {
+					if entries[index].CatalogID == input.CatalogID || slices.Contains(entries[index].CatalogAliases, input.CatalogID) {
 						entry = &entries[index]
 						break
 					}
@@ -61,7 +61,7 @@ func (handlers *cfpHandlers) routes() []route {
 				if entry == nil {
 					return nil, &apiError{status: 404, detail: "CFP journal catalog member not found"}
 				}
-				snapshots, err := handlers.repository.LoadJournalsForCatalogIds(context.WithoutCancel(ctx), append([]string{entry.CatalogId}, entry.CatalogAliases...))
+				snapshots, err := handlers.repository.LoadJournalsForCatalogIds(context.WithoutCancel(ctx), append([]string{entry.CatalogID}, entry.CatalogAliases...))
 				if err != nil {
 					return nil, internalError()
 				}

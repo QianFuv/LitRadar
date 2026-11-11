@@ -42,7 +42,7 @@ func runHelperFixture(mode string) {
 		startFixtureDescendant()
 	}
 	if mode == "flood" {
-		for index := 0; index < 128; index++ {
+		for range 128 {
 			fmt.Fprint(os.Stdout, strings.Repeat("o", 8192))
 			fmt.Fprint(os.Stderr, strings.Repeat("e", 8192))
 		}
@@ -120,7 +120,7 @@ func TestHelperLifecycleAndWholeTreeOwnership(t *testing.T) {
 }
 
 func TestObscuraProtocolAndOneAttempt(t *testing.T) {
-	config := SourceConfig{AllowedUrls: []UrlRule{{Host: "link.springer.com", PathPrefix: "/collections"}}}
+	config := SourceConfig{AllowedUrls: []URLRule{{Host: "link.springer.com", PathPrefix: "/collections"}}}
 	valid := `{"protocol":"litradar.cfp.page.v1","finalUrl":"https://link.springer.com/collections/a","html":"<main>complete text</main>"}`
 	for _, payload := range []string{valid} {
 		if _, err := decodeObscura(config, []byte(payload)); err != nil {
@@ -157,7 +157,7 @@ func TestPdfHelperFaithfulTextAndArguments(t *testing.T) {
 				}
 			})
 			transport := &LiveTransport{http: httpTransport, options: RefreshOptions{PdftotextPath: &path}}
-			document, err := transport.httpDocument(context.Background(), config, config.DiscoveryUrl, time.Now().Add(10*time.Second))
+			document, err := transport.httpDocument(context.Background(), config, config.DiscoveryURL, time.Now().Add(10*time.Second))
 			if !errors.Is(err, scenario.expected) {
 				t.Fatal(err)
 			}
@@ -208,14 +208,15 @@ func runDescendantFixture() {
 // helperFixtureOutput verifies browser and PDF invocation arguments before selecting the output file.
 func helperFixtureOutput() string {
 	output := os.Args[len(os.Args)-1]
-	if os.Args[1] == "fetch" {
+	switch os.Args[1] {
+	case "fetch":
 		position := slices.Index(os.Args, "--output")
 		if position < 0 {
 			os.Exit(31)
 		}
 		output = os.Args[position+1]
 		assertBrowserFixtureArguments()
-	} else if os.Args[1] == "-enc" {
+	case "-enc":
 		assertPdfFixtureArguments()
 	}
 	return output

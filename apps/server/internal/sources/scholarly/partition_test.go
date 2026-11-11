@@ -90,7 +90,8 @@ func TestDoiBatchStorageIndependence(t *testing.T) {
 	}
 	input[0] = "input changed"
 	batches[0][1] = "batch changed"
-	appended := append(batches[0], "appended")
+	appended := batches[0]
+	appended = append(appended, "appended")
 	if batches[0][0] != "first" || input[1] != "second" || batches[1][0] != "third" || appended[2] != "appended" {
 		t.Fatal("returned batches alias input or another batch", input, batches)
 	}

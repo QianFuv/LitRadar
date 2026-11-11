@@ -23,7 +23,7 @@ type Config struct {
 	SecretKeyFile, BundledMetaDir, Executable string
 	SchedulerIntervalSeconds                  uint64
 	IsDevelopment, AreSecureCookiesRequired   bool
-	ApiOptions                                api.Options
+	APIOptions                                api.Options
 }
 
 // NewConfig derives the original service defaults without touching deployment data.
@@ -41,7 +41,7 @@ func NewConfig(projectRoot, host string, port uint16, secretKeyFile string) (Con
 // ValidateDevelopment rejects public development listeners before any storage preparation.
 func (configuration Config) ValidateDevelopment() error {
 	if configuration.IsDevelopment && (configuration.Host != "127.0.0.1" || configuration.AreSecureCookiesRequired) {
-		return errors.New("Development mode requires --host 127.0.0.1 and cannot use --require-secure-cookies")
+		return errors.New("development mode requires --host 127.0.0.1 and cannot use --require-secure-cookies")
 	}
 	return nil
 }
@@ -53,7 +53,7 @@ func (configuration Config) BindAddress() string {
 
 // ApplyRuntimeSettings validates every known setting and applies server policy in source order.
 func (configuration *Config) ApplyRuntimeSettings(values []settings.Value) error {
-	configuration.ApiOptions.IsDevelopment = configuration.IsDevelopment
+	configuration.APIOptions.IsDevelopment = configuration.IsDevelopment
 	for _, value := range values {
 		if _, exists := settings.Default(value.Field); !exists {
 			continue
@@ -63,7 +63,7 @@ func (configuration *Config) ApplyRuntimeSettings(values []settings.Value) error
 			return err
 		}
 		if value.Field == "oidc_issuer_url" || value.Field == "public_base_url" {
-			if err := settings.ValidateOidcUrl(canonical, configuration.IsDevelopment); err != nil {
+			if err := settings.ValidateOidcURL(canonical, configuration.IsDevelopment); err != nil {
 				return err
 			}
 		}
@@ -71,8 +71,8 @@ func (configuration *Config) ApplyRuntimeSettings(values []settings.Value) error
 			return err
 		}
 	}
-	if configuration.AreSecureCookiesRequired && !configuration.ApiOptions.AreCookiesSecure {
-		return errors.New("Secure session cookies are required; set secure_cookies to true before startup")
+	if configuration.AreSecureCookiesRequired && !configuration.APIOptions.AreCookiesSecure {
+		return errors.New("secure session cookies are required; set secure_cookies to true before startup")
 	}
 	return nil
 }
@@ -92,25 +92,25 @@ func (configuration *Config) applyCanonicalRuntimeSetting(field, canonical strin
 	case "telemetry_retention_days":
 		configuration.TelemetryRetentionDays, _ = strconv.Atoi(canonical)
 	case "cors_allowed_origins":
-		configuration.ApiOptions.CorsOrigins = commaValues(canonical)
+		configuration.APIOptions.CorsOrigins = commaValues(canonical)
 	case "mcp_allowed_hosts":
-		configuration.ApiOptions.McpHosts = commaValues(canonical)
+		configuration.APIOptions.McpHosts = commaValues(canonical)
 	case "mcp_allowed_origins":
-		configuration.ApiOptions.McpOrigins = commaValues(canonical)
+		configuration.APIOptions.McpOrigins = commaValues(canonical)
 	case "secure_cookies":
-		configuration.ApiOptions.AreCookiesSecure = canonical == "true"
+		configuration.APIOptions.AreCookiesSecure = canonical == "true"
 	case "trusted_proxy_cidrs":
 		prefixes, err := runtimeProxyPrefixes(canonical)
 		if err != nil {
 			return err
 		}
-		configuration.ApiOptions.TrustedProxies = prefixes
+		configuration.APIOptions.TrustedProxies = prefixes
 	case "auth_rate_limit_policy":
 		policy, err := settings.ParseRateLimitPolicy(canonical)
 		if err != nil {
 			return err
 		}
-		configuration.ApiOptions.RateLimit = policy
+		configuration.APIOptions.RateLimit = policy
 	}
 	return nil
 }

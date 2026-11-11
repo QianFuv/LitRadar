@@ -27,7 +27,7 @@ func EnsureSeed(ctx context.Context, repository *storage.Repository) (storage.Im
 	if err != nil {
 		return storage.ImportResult{}, &storage.InvalidError{Message: err.Error()}
 	}
-	result, err := repository.ImportPrepared(ctx, assets.SeedId, seed)
+	result, err := repository.ImportPrepared(ctx, assets.SeedID, seed)
 	var invalid *storage.InvalidError
 	if !errors.As(err, &invalid) || invalid.Message != "CFP seed identity has different content; use a new import identity" {
 		return result, err
@@ -36,12 +36,12 @@ func EnsureSeed(ctx context.Context, repository *storage.Repository) (storage.Im
 	if prepareError != nil {
 		return storage.ImportResult{}, &storage.InvalidError{Message: prepareError.Error()}
 	}
-	return repository.ImportPrepared(ctx, assets.SeedId, historical)
+	return repository.ImportPrepared(ctx, assets.SeedID, historical)
 }
 
 type RefreshResult struct {
 	SourceKey string  `json:"sourceKey"`
-	CatalogId string  `json:"catalogId"`
+	CatalogID string  `json:"catalogId"`
 	Status    string  `json:"status"`
 	Notices   uint64  `json:"notices"`
 	Error     *string `json:"error"`
@@ -53,7 +53,7 @@ func failedResult(config SourceConfig, err error) RefreshResult {
 		status = "unsupported"
 	}
 	message := err.Error()
-	return RefreshResult{SourceKey: config.SourceKey, CatalogId: config.CatalogIds[0], Status: status, Error: &message}
+	return RefreshResult{SourceKey: config.SourceKey, CatalogID: config.CatalogIds[0], Status: status, Error: &message}
 }
 func leaseSeconds(deadline time.Time) int64 {
 	return max(1, min(600, int64(max(0, time.Until(deadline))/time.Second)+1))
@@ -80,7 +80,7 @@ func RefreshSource(ctx context.Context, repository *storage.Repository, config S
 		}
 	}
 	documents := acquisitionDocuments(acquired.Documents)
-	capture, err := jsonvalue.EncodeJson(documents)
+	capture, err := jsonvalue.EncodeJSON(documents)
 	if err != nil {
 		return RefreshResult{}, &storage.PayloadError{Cause: err}
 	}
@@ -90,7 +90,7 @@ func RefreshSource(ctx context.Context, repository *storage.Repository, config S
 		}
 		return failedResult(config, ErrTooLarge), nil
 	}
-	publication := storage.Publication{Capture: capture, CaptureFormat: "original_documents_json", SourceUrl: config.DiscoveryUrl, ConfigVersion: config.ConfigVersion, Sources: acquired.Sources, EmptyJournals: acquired.EmptyJournals}
+	publication := storage.Publication{Capture: capture, CaptureFormat: "original_documents_json", SourceURL: config.DiscoveryURL, ConfigVersion: config.ConfigVersion, Sources: acquired.Sources, EmptyJournals: acquired.EmptyJournals}
 	return publishAcquisition(databaseCtx, repository, lease, config, publication)
 }
 
@@ -102,7 +102,7 @@ func publishAcquisition(databaseCtx context.Context, repository *storage.Reposit
 		}
 		return RefreshResult{}, err
 	}
-	return RefreshResult{SourceKey: config.SourceKey, CatalogId: config.CatalogIds[0], Status: "success", Notices: uint64(len(publication.Sources))}, nil
+	return RefreshResult{SourceKey: config.SourceKey, CatalogID: config.CatalogIds[0], Status: "success", Notices: uint64(len(publication.Sources))}, nil
 }
 
 func validOptions(options RefreshOptions) bool {
@@ -126,7 +126,7 @@ func RefreshSources(ctx context.Context, repository *storage.Repository, configs
 		workers.Go(func() error {
 			if !time.Now().Before(deadline) || ctx.Err() != nil {
 				reason := "Batch deadline or cancellation prevented this attempt"
-				results[index] = RefreshResult{SourceKey: config.SourceKey, CatalogId: config.CatalogIds[0], Status: "not_attempted", Error: &reason}
+				results[index] = RefreshResult{SourceKey: config.SourceKey, CatalogID: config.CatalogIds[0], Status: "not_attempted", Error: &reason}
 				return nil
 			}
 			transport := NewLiveTransport(options)
@@ -178,7 +178,7 @@ func retainOriginalNotices(databaseCtx context.Context, repository *storage.Repo
 func acquisitionDocuments(acquired []Document) []map[string]string {
 	documents := []map[string]string{}
 	for _, document := range acquired {
-		documents = append(documents, map[string]string{"url": document.FinalUrl, "format": document.Format, "text": document.Text})
+		documents = append(documents, map[string]string{"url": document.FinalURL, "format": document.Format, "text": document.Text})
 	}
 	return documents
 }

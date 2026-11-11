@@ -74,7 +74,7 @@ func StoreManifestIntent(ctx context.Context, connection *sql.Conn, id, owner st
 			if phase != CatalogIndexing {
 				return batchState("manifest intent requires an indexing catalog")
 			}
-			if _, err := batchQueries.StoreManifestIntent(ctx, connection, batchdb.StoreManifestIntentParams{BatchID: sqlite.Text(id), Ordinal: sqlite.Integer(int64(ordinal)), ManifestPayload: dbtypes.Blob(intent.Payload), ManifestSHA256: new(sqlite.Text(intent.Sha256)), ManifestThroughEventID: (*sqlite.Integer)(intent.ThroughEventId), ManifestPath: new(sqlite.Text(intent.Path)), ManifestRunID: new(sqlite.Text(intent.RunId)), ManifestGeneratedAt: new(sqlite.Text(intent.GeneratedAt)), UpdatedAt: sqlite.Integer(now)}); err != nil {
+			if _, err := batchQueries.StoreManifestIntent(ctx, connection, batchdb.StoreManifestIntentParams{BatchID: sqlite.Text(id), Ordinal: sqlite.Integer(int64(ordinal)), ManifestPayload: dbtypes.Blob(intent.Payload), ManifestSHA256: new(sqlite.Text(intent.Sha256)), ManifestThroughEventID: (*sqlite.Integer)(intent.ThroughEventID), ManifestPath: new(sqlite.Text(intent.Path)), ManifestRunID: new(sqlite.Text(intent.RunID)), ManifestGeneratedAt: new(sqlite.Text(intent.GeneratedAt)), UpdatedAt: sqlite.Integer(now)}); err != nil {
 				return err
 			}
 		}
@@ -82,7 +82,7 @@ func StoreManifestIntent(ctx context.Context, connection *sql.Conn, id, owner st
 	})
 }
 func sameManifestIntent(first, second ManifestIntent) bool {
-	return bytes.Equal(first.Payload, second.Payload) && first.Sha256 == second.Sha256 && sameOptional(first.ThroughEventId, second.ThroughEventId) && first.Path == second.Path && first.RunId == second.RunId && first.GeneratedAt == second.GeneratedAt
+	return bytes.Equal(first.Payload, second.Payload) && first.Sha256 == second.Sha256 && sameOptional(first.ThroughEventID, second.ThroughEventID) && first.Path == second.Path && first.RunID == second.RunID && first.GeneratedAt == second.GeneratedAt
 }
 
 // StoreCatalogOutcome records immutable indexing counters while permitting later publication-path enrichment.
@@ -124,7 +124,7 @@ func saveCatalogOutcome(ctx context.Context, connection *sql.Conn, id string, or
 	if err != nil {
 		return err
 	}
-	changed, err := batchQueries.StoreCatalogOutcome(ctx, connection, batchdb.StoreCatalogOutcomeParams{BatchID: sqlite.Text(id), Ordinal: sqlite.Integer(int64(ordinal)), RunID: new(sqlite.Text(outcome.RunId)), WrittenArticleCount: new(sqlite.Integer(outcome.WrittenArticleCount)), SourceAttemptCount: new(sqlite.Integer(attempts)), OutcomeManifestPath: (*sqlite.Text)(outcome.ManifestPath), UpdatedAt: sqlite.Integer(now), JournalCount: sqlite.Integer(journals)})
+	changed, err := batchQueries.StoreCatalogOutcome(ctx, connection, batchdb.StoreCatalogOutcomeParams{BatchID: sqlite.Text(id), Ordinal: sqlite.Integer(int64(ordinal)), RunID: new(sqlite.Text(outcome.RunID)), WrittenArticleCount: new(sqlite.Integer(outcome.WrittenArticleCount)), SourceAttemptCount: new(sqlite.Integer(attempts)), OutcomeManifestPath: (*sqlite.Text)(outcome.ManifestPath), UpdatedAt: sqlite.Integer(now), JournalCount: sqlite.Integer(journals)})
 	return expectBatchChange(changed, err, "catalog outcome journal count does not match the frozen CSV")
 }
 
@@ -194,7 +194,7 @@ func CompleteBatch(ctx context.Context, connection *sql.Conn, id, owner string, 
 
 func retainCatalogOutcome(current *BatchCatalogOutcome, outcome BatchCatalogOutcome) (BatchCatalogOutcome, error) {
 	if current != nil {
-		if current.RunId != outcome.RunId || current.JournalCount != outcome.JournalCount || current.WrittenArticleCount != outcome.WrittenArticleCount || current.SourceAttemptCount != outcome.SourceAttemptCount {
+		if current.RunID != outcome.RunID || current.JournalCount != outcome.JournalCount || current.WrittenArticleCount != outcome.WrittenArticleCount || current.SourceAttemptCount != outcome.SourceAttemptCount {
 			return outcome, batchState("catalog outcome immutable counters changed during recovery")
 		}
 		if current.ManifestPath != nil {

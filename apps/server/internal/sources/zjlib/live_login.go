@@ -52,8 +52,8 @@ func (live *LiveTransport) StartQrLogin(ctx context.Context) (QrLogin, error) {
 	if err != nil {
 		return QrLogin{}, err
 	}
-	login := QrLogin{Uuid: stringField(data, "uuid"), Status: stringField(data, "status"), QrCode: stringField(data, "qrCode")}
-	if login.Uuid == "" || login.QrCode == "" {
+	login := QrLogin{UUID: stringField(data, "uuid"), Status: stringField(data, "status"), QrCode: stringField(data, "qrCode")}
+	if login.UUID == "" || login.QrCode == "" {
 		return QrLogin{}, &Error{Kind: "Parse", Message: "QR login response did not contain uuid/qrCode."}
 	}
 	return login, nil
@@ -88,7 +88,7 @@ func (live *LiveTransport) PollQrLogin(ctx context.Context, uuid string, timeout
 	}
 	return "", &Error{Kind: "Timeout", Message: fmt.Sprintf("Timed out waiting for QR scan after %d seconds.", timeoutSeconds)}
 }
-func (live *LiveTransport) buildShareSsoUrl(ctx context.Context, token string) (string, error) {
+func (live *LiveTransport) buildShareSsoURL(ctx context.Context, token string) (string, error) {
 	location := appendEndpoint(live.state.allowed.bases[wwwFamily], "/bff-api/portal-admin-service/open-api/build-and-share/ssoLoginUrl") + "?" + encodePairs(pair("referURL", live.state.allowed.entry))
 	response, finish, err := live.send(ctx, http.MethodGet, location, "", wwwHeaders(live.state.allowed.bases[wwwFamily], &token), false)
 	if err != nil {
@@ -107,8 +107,8 @@ func (live *LiveTransport) buildShareSsoUrl(ctx context.Context, token string) (
 }
 
 // enterShare completes protocol, optional sync, entry and user-info requests in order.
-func (live *LiveTransport) enterShare(ctx context.Context, ssoUrl string) error {
-	response, finish, err := live.send(ctx, http.MethodGet, ssoUrl, "", htmlHeaders(live.state.allowed.bases[wwwFamily]+"/"), false)
+func (live *LiveTransport) enterShare(ctx context.Context, ssoURL string) error {
+	response, finish, err := live.send(ctx, http.MethodGet, ssoURL, "", htmlHeaders(live.state.allowed.bases[wwwFamily]+"/"), false)
 	if err != nil {
 		return err
 	}
@@ -116,7 +116,7 @@ func (live *LiveTransport) enterShare(ctx context.Context, ssoUrl string) error 
 		finish()
 		return err
 	}
-	responseUrl := response.Request.URL.String()
+	responseURL := response.Request.URL.String()
 	text, err := responseText(response)
 	finish()
 	if err != nil {
@@ -127,11 +127,11 @@ func (live *LiveTransport) enterShare(ctx context.Context, ssoUrl string) error 
 		return err
 	}
 	if sync != nil {
-		if err := live.syncShareCookies(ctx, sync, responseUrl); err != nil {
+		if err := live.syncShareCookies(ctx, sync, responseURL); err != nil {
 			return err
 		}
 	}
-	response, finish, err = live.send(ctx, http.MethodGet, live.state.allowed.entry, "", htmlHeaders(ssoUrl), true)
+	response, finish, err = live.send(ctx, http.MethodGet, live.state.allowed.entry, "", htmlHeaders(ssoURL), true)
 	if err != nil {
 		return err
 	}
@@ -148,7 +148,7 @@ func (live *LiveTransport) enterShare(ctx context.Context, ssoUrl string) error 
 	defer finish()
 	return raiseForStatus(response, "load Share user info")
 }
-func (live *LiveTransport) getProxyLoginUrl(ctx context.Context) (string, error) {
+func (live *LiveTransport) getProxyLoginURL(ctx context.Context) (string, error) {
 	location := appendEndpoint(live.state.allowed.bases[shareFamily], "/sso/api/auth/library/vpn358") + "?" + encodePairs(pair("wfwfid", "2120"), pair("refer", live.state.allowed.referer))
 	response, finish, err := live.send(ctx, http.MethodGet, location, "", htmlHeaders(live.state.allowed.entry), false)
 	if err != nil {
@@ -160,7 +160,7 @@ func (live *LiveTransport) getProxyLoginUrl(ctx context.Context) (string, error)
 	}
 	var login string
 	if location, ok := response.Header["Location"]; ok && len(location) > 0 && asciiHeader(location[0]) {
-		login, err = joinUrl(response.Request.URL.String(), location[0])
+		login, err = joinURL(response.Request.URL.String(), location[0])
 	} else {
 		var text string
 		text, err = responseText(response)
@@ -228,21 +228,21 @@ func (live *LiveTransport) enterProxy(ctx context.Context, login string) (string
 		}
 		status := response.StatusCode
 		values, hasLocation := response.Header["Location"]
-		responseUrl := response.Request.URL.String()
+		responseURL := response.Request.URL.String()
 		finish()
 		if isSuccessfulProxyStatus(status) {
-			final, err := live.acceptProxySession(current, responseUrl)
+			final, err := live.acceptProxySession(current, responseURL)
 			return final, false, err
 		}
 		if status < 300 || status >= 400 {
 			return "", false, &Error{Kind: "Request", Message: fmt.Sprintf("enter zyproxy failed with HTTP %d.", status)}
 		}
-		next, currentEndpoint, shouldRetry, err := live.proxyTransition(current, responseUrl, values, hasLocation, hops, history)
+		next, currentEndpoint, shouldRetry, err := live.proxyTransition(current, responseURL, values, hasLocation, hops, history)
 		if err != nil || shouldRetry {
 			return "", shouldRetry, err
 		}
 		history = append(history, currentEndpoint)
-		referer = responseUrl
+		referer = responseURL
 		current = next
 	}
 }
@@ -258,7 +258,7 @@ func (live *LiveTransport) WarmUpFulltextSession(ctx context.Context, token stri
 	}
 	for attempt := 1; attempt <= 3; attempt++ {
 		started := time.Now()
-		login, err := live.getProxyLoginUrl(ctx)
+		login, err := live.getProxyLoginURL(ctx)
 		var final string
 		var shouldRetry bool
 		if err == nil {
@@ -325,8 +325,8 @@ func qrPollResult(data any) (string, bool, error) {
 }
 
 // syncShareCookies completes the ordered sync POST before opening the Share entry.
-func (live *LiveTransport) syncShareCookies(ctx context.Context, sync *shareCookieSync, responseUrl string) error {
-	headers := htmlHeaders(responseUrl)
+func (live *LiveTransport) syncShareCookies(ctx context.Context, sync *shareCookieSync, responseURL string) error {
+	headers := htmlHeaders(responseURL)
 	headers.Set("Origin", origin(live.state.allowed.bases[shareFamily]))
 	headers.Set("Content-Type", "application/x-www-form-urlencoded")
 	response, finish, err := live.send(ctx, http.MethodPost, sync.url, encodePairs(pair("sign", sync.fields["sign"]), pair("url", sync.fields["url"])), headers, true)
@@ -342,7 +342,7 @@ func (live *LiveTransport) syncShareCookies(ctx context.Context, sync *shareCook
 }
 
 // acceptProxySession validates the final family before the jar-visible session cookie.
-func (live *LiveTransport) acceptProxySession(current *whatwg.Url, responseUrl string) (string, error) {
+func (live *LiveTransport) acceptProxySession(current *whatwg.Url, responseURL string) (string, error) {
 	endpoint, err := live.state.allowed.proxyEndpoint(current)
 	if err != nil {
 		return "", err
@@ -353,12 +353,12 @@ func (live *LiveTransport) acceptProxySession(current *whatwg.Url, responseUrl s
 	if !live.HasUnexpiredCookie("vpn358_sid", time.Now().Unix()) {
 		return "", &Error{Kind: "Parse", Message: "zyproxy login did not set vpn358_sid."}
 	}
-	return responseUrl, nil
+	return responseURL, nil
 }
 
 // proxyTransition preserves hop, Location, endpoint, self and cycle error priority.
-func (live *LiveTransport) proxyTransition(current *whatwg.Url, responseUrl string, values []string, hasLocation bool, hops int, history []proxyEndpoint) (*whatwg.Url, proxyEndpoint, bool, error) {
-	next, err := proxyRedirectLocation(responseUrl, values, hasLocation, hops)
+func (live *LiveTransport) proxyTransition(current *whatwg.Url, responseURL string, values []string, hasLocation bool, hops int, history []proxyEndpoint) (*whatwg.Url, proxyEndpoint, bool, error) {
+	next, err := proxyRedirectLocation(responseURL, values, hasLocation, hops)
 	if err != nil {
 		return nil, proxyEndpoint{}, false, err
 	}
@@ -384,7 +384,7 @@ func (live *LiveTransport) proxyTransition(current *whatwg.Url, responseUrl stri
 
 // prepareShareSession performs SSO and Share setup once before proxy retries.
 func (live *LiveTransport) prepareShareSession(ctx context.Context, token string) error {
-	sso, err := live.buildShareSsoUrl(ctx, token)
+	sso, err := live.buildShareSsoURL(ctx, token)
 	if err != nil {
 		return err
 	}
@@ -413,14 +413,14 @@ func isSuccessfulProxyStatus(status int) bool {
 }
 
 // proxyRedirectLocation gives hop exhaustion precedence over Location admission.
-func proxyRedirectLocation(responseUrl string, values []string, hasLocation bool, hops int) (*whatwg.Url, error) {
+func proxyRedirectLocation(responseURL string, values []string, hasLocation bool, hops int) (*whatwg.Url, error) {
 	if hops >= 4 {
 		return nil, &Error{Kind: "Request", Message: "zyproxy login exceeded 4 redirect hops."}
 	}
 	if !hasLocation || len(values) == 0 || !asciiHeader(values[0]) {
 		return nil, &Error{Kind: "Parse", Message: "zyproxy redirect did not contain a valid Location."}
 	}
-	next, err := whatwg.NewParser().ParseRef(responseUrl, values[0])
+	next, err := whatwg.NewParser().ParseRef(responseURL, values[0])
 	if err != nil {
 		return nil, &Error{Kind: "Parse", Message: "zyproxy redirect Location was invalid."}
 	}

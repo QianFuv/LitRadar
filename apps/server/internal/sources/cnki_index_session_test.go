@@ -27,7 +27,7 @@ func TestCnkiRetryRefreshesNavigationPreservesFrozenIssuesAndDetails(t *testing.
 		t.Fatalf("session refresh failed: err=%v journals=%d trees=%d calls=%v", err, state.journals.Load(), state.trees.Load(), calls)
 	}
 	checkpoint, err := decodeCnkiCheckpoint(*first.Progress.Checkpoint)
-	if err != nil || checkpoint.CandidateHeadIssueId != "202601" || checkpoint.CurrentIssueId != "202512" || checkpoint.PageIndex != 0 {
+	if err != nil || checkpoint.CandidateHeadIssueID != "202601" || checkpoint.CurrentIssueID != "202512" || checkpoint.PageIndex != 0 {
 		t.Fatalf("retry changed frozen traversal: %#v %v", checkpoint, err)
 	}
 	last, err := cnkiTestFetch(index, first.Progress.Checkpoint)
@@ -35,7 +35,7 @@ func TestCnkiRetryRefreshesNavigationPreservesFrozenIssuesAndDetails(t *testing.
 		t.Fatalf("refreshed snapshot was not reusable: %#v %v", last.Progress, err)
 	}
 	anchor, err := decodeCnkiAnchor(*last.Progress.NextAnchor)
-	if err != nil || anchor.YearIssueId != "202601" {
+	if err != nil || anchor.YearIssueID != "202601" {
 		t.Fatalf("frozen head changed: %#v %v", anchor, err)
 	}
 }
@@ -61,16 +61,16 @@ func TestCnkiRetryKeepsResumedPage(t *testing.T) {
 		}
 		return map[string]any{"title": "A", "authors": "Author"}, nil
 	}
-	encoded, err := (cnki.Checkpoint{Version: cnki.CheckpointVersion, CandidateHeadIssueId: "202601", CurrentIssueId: "202512", PageIndex: 2}).Encode()
+	encoded, err := (cnki.Checkpoint{Version: cnki.CheckpointVersion, CandidateHeadIssueID: "202601", CurrentIssueID: "202512", PageIndex: 2}).Encode()
 	if err != nil {
 		t.Fatal(err)
 	}
-	batch, err := index.Fetch(context.Background(), domain.JournalCatalogEntry{CatalogId: "J", Title: "Journal"}, domain.IndexFetchContext{Mode: domain.Bootstrap, TraversalCheckpoint: &encoded})
+	batch, err := index.Fetch(context.Background(), domain.JournalCatalogEntry{CatalogID: "J", Title: "Journal"}, domain.IndexFetchContext{Mode: domain.Bootstrap, TraversalCheckpoint: &encoded})
 	if err != nil {
 		t.Fatal(err)
 	}
 	checkpoint, err := decodeCnkiCheckpoint(*batch.Progress.Checkpoint)
-	if err != nil || checkpoint.CandidateHeadIssueId != "202601" || checkpoint.CurrentIssueId != "202512" || checkpoint.PageIndex != 3 || pages != 2 {
+	if err != nil || checkpoint.CandidateHeadIssueID != "202601" || checkpoint.CurrentIssueID != "202512" || checkpoint.PageIndex != 3 || pages != 2 {
 		t.Fatalf("resumed checkpoint changed: %#v %v pages=%d", checkpoint, err, pages)
 	}
 }
@@ -90,7 +90,7 @@ func TestCnkiSessionRefreshRejectsChangedCoverage(t *testing.T) {
 			index, state := newCnkiIndexTest(t, []any{cnkiTestRow("A")}, 1)
 			state.requiresSession = true
 			state.issues = append(state.issues, map[string]any{"year_issue_id": "202512", "year": int64(2025), "number": "12"})
-			original := copyCnkiJson(state.issues).([]any)
+			original := copyCnkiJSON(state.issues).([]any)
 			pages := 0
 			state.page = func(_ any, page uint64) cnki.IssueArticlePage {
 				pages++

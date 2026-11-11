@@ -103,8 +103,7 @@ func InitContent(ctx context.Context, connection *sql.Conn) error {
 
 func validateContent(ctx context.Context, connection *sql.Conn, version int) error {
 	if err := indexschema.ValidateStructure(ctx, connection, version); err != nil {
-		var invalid indexschema.InvalidStructure
-		if errors.As(err, &invalid) {
+		if invalid, ok := errors.AsType[indexschema.InvalidStructure](err); ok {
 			return &InvalidContentSchema{invalid.Message}
 		}
 		return err

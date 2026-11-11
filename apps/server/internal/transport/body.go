@@ -19,8 +19,8 @@ var (
 	ErrReadFailed = errors.New("response body could not be read")
 	// ErrTooLarge identifies the decoded endpoint size boundary.
 	ErrTooLarge = errors.New("response body exceeded the configured size limit")
-	// ErrInvalidJson identifies malformed bounded JSON without including its contents.
-	ErrInvalidJson = errors.New("response body was not valid JSON")
+	// ErrInvalidJSON identifies malformed bounded JSON without including its contents.
+	ErrInvalidJSON = errors.New("response body was not valid JSON")
 )
 
 // BoundedBytes consumes and closes a transparently decoded HTTP response body.
@@ -63,25 +63,25 @@ func LossyUtf8(body []byte) string {
 	return string(decoded)
 }
 
-// ParseJson retains numeric tokens while applying encoding/json validation.
-func ParseJson(body []byte) (any, error) {
+// ParseJSON retains numeric tokens while applying encoding/json validation.
+func ParseJSON(body []byte) (any, error) {
 	if !jsontext.Value(body).IsValid() {
-		return nil, ErrInvalidJson
+		return nil, ErrInvalidJSON
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
 	var result any
 	if err := decoder.Decode(&result); err != nil {
-		return nil, ErrInvalidJson
+		return nil, ErrInvalidJSON
 	}
 	return result, nil
 }
 
-// BoundedJson reads a bounded response before applying strict JSON validation.
-func BoundedJson(response *http.Response, maximum int64) (any, error) {
+// BoundedJSON reads a bounded response before applying strict JSON validation.
+func BoundedJSON(response *http.Response, maximum int64) (any, error) {
 	body, err := BoundedBytes(response, maximum)
 	if err != nil {
 		return nil, err
 	}
-	return ParseJson(body)
+	return ParseJSON(body)
 }

@@ -22,8 +22,8 @@ func hasQueryOrFragment(location *whatwg.Url) bool {
 	return strings.Contains(location.Href(true), "?") || location.Href(false) != location.Href(true)
 }
 
-func normalizeProxyUrl(value string) (string, error) {
-	invalid := errors.New("Invalid Provider proxy URL")
+func normalizeProxyURL(value string) (string, error) {
+	invalid := settingError(InvalidSetting, "Invalid Provider proxy URL")
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "", nil
@@ -87,12 +87,12 @@ func isProxyUserinfo(location *whatwg.Url) bool {
 	return isUsernameValid && isPasswordValid && (!strings.HasPrefix(location.Scheme(), "socks5") || usernameLength <= 255 && passwordLength <= 255)
 }
 
-// CanonicalizeBaseUrl preserves the exact administrator-approved HTTPS endpoint boundary.
-func CanonicalizeBaseUrl(value string) (string, error) {
+// CanonicalizeBaseURL preserves the exact administrator-approved HTTPS endpoint boundary.
+func CanonicalizeBaseURL(value string) (string, error) {
 	invalid := errors.New("AI allowed base URLs must be exact HTTPS base URLs without credentials, query, fragment, or port zero")
 	value = strings.TrimSpace(value)
 	location, err := whatwg.NewParser().Parse(value)
-	if err != nil || !isBaseUrlLocation(value, location) {
+	if err != nil || !isBaseURLLocation(value, location) {
 		return "", invalid
 	}
 	result := location.Href(false)
@@ -102,8 +102,8 @@ func CanonicalizeBaseUrl(value string) (string, error) {
 	return result, nil
 }
 
-// isBaseUrlLocation preserves the exact credential-free administrator endpoint boundary.
-func isBaseUrlLocation(value string, location *whatwg.Url) bool {
+// isBaseURLLocation preserves the exact credential-free administrator endpoint boundary.
+func isBaseURLLocation(value string, location *whatwg.Url) bool {
 	return location.Scheme() == "https" && location.Hostname() != "" && !strings.Contains(rawAuthority(value), "@") && location.Username() == "" && location.Password() == "" && location.Port() != "0" && !hasQueryOrFragment(location) && !location.OpaquePath()
 }
 

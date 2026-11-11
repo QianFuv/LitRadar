@@ -16,9 +16,9 @@ func TestActualAiRetryLogsAndTerminalFailureRedactPromptAndCredentials(t *testin
 	ctx, finish := testlog.Capture(t)
 	response := json.RawMessage(`{"status":503,"request_id":"request-123","retry_after":7,"body":{"error":"` + sentinel + `"}}`)
 	fixture := &aiFixture{responses: []json.RawMessage{response, response, response}}
-	config := AiRuntimeConfig{BaseUrl: "https://" + sentinel + ".example/v1", ApiKey: sentinel, Model: "fixture-model", SystemPrompt: sentinel}
-	client := &AiClient{transport: fixture, allowedBaseUrls: func(context.Context) ([]string, error) { return []string{config.BaseUrl}, nil }, retryAttempts: 2, temperature: 0.2, timeout: time.Second, wait: func(context.Context, time.Duration) error { return nil }}
-	_, err := client.SelectArticles(ctx, config, domain.Subscriber{Name: sentinel, Keywords: []string{sentinel}}, Defaults{MaxCandidates: 120}, []storage.ArticleCandidate{{ArticleId: 104, Title: sentinel, Abstract: sentinel}})
+	config := AiRuntimeConfig{BaseURL: "https://" + sentinel + ".example/v1", APIKey: sentinel, Model: "fixture-model", SystemPrompt: sentinel}
+	client := &AiClient{transport: fixture, allowedBaseUrls: func(context.Context) ([]string, error) { return []string{config.BaseURL}, nil }, retryAttempts: 2, temperature: 0.2, timeout: time.Second, wait: func(context.Context, time.Duration) error { return nil }}
+	_, err := client.SelectArticles(ctx, config, domain.Subscriber{Name: sentinel, Keywords: []string{sentinel}}, Defaults{MaxCandidates: 120}, []storage.ArticleCandidate{{ArticleID: 104, Title: sentinel, Abstract: sentinel}})
 	if err == nil || strings.Contains(err.Error(), sentinel) {
 		t.Fatal("missing or unsafe failure", err)
 	}

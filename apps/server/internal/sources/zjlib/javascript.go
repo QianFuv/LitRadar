@@ -26,11 +26,11 @@ func decodeJsString(value string) string {
 	return output.String()
 }
 func quotedAssignment(text, marker string) *string {
-	start := strings.Index(text, marker)
-	if start < 0 {
+	_, after, ok := strings.Cut(text, marker)
+	if !ok {
 		return nil
 	}
-	rest := text[start+len(marker):]
+	rest := after
 	equal := strings.IndexByte(rest, '=')
 	if equal < 0 {
 		return nil
@@ -39,18 +39,18 @@ func quotedAssignment(text, marker string) *string {
 	if rest == "" || rest[0] != '\'' && rest[0] != '"' {
 		return nil
 	}
-	return pointer(decodeJsString(strings.SplitN(rest[1:], rest[:1], 2)[0]))
+	return new(decodeJsString(strings.SplitN(rest[1:], rest[:1], 2)[0]))
 }
 func extractJsVar(text, name string) *string { return quotedAssignment(text, "var "+name) }
 func extractWindowLocation(text, base string) (string, error) {
 	for _, marker := range []string{"window.location.href", "location.href", "window.location"} {
 		if reference := quotedAssignment(text, marker); reference != nil {
-			return joinUrl(base, *reference)
+			return joinURL(base, *reference)
 		}
 	}
 	return "", &Error{Kind: "Parse", Message: "Could not find JavaScript window.location redirect."}
 }
-func joinUrl(base, reference string) (string, error) {
+func joinURL(base, reference string) (string, error) {
 	location, err := whatwg.NewParser().Parse(base)
 	if err != nil {
 		return "", &Error{Kind: "Parse", Message: urlParseMessage(err, false)}
@@ -98,7 +98,7 @@ func safeAbsolutePath(path string) bool {
 			return false
 		}
 	}
-	for _, part := range strings.Split(path, "/") {
+	for part := range strings.SplitSeq(path, "/") {
 		if part == "." || part == ".." {
 			return false
 		}
@@ -115,22 +115,22 @@ func extractShareCookieSync(text string, allowed endpoints) (*shareCookieSync, e
 	base, _ := whatwg.NewParser().Parse(allowed.bases[shareFamily])
 	origin := base.Scheme() + "://" + base.Host()
 	normalized, portal := shareSyncDomainAndPortal(text, origin, base.Scheme())
-	callbackUrl, err := allowed.join(allowed.bases[shareFamily], *callback, shareFamily)
+	callbackURL, err := allowed.join(allowed.bases[shareFamily], *callback, shareFamily)
 	if err != nil {
 		return nil, err
 	}
-	domainUrl, err := whatwg.NewParser().Parse(normalized)
+	domainURL, err := whatwg.NewParser().Parse(normalized)
 	if err != nil {
 		return nil, &Error{Kind: "Parse", Message: "Share cookie sync domain was invalid."}
 	}
-	if !isAllowedShareSync(domainUrl, base, portal) {
+	if !isAllowedShareSync(domainURL, base, portal) {
 		return nil, &Error{Kind: "Parse", Message: "Share cookie sync endpoint was not allowed."}
 	}
-	syncUrl, err := allowed.parse(origin+strings.TrimRight(portal, "/")+"/sso-login/cookie/sync", shareFamily)
+	syncURL, err := allowed.parse(origin+strings.TrimRight(portal, "/")+"/sso-login/cookie/sync", shareFamily)
 	if err != nil {
 		return nil, err
 	}
-	return &shareCookieSync{url: syncUrl.Href(false), fields: map[string]string{"sign": *sign, "url": callbackUrl}}, nil
+	return &shareCookieSync{url: syncURL.Href(false), fields: map[string]string{"sign": *sign, "url": callbackURL}}, nil
 }
 
 // writeJsEscape writes one escaped rune and returns the last consumed rune index.
@@ -181,8 +181,8 @@ func isSafePathCharacter(character byte) bool {
 }
 
 // isAllowedShareSync checks origin and root domain before the absolute portal path.
-func isAllowedShareSync(domainUrl, base *whatwg.Url, portal string) bool {
-	return !(!hasOrigin(domainUrl, base) || strings.Trim(domainUrl.Pathname(), "/") != "" || strings.Contains(domainUrl.Href(true), "?") || domainUrl.Href(false) != domainUrl.Href(true) || !safeAbsolutePath(portal))
+func isAllowedShareSync(domainURL, base *whatwg.Url, portal string) bool {
+	return hasOrigin(domainURL, base) && strings.Trim(domainURL.Pathname(), "/") == "" && !strings.Contains(domainURL.Href(true), "?") && domainURL.Href(false) == domainURL.Href(true) && safeAbsolutePath(portal)
 }
 
 // shareSyncDomainAndPortal preserves missing defaults and protocol-relative domain normalization.
@@ -192,7 +192,7 @@ func shareSyncDomainAndPortal(text, origin, scheme string) (string, string) {
 		domain = &origin
 	}
 	if portal == nil {
-		portal = pointer("/entry")
+		portal = new("/entry")
 	}
 	normalized := *domain
 	if strings.HasPrefix(normalized, "//") {

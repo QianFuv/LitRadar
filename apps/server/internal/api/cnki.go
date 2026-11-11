@@ -43,8 +43,7 @@ func runCnki[Value any](request *http.Request, pool *executor.Pool, work func() 
 		return zero, mapExecutorError(err)
 	}
 	if observed.err != nil {
-		var failure *apiError
-		if errors.As(observed.err, &failure) {
+		if failure, ok := errors.AsType[*apiError](observed.err); ok {
 			return zero, failure
 		}
 		return zero, internalError()
@@ -61,13 +60,13 @@ func cnkiSuperseded() *apiError {
 
 // parseCnkiSession adds a missing QR identity without replacing a stored field.
 func parseCnkiSession(row *storage.CnkiData) (any, error) {
-	data, err := transport.ParseJson(row.SessionData)
+	data, err := transport.ParseJSON(row.SessionData)
 	if err != nil {
 		return nil, err
 	}
 	if object, ok := data.(map[string]any); ok {
 		if _, exists := object["qr_uuid"]; !exists {
-			object["qr_uuid"] = row.QrUuid
+			object["qr_uuid"] = row.QrUUID
 		}
 	}
 
@@ -96,6 +95,6 @@ func (handlers *cnkiHandlers) pollCnkiClient(ctx context.Context, row *storage.C
 	if _, err = client.WarmUpFulltextSession(ctx); err != nil {
 		return nil, cnkiFailure(502, "cnki_warmup_failed", "warmup", "CNKI full-text session warm-up failed")
 	}
-	encoded, err := jsonvalue.EncodeJson(client.StateData())
+	encoded, err := jsonvalue.EncodeJSON(client.StateData())
 	return json.RawMessage(encoded), err
 }

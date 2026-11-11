@@ -13,7 +13,7 @@ import (
 )
 
 func testPuzzle() CaptchaPuzzle {
-	return CaptchaPuzzle{ChallengeUrl: KnsBase + "/verify/home", CaptchaType: "blockPuzzle", CaptchaId: "secret-id", Ident: "private-ident", ReturnUrl: "private-return", SecretKey: "0123456789abcdef", Token: "private-token", OriginalImageBase64: "original", JigsawImageBase64: "jigsaw"}
+	return CaptchaPuzzle{ChallengeURL: KnsBase + "/verify/home", CaptchaType: "blockPuzzle", CaptchaID: "secret-id", Ident: "private-ident", ReturnURL: "private-return", SecretKey: "0123456789abcdef", Token: "private-token", OriginalImageBase64: "original", JigsawImageBase64: "jigsaw"}
 }
 
 // TestCaptchaFreshPuzzlePerCandidate preserves fresh challenges and encrypted candidate order.
@@ -25,7 +25,7 @@ func TestCaptchaFreshPuzzlePerCandidate(t *testing.T) {
 	fetch := func(context.Context, string) (CaptchaPuzzle, error) {
 		fetches++
 		puzzle := testPuzzle()
-		puzzle.CaptchaId = fmt.Sprintf("id-%d", fetches)
+		puzzle.CaptchaID = fmt.Sprintf("id-%d", fetches)
 		return puzzle, nil
 	}
 	submit := func(_ context.Context, puzzle CaptchaPuzzle, point string) (bool, error) {
@@ -47,7 +47,7 @@ func TestCaptchaFreshPuzzlePerCandidate(t *testing.T) {
 	if clone.RemainingBudget() != 2 || session.RemainingBudget() != 0 {
 		t.Fatal("clone shared budget")
 	}
-	retained, _ := session.AttachCaptchaId(KnsBase + "/a")
+	retained, _ := session.AttachCaptchaID(KnsBase + "/a")
 	if !strings.HasSuffix(retained, "captchaId=id-3") {
 		t.Fatal(retained)
 	}
@@ -90,7 +90,7 @@ func TestCaptchaFormattingAndCancelledSolve(t *testing.T) {
 	for _, value := range []any{puzzle, &puzzle} {
 		for _, format := range []string{"%v", "%+v", "%#v"} {
 			text := fmt.Sprintf(format, value)
-			for _, secret := range []string{puzzle.CaptchaId, puzzle.SecretKey, puzzle.Token, puzzle.Ident, puzzle.ReturnUrl} {
+			for _, secret := range []string{puzzle.CaptchaID, puzzle.SecretKey, puzzle.Token, puzzle.Ident, puzzle.ReturnURL} {
 				if strings.Contains(text, secret) {
 					t.Fatal(text)
 				}
@@ -149,7 +149,7 @@ func TestCaptchaCallbacksCanInspectSession(t *testing.T) {
 			_ = fmt.Sprintf("%#v", session)
 			return testPuzzle(), nil
 		}, func(context.Context, CaptchaPuzzle, string) (bool, error) {
-			_, err := session.AttachCaptchaId(KnsBase + "/a")
+			_, err := session.AttachCaptchaID(KnsBase + "/a")
 			return true, err
 		})
 	}()
@@ -173,7 +173,7 @@ func TestCaptchaQueryIsNotChallengePath(t *testing.T) {
 func assertCaptchaCandidates(t *testing.T, submits []string) {
 	t.Helper()
 	for index, x := range []int32{100, 101, 99} {
-		want, err := jfbym.EncryptPointJson(testPuzzle().SecretKey, x, 5)
+		want, err := jfbym.EncryptPointJSON(testPuzzle().SecretKey, x, 5)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -187,7 +187,7 @@ func assertCaptchaCandidates(t *testing.T, submits []string) {
 func assertCaptchaAttachment(t *testing.T, session *CaptchaSession) {
 	t.Helper()
 	for input, want := range map[string]string{KnsBase + "/a?x=%2b+~": KnsBase + "/a?x=%2b+~&captchaId=id-3", KnsBase + "/a?%63aptchaId=old": KnsBase + "/a?%63aptchaId=old", KnsBase + "/a?CAPTCHAID=old": KnsBase + "/a?CAPTCHAID=old&captchaId=id-3", KnsBase + "/a?x=1&": KnsBase + "/a?x=1&&captchaId=id-3"} {
-		got, err := session.AttachCaptchaId(input)
+		got, err := session.AttachCaptchaID(input)
 		if err != nil || got != want {
 			t.Fatalf("attach %q: %q %v want %q", input, got, err, want)
 		}
@@ -197,7 +197,7 @@ func assertCaptchaAttachment(t *testing.T, session *CaptchaSession) {
 // assertOrdinaryRequestBudget exercises ordinary slots independently of two replay classes.
 func assertOrdinaryRequestBudget(t *testing.T, budget *requestBudget) {
 	t.Helper()
-	for ordinary := 0; ordinary < 5; ordinary++ {
+	for ordinary := range 5 {
 		isReplay, ok := budget.nextAttempt()
 		if !ok || isReplay {
 			t.Fatal("ordinary attempt missing")
@@ -236,8 +236,7 @@ func assertRemainingCaptchaReplays(t *testing.T, budget *requestBudget) {
 			t.Fatal("captcha replay used ordinary budget")
 		}
 	}
-	var failure *Error
-	if !errors.As(budget.scheduleCaptchaReplay(), &failure) {
+	if _, ok := errors.AsType[*Error](budget.scheduleCaptchaReplay()); !ok {
 		t.Fatal("captcha replay budget exceeded")
 	}
 }

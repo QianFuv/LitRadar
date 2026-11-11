@@ -15,8 +15,7 @@ import (
 func Normalize(field, value string) (canonical string, err error) {
 	defer func() {
 		if err != nil {
-			var known Error
-			if !errors.As(err, &known) {
+			if _, ok := errors.AsType[Error](err); !ok {
 				err = settingError(InvalidSetting, err.Error())
 			}
 		}
@@ -32,9 +31,9 @@ func Normalize(field, value string) (canonical string, err error) {
 func normalizeStructuredSetting(definition *definition, value string) (string, error) {
 	switch definition.Parser {
 	case "OidcUrl":
-		return normalizeOidcUrl(value)
+		return normalizeOidcURL(value)
 	case "ProviderProxyUrl":
-		return normalizeProxyUrl(value)
+		return normalizeProxyURL(value)
 	case "ProviderProxyPolicy":
 		return normalizeProxyPolicy(value)
 	case "ExactOriginList", "HeaderValueList":
@@ -60,7 +59,7 @@ func normalizeRateLimitPolicy(value string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return jsonvalue.EncodeJson(policy)
+	return jsonvalue.EncodeJSON(policy)
 }
 
 // normalizeScalarSetting handles text, booleans and bounded numeric settings.
@@ -90,12 +89,12 @@ func normalizeLogSetting(parser, value string) (string, error) {
 		if value == "json" || value == "compact" {
 			return value, nil
 		}
-		return "", errors.New("Invalid LitRadar log format")
+		return "", settingError(InvalidSetting, "Invalid LitRadar log format")
 	case "LogFilter":
 		if validLogFilter(value) {
 			return value, nil
 		}
-		return "", errors.New("Invalid LitRadar log filter")
+		return "", settingError(InvalidSetting, "Invalid LitRadar log filter")
 	default:
 		panic("unrecognized runtime setting parser")
 	}
@@ -111,7 +110,7 @@ func normalizeBoolean(field, value, defaultValue string) (string, error) {
 	case "0", "false", "no", "off":
 		return "false", nil
 	default:
-		return "", fmt.Errorf("Invalid boolean runtime setting %s: %s", field, value)
+		return "", settingError(InvalidSetting, fmt.Sprintf("Invalid boolean runtime setting %s: %s", field, value))
 	}
 }
 
@@ -119,7 +118,7 @@ func normalizeBoolean(field, value, defaultValue string) (string, error) {
 func normalizeBaseUrls(value string) (string, error) {
 	result := []string{}
 	for _, entry := range commaEntries(value) {
-		canonical, err := CanonicalizeBaseUrl(entry)
+		canonical, err := CanonicalizeBaseURL(entry)
 		if err != nil {
 			return "", err
 		}
@@ -140,7 +139,7 @@ func asciiLower(value string) string {
 }
 func commaEntries(value string) []string {
 	result := []string{}
-	for _, entry := range strings.Split(value, ",") {
+	for entry := range strings.SplitSeq(value, ",") {
 		entry = strings.TrimSpace(entry)
 		if entry != "" {
 			result = append(result, entry)
@@ -157,7 +156,7 @@ func normalizeBoundedInteger(value string, maximum uint64, message string) (stri
 }
 
 func normalizeNetworks(value string) (string, error) {
-	invalid := errors.New("Trusted proxy CIDRs must contain only valid IPv4 or IPv6 networks")
+	invalid := settingError(InvalidSetting, "Trusted proxy CIDRs must contain only valid IPv4 or IPv6 networks")
 	result := []string{}
 	for _, entry := range commaEntries(value) {
 		addressText, prefixText, hasPrefix := strings.Cut(entry, "/")
@@ -186,10 +185,10 @@ func normalizeHeaders(field, value string, isOrigin bool) (string, error) {
 	for _, entry := range entries {
 		isValid := isHeaderValue(entry)
 		if isValid && isOrigin {
-			isValid = field == "mcp_allowed_origins" && entry == "null" || exactHttpOrigin(entry)
+			isValid = field == "mcp_allowed_origins" && entry == "null" || exactHTTPOrigin(entry)
 		}
 		if !isValid {
-			return "", fmt.Errorf("Invalid %s: %s", label, entry)
+			return "", settingError(InvalidSetting, fmt.Sprintf("Invalid %s: %s", label, entry))
 		}
 	}
 	return strings.Join(entries, ","), nil
@@ -205,8 +204,8 @@ func isHeaderValue(entry string) bool {
 	return true
 }
 
-// exactHttpOrigin preserves http::Uri authority acceptance, including opaque port text.
-func exactHttpOrigin(value string) bool {
+// exactHTTPOrigin preserves http::Uri authority acceptance, including opaque port text.
+func exactHTTPOrigin(value string) bool {
 	if len(value) > 65534 {
 		return false
 	}

@@ -44,8 +44,8 @@ type semanticScheduler struct {
 	Interval, Period scheduleTime
 }
 
-func newSemanticScheduler(keyCount int, processId, processCount uint64, epoch, interval scheduleTime) *semanticScheduler {
-	worker, count := processContext(processId, processCount)
+func newSemanticScheduler(keyCount int, processID, processCount uint64, epoch, interval scheduleTime) *semanticScheduler {
+	worker, count := processContext(processID, processCount)
 	interval = later(interval, milliseconds(1))
 	state := &semanticScheduler{Slots: make([]keyState, keyCount), Interval: interval, Period: interval.multiply(count)}
 	if keyCount > 0 {
@@ -158,8 +158,8 @@ type openAlexScheduler struct {
 	MaximumListCredits, MaximumSearchCredits uint64
 }
 
-func newOpenAlexScheduler(keyCount int, processId, processCount uint64, epoch scheduleTime, capacity uint64) *openAlexScheduler {
-	worker, count := processContext(processId, processCount)
+func newOpenAlexScheduler(keyCount int, processID, processCount uint64, epoch scheduleTime, capacity uint64) *openAlexScheduler {
+	worker, count := processContext(processID, processCount)
 	state := &openAlexScheduler{Slots: make([]keyState, keyCount), Period: milliseconds(40).multiply(count), Capacity: max(capacity, 1), ProcessCount: count, MaximumListCredits: 1, MaximumSearchCredits: 10}
 	if keyCount > 0 {
 		state.NextTie = int(uint64(worker) % uint64(keyCount))

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strings"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
@@ -19,8 +20,8 @@ import (
 type Article struct {
 	Favorite
 	MetadataStatus  string       `json:"metadata_status" nullable:"false" enum:"available,missing,unavailable"`
-	JournalId       *identity.Id `json:"journal_id" required:"false" nullable:"true"`
-	IssueId         *int64       `json:"issue_id" required:"false" nullable:"true" format:"int64"`
+	JournalID       *identity.ID `json:"journal_id" required:"false" nullable:"true"`
+	IssueID         *int64       `json:"issue_id" required:"false" nullable:"true" format:"int64"`
 	Title           *string      `json:"title" required:"false" nullable:"true"`
 	PublicationYear *int64       `json:"publication_year" required:"false" nullable:"true" format:"int64"`
 	Date            *string      `json:"date" required:"false" nullable:"true"`
@@ -41,7 +42,7 @@ func resolve(configuration config.Config, name string) (string, error) {
 	if name != "" {
 		selected = &name
 	}
-	return configuration.ResolveIndexDbPath(selected)
+	return configuration.ResolveIndexDBPath(selected)
 }
 func isMissing(err error) bool {
 	return errors.Is(err, config.ErrNoDatabases) || errors.Is(err, config.ErrNotFound) || errors.Is(err, config.ErrInvalidName)
@@ -86,7 +87,7 @@ func queryIds(ids []int64) (string, []any) {
 func Enrich(ctx context.Context, configuration config.Config, favorites []Favorite) []Article {
 	groups := map[string][]int64{}
 	for _, favorite := range favorites {
-		groups[favorite.DbName] = append(groups[favorite.DbName], int64(favorite.ArticleId))
+		groups[favorite.DBName] = append(groups[favorite.DBName], int64(favorite.ArticleID))
 	}
 	var metadata map[Reference]Article
 	unavailable := map[string]bool{}
@@ -97,9 +98,7 @@ func Enrich(ctx context.Context, configuration config.Config, favorites []Favori
 				metadata = items
 				continue
 			}
-			for key, item := range items {
-				metadata[key] = item
-			}
+			maps.Copy(metadata, items)
 			continue
 		}
 		unavailable[name] = true
@@ -137,7 +136,7 @@ func loadMetadata(ctx context.Context, filename, name string, ids []int64) (resu
 func LoadCitationRecords(ctx context.Context, configuration config.Config, references []Reference) ([]domain.FavoriteCitation, error) {
 	groups := map[string][]int64{}
 	for _, reference := range references {
-		groups[reference.DbName] = append(groups[reference.DbName], int64(reference.ArticleId))
+		groups[reference.DBName] = append(groups[reference.DBName], int64(reference.ArticleID))
 	}
 	var metadata map[Reference]domain.FavoriteCitation
 	for name, ids := range groups {
@@ -156,15 +155,13 @@ func LoadCitationRecords(ctx context.Context, configuration config.Config, refer
 			metadata = items
 			continue
 		}
-		for key, item := range items {
-			metadata[key] = item
-		}
+		maps.Copy(metadata, items)
 	}
 	result := make([]domain.FavoriteCitation, 0, len(references))
 	for _, reference := range references {
 		item, exists := metadata[reference]
 		if !exists {
-			item = domain.FavoriteCitation{ArticleId: reference.ArticleId, DbName: reference.DbName, Authors: []string{}}
+			item = domain.FavoriteCitation{ArticleID: reference.ArticleID, DBName: reference.DBName, Authors: []string{}}
 		}
 		result = append(result, item)
 	}
@@ -206,7 +203,7 @@ func loadCitations(ctx context.Context, filename, name string, ids []int64) (res
 		if err != nil {
 			return nil, err
 		}
-		result[Reference{identity.Id(id), name}] = domain.FavoriteCitation{ArticleId: identity.Id(id), DbName: name, Title: title.Value, Authors: names, JournalTitle: journal.Value, Date: date.Value, Doi: doi.Value}
+		result[Reference{identity.ID(id), name}] = domain.FavoriteCitation{ArticleID: identity.ID(id), DBName: name, Title: title.Value, Authors: names, JournalTitle: journal.Value, Date: date.Value, Doi: doi.Value}
 	}
 	return result, rows.Err()
 }
@@ -247,7 +244,7 @@ func projectFavoriteMetadata(favorites []Favorite, metadata map[Reference]Articl
 		item, exists := metadata[favorite.Reference]
 		if !exists {
 			item.MetadataStatus = "missing"
-			if unavailable[favorite.DbName] {
+			if unavailable[favorite.DBName] {
 				item.MetadataStatus = "unavailable"
 			}
 		}
@@ -282,7 +279,7 @@ func loadMetadataChunk(ctx context.Context, database *sql.DB, name string, chunk
 }
 
 // metadataArticleFromRow preserves strict whole-row scan before authors and row-local optional pointers.
-func metadataArticleFromRow(row scanner) (identity.Id, Article, error) {
+func metadataArticleFromRow(row scanner) (identity.ID, Article, error) {
 	var id storage.Integer
 	var journal, issue, year, openAccess, inPress storage.OptionalInteger
 	var title, date, abstract, doi, journalTitle, issn, eissn, volume, number storage.OptionalText
@@ -294,10 +291,10 @@ func metadataArticleFromRow(row scanner) (identity.Id, Article, error) {
 	if err != nil {
 		return 0, Article{}, err
 	}
-	item := Article{MetadataStatus: "available", IssueId: issue.Value, Title: title.Value, PublicationYear: year.Value, Date: date.Value, Authors: &names, Abstract: abstract.Value, Doi: doi.Value, JournalTitle: journalTitle.Value, OpenAccess: boolValue(openAccess.Value), InPress: boolValue(inPress.Value), Volume: volume.Value, Number: number.Value, Issn: issn.Value, Eissn: eissn.Value}
+	item := Article{MetadataStatus: "available", IssueID: issue.Value, Title: title.Value, PublicationYear: year.Value, Date: date.Value, Authors: &names, Abstract: abstract.Value, Doi: doi.Value, JournalTitle: journalTitle.Value, OpenAccess: boolValue(openAccess.Value), InPress: boolValue(inPress.Value), Volume: volume.Value, Number: number.Value, Issn: issn.Value, Eissn: eissn.Value}
 	if journal.Value != nil {
-		value := identity.Id(*journal.Value)
-		item.JournalId = &value
+		value := identity.ID(*journal.Value)
+		item.JournalID = &value
 	}
-	return identity.Id(id), item, nil
+	return identity.ID(id), item, nil
 }

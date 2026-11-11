@@ -28,11 +28,11 @@ type ContentWriteOutcome struct {
 	ChangeEventsEmitted  uint64 `json:"change_events_emitted"`
 }
 
-// ArticleIdCollision prevents a new hash allocation from replacing an unrelated existing row.
-type ArticleIdCollision struct{ ArticleId int64 }
+// ArticleIDCollision prevents a new hash allocation from replacing an unrelated existing row.
+type ArticleIDCollision struct{ ArticleID int64 }
 
-func (err *ArticleIdCollision) Error() string {
-	return fmt.Sprintf("canonical article ID collision for %d", err.ArticleId)
+func (err *ArticleIDCollision) Error() string {
+	return fmt.Sprintf("canonical article ID collision for %d", err.ArticleID)
 }
 
 // WriteContentBatch commits canonical content, projections, aliases and outbox events atomically.
@@ -62,7 +62,7 @@ func WriteContentBatchWithEvents(ctx context.Context, connection *sql.Conn, cata
 		if err != nil {
 			return err
 		}
-		journal := JournalId(catalog.CatalogId)
+		journal := JournalID(catalog.CatalogID)
 		for _, issue := range batch.Issues {
 			if _, err := writer.upsertIssue(journal, issue); err != nil {
 				return err
@@ -111,7 +111,7 @@ func prepareWriter(ctx context.Context, connection *sql.Conn, shouldRecordEvents
 		writer.close()
 		return nil, err
 	}
-	for _, statement := range []string{searchDeleteSql, searchInsertSql, identityClaimSql} {
+	for _, statement := range []string{searchDeleteSQL, searchInsertSQL, identityClaimSQL} {
 		prepared, err := connection.PrepareContext(ctx, statement)
 		if err != nil {
 			writer.close()
@@ -137,7 +137,7 @@ func (writer *contentWriter) queryRow(statement string, args ...any) *sql.Row {
 }
 
 func (writer *contentWriter) upsertIssue(journal int64, issue domain.IssueDraft) (*int64, error) {
-	id := IssueId(journal, issue)
+	id := IssueID(journal, issue)
 	if id == nil {
 		return nil, nil
 	}
@@ -168,7 +168,7 @@ func (writer *contentWriter) loadArticle(id int64) (*domain.ArticleDraft, *int64
 	if err != nil {
 		return nil, nil, err
 	}
-	return &domain.ArticleDraft{CatalogId: string(row.CatalogID), Title: string(row.Title), PublicationYear: (*int64)(row.PublicationYear), Date: (*string)(row.Date), IssueTitle: (*string)(row.Title_2), Volume: (*string)(row.Volume), IssueNumber: (*string)(row.Number), Authors: names, StartPage: (*string)(row.StartPage), EndPage: (*string)(row.EndPage), AbstractText: (*string)(row.AbstractText), Doi: (*string)(row.DOI), Pmid: (*string)(row.PMID), OpenAccess: integerBool((*int64)(row.OpenAccess)), InPress: integerBool((*int64)(row.InPress)), RetractionDois: retractions}, (*int64)(row.IssueID), nil
+	return &domain.ArticleDraft{CatalogID: string(row.CatalogID), Title: string(row.Title), PublicationYear: (*int64)(row.PublicationYear), Date: (*string)(row.Date), IssueTitle: (*string)(row.Title_2), Volume: (*string)(row.Volume), IssueNumber: (*string)(row.Number), Authors: names, StartPage: (*string)(row.StartPage), EndPage: (*string)(row.EndPage), AbstractText: (*string)(row.AbstractText), Doi: (*string)(row.DOI), Pmid: (*string)(row.PMID), OpenAccess: integerBool((*int64)(row.OpenAccess)), InPress: integerBool((*int64)(row.InPress)), RetractionDois: retractions}, (*int64)(row.IssueID), nil
 }
 
 func (writer *contentWriter) writeArticle(catalog domain.JournalCatalogEntry, journal int64, article domain.ArticleDraft, revision, createdAt string, outcome *ContentWriteOutcome) error {
@@ -189,53 +189,53 @@ func (writer *contentWriter) writeArticle(catalog domain.JournalCatalogEntry, jo
 	if err != nil {
 		return err
 	}
-	issue, err := writer.upsertIssue(journal, domain.IssueDraft{CatalogId: merged.CatalogId, PublicationYear: merged.PublicationYear, Title: merged.IssueTitle, Volume: merged.Volume, Number: merged.IssueNumber, Date: merged.Date})
+	issue, err := writer.upsertIssue(journal, domain.IssueDraft{CatalogID: merged.CatalogID, PublicationYear: merged.PublicationYear, Title: merged.IssueTitle, Volume: merged.Volume, Number: merged.IssueNumber, Date: merged.Date})
 	if err != nil {
 		return err
 	}
 	isChanged := existing == nil || !reflect.DeepEqual(*existing, merged) || !reflect.DeepEqual(previousIssue, issue)
 	if isChanged {
-		if err := writer.persistArticleChange(catalog, resolution.ArticleId, journal, previousIssue, issue, existing, merged, revision, createdAt, outcome); err != nil {
+		if err := writer.persistArticleChange(catalog, resolution.ArticleID, journal, previousIssue, issue, existing, merged, revision, createdAt, outcome); err != nil {
 			return err
 		}
 	}
-	return writer.claimArticleAliases(incoming, aliases, merged, resolution.ArticleId, preservedAlias, outcome)
+	return writer.claimArticleAliases(incoming, aliases, merged, resolution.ArticleID, preservedAlias, outcome)
 }
 
 // resolveStoredArticleIdentity preserves an exact legacy duplicate's weak alias without merging IDs.
 func (writer *contentWriter) resolveStoredArticleIdentity(article domain.ArticleDraft, keys []ArticleIdentityKey, aliases map[ArticleIdentityKey]int64) (ArticleIdentityResolution, *ArticleIdentityKey, error) {
 	resolution, err := resolveArticleIdentity(keys, aliases)
-	var conflict *IdentityConflict
-	if !errors.As(err, &conflict) {
+	if _, ok := errors.AsType[*IdentityConflict](err); !ok {
 		return resolution, nil, err
 	}
 	var doiKey, weakKey ArticleIdentityKey
 	for _, key := range keys {
-		if key.Kind == "doi" {
+		switch key.Kind {
+		case "doi":
 			doiKey = key
-		} else if key.Kind == "bibliographic" {
+		case "bibliographic":
 			weakKey = key
 		}
 	}
-	strongId, hasDoi := aliases[doiKey]
-	weakId, hasWeak := aliases[weakKey]
-	if !hasDoi || !hasWeak || strongId == weakId {
+	strongID, hasDoi := aliases[doiKey]
+	weakID, hasWeak := aliases[weakKey]
+	if !hasDoi || !hasWeak || strongID == weakID {
 		return ArticleIdentityResolution{}, nil, err
 	}
 	for key, owner := range aliases {
-		if key != weakKey && owner != strongId {
+		if key != weakKey && owner != strongID {
 			return ArticleIdentityResolution{}, nil, err
 		}
 	}
-	strong, _, loadError := writer.loadArticle(strongId)
+	strong, _, loadError := writer.loadArticle(strongID)
 	if loadError != nil {
 		return ArticleIdentityResolution{}, nil, loadError
 	}
-	weak, _, loadError := writer.loadArticle(weakId)
+	weak, _, loadError := writer.loadArticle(weakID)
 	if loadError != nil {
 		return ArticleIdentityResolution{}, nil, loadError
 	}
-	if !matchesLegacyPublication(strong, article) || !matchesLegacyPublication(weak, article) || weak.Doi != nil || weak.Pmid != nil || strong.Doi == nil || !reflect.DeepEqual(domain.NormalizeDoi(*strong.Doi), ptr(doiKey.Value)) || !reflect.DeepEqual(bibliographicFingerprint(*weak), ptr(weakKey.Value)) {
+	if !matchesLegacyPublication(strong, article) || !matchesLegacyPublication(weak, article) || weak.Doi != nil || weak.Pmid != nil || strong.Doi == nil || !reflect.DeepEqual(domain.NormalizeDoi(*strong.Doi), new(doiKey.Value)) || !reflect.DeepEqual(bibliographicFingerprint(*weak), new(weakKey.Value)) {
 		return ArticleIdentityResolution{}, nil, err
 	}
 	if strong.Pmid != nil && article.Pmid != nil && !reflect.DeepEqual(domain.NormalizePmid(*strong.Pmid), domain.NormalizePmid(*article.Pmid)) {
@@ -244,7 +244,7 @@ func (writer *contentWriter) resolveStoredArticleIdentity(article domain.Article
 	pmid := firstValue(article.Pmid, strong.Pmid)
 	var hasStrongConflict bool
 	loadError = func() error {
-		queryResult, err := contentQueries.HasStoredArticleIdentity(writer.ctx, writer.connection, contentdb.HasStoredArticleIdentityParams{ArticleID: sqlite.Integer(weakId), ArticleID_2: sqlite.Integer(strongId), IdentityValue: sqlite.Text(doiKey.Value), IdentityValue_2: sqlite.Text(optionalString(pmid))})
+		queryResult, err := contentQueries.HasStoredArticleIdentity(writer.ctx, writer.connection, contentdb.HasStoredArticleIdentityParams{ArticleID: sqlite.Integer(weakID), ArticleID_2: sqlite.Integer(strongID), IdentityValue: sqlite.Text(doiKey.Value), IdentityValue_2: sqlite.Text(optionalString(pmid))})
 		if err != nil {
 			return err
 		}
@@ -257,12 +257,12 @@ func (writer *contentWriter) resolveStoredArticleIdentity(article domain.Article
 	if hasStrongConflict {
 		return ArticleIdentityResolution{}, nil, err
 	}
-	return ArticleIdentityResolution{strongId, true, doiKey}, &weakKey, nil
+	return ArticleIdentityResolution{strongID, true, doiKey}, &weakKey, nil
 }
 
 // matchesLegacyPublication requires exact publication evidence and rejects populated field contradictions.
 func matchesLegacyPublication(stored *domain.ArticleDraft, incoming domain.ArticleDraft) bool {
-	if stored == nil || stored.CatalogId != incoming.CatalogId || legacyPublicationTitle(stored.Title) != legacyPublicationTitle(incoming.Title) || stored.PublicationYear == nil || incoming.PublicationYear == nil || *stored.PublicationYear != *incoming.PublicationYear {
+	if stored == nil || stored.CatalogID != incoming.CatalogID || legacyPublicationTitle(stored.Title) != legacyPublicationTitle(incoming.Title) || stored.PublicationYear == nil || incoming.PublicationYear == nil || *stored.PublicationYear != *incoming.PublicationYear {
 		return false
 	}
 	storedFields := []*string{stored.Volume, stored.IssueNumber, stored.StartPage, stored.EndPage}
@@ -306,7 +306,7 @@ func (writer *contentWriter) projectArticle(id, journal int64, issue *int64, cat
 	if _, err := writer.queries.UpsertListing(writer.ctx, writerdb.UpsertListingParams{ArticleID: sqlite.Integer(id), JournalID: sqlite.Integer(journal), IssueID: (*sqlite.Integer)(issue), PublicationYear: (*sqlite.Integer)(article.PublicationYear), Date: (*sqlite.Text)(article.Date), OpenAccess: booleanInteger(article.OpenAccess), InPress: booleanInteger(article.InPress), DOI: (*sqlite.Text)(article.Doi), PMID: (*sqlite.Text)(article.Pmid), Area: (*sqlite.Text)(catalog.Area)}); err != nil {
 		return err
 	}
-	if _, err := writer.exec(searchDeleteSql, id); err != nil {
+	if _, err := writer.exec(searchDeleteSQL, id); err != nil {
 		return err
 	}
 	authors := make([]string, len(article.Authors))
@@ -323,7 +323,7 @@ func (writer *contentWriter) projectArticle(id, journal int64, issue *int64, cat
 		writer.isJournalTitlePrepared = true
 	}
 	values = append(values, writer.journalTitle)
-	_, err := writer.exec(searchInsertSql, values...)
+	_, err := writer.exec(searchInsertSQL, values...)
 	return err
 }
 
@@ -341,7 +341,7 @@ func integerBool(value *int64) *bool {
 	if value == nil {
 		return nil
 	}
-	return ptr(*value != 0)
+	return new(*value != 0)
 }
 
 func (writer *contentWriter) lookupIdentityAliases(incoming []ArticleIdentityKey) (map[ArticleIdentityKey]int64, error) {
@@ -359,31 +359,31 @@ func (writer *contentWriter) lookupIdentityAliases(incoming []ArticleIdentityKey
 
 // claimArticleAliases rechecks every owner while reusing existence known within the immediate transaction.
 func (writer *contentWriter) claimArticleAliases(incoming []ArticleIdentityKey, knownAliases map[ArticleIdentityKey]int64, merged domain.ArticleDraft, id int64, preservedAlias *ArticleIdentityKey, outcome *ContentWriteOutcome) error {
-	keys := append(incoming, ArticleIdentityKeys(merged)...)
+	keys := append(slices.Clone(incoming), ArticleIdentityKeys(merged)...)
 	sortIdentityKeys(keys)
 	keys = slices.Compact(keys)
 	for _, key := range keys {
-		claimId := id
+		claimID := id
 		if preservedAlias != nil && key == *preservedAlias {
-			claimId = knownAliases[key]
+			claimID = knownAliases[key]
 		}
 		var owner, wasInserted sqlite.Integer
 		if _, hasKnownOwner := knownAliases[key]; hasKnownOwner {
 			var err error
-			owner, err = writer.queries.ClaimArticleAlias(writer.ctx, writerdb.ClaimArticleAliasParams{IdentityKind: sqlite.Text(key.Kind), IdentityValue: sqlite.Text(key.Value), ArticleID: sqlite.Integer(claimId)})
+			owner, err = writer.queries.ClaimArticleAlias(writer.ctx, writerdb.ClaimArticleAliasParams{IdentityKind: sqlite.Text(key.Kind), IdentityValue: sqlite.Text(key.Value), ArticleID: sqlite.Integer(claimID)})
 			if err != nil {
 				return err
 			}
 		} else {
-			if err := writer.queryRow(identityClaimSql, key.Kind, key.Value, claimId).Scan(&owner, &wasInserted); err != nil {
+			if err := writer.queryRow(identityClaimSQL, key.Kind, key.Value, claimID).Scan(&owner, &wasInserted); err != nil {
 				return err
 			}
 		}
 		if wasInserted != 0 {
 			outcome.IdentityAliasesAdded++
 		}
-		if int64(owner) != claimId {
-			return &IdentityConflict{[]int64{int64(owner), claimId}}
+		if int64(owner) != claimID {
+			return &IdentityConflict{[]int64{int64(owner), claimID}}
 		}
 	}
 	return nil
@@ -428,12 +428,12 @@ func (writer *contentWriter) recordArticleChange(id, journal int64, previousIssu
 }
 
 func (writer *contentWriter) loadResolvedArticle(resolution ArticleIdentityResolution) (*domain.ArticleDraft, *int64, error) {
-	existing, previousIssue, err := writer.loadArticle(resolution.ArticleId)
+	existing, previousIssue, err := writer.loadArticle(resolution.ArticleID)
 	if err != nil {
 		return nil, nil, err
 	}
 	if !resolution.IsExisting && existing != nil {
-		return nil, nil, &ArticleIdCollision{resolution.ArticleId}
+		return nil, nil, &ArticleIDCollision{resolution.ArticleID}
 	}
 	return existing, previousIssue, nil
 }

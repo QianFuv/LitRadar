@@ -85,7 +85,7 @@ type CrossrefWorkset struct {
 }
 
 func connectWorkset(filename, mode string) (*CrossrefWorkset, error) {
-	dsn, err := platform.FileUri(filename, mode)
+	dsn, err := platform.FileURI(filename, mode)
 	if err != nil {
 		return nil, worksetStorageError(err)
 	}

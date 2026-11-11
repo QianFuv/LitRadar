@@ -29,7 +29,7 @@ func PrepareNotifyAttempt(ctx context.Context, connection *sql.Conn, id, owner s
 		if err != nil {
 			return err
 		}
-		state := NotifyHandoffState{AttemptId: newAttempt, Status: NotifyRunning}
+		state := NotifyHandoffState{AttemptID: newAttempt, Status: NotifyRunning}
 		decision := "run"
 		shouldWrite := true
 		switch {
@@ -42,20 +42,20 @@ func PrepareNotifyAttempt(ctx context.Context, connection *sql.Conn, id, owner s
 			decision = "succeeded"
 			shouldWrite = false
 		case current.Status.canRetry():
-			if current.AttemptId == newAttempt {
+			if current.AttemptID == newAttempt {
 				return batchInput("notification retry attempt identifier must be new")
 			}
-			state.UnknownAcknowledgedAttemptId = current.UnknownAcknowledgedAttemptId
+			state.UnknownAcknowledgedAttemptID = current.UnknownAcknowledgedAttemptID
 			state.UnknownAcknowledgedAt = current.UnknownAcknowledgedAt
 		case !shouldAcknowledge:
 			state = *current
 			decision = "blocked_unknown"
 			shouldWrite = false
 		default:
-			if current.AttemptId == newAttempt {
+			if current.AttemptID == newAttempt {
 				return batchInput("notification acknowledged attempt identifier must be new")
 			}
-			state.UnknownAcknowledgedAttemptId = &current.AttemptId
+			state.UnknownAcknowledgedAttemptID = &current.AttemptID
 			state.UnknownAcknowledgedAt = &now
 		}
 		if shouldWrite {
@@ -96,7 +96,7 @@ func RecordNotifyAttemptResult(ctx context.Context, connection *sql.Conn, id, ow
 		if current == nil {
 			return batchState("notification result has no prepared attempt")
 		}
-		if current.AttemptId != attempt {
+		if current.AttemptID != attempt {
 			return batchState("notification result attempt identifier is stale")
 		}
 		if current.Status != NotifyRunning {
@@ -136,11 +136,11 @@ func saveNotifyHandoff(ctx context.Context, connection *sql.Conn, id string, ord
 	if err != nil {
 		return err
 	}
-	changed, err := batchQueries.StoreNotifyHandoff(ctx, connection, batchdb.StoreNotifyHandoffParams{BatchID: sqlite.Text(id), Ordinal: sqlite.Integer(count), NotifyAttemptID: new(sqlite.Text(state.AttemptId)), NotifyStatus: new(sqlite.Text(state.Status)), NotifyExitCode: func() *sqlite.Integer {
+	changed, err := batchQueries.StoreNotifyHandoff(ctx, connection, batchdb.StoreNotifyHandoffParams{BatchID: sqlite.Text(id), Ordinal: sqlite.Integer(count), NotifyAttemptID: new(sqlite.Text(state.AttemptID)), NotifyStatus: new(sqlite.Text(state.Status)), NotifyExitCode: func() *sqlite.Integer {
 		if state.ExitCode == nil {
 			return nil
 		}
 		return new(sqlite.Integer(*state.ExitCode))
-	}(), NotifyUnknownAcknowledgedAttemptID: (*sqlite.Text)(state.UnknownAcknowledgedAttemptId), NotifyUnknownAcknowledgedAt: (*sqlite.Integer)(state.UnknownAcknowledgedAt), UpdatedAt: sqlite.Integer(now)})
+	}(), NotifyUnknownAcknowledgedAttemptID: (*sqlite.Text)(state.UnknownAcknowledgedAttemptID), NotifyUnknownAcknowledgedAt: (*sqlite.Integer)(state.UnknownAcknowledgedAt), UpdatedAt: sqlite.Integer(now)})
 	return expectBatchChange(changed, err, "batch catalog row is missing")
 }

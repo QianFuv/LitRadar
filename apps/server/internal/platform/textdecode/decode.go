@@ -35,8 +35,8 @@ func correctedGb18030(unit []byte) (rune, bool) {
 	return int32(binary.BigEndian.Uint32(gb18030Corrections[index*8+4:])), true
 }
 
-// Html detects the HTML encoding using the WHATWG algorithm and decodes strictly.
-func Html(body []byte, contentType string) (string, error) {
+// HTML detects the HTML encoding using the WHATWG algorithm and decodes strictly.
+func HTML(body []byte, contentType string) (string, error) {
 	_, label, _ := charset.DetermineEncoding(body, contentType)
 	for _, marker := range [][]byte{{0xef, 0xbb, 0xbf}, {0xff, 0xfe}, {0xfe, 0xff}} {
 		if bytes.HasPrefix(body, marker) {

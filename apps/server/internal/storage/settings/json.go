@@ -11,7 +11,7 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
 )
 
-var errJsonShape = errors.New("invalid runtime JSON shape")
+var errJSONShape = errors.New("invalid runtime JSON shape")
 
 // IndexProviderRoutes maps catalog stems to their indexing providers.
 type IndexProviderRoutes map[string]string
@@ -22,13 +22,13 @@ type ProviderProxyPolicy map[string]bool
 // readObject validates every typed value before applying map duplicate-key semantics.
 // Struct callers additionally reject unknown, missing and duplicate members.
 func readObject(raw string, fields []string, consume func(string, json.RawMessage) error) error {
-	if !jsonvalue.ValidJson(raw) {
-		return errJsonShape
+	if !jsonvalue.ValidJSON(raw) {
+		return errJSONShape
 	}
 	decoder := json.NewDecoder(strings.NewReader(raw))
 	token, err := decoder.Token()
 	if err != nil || token != json.Delim('{') {
-		return errJsonShape
+		return errJSONShape
 	}
 	seen := map[string]bool{}
 	for decoder.More() {
@@ -37,7 +37,7 @@ func readObject(raw string, fields []string, consume func(string, json.RawMessag
 		}
 	}
 	if fields != nil && len(seen) != len(fields) {
-		return errJsonShape
+		return errJSONShape
 	}
 	return nil
 }
@@ -46,19 +46,19 @@ func readObject(raw string, fields []string, consume func(string, json.RawMessag
 func readObjectMember(decoder *json.Decoder, fields []string, seen map[string]bool, consume func(string, json.RawMessage) error) error {
 	token, err := decoder.Token()
 	if err != nil {
-		return errJsonShape
+		return errJSONShape
 	}
 	name, ok := token.(string)
 	if !ok {
-		return errJsonShape
+		return errJSONShape
 	}
 	if fields != nil && (seen[name] || !slices.Contains(fields, name)) {
-		return errJsonShape
+		return errJSONShape
 	}
 	seen[name] = true
 	var value json.RawMessage
 	if decoder.Decode(&value) != nil {
-		return errJsonShape
+		return errJSONShape
 	}
 	return consume(name, value)
 }
@@ -66,7 +66,7 @@ func readObjectMember(decoder *json.Decoder, fields []string, seen map[string]bo
 func jsonString(raw json.RawMessage) (string, error) {
 	var value string
 	if len(raw) == 0 || raw[0] != '"' || json.Unmarshal(raw, &value) != nil {
-		return "", errJsonShape
+		return "", errJSONShape
 	}
 	return value, nil
 }
@@ -74,7 +74,7 @@ func jsonString(raw json.RawMessage) (string, error) {
 func jsonStrings(raw json.RawMessage) ([]string, error) {
 	var entries []json.RawMessage
 	if len(raw) == 0 || raw[0] != '[' || json.Unmarshal(raw, &entries) != nil {
-		return nil, errJsonShape
+		return nil, errJSONShape
 	}
 	result := make([]string, len(entries))
 	for index, entry := range entries {
@@ -114,11 +114,11 @@ func sortedKeys[Value any](values map[string]Value) []string {
 }
 
 func normalizeProxyPolicy(raw string) (string, error) {
-	invalid := errors.New("Provider proxy policy must be a JSON object with boolean values and lowercase ASCII Provider names")
+	invalid := settingError(InvalidSetting, "Provider proxy policy must be a JSON object with boolean values and lowercase ASCII Provider names")
 	result := ProviderProxyPolicy{}
 	err := readObject(raw, nil, func(key string, value json.RawMessage) error {
 		if string(value) != "true" && string(value) != "false" {
-			return errJsonShape
+			return errJSONShape
 		}
 		result[key] = string(value) == "true"
 		return nil
@@ -131,11 +131,13 @@ func normalizeProxyPolicy(raw string) (string, error) {
 			return "", invalid
 		}
 	}
-	return jsonvalue.EncodeJson(result)
+	return jsonvalue.EncodeJSON(result)
 }
 
 func normalizeRoutes(raw string) (string, error) {
-	invalid := func(detail string) error { return fmt.Errorf("Invalid index_provider_routes: %s", detail) }
+	invalid := func(detail string) error {
+		return settingError(InvalidSetting, fmt.Sprintf("Invalid index_provider_routes: %s", detail))
+	}
 	result := IndexProviderRoutes{}
 	if readObject(raw, nil, func(key string, value json.RawMessage) error {
 		name, err := jsonString(value)
@@ -156,7 +158,7 @@ func normalizeRoutes(raw string) (string, error) {
 			return "", invalid("provider names must use lowercase ASCII names")
 		}
 	}
-	return jsonvalue.EncodeJson(result)
+	return jsonvalue.EncodeJSON(result)
 }
 
 // ProviderOrders preserves ordered fallbacks and deterministic catalog overrides.
@@ -166,7 +168,9 @@ type ProviderOrders struct {
 }
 
 func normalizeOrders(field, raw string) (string, error) {
-	invalid := func(detail string) error { return fmt.Errorf("Invalid %s: %s", field, detail) }
+	invalid := func(detail string) error {
+		return settingError(InvalidSetting, fmt.Sprintf("Invalid %s: %s", field, detail))
+	}
 	result := ProviderOrders{Catalogs: map[string][]string{}}
 	err := readObject(raw, []string{"default", "catalogs"}, func(key string, value json.RawMessage) error {
 		if key == "default" {
@@ -207,7 +211,7 @@ func normalizeOrders(field, raw string) (string, error) {
 			return "", err
 		}
 	}
-	return jsonvalue.EncodeJson(result)
+	return jsonvalue.EncodeJSON(result)
 }
 
 // TokenBucketPolicy is the exact integer policy used by authentication admission.
@@ -219,20 +223,20 @@ type TokenBucketPolicy struct {
 
 // RateLimitPolicy preserves the strict persisted structure and its field order.
 type RateLimitPolicy struct {
-	LoginIp          TokenBucketPolicy `json:"login_ip"`
+	LoginIP          TokenBucketPolicy `json:"login_ip"`
 	Username         TokenBucketPolicy `json:"username"`
-	RegisterIp       TokenBucketPolicy `json:"register_ip"`
+	RegisterIP       TokenBucketPolicy `json:"register_ip"`
 	GlobalLogin      TokenBucketPolicy `json:"global_login"`
 	GlobalRegister   TokenBucketPolicy `json:"global_register"`
-	IpKeyLimit       uint64            `json:"ip_key_limit"`
+	IPKeyLimit       uint64            `json:"ip_key_limit"`
 	UsernameKeyLimit uint64            `json:"username_key_limit"`
 }
 
 // ParseRateLimitPolicy validates local buckets and the dominating global breakers.
 func ParseRateLimitPolicy(raw string) (RateLimitPolicy, error) {
-	invalid := errors.New("Authentication rate-limit policy must be strict bounded JSON")
+	invalid := settingError(InvalidSetting, "Authentication rate-limit policy must be strict bounded JSON")
 	var result RateLimitPolicy
-	buckets := map[string]*TokenBucketPolicy{"login_ip": &result.LoginIp, "username": &result.Username, "register_ip": &result.RegisterIp, "global_login": &result.GlobalLogin, "global_register": &result.GlobalRegister}
+	buckets := map[string]*TokenBucketPolicy{"login_ip": &result.LoginIP, "username": &result.Username, "register_ip": &result.RegisterIP, "global_login": &result.GlobalLogin, "global_register": &result.GlobalRegister}
 	fields := []string{"login_ip", "username", "register_ip", "global_login", "global_register", "ip_key_limit", "username_key_limit"}
 	err := readObject(raw, fields, func(key string, value json.RawMessage) error {
 		return readRatePolicyValue(key, value, buckets, &result)
@@ -258,10 +262,10 @@ func readRatePolicyValue(key string, value json.RawMessage, buckets map[string]*
 	}
 	parsed, err := strconv.ParseUint(string(value), 10, 64)
 	if err != nil {
-		return errJsonShape
+		return errJSONShape
 	}
 	if key == "ip_key_limit" {
-		result.IpKeyLimit = parsed
+		result.IPKeyLimit = parsed
 	} else {
 		result.UsernameKeyLimit = parsed
 	}
@@ -273,7 +277,7 @@ func readTokenBucket(value json.RawMessage, bucket *TokenBucketPolicy) error {
 	return readObject(string(value), []string{"capacity", "refill_tokens", "refill_seconds"}, func(name string, number json.RawMessage) error {
 		parsed, err := strconv.ParseUint(string(number), 10, 64)
 		if err != nil {
-			return errJsonShape
+			return errJSONShape
 		}
 		switch name {
 		case "capacity":
@@ -294,7 +298,7 @@ func isBoundedBucket(bucket TokenBucketPolicy) bool {
 
 // hasBoundedPolicyKeys enforces finite IP and username cache capacities.
 func hasBoundedPolicyKeys(policy RateLimitPolicy) bool {
-	return policy.IpKeyLimit >= 1 && policy.IpKeyLimit <= 65536 && policy.UsernameKeyLimit >= 1 && policy.UsernameKeyLimit <= 65536
+	return policy.IPKeyLimit >= 1 && policy.IPKeyLimit <= 65536 && policy.UsernameKeyLimit >= 1 && policy.UsernameKeyLimit <= 65536
 }
 
 // bucketDominates requires greater capacity and at least the local refill rate.
@@ -304,5 +308,5 @@ func bucketDominates(global, front TokenBucketPolicy) bool {
 
 // hasDominatingGlobalBuckets checks both global breakers against each relevant local bucket.
 func hasDominatingGlobalBuckets(policy RateLimitPolicy) bool {
-	return bucketDominates(policy.GlobalLogin, policy.LoginIp) && bucketDominates(policy.GlobalLogin, policy.Username) && bucketDominates(policy.GlobalRegister, policy.RegisterIp) && bucketDominates(policy.GlobalRegister, policy.Username)
+	return bucketDominates(policy.GlobalLogin, policy.LoginIP) && bucketDominates(policy.GlobalLogin, policy.Username) && bucketDominates(policy.GlobalRegister, policy.RegisterIP) && bucketDominates(policy.GlobalRegister, policy.Username)
 }

@@ -29,7 +29,7 @@ type JournalListParams struct {
 
 // IssueListParams selects canonical issues independently of article availability.
 type IssueListParams struct {
-	JournalId, Year *int64
+	JournalID, Year *int64
 	Sort            *string
 	Limit, Offset   int64
 }
@@ -57,7 +57,7 @@ func decodeJournal(row querydb.JournalByIDRow) (domain.Journal, error) {
 	if err != nil {
 		return domain.Journal{}, err
 	}
-	return domain.Journal{JournalId: identity.Id(row.JournalID), CatalogId: string(row.CatalogID), Title: string(row.Title), TitleAliases: names, Issns: identifiers, Issn: (*string)(row.ISSN), Eissn: (*string)(row.EISSN), Area: (*string)(row.Area), UtdRank: (*string)(row.UTDRank), UtdRating: (*string)(row.UTDRating), AbsRank: (*string)(row.ABSRank), AbsRating: (*string)(row.ABSRating), FmsRank: (*string)(row.FMSRank), FmsRating: (*string)(row.FMSRating), FmscnRank: (*string)(row.FMSCNRank), FmscnRating: (*string)(row.FMSCNRating), HasArticles: row.Exists}, nil
+	return domain.Journal{JournalID: identity.ID(row.JournalID), CatalogID: string(row.CatalogID), Title: string(row.Title), TitleAliases: names, Issns: identifiers, Issn: (*string)(row.ISSN), Eissn: (*string)(row.EISSN), Area: (*string)(row.Area), UtdRank: (*string)(row.UTDRank), UtdRating: (*string)(row.UTDRating), AbsRank: (*string)(row.ABSRank), AbsRating: (*string)(row.ABSRating), FmsRank: (*string)(row.FMSRank), FmsRating: (*string)(row.FMSRating), FmscnRank: (*string)(row.FMSCNRank), FmscnRating: (*string)(row.FMSCNRating), HasArticles: row.Exists}, nil
 }
 
 func issueFromRow(scanner scanner) (domain.Issue, error) {
@@ -69,7 +69,7 @@ func issueFromRow(scanner scanner) (domain.Issue, error) {
 }
 
 func decodeIssue(row querydb.Issue) domain.Issue {
-	result := domain.Issue{IssueId: int64(row.IssueID), JournalId: identity.Id(row.JournalID), PublicationYear: (*int64)(row.PublicationYear), Title: (*string)(row.Title), Volume: (*string)(row.Volume), Number: (*string)(row.Number), Date: (*string)(row.Date)}
+	result := domain.Issue{IssueID: int64(row.IssueID), JournalID: identity.ID(row.JournalID), PublicationYear: (*int64)(row.PublicationYear), Title: (*string)(row.Title), Volume: (*string)(row.Volume), Number: (*string)(row.Number), Date: (*string)(row.Date)}
 	if result.Date != nil {
 		result.DatePrecision = domain.DatePrecision(*result.Date)
 	}
@@ -156,8 +156,8 @@ func ListIssues(ctx context.Context, configuration config.Config, name *string, 
 		return empty, err
 	}
 	filters := filter{}
-	if params.JournalId != nil {
-		filters.add("i.journal_id=?", *params.JournalId)
+	if params.JournalID != nil {
+		filters.add("i.journal_id=?", *params.JournalID)
 	}
 	if params.Year != nil {
 		filters.add("i.publication_year=?", *params.Year)
@@ -273,7 +273,7 @@ func ListJournalOptions(ctx context.Context, configuration config.Config, name *
 	}
 	items := make([]domain.JournalOption, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, domain.JournalOption{JournalId: identity.Id(row.JournalID), Title: string(row.Title)})
+		items = append(items, domain.JournalOption{JournalID: identity.ID(row.JournalID), Title: string(row.Title)})
 	}
 	return items, nil
 }

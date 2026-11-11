@@ -46,7 +46,7 @@ func prepareRecoveredIndex(t *testing.T, ctx context.Context) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := storage.TransitionCatalogPhase(ctx, batch.Conn, admission.Batch.BatchId, "fixture-owner", 0, storage.CatalogIndexing, time.Now().Unix()); err != nil {
+	if err := storage.TransitionCatalogPhase(ctx, batch.Conn, admission.Batch.BatchID, "fixture-owner", 0, storage.CatalogIndexing, time.Now().Unix()); err != nil {
 		t.Fatal(err)
 	}
 	control, err := storage.OpenControl(ctx, filepath.Join(root, "data", "index-control", "fixture.sqlite"))
@@ -62,12 +62,12 @@ func prepareRecoveredIndex(t *testing.T, ctx context.Context) string {
 		t.Fatal(err)
 	}
 	for ordinal, entry := range catalog.Entries {
-		prepareRecoveredJournalReplay(t, ctx, root, control, admission.Batch.BatchId, ordinal, entry)
+		prepareRecoveredJournalReplay(t, ctx, root, control, admission.Batch.BatchID, ordinal, entry)
 	}
 	if err := storage.ReleaseLease(ctx, control.Conn, "fixture", "scholarly", "fixture-run"); err != nil {
 		t.Fatal(err)
 	}
-	if err := storage.ReleaseBatchLease(ctx, batch.Conn, admission.Batch.BatchId, "fixture-owner"); err != nil {
+	if err := storage.ReleaseBatchLease(ctx, batch.Conn, admission.Batch.BatchID, "fixture-owner"); err != nil {
 		t.Fatal(err)
 	}
 	return root
@@ -100,7 +100,7 @@ func verifyRecoveredIndex(t *testing.T, root, stdout, stderr string) {
 			t.Errorf("batch.Close: %v", err)
 		}
 	}()
-	batchId := assertRecoveredBatchCompletion(t, batch, &count)
+	batchID := assertRecoveredBatchCompletion(t, batch, &count)
 	control, err := storage.OpenControl(context.Background(), filepath.Join(root, "data", "index-control", "fixture.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -110,7 +110,7 @@ func verifyRecoveredIndex(t *testing.T, root, stdout, stderr string) {
 			t.Errorf("control.Close: %v", err)
 		}
 	}()
-	assertRecoveredControlCompletion(t, control, batchId, &count)
+	assertRecoveredControlCompletion(t, control, batchID, &count)
 }
 
 // prepareRecoveredIndexSettings retains auth setup, proxy lifetime and encrypted offline settings.
@@ -151,9 +151,9 @@ func prepareRecoveredIndexSettings(t *testing.T, ctx context.Context, root strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxyUrl, policy := proxy.URL, `{"scholarly":true}`
+	proxyURL, policy := proxy.URL, `{"scholarly":true}`
 	apiKey, mailto := "synthetic-offline-key", "fixture@example.invalid"
-	_, err = settings.New(repository, codec).Update(ctx, nil, map[string]*string{"provider_proxy_url": &proxyUrl, "provider_proxy_policy": &policy, "openalex_api_key_pool": &apiKey, "semantic_scholar_api_key_pool": &apiKey, "crossref_mailto_pool": &mailto}, nil, nil)
+	_, err = settings.New(repository, codec).Update(ctx, nil, map[string]*string{"provider_proxy_url": &proxyURL, "provider_proxy_policy": &policy, "openalex_api_key_pool": &apiKey, "semantic_scholar_api_key_pool": &apiKey, "crossref_mailto_pool": &mailto}, nil, nil)
 	if err := repository.Close(); err != nil {
 		t.Fatalf("repository.Close: %v", err)
 	}
@@ -190,7 +190,7 @@ func prepareRecoveredIndexCatalog(t *testing.T, root string) (storage.CatalogInp
 }
 
 // prepareRecoveredJournalReplay collects exactly two offline pages and persists their ready checkpoint.
-func prepareRecoveredJournalReplay(t *testing.T, ctx context.Context, root string, control *storage.Connection, batchId string, ordinal int, entry domain.JournalCatalogEntry) {
+func prepareRecoveredJournalReplay(t *testing.T, ctx context.Context, root string, control *storage.Connection, batchID string, ordinal int, entry domain.JournalCatalogEntry) {
 	t.Helper()
 	var work map[string]any
 	decoder := json.NewDecoder(strings.NewReader(`{"title":["Offline recovered article"],"type":"journal-article","created":{"date-time":"2026-01-01T00:00:00Z","timestamp":1767225600000},"issued":{"date-parts":[[2026,1,1]]},"volume":"1","issue":"1"}`))
@@ -211,7 +211,7 @@ func prepareRecoveredJournalReplay(t *testing.T, ctx context.Context, root strin
 	if !strings.Contains(*checkpoint, `"ready"`) {
 		t.Fatal("fixture still requires an upstream request", *checkpoint)
 	}
-	run := storage.SyncRun{Scope: storage.SyncScope{CatalogName: "fixture", ProviderName: "scholarly", CatalogId: entry.CatalogId}, BatchId: batchId, RunId: "fixture-run", Mode: domain.Incremental}
+	run := storage.SyncRun{Scope: storage.SyncScope{CatalogName: "fixture", ProviderName: "scholarly", CatalogID: entry.CatalogID}, BatchID: batchID, RunID: "fixture-run", Mode: domain.Incremental}
 	if _, err := storage.PrepareJournalSync(ctx, control.Conn, run, true, "fixture"); err != nil {
 		t.Fatal(err)
 	}
@@ -241,16 +241,16 @@ func readRecoveredIndexOutcome(t *testing.T, stdout string) index.LiveCatalogOut
 func assertRecoveredProcessCorrelation(t *testing.T, stderr string) {
 	t.Helper()
 	processes := map[string]map[int]bool{"index": {}, "notify": {}}
-	for _, line := range strings.Split(stderr, "\n") {
+	for line := range strings.SplitSeq(stderr, "\n") {
 		var event struct {
 			Event string
 			Span  struct {
 				Command   string
-				ProcessId int `json:"process_id"`
+				ProcessID int `json:"process_id"`
 			}
 		}
 		if json.Unmarshal([]byte(line), &event) == nil && event.Event == "process.started" && processes[event.Span.Command] != nil {
-			processes[event.Span.Command][event.Span.ProcessId] = true
+			processes[event.Span.Command][event.Span.ProcessID] = true
 		}
 	}
 	if len(processes["index"]) != 3 || len(processes["notify"]) != 1 {
@@ -288,7 +288,7 @@ func readRecoveredIndexManifest(t *testing.T, root string, catalog index.LiveCat
 		t.Fatal(err)
 	}
 	var published recoveredIndexManifest
-	if json.Unmarshal(manifest, &published) != nil || published.Database != "fixture.sqlite" || published.Run != catalog.RunId || len(published.Articles) != 2 {
+	if json.Unmarshal(manifest, &published) != nil || published.Database != "fixture.sqlite" || published.Run != catalog.RunID || len(published.Articles) != 2 {
 		t.Fatal("incorrect published change manifest", string(manifest))
 	}
 	history, err := os.ReadFile(filepath.Join(root, "data", "push_state", "history", "fixture", fmt.Sprintf("%x.changes.json", sha256.Sum256(manifest))))
@@ -301,29 +301,29 @@ func readRecoveredIndexManifest(t *testing.T, root string, catalog index.LiveCat
 // assertRecoveredBatchCompletion retains completed handoff and lease assertions before control inspection.
 func assertRecoveredBatchCompletion(t *testing.T, batch *storage.Connection, count *int) string {
 	t.Helper()
-	var batchId, status string
-	if err := batch.QueryRowContext(context.Background(), "SELECT batch_id,status FROM index_batches").Scan(&batchId, &status); err != nil || status != "completed" {
+	var batchID, status string
+	if err := batch.QueryRowContext(context.Background(), "SELECT batch_id,status FROM index_batches").Scan(&batchID, &status); err != nil || status != "completed" {
 		t.Fatal("batch did not complete", status, err)
 	}
-	catalogs, err := storage.ReadBatchCatalogs(context.Background(), batch.Conn, batchId)
+	catalogs, err := storage.ReadBatchCatalogs(context.Background(), batch.Conn, batchID)
 	if err != nil || len(catalogs) != 1 || catalogs[0].Phase != storage.CatalogCompleted || catalogs[0].NotifyHandoff == nil || !catalogs[0].NotifyHandoff.Status.IsSuccess() {
 		t.Fatal("notify handoff was not durable", catalogs, err)
 	}
 	if err := batch.QueryRowContext(context.Background(), "SELECT count(*) FROM index_batch_lease").Scan(count); err != nil || *count != 0 {
 		t.Fatal("batch lease was not released", *count, err)
 	}
-	return batchId
+	return batchID
 }
 
 // assertRecoveredControlCompletion verifies empty recovery state and both acknowledged journal anchors.
-func assertRecoveredControlCompletion(t *testing.T, control *storage.Connection, batchId string, count *int) {
+func assertRecoveredControlCompletion(t *testing.T, control *storage.Connection, batchID string, count *int) {
 	t.Helper()
 	for _, table := range []string{"provider_leases", "provider_run_checkpoints"} {
 		if err := control.QueryRowContext(context.Background(), "SELECT count(*) FROM "+table).Scan(count); err != nil || *count != 0 {
 			t.Fatal("completed recovery state remains", table, *count, err)
 		}
 	}
-	if err := control.QueryRowContext(context.Background(), "SELECT count(*) FROM provider_sync_anchors WHERE completed_batch_id=?", batchId).Scan(count); err != nil || *count != 2 {
+	if err := control.QueryRowContext(context.Background(), "SELECT count(*) FROM provider_sync_anchors WHERE completed_batch_id=?", batchID).Scan(count); err != nil || *count != 2 {
 		t.Fatal("journal completion was not acknowledged", *count, err)
 	}
 }

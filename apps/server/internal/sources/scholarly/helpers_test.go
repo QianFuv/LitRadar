@@ -14,7 +14,7 @@ func TestCrossrefBoundsPrecedeTimestampRange(t *testing.T) {
 	}
 }
 func TestRedactKeyWithoutEquals(t *testing.T) {
-	if actual := RedactUrl("https://example.test/?api_key&cursor&x=1"); actual != "https://example.test/?api_key=SECRET&cursor=REDACTED&x=1" {
+	if actual := RedactURL("https://example.test/?api_key&cursor&x=1"); actual != "https://example.test/?api_key=SECRET&cursor=REDACTED&x=1" {
 		t.Fatal(actual)
 	}
 }

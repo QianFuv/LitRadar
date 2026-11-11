@@ -56,8 +56,7 @@ func TestScheduledJobDecodingKeepsBusinessValidationSeparate(t *testing.T) {
 		if err := json.Unmarshal([]byte(raw), &job); err != nil {
 			t.Fatal(err)
 		}
-		var validation *ValidationError
-		if !errors.As(job.Validate(), &validation) {
+		if _, ok := errors.AsType[*ValidationError](job.Validate()); !ok {
 			t.Fatal(job)
 		}
 	}

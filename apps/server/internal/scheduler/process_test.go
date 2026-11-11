@@ -74,7 +74,7 @@ func processFixture(t *testing.T, role string) (scheduledProcess, string) {
 	return scheduledProcess{command: "index", path: executable}, directory
 }
 func testClaim() store.Claim {
-	return store.Claim{RunId: 42, WorkerId: "fixture", Task: domain.Task{Id: 1, Name: "fixture"}}
+	return store.Claim{RunID: 42, WorkerID: "fixture", Task: domain.Task{ID: 1, Name: "fixture"}}
 }
 
 // TestSchedulerWindowsSignedExitCode checks signed exit status without a short startup deadline.
@@ -227,7 +227,7 @@ func TestSchedulerCommandsSequence(t *testing.T) {
 			if scenario == "first-failed" {
 				t.Setenv("LITRADAR_SCHEDULER_TEST_FAIL", "index")
 			}
-			task := domain.Task{Id: 1, Job: &domain.Job{Kind: "index", Notify: true, Push: true}, TimeoutSeconds: 60}
+			task := domain.Task{ID: 1, Job: &domain.Job{Kind: "index", Notify: true, Push: true}, TimeoutSeconds: 60}
 			config := ProcessConfig{ProjectRoot: "explicit root with spaces", AuthDatabase: "auth path", Executable: command.path, SecretKeyFile: "key path"}
 			result := config.runProcesses(t.Context(), task, testClaim(), func() bool { return true })
 			expected := map[string]domain.State{"success": domain.Success, "first-failed": domain.Failed}[scenario]
@@ -252,7 +252,7 @@ func TestSchedulerCommandsSequence(t *testing.T) {
 				if err := json.Unmarshal(line, &record); err != nil {
 					t.Errorf("json.Unmarshal: %v", err)
 				}
-				if record.Cwd != cwd || record.Args[0] != []string{"index", "notify", "push"}[index] || strings.Join(record.Args[len(record.Args)-2:], " ") != ParentRunIdArgument+" 42" {
+				if record.Cwd != cwd || record.Args[0] != []string{"index", "notify", "push"}[index] || strings.Join(record.Args[len(record.Args)-2:], " ") != ParentRunIDArgument+" 42" {
 					t.Fatalf("wrong command %#v", record)
 				}
 			}
@@ -290,7 +290,7 @@ func runClaimCrashFixture(directory string) {
 
 // writeStartedCrashEffect starts the owned claim before writing, syncing and closing its external effect.
 func writeStartedCrashEffect(repository *store.Repository, claim store.Claim, directory string) {
-	if started, err := repository.StartRun(context.Background(), claim.RunId, "crashed", 100, 90); err != nil || !started {
+	if started, err := repository.StartRun(context.Background(), claim.RunID, "crashed", 100, 90); err != nil || !started {
 		os.Exit(42)
 	}
 	file, err := os.OpenFile(filepath.Join(directory, "effect"), os.O_CREATE|os.O_WRONLY, 0600)

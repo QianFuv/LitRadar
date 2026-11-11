@@ -5,8 +5,8 @@ import "log/slog"
 
 // Subscriber contains the notification preferences and decrypted integration credentials.
 type Subscriber struct {
-	SubscriberId         string   `json:"subscriber_id"`
-	UserId               int64    `json:"user_id"`
+	SubscriberID         string   `json:"subscriber_id"`
+	UserID               int64    `json:"user_id"`
 	Name                 string   `json:"name"`
 	PushplusToken        string   `json:"pushplus_token"`
 	Channel              *string  `json:"channel"`
@@ -16,14 +16,14 @@ type Subscriber struct {
 	Topic                *string  `json:"topic"`
 	Template             *string  `json:"template"`
 	DeliveryMethod       string   `json:"delivery_method"`
-	TrackingFolderId     *int64   `json:"tracking_folder_id"`
+	TrackingFolderID     *int64   `json:"tracking_folder_id"`
 	SyncToTrackingFolder bool     `json:"sync_to_tracking_folder"`
-	AiBaseUrl            *string  `json:"ai_base_url"`
-	AiApiKey             *string  `json:"ai_api_key"`
+	AiBaseURL            *string  `json:"ai_base_url"`
+	AiAPIKey             *string  `json:"ai_api_key"`
 	AiModel              *string  `json:"ai_model"`
 	AiSystemPrompt       *string  `json:"ai_system_prompt"`
-	AiBackupBaseUrl      *string  `json:"ai_backup_base_url"`
-	AiBackupApiKey       *string  `json:"ai_backup_api_key"`
+	AiBackupBaseURL      *string  `json:"ai_backup_base_url"`
+	AiBackupAPIKey       *string  `json:"ai_backup_api_key"`
 	AiBackupModel        *string  `json:"ai_backup_model"`
 	AiBackupSystemPrompt *string  `json:"ai_backup_system_prompt"`
 	AiRetryAttempts      int64    `json:"ai_retry_attempts"`
@@ -40,7 +40,7 @@ func (subscriber Subscriber) LogValue() slog.Value { return slog.StringValue(sub
 
 // RankedSelection preserves the model score for one article.
 type RankedSelection struct {
-	ArticleId int64   `json:"article_id"`
+	ArticleID int64   `json:"article_id"`
 	Score     float64 `json:"score"`
 }
 

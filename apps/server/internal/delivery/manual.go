@@ -26,8 +26,8 @@ type ManualWeeklyPushConfig struct {
 	WindowEnd           weekly.Timestamp
 	StorageConfig       storageconfig.Config
 	SecretCodec         *secrets.Codec
-	UserId              int64
-	AttemptId           string
+	UserID              int64
+	AttemptID           string
 	AiModel             *string
 	MaxCandidates       *int
 	TimeoutSeconds      uint64
@@ -48,7 +48,7 @@ type ManualWeeklyPushOutcome struct {
 	Selected        int64   `json:"selected"`
 	TotalCandidates *int64  `json:"total_candidates"`
 	Summary         string  `json:"summary"`
-	FolderId        *int64  `json:"folder_id"`
+	FolderID        *int64  `json:"folder_id"`
 	FolderName      *string `json:"folder_name"`
 }
 
@@ -64,9 +64,9 @@ func RunManualWeeklyPush(ctx context.Context, config ManualWeeklyPushConfig) (Ma
 }
 
 func runManualWeeklyPush(ctx context.Context, config ManualWeeklyPushConfig, deliver func(context.Context, RunConfig, *int64, *recommend.ChangeManifest) (RunOutcome, error)) (result ManualWeeklyPushOutcome, resultError error) {
-	ctx = observability.StartSpan(ctx, "litradar_worker::delivery::orchestration", "delivery.manual", map[string]any{"component": "delivery", "workflow": "manual_weekly_push", "mode": "execute", "user_id": config.UserId})
+	ctx = observability.StartSpan(ctx, "litradar_worker::delivery::orchestration", "delivery.manual", map[string]any{"component": "delivery", "workflow": "manual_weekly_push", "mode": "execute", "user_id": config.UserID})
 	started := time.Now()
-	logger := slog.Default().With("component", "delivery", "workflow", "manual_weekly_push", "mode", "execute", "user_id", config.UserId)
+	logger := slog.Default().With("component", "delivery", "workflow", "manual_weekly_push", "mode", "execute", "user_id", config.UserID)
 	logger.InfoContext(ctx, "delivery.manual.started", "event", "delivery.manual.started", "outcome", "started")
 	defer func() {
 		if resultError != nil {
@@ -87,7 +87,7 @@ func runManualWeeklyPush(ctx context.Context, config ManualWeeklyPushConfig, del
 	if err := checkManualExecution(config); err != nil {
 		return result, err
 	}
-	repository, err := store.Open(config.StorageConfig.AuthDbPath)
+	repository, err := store.Open(config.StorageConfig.AuthDBPath)
 	if err != nil {
 		return result, classified("business_storage", err)
 	}
@@ -96,7 +96,7 @@ func runManualWeeklyPush(ctx context.Context, config ManualWeeklyPushConfig, del
 			resultError = errors.Join(resultError, fmt.Errorf("close repository: %w", closeError))
 		}
 	}()
-	preferences, err := repository.GetNotificationSettings(ctx, config.SecretCodec, config.UserId)
+	preferences, err := repository.GetNotificationSettings(ctx, config.SecretCodec, config.UserID)
 	if err != nil {
 		return result, classified("business_storage", err)
 	}
@@ -107,7 +107,7 @@ func runManualWeeklyPush(ctx context.Context, config ManualWeeklyPushConfig, del
 	if method == "" {
 		method = "folder"
 	}
-	accounts, err := auth.Open(config.StorageConfig.AuthDbPath)
+	accounts, err := auth.Open(config.StorageConfig.AuthDBPath)
 	if err != nil {
 		return result, classified("business_storage", err)
 	}
@@ -116,7 +116,7 @@ func runManualWeeklyPush(ctx context.Context, config ManualWeeklyPushConfig, del
 			resultError = errors.Join(resultError, fmt.Errorf("close accounts: %w", closeError))
 		}
 	}()
-	folder, err := favorites.New(accounts).TrackingFolder(ctx, identity.Id(config.UserId))
+	folder, err := favorites.New(accounts).TrackingFolder(ctx, identity.ID(config.UserID))
 	if err != nil {
 		return result, classified("business_storage", err)
 	}
@@ -129,7 +129,7 @@ func runManualWeeklyPush(ctx context.Context, config ManualWeeklyPushConfig, del
 func manualOutcome(message string, folder *favorites.Folder) ManualWeeklyPushOutcome {
 	result := ManualWeeklyPushOutcome{Status: "completed", Message: message}
 	if folder != nil {
-		result.FolderId = &folder.Id
+		result.FolderID = &folder.ID
 		result.FolderName = &folder.Name
 	}
 	return result
@@ -169,7 +169,7 @@ func manualOutcomeFromDelivery(method string, folder *favorites.Folder, outcomes
 
 func validateManualTrackingFolder(method string, preferences *domain.NotificationSettings, folder *favorites.Folder) error {
 	if (method == "folder" || preferences.SyncToTrackingFolder) && folder == nil {
-		return errors.New("No tracking folder configured. Create a folder and set it as tracking first.")
+		return errors.New("no tracking folder configured. Create a folder and set it as tracking first")
 	}
 	return nil
 }
@@ -181,7 +181,7 @@ func deliverManualWeeklyWindow(ctx context.Context, config ManualWeeklyPushConfi
 	}
 	manifests := []weekly.Manifest{}
 	for _, publication := range publications {
-		if recommend.IsDatabaseSelected(preferences.SelectedDatabases, publication.DbName) {
+		if recommend.IsDatabaseSelected(preferences.SelectedDatabases, publication.DBName) {
 			manifests = append(manifests, publication)
 		}
 	}
@@ -214,13 +214,13 @@ func executeManualPublications(ctx context.Context, config ManualWeeklyPushConfi
 				return nil, err
 			}
 		}
-		filename, err := config.StorageConfig.ResolveIndexDbPath(&publication.DbName)
+		filename, err := config.StorageConfig.ResolveIndexDBPath(&publication.DBName)
 		if err != nil {
 			return nil, classified("index_storage", err)
 		}
-		child := RunConfig{AuthDbPath: config.StorageConfig.AuthDbPath, SecretCodec: config.SecretCodec, IndexDbPath: filename, DbName: publication.DbName, AttemptId: &config.AttemptId, AiModel: config.AiModel, MaxCandidates: config.MaxCandidates, TimeoutSeconds: config.TimeoutSeconds, RetryAttempts: config.RetryAttempts, DedupeRetentionDays: config.DedupeRetentionDays, Mode: store.RunModeExecute, Workflow: workflow, Trigger: store.TriggerKindScheduled, ExecutionControl: config.ExecutionControl}
-		manifest := recommend.ChangeManifest{PendingIssueKeys: []string{}, PendingInpressKeys: []string{}, PendingArticleIds: publication.ArticleIds, RunId: publication.RunId}
-		outcome, err := deliver(ctx, child, &config.UserId, &manifest)
+		child := RunConfig{AuthDBPath: config.StorageConfig.AuthDBPath, SecretCodec: config.SecretCodec, IndexDBPath: filename, DBName: publication.DBName, AttemptID: &config.AttemptID, AiModel: config.AiModel, MaxCandidates: config.MaxCandidates, TimeoutSeconds: config.TimeoutSeconds, RetryAttempts: config.RetryAttempts, DedupeRetentionDays: config.DedupeRetentionDays, Mode: store.RunModeExecute, Workflow: workflow, Trigger: store.TriggerKindScheduled, ExecutionControl: config.ExecutionControl}
+		manifest := recommend.ChangeManifest{PendingIssueKeys: []string{}, PendingInpressKeys: []string{}, PendingArticleIds: publication.ArticleIds, RunID: publication.RunID}
+		outcome, err := deliver(ctx, child, &config.UserID, &manifest)
 		if err != nil {
 			return nil, err
 		}
@@ -240,14 +240,15 @@ func collectManualDeliveryOutcomes(result *ManualWeeklyPushOutcome, outcomes []R
 	totals := manualDeliveryTotals{selectedDatabases: map[string]bool{}, failures: []string{}, skips: []string{}}
 	for _, outcome := range outcomes {
 		totals.candidates += int64(len(outcome.CandidateArticleIds))
-		if outcome.Status == "failed" {
-			totals.failures = append(totals.failures, outcome.DbName+" delivery failed")
-		} else if outcome.Status == "unknown" {
+		switch outcome.Status {
+		case "failed":
+			totals.failures = append(totals.failures, outcome.DBName+" delivery failed")
+		case "unknown":
 			totals.hasUnknown = true
-			totals.failures = append(totals.failures, outcome.DbName+" delivery outcome is unknown")
+			totals.failures = append(totals.failures, outcome.DBName+" delivery outcome is unknown")
 		}
 		for _, subscriber := range outcome.Subscribers {
-			collectManualSubscriber(result, &totals, outcome.DbName, subscriber)
+			collectManualSubscriber(result, &totals, outcome.DBName, subscriber)
 		}
 	}
 	return totals
@@ -256,7 +257,7 @@ func collectManualDeliveryOutcomes(result *ManualWeeklyPushOutcome, outcomes []R
 func collectManualSubscriber(result *ManualWeeklyPushOutcome, totals *manualDeliveryTotals, database string, subscriber SubscriberPlan) {
 	result.Selected += int64(len(subscriber.SelectedArticleIds))
 	result.Pushed += int64(subscriber.FolderSyncedCount)
-	if subscriber.MessageId != nil {
+	if subscriber.MessageID != nil {
 		totals.messages++
 	}
 	if len(subscriber.SelectedArticleIds) > 0 {

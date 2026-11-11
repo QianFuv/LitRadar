@@ -68,6 +68,33 @@ func TestTrackingSettingsPreserveSecretIntentAndMaskedProjection(t *testing.T) {
 	}
 }
 
+func TestNotificationSettingsSecretInputPresence(t *testing.T) {
+	for _, scenario := range []struct {
+		name, body string
+		isPresent  bool
+		value      *string
+	}{
+		{"omitted", `{}`, false, nil},
+		{"clear", `{"ai_api_key":null,"ai_backup_api_key":null,"pushplus_token":null}`, true, nil},
+		{"replace", `{"ai_api_key":"replacement","ai_backup_api_key":"replacement","pushplus_token":"replacement"}`, true, new("replacement")},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			var input NotificationSettingsUpdate
+			if err := json.Unmarshal([]byte(scenario.body), &input); err != nil {
+				t.Fatal(err)
+			}
+			for _, secret := range []domain.SecretUpdate{input.AIAPIKey, input.AIBackupAPIKey, input.PushplusToken} {
+				if secret.IsPresent != scenario.isPresent || (secret.Value == nil) != (scenario.value == nil) {
+					t.Fatalf("unexpected secret presence: %+v", secret)
+				}
+				if secret.Value != nil && *secret.Value != *scenario.value {
+					t.Fatal("replacement value changed")
+				}
+			}
+		})
+	}
+}
+
 func TestTrackingValidationOrderAndDatabaseNormalization(t *testing.T) {
 	handlers, auth, router, token, _ := trackingFixture(t)
 	if err := auth.repository.WithConnection(context.Background(), func(connection *sql.Conn) error {
@@ -121,7 +148,7 @@ func TestManualPushDurableAdmissionOwnershipAndCancellation(t *testing.T) {
 	}
 	first := assertDuplicateManualAdmission(t, router, token)
 	assertQueuedManualDeadline(t, handlers)
-	path := "/api/tracking/push-weekly/runs/" + *first.JobId
+	path := "/api/tracking/push-weekly/runs/" + *first.JobID
 	if response := authRequest(router, "GET", path, "", member); response.Code != 404 {
 		t.Fatal(response.Code, response.Body.String())
 	}
@@ -151,11 +178,11 @@ func TestManualUnknownAcknowledgementRemainsOwnerOnlyAndAtomic(t *testing.T) {
 	handlers, auth, router, token, member := trackingFixture(t)
 	response := authRequest(router, "POST", "/api/tracking/push-weekly", "", member)
 	var status manualPushStatus
-	if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &status) != nil || status.JobId == nil {
+	if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &status) != nil || status.JobID == nil {
 		t.Fatal(response.Code, response.Body.String())
 	}
 	if err := auth.repository.WithConnection(context.Background(), func(connection *sql.Conn) error {
-		_, err := connection.ExecContext(context.Background(), "UPDATE delivery_runs SET status='unknown',finished_at=?,revision=revision+1 WHERE external_id=?", currentTimestamp(), *status.JobId)
+		_, err := connection.ExecContext(context.Background(), "UPDATE delivery_runs SET status='unknown',finished_at=?,revision=revision+1 WHERE external_id=?", currentTimestamp(), *status.JobID)
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -163,7 +190,7 @@ func TestManualUnknownAcknowledgementRemainsOwnerOnlyAndAtomic(t *testing.T) {
 	if response := authRequest(router, "POST", "/api/tracking/push-weekly", "", member); response.Code != 409 {
 		t.Fatal(response.Code, response.Body.String())
 	}
-	path := "/api/tracking/push-weekly/runs/" + *status.JobId + "/acknowledge"
+	path := "/api/tracking/push-weekly/runs/" + *status.JobID + "/acknowledge"
 	if response := authRequest(router, "POST", path, "", token); response.Code != 404 {
 		t.Fatal("admin acquired owner-only acknowledgement", response.Code, response.Body.String())
 	}
@@ -180,7 +207,7 @@ func TestManualUnknownAcknowledgementRemainsOwnerOnlyAndAtomic(t *testing.T) {
 		if err := connection.QueryRowContext(context.Background(), "SELECT count(*),actor_id,target_id,action,outcome,request_id FROM security_audit_events WHERE action='manual_push_unknown_acknowledge'").Scan(&count, &actor, &target, &action, &outcome, &correlation); err != nil {
 			return err
 		}
-		if count != 1 || actor != 2 || target != latest.Id || action != "manual_push_unknown_acknowledge" || outcome != "completed" || correlation != "fixture-request" {
+		if count != 1 || actor != 2 || target != latest.ID || action != "manual_push_unknown_acknowledge" || outcome != "completed" || correlation != "fixture-request" {
 			t.Errorf("acknowledgement audit identity: %d %d %d %s %s %s", count, actor, target, action, outcome, correlation)
 		}
 		return nil
@@ -193,7 +220,7 @@ func TestManualPublicOutcomeRequiresStrictDecodedState(t *testing.T) {
 	assertMalformedManualResultsAreHidden(t)
 	encoded := `{"status":"completed","message":"Public result","pushed":7,"selected":8,"summary":"Public summary"}`
 	for _, state := range []storage.RunStatus{storage.RunStatusCompleted, storage.RunStatusRunning, storage.RunStatusUnknown} {
-		value := manualStatus(&storage.RunRecord{Status: state, ResultJson: &encoded})
+		value := manualStatus(&storage.RunRecord{Status: state, ResultJSON: &encoded})
 		if value.Pushed != 7 || value.Selected != 8 || value.Summary != "Public summary" {
 			t.Fatal(value)
 		}
@@ -229,7 +256,7 @@ func assertNotificationSecretUpdate(t *testing.T, handlers *trackingHandlers, ro
 		t.Fatal(err)
 	}
 	shouldHaveSecret := !strings.Contains(body, "null")
-	if value.HasPushplusToken != shouldHaveSecret || value.HasAiApiKey != shouldHaveSecret || value.HasAiBackupApiKey != shouldHaveSecret {
+	if value.HasPushplusToken != shouldHaveSecret || value.HasAiAPIKey != shouldHaveSecret || value.HasAiBackupAPIKey != shouldHaveSecret {
 		t.Fatal(response.Body.String())
 	}
 	assertStoredNotificationIntent(t, handlers, body, value, shouldHaveSecret, response)
@@ -242,7 +269,7 @@ func assertStoredNotificationIntent(t *testing.T, handlers *trackingHandlers, bo
 	if err != nil {
 		t.Fatal(err)
 	}
-	if shouldHaveSecret && (stored.PushplusToken != "private-push" || stored.AiApiKey != "private-ai" || stored.AiBackupApiKey != "private-backup") {
+	if shouldHaveSecret && (stored.PushplusToken != "private-push" || stored.AiAPIKey != "private-ai" || stored.AiBackupAPIKey != "private-backup") {
 		t.Fatal("secret intent changed")
 	}
 	if strings.Contains(body, "keywords") && (strings.Join(value.Keywords, ",") != "x,x" || value.PushplusTemplate != "markdown") {
@@ -255,15 +282,15 @@ func assertDuplicateManualAdmission(t *testing.T, router *http.ServeMux, token s
 	t.Helper()
 	var response *httptest.ResponseRecorder
 	var first manualPushStatus
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		response = authRequest(router, "POST", "/api/tracking/push-weekly", "", token)
 		var current manualPushStatus
-		if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &current) != nil || current.JobId == nil || len(*current.JobId) != 32 || current.Status != "pending" || !current.CanCancel {
+		if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &current) != nil || current.JobID == nil || len(*current.JobID) != 32 || current.Status != "pending" || !current.CanCancel {
 			t.Fatal(response.Code, response.Body.String())
 		}
 		if attempt == 0 {
 			first = current
-		} else if *first.JobId != *current.JobId {
+		} else if *first.JobID != *current.JobID {
 			t.Fatal("duplicate admission created another job")
 		}
 	}
@@ -283,13 +310,12 @@ func assertQueuedManualDeadline(t *testing.T, handlers *trackingHandlers) {
 // assertAdminCanCancelMemberManualRun checks administrator cancellation of another owner's run.
 func assertAdminCanCancelMemberManualRun(t *testing.T, router *http.ServeMux, token, member string) {
 	t.Helper()
-	var response *httptest.ResponseRecorder
-	response = authRequest(router, "POST", "/api/tracking/push-weekly", "", member)
+	var response = authRequest(router, "POST", "/api/tracking/push-weekly", "", member)
 	var second manualPushStatus
-	if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &second) != nil || second.JobId == nil {
+	if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &second) != nil || second.JobID == nil {
 		t.Fatal(response.Code, response.Body.String())
 	}
-	if response := authRequest(router, "POST", "/api/tracking/push-weekly/runs/"+*second.JobId+"/cancel", "", token); response.Code != 200 {
+	if response := authRequest(router, "POST", "/api/tracking/push-weekly/runs/"+*second.JobID+"/cancel", "", token); response.Code != 200 {
 		t.Fatal("admin cannot cancel another owner", response.Code, response.Body.String())
 	}
 }
@@ -324,7 +350,7 @@ func assertManualAcknowledgementAuditRollback(t *testing.T, handlers *trackingHa
 func assertMalformedManualResultsAreHidden(t *testing.T) {
 	t.Helper()
 	for _, encoded := range []string{`{}`, `{"status":"completed","message":"private","pushed":null,"selected":1,"summary":"x"}`, `{"status":"invented","message":"private","pushed":1,"selected":1,"summary":"x"}`, `{"status":"completed","status":"completed","message":"private","pushed":1,"selected":1,"summary":"x"}`, `{"status":{"completed":null,"completed":null},"message":"private","pushed":1,"selected":1,"summary":"x"}`} {
-		value := manualStatus(&storage.RunRecord{Status: storage.RunStatusCompleted, ResultJson: &encoded})
+		value := manualStatus(&storage.RunRecord{Status: storage.RunStatusCompleted, ResultJSON: &encoded})
 		if value.Message != "Manual push completed" || value.Pushed != 0 || value.Summary != "Stored manual delivery result is invalid or obsolete" {
 			t.Fatal("invalid result disclosed", encoded, value)
 		}

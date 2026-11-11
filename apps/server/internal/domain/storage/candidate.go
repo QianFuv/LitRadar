@@ -4,9 +4,9 @@ import "log/slog"
 
 // ArticleCandidate supplies notification ranking without changing canonical numeric identifiers.
 type ArticleCandidate struct {
-	ArticleId    int64   `json:"article_id"`
-	JournalId    int64   `json:"journal_id"`
-	IssueId      *int64  `json:"issue_id"`
+	ArticleID    int64   `json:"article_id"`
+	JournalID    int64   `json:"journal_id"`
+	IssueID      *int64  `json:"issue_id"`
 	Title        string  `json:"title"`
 	Abstract     string  `json:"abstract_text"`
 	Date         *string `json:"date"`

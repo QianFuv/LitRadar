@@ -194,8 +194,8 @@ func resumeProcessThreads(snapshot windows.Handle, pid int) error {
 }
 
 // resumeProcessThread closes its handle immediately after attempting the resume.
-func resumeProcessThread(threadId uint32) (uint32, error) {
-	thread, openError := windows.OpenThread(windows.THREAD_SUSPEND_RESUME, false, threadId)
+func resumeProcessThread(threadID uint32) (uint32, error) {
+	thread, openError := windows.OpenThread(windows.THREAD_SUSPEND_RESUME, false, threadID)
 	if openError != nil {
 		return 0, openError
 	}

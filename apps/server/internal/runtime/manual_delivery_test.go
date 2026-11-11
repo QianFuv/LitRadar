@@ -31,9 +31,9 @@ func manualFixture(t *testing.T) (*Prepared, *delivery.RunRecord) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	userId := int64(user.Id)
+	userID := int64(user.ID)
 	deadline := unixTime() + 300
-	outcome, err := prepared.services.Delivery.AdmitManualRun(context.Background(), delivery.RunCreate{ExternalId: "fixture-run", Workflow: delivery.WorkflowPush, ScopeKey: "manual:user", TriggerKind: delivery.TriggerKindManual, Mode: delivery.RunModeExecute, UserId: &userId, DeadlineAt: &deadline, CreatedAt: unixTime()})
+	outcome, err := prepared.services.Delivery.AdmitManualRun(context.Background(), delivery.RunCreate{ExternalID: "fixture-run", Workflow: delivery.WorkflowPush, ScopeKey: "manual:user", TriggerKind: delivery.TriggerKindManual, Mode: delivery.RunModeExecute, UserID: &userID, DeadlineAt: &deadline, CreatedAt: unixTime()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestManualDispatchSpawnFailureFinalizesOnlyQueuedRun(t *testing.T) {
 	if err := dispatcher.dispatch(2); err != nil {
 		t.Fatal(err)
 	}
-	stored, err := dispatcher.repository.LoadRun(context.Background(), run.Id)
+	stored, err := dispatcher.repository.LoadRun(context.Background(), run.ID)
 	if err != nil || stored.Status != delivery.RunStatusFailed || stored.ErrorCode == nil || *stored.ErrorCode != "spawn_or_assign_failed" || len(dispatcher.children) != 0 {
 		t.Fatal("spawn failure lost durable classification", stored, err)
 	}
@@ -60,15 +60,15 @@ func TestManualFinalizationReportsPersistenceFailure(t *testing.T) {
 			prepared, run := manualFixture(t)
 			dispatcher := manualDispatcher{configuration: prepared.configuration, repository: prepared.services.Delivery}
 			dispatcher.configuration.Executable = filepath.Join(t.TempDir(), "missing-binary")
-			active := &manualChild{runId: run.Id, ownerId: "owner", stopKind: "deadline"}
+			active := &manualChild{runID: run.ID, ownerID: "owner", stopKind: "deadline"}
 			if scenario == "forced owner" {
-				if _, err := dispatcher.repository.ClaimRun(context.Background(), run.Id, active.ownerId, run.Revision, unixTime(), 300); err != nil {
+				if _, err := dispatcher.repository.ClaimRun(context.Background(), run.ID, active.ownerID, run.Revision, unixTime(), 300); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if err := prepared.services.Auth.WithConnection(context.Background(), func(connection *sql.Conn) error {
 				if scenario == "queued deadline" {
-					if _, err := connection.ExecContext(context.Background(), "UPDATE delivery_runs SET created_at=?,deadline_at=? WHERE id=?", unixTime()-2, unixTime()-1, run.Id); err != nil {
+					if _, err := connection.ExecContext(context.Background(), "UPDATE delivery_runs SET created_at=?,deadline_at=? WHERE id=?", unixTime()-2, unixTime()-1, run.ID); err != nil {
 						return err
 					}
 				}
@@ -97,14 +97,14 @@ func TestManualFinalizationReportsPersistenceFailure(t *testing.T) {
 func TestExpiredManualCandidatePreservesConcurrentClaim(t *testing.T) {
 	prepared, run := manualFixture(t)
 	dispatcher := manualDispatcher{repository: prepared.services.Delivery}
-	if _, err := dispatcher.repository.ClaimRun(context.Background(), run.Id, "replacement", run.Revision, unixTime(), 300); err != nil {
+	if _, err := dispatcher.repository.ClaimRun(context.Background(), run.ID, "replacement", run.Revision, unixTime(), 300); err != nil {
 		t.Fatal(err)
 	}
 	if isExpired, err := dispatcher.expireQueuedManualCandidate(*run, *run.DeadlineAt); err != nil || !isExpired {
 		t.Fatal("concurrent claim was treated as a persistence failure", isExpired, err)
 	}
-	stored, err := dispatcher.repository.LoadRun(context.Background(), run.Id)
-	if err != nil || stored.OwnerId == nil || *stored.OwnerId != "replacement" || stored.Status != delivery.RunStatusClaimed {
+	stored, err := dispatcher.repository.LoadRun(context.Background(), run.ID)
+	if err != nil || stored.OwnerID == nil || *stored.OwnerID != "replacement" || stored.Status != delivery.RunStatusClaimed {
 		t.Fatal("stale candidate changed replacement ownership", stored, err)
 	}
 }
@@ -112,20 +112,20 @@ func TestExpiredManualCandidatePreservesConcurrentClaim(t *testing.T) {
 func TestForcedManualFinalizationPreservesReplacementOwnerAndTerminalResult(t *testing.T) {
 	prepared, run := manualFixture(t)
 	repository := prepared.services.Delivery
-	claimed, err := repository.ClaimRun(context.Background(), run.Id, "replacement", run.Revision, unixTime(), 300)
+	claimed, err := repository.ClaimRun(context.Background(), run.ID, "replacement", run.Revision, unixTime(), 300)
 	if err != nil {
 		t.Fatal(err)
 	}
 	dispatcher := manualDispatcher{repository: repository}
-	active := &manualChild{runId: run.Id, ownerId: "previous", stopKind: "shutdown"}
+	active := &manualChild{runID: run.ID, ownerID: "previous", stopKind: "shutdown"}
 	assertReplacementManualOwnerProtected(t, &dispatcher, active, claimed.Run.Revision)
-	active.ownerId = "replacement"
+	active.ownerID = "replacement"
 	revision := assertOwnedManualRunQuarantined(t, &dispatcher, active)
 	active.stopKind = "deadline"
 	if err := dispatcher.finalizeForced(active); err != nil {
 		t.Fatal(err)
 	}
-	stored, err := repository.LoadRun(context.Background(), run.Id)
+	stored, err := repository.LoadRun(context.Background(), run.ID)
 	if err != nil || stored.Revision != revision || *stored.ErrorCode != "forced_shutdown_unknown" {
 		t.Fatal("terminal result was overwritten", stored, err)
 	}
@@ -194,11 +194,11 @@ func runtimeChild(t *testing.T) (*process.Child, string) {
 func TestManualShutdownReapsChildBeforeQuarantiningOwnedRun(t *testing.T) {
 	prepared, run := manualFixture(t)
 	owner := "manual-owner"
-	if _, err := prepared.services.Delivery.ClaimRun(context.Background(), run.Id, owner, run.Revision, unixTime(), 300); err != nil {
+	if _, err := prepared.services.Delivery.ClaimRun(context.Background(), run.ID, owner, run.Revision, unixTime(), 300); err != nil {
 		t.Fatal(err)
 	}
 	child, address := runtimeChild(t)
-	dispatcher := manualDispatcher{repository: prepared.services.Delivery, children: []*manualChild{{runId: run.Id, ownerId: owner, child: child}}}
+	dispatcher := manualDispatcher{repository: prepared.services.Delivery, children: []*manualChild{{runID: run.ID, ownerID: owner, child: child}}}
 	if err := dispatcher.shutdown(); err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestManualShutdownReapsChildBeforeQuarantiningOwnedRun(t *testing.T) {
 		}
 		t.Fatal("dispatcher released a live child")
 	}
-	stored, err := dispatcher.repository.LoadRun(context.Background(), run.Id)
+	stored, err := dispatcher.repository.LoadRun(context.Background(), run.ID)
 	if err != nil || stored.Status != delivery.RunStatusUnknown || stored.ErrorCode == nil || *stored.ErrorCode != "forced_shutdown_unknown" || len(dispatcher.children) != 0 {
 		t.Fatal(fmt.Sprint("shutdown state: ", stored, err))
 	}
@@ -220,8 +220,8 @@ func assertReplacementManualOwnerProtected(t *testing.T, dispatcher *manualDispa
 	if err := dispatcher.finalizeForced(active); err != nil {
 		t.Fatal(err)
 	}
-	stored, err := dispatcher.repository.LoadRun(context.Background(), active.runId)
-	if err != nil || stored.Revision != claimedRevision || stored.OwnerId == nil || *stored.OwnerId != "replacement" {
+	stored, err := dispatcher.repository.LoadRun(context.Background(), active.runID)
+	if err != nil || stored.Revision != claimedRevision || stored.OwnerID == nil || *stored.OwnerID != "replacement" {
 		t.Fatal("forced termination overwrote replacement ownership", stored, err)
 	}
 }
@@ -232,7 +232,7 @@ func assertOwnedManualRunQuarantined(t *testing.T, dispatcher *manualDispatcher,
 	if err := dispatcher.finalizeForced(active); err != nil {
 		t.Fatal(err)
 	}
-	stored, err := dispatcher.repository.LoadRun(context.Background(), active.runId)
+	stored, err := dispatcher.repository.LoadRun(context.Background(), active.runID)
 	if err != nil || stored.Status != delivery.RunStatusUnknown || stored.ErrorCode == nil || *stored.ErrorCode != "forced_shutdown_unknown" {
 		t.Fatal("owned ambiguous run was not quarantined", stored, err)
 	}

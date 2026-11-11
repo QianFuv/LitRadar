@@ -32,7 +32,7 @@ type authStats struct {
 	ActiveAnnouncements     int64 `json:"active_announcements" nullable:"false" format:"int64"`
 }
 type indexDatabaseStats struct {
-	DbName   string `json:"db_name" nullable:"false"`
+	DBName   string `json:"db_name" nullable:"false"`
 	Articles int64  `json:"articles" nullable:"false" format:"int64"`
 	Journals int64  `json:"journals" nullable:"false" format:"int64"`
 	Issues   int64  `json:"issues" nullable:"false" format:"int64"`
@@ -44,7 +44,7 @@ type indexStats struct {
 	TotalJournals int64                `json:"total_journals" nullable:"false" format:"int64"`
 }
 type pushStats struct {
-	DbName         string  `json:"db_name" nullable:"false"`
+	DBName         string  `json:"db_name" nullable:"false"`
 	Status         string  `json:"status" nullable:"false" enum:"idle,running,completed,failed,skipped,unknown,error"`
 	LastCompleted  *string `json:"last_completed" required:"false" nullable:"true"`
 	DeliveredCount *int    `json:"delivered_count,omitempty" required:"false" nullable:"true" minimum:"0" format:"int64"`
@@ -83,7 +83,7 @@ func readAdminStats(ctx context.Context, repository *storageauth.Repository, con
 		item, err := readIndexDatabaseStats(ctx, path)
 		if err != nil {
 			failed := true
-			item = indexDatabaseStats{DbName: filepath.Base(path), Error: &failed}
+			item = indexDatabaseStats{DBName: filepath.Base(path), Error: &failed}
 		} else {
 			result.Index.TotalArticles += item.Articles
 			result.Index.TotalJournals += item.Journals
@@ -99,7 +99,7 @@ func readAdminStats(ctx context.Context, repository *storageauth.Repository, con
 
 // readIndexDatabaseStats preserves optional issue-count failures in legacy databases.
 func readIndexDatabaseStats(ctx context.Context, path string) (resultValue1 indexDatabaseStats, resultError error) {
-	result := indexDatabaseStats{DbName: filepath.Base(path)}
+	result := indexDatabaseStats{DBName: filepath.Base(path)}
 	database, err := sqlite.OpenPlain(path)
 	if err != nil {
 		return result, err
@@ -151,7 +151,7 @@ func readPushStats(root string) ([]pushStats, error) {
 
 // readPushState retains error status for unreadable or malformed legacy state files.
 func readPushState(directory, name string) pushStats {
-	item := pushStats{DbName: strings.TrimSuffix(name, ".json"), Status: "error"}
+	item := pushStats{DBName: strings.TrimSuffix(name, ".json"), Status: "error"}
 	root, err := os.OpenRoot(directory)
 	if err != nil {
 		return item
@@ -161,7 +161,7 @@ func readPushState(directory, name string) pushStats {
 	if err != nil {
 		return item
 	}
-	value, err := transport.ParseJson(data)
+	value, err := transport.ParseJSON(data)
 	if err != nil {
 		return item
 	}

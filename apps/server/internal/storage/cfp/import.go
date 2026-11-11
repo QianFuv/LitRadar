@@ -32,18 +32,18 @@ func insertNotices(ctx context.Context, connection *sql.Conn, key, sourceKey str
 		}()
 	}
 	for order, pair := range notices {
-		source, err := jsonvalue.EncodeJson(pair.source)
+		source, err := jsonvalue.EncodeJSON(pair.source)
 		if err != nil {
 			return err
 		}
-		notice, err := jsonvalue.EncodeJson(pair.notice)
+		notice, err := jsonvalue.EncodeJSON(pair.notice)
 		if err != nil {
 			return err
 		}
 		if statement == nil {
-			_, err = queries.InsertNotices(ctx, connection, cfpdb.InsertNoticesParams{JournalKey: sqlite.Text(key), NoticeKey: sqlite.Text(pair.notice.Id), SourceKey: sqlite.Text(sourceKey), SourceJSON: sqlite.Text(source), NormalizedJSON: sqlite.Text(notice), DisplayOrder: sqlite.Integer(order)})
+			_, err = queries.InsertNotices(ctx, connection, cfpdb.InsertNoticesParams{JournalKey: sqlite.Text(key), NoticeKey: sqlite.Text(pair.notice.ID), SourceKey: sqlite.Text(sourceKey), SourceJSON: sqlite.Text(source), NormalizedJSON: sqlite.Text(notice), DisplayOrder: sqlite.Integer(order)})
 		} else {
-			_, err = statement.ExecContext(ctx, key, pair.notice.Id, sourceKey, source, notice, order)
+			_, err = statement.ExecContext(ctx, key, pair.notice.ID, sourceKey, source, notice, order)
 		}
 		if err != nil {
 			return err
@@ -55,7 +55,7 @@ func emptyFields(journal *preparedJournal) (*string, *string) {
 	if journal.empty == nil {
 		return nil, nil
 	}
-	return &journal.empty.SourceUrl, &journal.empty.SourceStatement
+	return &journal.empty.SourceURL, &journal.empty.SourceStatement
 }
 func insertJournal(ctx context.Context, connection *sql.Conn, key, sourceKey string, journal *preparedJournal) error {
 	url, statement := emptyFields(journal)
@@ -74,21 +74,21 @@ func insertJournal(ctx context.Context, connection *sql.Conn, key, sourceKey str
 }
 
 // ImportSeed validates a byte-identical, immutable operator import identity.
-func (repository *Repository) ImportSeed(ctx context.Context, seedId string, input []byte) (ImportResult, error) {
+func (repository *Repository) ImportSeed(ctx context.Context, seedID string, input []byte) (ImportResult, error) {
 	seed, err := PrepareSeed(input)
 	if err != nil {
 		return ImportResult{}, err
 	}
-	return repository.ImportPrepared(ctx, seedId, seed)
+	return repository.ImportPrepared(ctx, seedID, seed)
 }
 
 // ImportPrepared rechecks the import marker under the write lock and never merges existing owners.
-func (repository *Repository) ImportPrepared(ctx context.Context, seedId string, seed *PreparedSeed) (ImportResult, error) {
+func (repository *Repository) ImportPrepared(ctx context.Context, seedID string, seed *PreparedSeed) (ImportResult, error) {
 	result := ImportResult{Journals: uint64(len(seed.journals)), Notices: seed.notices, ContentHash: seed.digest}
 	err := repository.transaction(ctx, true, func(connection *sql.Conn) error {
 		var previous sqlite.Text
 		err := func() error {
-			queryResult, err := queries.SeedHash(ctx, connection, cfpdb.SeedHashParams{SeedID: sqlite.Text(seedId)})
+			queryResult, err := queries.SeedHash(ctx, connection, cfpdb.SeedHashParams{SeedID: sqlite.Text(seedID)})
 			if err != nil {
 				return err
 			}
@@ -111,24 +111,24 @@ func (repository *Repository) ImportPrepared(ctx context.Context, seedId string,
 			for _, pair := range journal.notices {
 				originals = append(originals, pair.source)
 			}
-			capture, err := jsonvalue.EncodeJson(originals)
+			capture, err := jsonvalue.EncodeJSON(originals)
 			if err != nil {
 				return err
 			}
-			sourceUrl := ""
+			sourceURL := ""
 			if journal.empty != nil {
-				sourceUrl = journal.empty.SourceUrl
+				sourceURL = journal.empty.SourceURL
 			} else if len(journal.notices) > 0 {
-				sourceUrl = journal.notices[0].source.SourceUrl
+				sourceURL = journal.notices[0].source.SourceURL
 			}
-			if _, err = queries.InsertSource(ctx, connection, cfpdb.InsertSourceParams{SourceKey: sqlite.Text(sourceKey), URL: sqlite.Text(sourceUrl), ParserVersion: sqlite.Integer(domain.ParserVersion), Capture: sqlite.Text(capture), ContentHash: sqlite.Text(digest([]byte(capture)))}); err != nil {
+			if _, err = queries.InsertSource(ctx, connection, cfpdb.InsertSourceParams{SourceKey: sqlite.Text(sourceKey), URL: sqlite.Text(sourceURL), ParserVersion: sqlite.Integer(domain.ParserVersion), Capture: sqlite.Text(capture), ContentHash: sqlite.Text(digest([]byte(capture)))}); err != nil {
 				return err
 			}
 			if err = insertJournal(ctx, connection, key, sourceKey, journal); err != nil {
 				return err
 			}
 		}
-		_, err = queries.RecordSeed(ctx, connection, cfpdb.RecordSeedParams{SeedID: sqlite.Text(seedId), ContentHash: sqlite.Text(seed.digest), ParserVersion: sqlite.Integer(domain.ParserVersion), JournalCount: sqlite.Integer(result.Journals), NoticeCount: sqlite.Integer(result.Notices)})
+		_, err = queries.RecordSeed(ctx, connection, cfpdb.RecordSeedParams{SeedID: sqlite.Text(seedID), ContentHash: sqlite.Text(seed.digest), ParserVersion: sqlite.Integer(domain.ParserVersion), JournalCount: sqlite.Integer(result.Journals), NoticeCount: sqlite.Integer(result.Notices)})
 		if err == nil {
 			result.DidImport = true
 		}

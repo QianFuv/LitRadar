@@ -9,17 +9,17 @@ import (
 	whatwg "github.com/nlnwa/whatwg-url/url"
 )
 
-// parseDomesticUrl admits the original domestic URL grammar after relative resolution.
-func parseDomesticUrl(value string) (*whatwg.Url, error) {
+// parseDomesticURL admits the original domestic URL grammar after relative resolution.
+func parseDomesticURL(value string) (*whatwg.Url, error) {
 	value = strings.TrimSpace(value)
 	if value == "" || strings.HasPrefix(value, "//") {
 		return nil, &Error{Kind: "Request", Message: "domestic CNKI URL is invalid"}
 	}
-	parsed, err := resolveDomesticUrl(value)
+	parsed, err := resolveDomesticURL(value)
 	if err != nil {
 		return nil, err
 	}
-	if !isAllowedDomesticUrl(parsed) {
+	if !isAllowedDomesticURL(parsed) {
 		return nil, &Error{Kind: "Request", Message: "domestic CNKI URL is not allowed"}
 	}
 	return parsed, nil
@@ -55,7 +55,7 @@ func asciiLower(value string) string {
 
 // WithDomesticPlatform validates a domestic URL and replaces all platform query aliases.
 func WithDomesticPlatform(value string) (string, error) {
-	parsed, err := parseDomesticUrl(value)
+	parsed, err := parseDomesticURL(value)
 	if err != nil {
 		return "", err
 	}
@@ -75,8 +75,8 @@ func WithDomesticPlatform(value string) (string, error) {
 	return parsed.Href(false), nil
 }
 
-// RedactUrl retains nonsensitive query order and removes challenge credentials.
-func RedactUrl(value string) string {
+// RedactURL retains nonsensitive query order and removes challenge credentials.
+func RedactURL(value string) string {
 	parsed, err := whatwg.NewParser().Parse(value)
 	if err != nil {
 		return "[REDACTED INVALID DOMESTIC URL]"
@@ -103,8 +103,8 @@ func ContainsOverseasHost(value string) bool {
 	return strings.Contains(strings.ToLower(value), "oversea.cnki.net")
 }
 
-// resolveDomesticUrl preserves absolute parsing and the three relative KNS prefixes.
-func resolveDomesticUrl(value string) (*whatwg.Url, error) {
+// resolveDomesticURL preserves absolute parsing and the three relative KNS prefixes.
+func resolveDomesticURL(value string) (*whatwg.Url, error) {
 	parser := whatwg.NewParser()
 	parsed, err := parser.Parse(value)
 	if err != nil {
@@ -123,7 +123,7 @@ func resolveDomesticUrl(value string) (*whatwg.Url, error) {
 	return parsed, nil
 }
 
-// isAllowedDomesticUrl admits only credential-free domestic HTTPS endpoints.
-func isAllowedDomesticUrl(parsed *whatwg.Url) bool {
-	return !(parsed.Scheme() != "https" || parsed.Hostname() != "navi.cnki.net" && parsed.Hostname() != "kns.cnki.net" || parsed.Username() != "" || parsed.Password() != "" || parsed.Port() != "" && parsed.Port() != "443")
+// isAllowedDomesticURL admits only credential-free domestic HTTPS endpoints.
+func isAllowedDomesticURL(parsed *whatwg.Url) bool {
+	return parsed.Scheme() == "https" && (parsed.Hostname() == "navi.cnki.net" || parsed.Hostname() == "kns.cnki.net") && parsed.Username() == "" && parsed.Password() == "" && (parsed.Port() == "" || parsed.Port() == "443")
 }

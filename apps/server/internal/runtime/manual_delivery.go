@@ -19,8 +19,8 @@ import (
 const cooperativeGrace = 250 * time.Millisecond
 
 type manualChild struct {
-	runId       int64
-	ownerId     string
+	runID       int64
+	ownerID     string
 	child       *process.Child
 	stopKind    string
 	stopStarted time.Time
@@ -74,7 +74,7 @@ func (dispatcher *manualDispatcher) reap() error {
 		if exitError != nil {
 			outcome = "failure"
 		}
-		slog.Info("delivery.dispatcher.child_completed", "event", "delivery.dispatcher.child_completed", "component", "delivery_dispatcher", "outcome", outcome, "delivery_run_id", active.runId, "exit_success", exitError == nil)
+		slog.Info("delivery.dispatcher.child_completed", "event", "delivery.dispatcher.child_completed", "component", "delivery_dispatcher", "outcome", outcome, "delivery_run_id", active.runID, "exit_success", exitError == nil)
 		dispatcher.remove(index)
 	}
 	return nil
@@ -98,7 +98,7 @@ func (dispatcher *manualDispatcher) dispatch(concurrency int) error {
 		return errors.New("delivery dispatch query failed")
 	}
 	for _, candidate := range candidates {
-		isActive := dispatcher.hasActiveManualRun(candidate.Id)
+		isActive := dispatcher.hasActiveManualRun(candidate.ID)
 		if isActive {
 			continue
 		}
@@ -109,15 +109,15 @@ func (dispatcher *manualDispatcher) dispatch(concurrency int) error {
 		if isExpired {
 			continue
 		}
-		active, err := dispatcher.spawn(candidate.Id)
+		active, err := dispatcher.spawn(candidate.ID)
 		if err == nil {
 			dispatcher.children = append(dispatcher.children, active)
 			continue
 		}
-		slog.Error("delivery.dispatcher.spawn_failed", "event", "delivery.dispatcher.spawn_failed", "component", "delivery_dispatcher", "outcome", "failure", "error_kind", "spawn_or_assign_failed", "delivery_run_id", candidate.Id)
+		slog.Error("delivery.dispatcher.spawn_failed", "event", "delivery.dispatcher.spawn_failed", "component", "delivery_dispatcher", "outcome", "failure", "error_kind", "spawn_or_assign_failed", "delivery_run_id", candidate.ID)
 		if candidate.Status == delivery.RunStatusQueued {
 			code := "spawn_or_assign_failed"
-			if _, err := dispatcher.repository.FinalizeQueuedRun(context.Background(), candidate.Id, candidate.Revision, delivery.RunStatusFailed, nil, &code, unixTime()); err != nil && !errors.Is(err, delivery.ErrConflict) {
+			if _, err := dispatcher.repository.FinalizeQueuedRun(context.Background(), candidate.ID, candidate.Revision, delivery.RunStatusFailed, nil, &code, unixTime()); err != nil && !errors.Is(err, delivery.ErrConflict) {
 				return errors.New("delivery terminal state persistence failed")
 			}
 		}
@@ -125,26 +125,26 @@ func (dispatcher *manualDispatcher) dispatch(concurrency int) error {
 	return nil
 }
 
-func (dispatcher *manualDispatcher) spawn(runId int64) (*manualChild, error) {
+func (dispatcher *manualDispatcher) spawn(runID int64) (*manualChild, error) {
 	var random [16]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return nil, err
 	}
 	owner := "manual-worker-" + hex.EncodeToString(random[:])
 	configuration := dispatcher.configuration
-	arguments := []string{"delivery-run", "--project-root", configuration.Storage.ProjectRoot, "--auth-db", configuration.Storage.AuthDbPath, "--secret-key-file", configuration.SecretKeyFile, "--run-id", strconv.FormatInt(runId, 10), "--owner-id", owner, scheduler.ParentRunIdArgument, fmt.Sprintf("manual-delivery-%d", runId)}
+	arguments := []string{"delivery-run", "--project-root", configuration.Storage.ProjectRoot, "--auth-db", configuration.Storage.AuthDBPath, "--secret-key-file", configuration.SecretKeyFile, "--run-id", strconv.FormatInt(runID, 10), "--owner-id", owner, scheduler.ParentRunIDArgument, fmt.Sprintf("manual-delivery-%d", runID)}
 	child, err := process.Start(context.Background(), process.Config{Path: configuration.Executable, Args: arguments, InheritStdin: true, InheritStdout: true, InheritStderr: true})
 	if err != nil {
 		return nil, err
 	}
-	return &manualChild{runId: runId, ownerId: owner, child: child}, nil
+	return &manualChild{runID: runID, ownerID: owner, child: child}, nil
 }
 
 func (dispatcher *manualDispatcher) enforceStops() error {
 	now := unixTime()
 	for index := 0; index < len(dispatcher.children); {
 		active := dispatcher.children[index]
-		run, err := dispatcher.repository.LoadRun(context.Background(), active.runId)
+		run, err := dispatcher.repository.LoadRun(context.Background(), active.runID)
 		if err != nil {
 			return errors.New("delivery cancellation query failed")
 		}
@@ -162,7 +162,7 @@ func (dispatcher *manualDispatcher) enforceStops() error {
 }
 
 func (dispatcher *manualDispatcher) finalizeForced(active *manualChild) error {
-	run, err := dispatcher.repository.LoadRun(context.Background(), active.runId)
+	run, err := dispatcher.repository.LoadRun(context.Background(), active.runID)
 	if err != nil {
 		return errors.New("delivery forced-stop query failed")
 	}
@@ -172,13 +172,13 @@ func (dispatcher *manualDispatcher) finalizeForced(active *manualChild) error {
 	if run.Status == delivery.RunStatusQueued {
 		if active.stopKind == "deadline" {
 			code := "deadline_exceeded"
-			if _, err := dispatcher.repository.FinalizeQueuedRun(context.Background(), run.Id, run.Revision, delivery.RunStatusTimedOut, nil, &code, unixTime()); err != nil && !errors.Is(err, delivery.ErrConflict) {
+			if _, err := dispatcher.repository.FinalizeQueuedRun(context.Background(), run.ID, run.Revision, delivery.RunStatusTimedOut, nil, &code, unixTime()); err != nil && !errors.Is(err, delivery.ErrConflict) {
 				return errors.New("delivery terminal state persistence failed")
 			}
 		}
 		return nil
 	}
-	if run.OwnerId == nil || *run.OwnerId != active.ownerId {
+	if run.OwnerID == nil || *run.OwnerID != active.ownerID {
 		return nil
 	}
 	kind := active.stopKind
@@ -186,7 +186,7 @@ func (dispatcher *manualDispatcher) finalizeForced(active *manualChild) error {
 		kind = "termination"
 	}
 	code := "forced_" + kind + "_unknown"
-	if _, err := dispatcher.repository.FinalizeRun(context.Background(), run.Id, active.ownerId, run.Revision, delivery.RunStatusUnknown, nil, &code, unixTime()); err != nil && !errors.Is(err, delivery.ErrConflict) {
+	if _, err := dispatcher.repository.FinalizeRun(context.Background(), run.ID, active.ownerID, run.Revision, delivery.RunStatusUnknown, nil, &code, unixTime()); err != nil && !errors.Is(err, delivery.ErrConflict) {
 		return errors.New("delivery terminal state persistence failed")
 	}
 	return nil
@@ -208,10 +208,10 @@ func (dispatcher *manualDispatcher) shutdown() error {
 }
 
 // hasActiveManualRun retains a full scan of current children before spawning a candidate.
-func (dispatcher *manualDispatcher) hasActiveManualRun(runId int64) bool {
+func (dispatcher *manualDispatcher) hasActiveManualRun(runID int64) bool {
 	isActive := false
 	for _, active := range dispatcher.children {
-		isActive = isActive || active.runId == runId
+		isActive = isActive || active.runID == runID
 	}
 	return isActive
 }
@@ -220,7 +220,7 @@ func (dispatcher *manualDispatcher) hasActiveManualRun(runId int64) bool {
 func (dispatcher *manualDispatcher) expireQueuedManualCandidate(candidate delivery.RunRecord, now float64) (bool, error) {
 	if candidate.Status == delivery.RunStatusQueued && candidate.DeadlineAt != nil && *candidate.DeadlineAt <= now {
 		code := "deadline_exceeded"
-		if _, err := dispatcher.repository.FinalizeQueuedRun(context.Background(), candidate.Id, candidate.Revision, delivery.RunStatusTimedOut, nil, &code, now); err != nil && !errors.Is(err, delivery.ErrConflict) {
+		if _, err := dispatcher.repository.FinalizeQueuedRun(context.Background(), candidate.ID, candidate.Revision, delivery.RunStatusTimedOut, nil, &code, now); err != nil && !errors.Is(err, delivery.ErrConflict) {
 			return true, errors.New("delivery terminal state persistence failed")
 		}
 		return true, nil
@@ -261,9 +261,9 @@ func (dispatcher *manualDispatcher) terminateManualChild(active *manualChild) er
 // requestManualShutdown requests cancellation for every owned child before any wait or reap.
 func (dispatcher *manualDispatcher) requestManualShutdown() {
 	for _, active := range dispatcher.children {
-		run, err := dispatcher.repository.LoadRun(context.Background(), active.runId)
-		if err == nil && run != nil && !run.Status.IsTerminal() && run.OwnerId != nil && *run.OwnerId == active.ownerId {
-			_, _ = dispatcher.repository.CancelRun(context.Background(), run.Id, run.Revision, unixTime())
+		run, err := dispatcher.repository.LoadRun(context.Background(), active.runID)
+		if err == nil && run != nil && !run.Status.IsTerminal() && run.OwnerID != nil && *run.OwnerID == active.ownerID {
+			_, _ = dispatcher.repository.CancelRun(context.Background(), run.ID, run.Revision, unixTime())
 		}
 		active.stopKind, active.stopStarted = "shutdown", time.Now()
 	}

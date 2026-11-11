@@ -75,7 +75,7 @@ func (phase CrossrefPhase) MarshalJSON() ([]byte, error) {
 	case "emit":
 		return encodeWorksetStruct(emitPhaseWire{phase.Kind, phase.Upper, phase.Lower, phase.After})
 	default:
-		return nil, errWorksetJson
+		return nil, errWorksetJSON
 	}
 }
 
@@ -112,7 +112,7 @@ func (phase *CrossrefPhase) UnmarshalJSON(body []byte) error {
 		decoded.Lower = wire.Lower
 		decoded.After = wire.After
 	default:
-		return errWorksetJson
+		return errWorksetJSON
 	}
 	*phase = decoded
 	return nil
@@ -156,7 +156,7 @@ func validWorksetToken(value string) bool {
 		return false
 	}
 	for _, character := range []byte(value) {
-		if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f') {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
 			return false
 		}
 	}

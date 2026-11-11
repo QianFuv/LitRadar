@@ -51,7 +51,7 @@ func CheckInterrupted(configuration config.Config) error {
 
 // EnsureInactive checks service heartbeats and control leases without acquiring an indexing lease.
 func EnsureInactive(ctx context.Context, configuration config.Config, now int64) error {
-	active, err := backup.HasRecentHeartbeat(ctx, configuration.AuthDbPath, float64(now), backup.ActiveHeartbeatMaxAge)
+	active, err := backup.HasRecentHeartbeat(ctx, configuration.AuthDBPath, float64(now), backup.ActiveHeartbeatMaxAge)
 	if err != nil {
 		return validation("auth.sqlite", fmt.Sprintf("activity gate: %v", err))
 	}

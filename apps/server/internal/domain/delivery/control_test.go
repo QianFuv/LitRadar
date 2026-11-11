@@ -15,16 +15,14 @@ func TestOneBudgetSurvivesConcurrentEndpointAndFormatAttempts(t *testing.T) {
 	var successes atomic.Int32
 	var group sync.WaitGroup
 	for range 20 {
-		group.Add(1)
-		go func() {
-			defer group.Done()
+		group.Go(func() {
 			_, err := control.BeginAiRequest(time.Second)
 			if err == nil {
 				successes.Add(1)
 			} else if err != ControlBudgetExhausted {
 				t.Error(err)
 			}
-		}()
+		})
 	}
 	group.Wait()
 	if successes.Load() != 8 {

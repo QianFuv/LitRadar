@@ -15,8 +15,8 @@ import (
 )
 
 // RunManualDeliveryJob claims an existing dispatcher job and persists its terminal result using current ownership.
-func RunManualDeliveryJob(ctx context.Context, config storageconfig.Config, codec *secrets.Codec, runId int64, owner string) (resultValue1 *store.RunRecord, resultError error) {
-	repository, err := store.Open(config.AuthDbPath)
+func RunManualDeliveryJob(ctx context.Context, config storageconfig.Config, codec *secrets.Codec, runID int64, owner string) (resultValue1 *store.RunRecord, resultError error) {
+	repository, err := store.Open(config.AuthDBPath)
 	if err != nil {
 		return nil, err
 	}
@@ -25,12 +25,12 @@ func RunManualDeliveryJob(ctx context.Context, config storageconfig.Config, code
 			resultError = errors.Join(resultError, fmt.Errorf("close repository: %w", closeError))
 		}
 	}()
-	return runManualDeliveryJob(ctx, repository, config, codec, runId, owner, RunManualWeeklyPush)
+	return runManualDeliveryJob(ctx, repository, config, codec, runID, owner, RunManualWeeklyPush)
 }
 
-func runManualDeliveryJob(ctx context.Context, repository *store.Repository, config storageconfig.Config, codec *secrets.Codec, runId int64, owner string, execute func(context.Context, ManualWeeklyPushConfig) (ManualWeeklyPushOutcome, error)) (*store.RunRecord, error) {
+func runManualDeliveryJob(ctx context.Context, repository *store.Repository, config storageconfig.Config, codec *secrets.Codec, runID int64, owner string, execute func(context.Context, ManualWeeklyPushConfig) (ManualWeeklyPushOutcome, error)) (*store.RunRecord, error) {
 	load := func(readContext context.Context) (*store.RunRecord, error) {
-		record, err := repository.LoadRun(readContext, runId)
+		record, err := repository.LoadRun(readContext, runID)
 		if err == nil && record == nil {
 			err = store.ErrNotFound
 		}
@@ -42,31 +42,31 @@ func runManualDeliveryJob(ctx context.Context, repository *store.Repository, con
 	}
 	claimed, now, deadline := claim.record, claim.now, claim.deadline
 	finish := func(record *store.RunRecord, status store.RunStatus, result, code *string) (*store.RunRecord, error) {
-		return repository.FinalizeRun(context.WithoutCancel(ctx), record.Id, owner, record.Revision, status, result, code, unixNow())
+		return repository.FinalizeRun(context.WithoutCancel(ctx), record.ID, owner, record.Revision, status, result, code, unixNow())
 	}
 	running, shouldExecute, err := startManualJob(ctx, repository, claimed, owner, now, deadline, load, finish)
 	if err != nil || !shouldExecute {
 		return running, err
 	}
 	control := domain.NewExecutionControl(deadline, domain.ManualAiRequestBudget, func() (bool, error) {
-		record, err := repository.LoadRun(context.WithoutCancel(ctx), runId)
+		record, err := repository.LoadRun(context.WithoutCancel(ctx), runID)
 		return record == nil || record.CancellationRequested || record.Status.IsTerminal(), err
 	})
 	stamp, err := manualCreationTime(running.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
-	result, executionError := execute(ctx, ManualWeeklyPushConfig{WindowEnd: stamp, StorageConfig: config, SecretCodec: codec, UserId: *running.UserId, AttemptId: running.ExternalId, TimeoutSeconds: 120, RetryAttempts: 3, DedupeRetentionDays: 60, ExecutionControl: control})
+	result, executionError := execute(ctx, ManualWeeklyPushConfig{WindowEnd: stamp, StorageConfig: config, SecretCodec: codec, UserID: *running.UserID, AttemptID: running.ExternalID, TimeoutSeconds: 120, RetryAttempts: 3, DedupeRetentionDays: 60, ExecutionControl: control})
 	return finalizeManualExecution(ctx, owner, result, executionError, load, finish)
 }
 
 func isValidManualJob(run store.RunRecord) bool {
-	return run.TriggerKind == store.TriggerKindManual && run.Mode == store.RunModeExecute && run.UserId != nil && *run.UserId > 0 && run.DbName == nil && run.DeadlineAt != nil && !math.IsNaN(*run.DeadlineAt) && !math.IsInf(*run.DeadlineAt, 0) && *run.DeadlineAt > run.CreatedAt && *run.DeadlineAt-run.CreatedAt <= domain.ManualJobDeadlineSeconds+1
+	return run.TriggerKind == store.TriggerKindManual && run.Mode == store.RunModeExecute && run.UserID != nil && *run.UserID > 0 && run.DBName == nil && run.DeadlineAt != nil && !math.IsNaN(*run.DeadlineAt) && !math.IsInf(*run.DeadlineAt, 0) && *run.DeadlineAt > run.CreatedAt && *run.DeadlineAt-run.CreatedAt <= domain.ManualJobDeadlineSeconds+1
 }
 
 func manualCreationTime(value float64) (weekly.Timestamp, error) {
 	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value >= float64(math.MaxInt64) {
-		return weekly.Timestamp{}, errors.New("Manual job creation time is invalid")
+		return weekly.Timestamp{}, errors.New("manual job creation time is invalid")
 	}
 	seconds, fraction := math.Modf(value)
 	nanoseconds := math.RoundToEven(fraction * 1e9)
@@ -85,13 +85,13 @@ func manualOutcomeTerminal(status string) (store.RunStatus, *string) {
 	case "completed":
 		return store.RunStatusCompleted, nil
 	case "unknown":
-		return store.RunStatusUnknown, pointer("ambiguous_delivery")
+		return store.RunStatusUnknown, new("ambiguous_delivery")
 	case "cancelled":
 		return store.RunStatusCancelled, nil
 	case "timed_out":
 		return store.RunStatusTimedOut, nil
 	default:
-		return store.RunStatusFailed, pointer("delivery_failed")
+		return store.RunStatusFailed, new("delivery_failed")
 	}
 }
 
@@ -131,7 +131,7 @@ func claimManualJob(ctx context.Context, repository *store.Repository, owner str
 		deadline = *candidate.DeadlineAt
 	}
 	lease := math.Min(math.Max(deadline-now, 1), domain.ManualJobDeadlineSeconds) + 30
-	claim, err := repository.ClaimRun(ctx, candidate.Id, owner, candidate.Revision, now, lease)
+	claim, err := repository.ClaimRun(ctx, candidate.ID, owner, candidate.Revision, now, lease)
 	if errors.Is(err, store.ErrConflict) {
 		record, err := load(ctx)
 		return manualJobClaim{record: record}, err
@@ -151,18 +151,18 @@ func claimManualJob(ctx context.Context, repository *store.Repository, owner str
 
 func startManualJob(ctx context.Context, repository *store.Repository, claimed *store.RunRecord, owner string, now, deadline float64, load func(context.Context) (*store.RunRecord, error), finish func(*store.RunRecord, store.RunStatus, *string, *string) (*store.RunRecord, error)) (*store.RunRecord, bool, error) {
 	if !isValidManualJob(*claimed) {
-		record, err := finish(claimed, store.RunStatusFailed, nil, pointer("invalid_job_context"))
+		record, err := finish(claimed, store.RunStatusFailed, nil, new("invalid_job_context"))
 		return record, false, err
 	}
 	if claimed.CancellationRequested {
-		record, err := finish(claimed, store.RunStatusCancelled, nil, pointer("cancelled"))
+		record, err := finish(claimed, store.RunStatusCancelled, nil, new("cancelled"))
 		return record, false, err
 	}
 	if now >= deadline {
-		record, err := finish(claimed, store.RunStatusTimedOut, nil, pointer("deadline_exceeded"))
+		record, err := finish(claimed, store.RunStatusTimedOut, nil, new("deadline_exceeded"))
 		return record, false, err
 	}
-	running, err := repository.StartRun(ctx, claimed.Id, owner, claimed.Revision, now)
+	running, err := repository.StartRun(ctx, claimed.ID, owner, claimed.Revision, now)
 	if errors.Is(err, store.ErrConflict) {
 		return reconcileManualStartConflict(ctx, owner, err, load, finish)
 	}
@@ -177,8 +177,8 @@ func reconcileManualStartConflict(ctx context.Context, owner string, cause error
 	if readError != nil {
 		return nil, false, readError
 	}
-	if current.OwnerId != nil && *current.OwnerId == owner && current.CancellationRequested {
-		record, err := finish(current, store.RunStatusCancelled, nil, pointer("cancelled"))
+	if current.OwnerID != nil && *current.OwnerID == owner && current.CancellationRequested {
+		record, err := finish(current, store.RunStatusCancelled, nil, new("cancelled"))
 		return record, false, err
 	}
 	return nil, false, cause
@@ -192,7 +192,7 @@ func finalizeManualExecution(ctx context.Context, owner string, result ManualWee
 	if current.Status.IsTerminal() {
 		return current, nil
 	}
-	if current.OwnerId == nil || *current.OwnerId != owner {
+	if current.OwnerID == nil || *current.OwnerID != owner {
 		return nil, store.ErrConflict
 	}
 	if executionError != nil {
@@ -200,9 +200,9 @@ func finalizeManualExecution(ctx context.Context, owner string, result ManualWee
 		return finish(current, status, nil, &code)
 	}
 	status, code := manualOutcomeTerminal(result.Status)
-	encoded, err := resultJson(result)
+	encoded, err := resultJSON(result)
 	if err != nil {
-		return nil, errors.New("Manual delivery result serialization failed")
+		return nil, errors.New("manual delivery result serialization failed")
 	}
 	return finish(current, status, &encoded, code)
 }

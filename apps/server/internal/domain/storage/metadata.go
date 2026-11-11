@@ -11,8 +11,8 @@ import (
 
 // Journal retains canonical catalog identity, metadata and live article availability.
 type Journal struct {
-	JournalId    identity.Id `json:"journal_id" nullable:"false"`
-	CatalogId    string      `json:"catalog_id" nullable:"false"`
+	JournalID    identity.ID `json:"journal_id" nullable:"false"`
+	CatalogID    string      `json:"catalog_id" nullable:"false"`
 	Title        string      `json:"title" nullable:"false"`
 	TitleAliases []string    `json:"title_aliases" nullable:"false"`
 	Issns        []string    `json:"issns" nullable:"false"`
@@ -32,8 +32,8 @@ type Journal struct {
 
 // Issue preserves absent fields and derives date precision without rewriting stored text.
 type Issue struct {
-	IssueId         int64       `json:"issue_id" nullable:"false" format:"int64"`
-	JournalId       identity.Id `json:"journal_id" nullable:"false"`
+	IssueID         int64       `json:"issue_id" nullable:"false" format:"int64"`
+	JournalID       identity.ID `json:"journal_id" nullable:"false"`
 	PublicationYear *int64      `json:"publication_year" required:"false" nullable:"true" format:"int64"`
 	Title           *string     `json:"title" required:"false" nullable:"true"`
 	Volume          *string     `json:"volume" required:"false" nullable:"true"`
@@ -88,7 +88,7 @@ type YearSummary struct {
 
 // JournalOption exposes the stable identifier and title used by selectors.
 type JournalOption struct {
-	JournalId identity.Id `json:"journal_id" nullable:"false"`
+	JournalID identity.ID `json:"journal_id" nullable:"false"`
 	Title     string      `json:"title" nullable:"false"`
 }
 

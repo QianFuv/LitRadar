@@ -27,16 +27,15 @@ type durableRun struct {
 	didTakeOverCompetingRun bool
 }
 
-func unixNow() float64          { return math.Max(0, float64(time.Now().UnixNano())/1e9) }
-func pointer[T any](value T) *T { return &value }
+func unixNow() float64 { return math.Max(0, float64(time.Now().UnixNano())/1e9) }
 
 func (run *durableRun) renew(ctx context.Context, repository *store.Repository, now float64) error {
-	updated, err := repository.RenewRun(ctx, run.run.Id, run.owner, run.run.Revision, now, deliveryLeaseSeconds)
+	updated, err := repository.RenewRun(ctx, run.run.ID, run.owner, run.run.Revision, now, deliveryLeaseSeconds)
 	if err != nil {
 		return err
 	}
 	run.run = updated
-	lease, err := repository.RenewLease(ctx, run.workflow, run.dbName, run.run.Id, run.owner, run.lease.Revision, now, deliveryLeaseSeconds)
+	lease, err := repository.RenewLease(ctx, run.workflow, run.dbName, run.run.ID, run.owner, run.lease.Revision, now, deliveryLeaseSeconds)
 	if err != nil {
 		return err
 	}
@@ -51,11 +50,11 @@ func (run *durableRun) finalizeWithCheckpoint(ctx context.Context, repository *s
 	if snapshot.InpressArticleCounts == nil {
 		snapshot.InpressArticleCounts = map[string]int64{}
 	}
-	encoded, err := jsonvalue.EncodeJson(snapshot)
+	encoded, err := jsonvalue.EncodeJSON(snapshot)
 	if err != nil {
-		return errors.New("Delivery checkpoint serialization failed")
+		return errors.New("delivery checkpoint serialization failed")
 	}
-	return run.finalizeCheckpoint(ctx, repository, status, store.CheckpointUpdate{Status: checkpointStatus, SnapshotJson: string(encoded), LastCompletedRunAt: completedAt, UpdatedAt: now}, result, errorCode)
+	return run.finalizeCheckpoint(ctx, repository, status, store.CheckpointUpdate{Status: checkpointStatus, SnapshotJSON: string(encoded), LastCompletedRunAt: completedAt, UpdatedAt: now}, result, errorCode)
 }
 
 func (run *durableRun) finalizeCheckpoint(ctx context.Context, repository *store.Repository, status store.RunStatus, update store.CheckpointUpdate, result, errorCode *string) error {
@@ -63,7 +62,7 @@ func (run *durableRun) finalizeCheckpoint(ctx context.Context, repository *store
 	if run.checkpoint != nil {
 		revision = &run.checkpoint.Revision
 	}
-	finalized, err := repository.FinalizeRunWithCheckpoint(ctx, run.run.Id, run.owner, run.run.Revision, status, result, errorCode, run.workflow, run.dbName, revision, update, run.lease.Revision)
+	finalized, err := repository.FinalizeRunWithCheckpoint(ctx, run.run.ID, run.owner, run.run.Revision, status, result, errorCode, run.workflow, run.dbName, revision, update, run.lease.Revision)
 	if err != nil {
 		return err
 	}
@@ -72,36 +71,36 @@ func (run *durableRun) finalizeCheckpoint(ctx context.Context, repository *store
 }
 
 func (run *durableRun) failBestEffort(ctx context.Context, repository *store.Repository, errorCode string, now float64) {
-	recovery, err := repository.ReconcileAfterTakeover(ctx, run.run.Id, run.owner, run.run.Revision, now)
+	recovery, err := repository.ReconcileAfterTakeover(ctx, run.run.ID, run.owner, run.run.Revision, now)
 	isAmbiguous := err == nil && (recovery.UnknownItemCount > 0 || recovery.UnknownDedupeCount > 0)
 	if run.run.Status.IsActive() {
 		status, checkpointStatus := store.RunStatusFailed, store.CheckpointStatusFailed
 		if isAmbiguous {
 			status, checkpointStatus, errorCode = store.RunStatusUnknown, store.CheckpointStatusUnknown, "ambiguous_delivery"
 		}
-		update := store.CheckpointUpdate{Status: checkpointStatus, SnapshotJson: "{}", UpdatedAt: now}
+		update := store.CheckpointUpdate{Status: checkpointStatus, SnapshotJSON: "{}", UpdatedAt: now}
 		if run.checkpoint != nil {
-			update.SnapshotJson = run.checkpoint.SnapshotJson
+			update.SnapshotJSON = run.checkpoint.SnapshotJSON
 			update.LastCompletedRunAt = run.checkpoint.LastCompletedRunAt
 		}
 		if run.finalizeCheckpoint(ctx, repository, status, update, nil, &errorCode) == nil {
 			return
 		}
-		if updated, err := repository.FinalizeRun(ctx, run.run.Id, run.owner, run.run.Revision, status, nil, &errorCode, now); err == nil {
+		if updated, err := repository.FinalizeRun(ctx, run.run.ID, run.owner, run.run.Revision, status, nil, &errorCode, now); err == nil {
 			run.run = updated
 		}
 	}
-	if _, err := repository.ReleaseLease(ctx, run.workflow, run.dbName, run.run.Id, run.owner, run.lease.Revision, now); err != nil {
+	if _, err := repository.ReleaseLease(ctx, run.workflow, run.dbName, run.run.ID, run.owner, run.lease.Revision, now); err != nil {
 		slog.Warn("cleanup.failed", "operation", "repository.ReleaseLease", "error", err)
 	}
 }
 
-func admitDurableRun(ctx context.Context, repository *store.Repository, config RunConfig, userId *int64, externalId string, now float64) (*durableRun, *store.RunRecord, error) {
+func admitDurableRun(ctx context.Context, repository *store.Repository, config RunConfig, userID *int64, externalID string, now float64) (*durableRun, *store.RunRecord, error) {
 	owner, deadline, err := newDeliveryOwner(config)
 	if err != nil {
 		return nil, nil, err
 	}
-	admission, err := repository.AdmitRun(ctx, store.RunCreate{ExternalId: externalId, Workflow: config.Workflow, ScopeKey: config.DbName, DbName: &config.DbName, TriggerKind: config.Trigger, Mode: config.Mode, UserId: userId, DeadlineAt: deadline, CreatedAt: now})
+	admission, err := repository.AdmitRun(ctx, store.RunCreate{ExternalID: externalID, Workflow: config.Workflow, ScopeKey: config.DBName, DBName: &config.DBName, TriggerKind: config.Trigger, Mode: config.Mode, UserID: userID, DeadlineAt: deadline, CreatedAt: now})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -118,14 +117,14 @@ func admitDurableRun(ctx context.Context, repository *store.Repository, config R
 	if claimed.Status.IsTerminal() {
 		return nil, claimed, nil
 	}
-	if err := validateRecoveredDelivery(ctx, repository, config, userId, claimed, owner, now); err != nil {
+	if err := validateRecoveredDelivery(ctx, repository, config, userID, claimed, owner, now); err != nil {
 		return nil, nil, err
 	}
 	lease, err := acquireDeliveryWorkflowLease(ctx, repository, config, claimed, owner, now)
 	if err != nil {
 		return nil, nil, err
 	}
-	run := &durableRun{run: claimed, lease: lease.Lease, owner: owner, workflow: config.Workflow, dbName: config.DbName, didTakeOverCompetingRun: didTakeOver}
+	run := &durableRun{run: claimed, lease: lease.Lease, owner: owner, workflow: config.Workflow, dbName: config.DBName, didTakeOverCompetingRun: didTakeOver}
 	if err := initializeAdmittedDelivery(ctx, repository, config, run, owner, now); err != nil {
 		return nil, nil, err
 	}
@@ -133,7 +132,7 @@ func admitDurableRun(ctx context.Context, repository *store.Repository, config R
 }
 
 func claimCandidate(ctx context.Context, repository *store.Repository, candidate *store.RunRecord, owner string, now float64) (*store.RunRecord, bool, error) {
-	claim, err := repository.ClaimRun(ctx, candidate.Id, owner, candidate.Revision, now, deliveryLeaseSeconds)
+	claim, err := repository.ClaimRun(ctx, candidate.ID, owner, candidate.Revision, now, deliveryLeaseSeconds)
 	if err != nil {
 		return nil, false, err
 	}
@@ -144,7 +143,7 @@ func claimCandidate(ctx context.Context, repository *store.Repository, candidate
 		return nil, false, ErrBusy
 	}
 	if candidate.Status == store.RunStatusQueued {
-		if _, err := repository.CancelRun(ctx, candidate.Id, candidate.Revision, now); err != nil {
+		if _, err := repository.CancelRun(ctx, candidate.ID, candidate.Revision, now); err != nil {
 			slog.Warn("cleanup.failed", "operation", "repository.CancelRun", "error", err)
 		}
 	}
@@ -152,7 +151,7 @@ func claimCandidate(ctx context.Context, repository *store.Repository, candidate
 	if active.LeaseExpiresAt == nil || *active.LeaseExpiresAt > now {
 		return nil, false, ErrBusy
 	}
-	claim, err = repository.ClaimRun(ctx, active.Id, owner, active.Revision, now, deliveryLeaseSeconds)
+	claim, err = repository.ClaimRun(ctx, active.ID, owner, active.Revision, now, deliveryLeaseSeconds)
 	if err != nil {
 		return nil, false, err
 	}
@@ -166,35 +165,35 @@ func acceptsDeliveryClaim(claim store.RunOutcome) bool {
 	return claim.Kind == "claimed" || claim.Kind == "unavailable" && claim.Run.Status.IsTerminal()
 }
 
-func validateRecoveredDelivery(ctx context.Context, repository *store.Repository, config RunConfig, userId *int64, claimed *store.RunRecord, owner string, now float64) error {
-	if claimed.Mode != config.Mode || claimed.TriggerKind != config.Trigger || !reflect.DeepEqual(claimed.UserId, userId) {
-		if _, err := repository.FinalizeRun(ctx, claimed.Id, owner, claimed.Revision, store.RunStatusFailed, nil, pointer("recovery_context_mismatch"), now); err != nil {
+func validateRecoveredDelivery(ctx context.Context, repository *store.Repository, config RunConfig, userID *int64, claimed *store.RunRecord, owner string, now float64) error {
+	if claimed.Mode != config.Mode || claimed.TriggerKind != config.Trigger || !reflect.DeepEqual(claimed.UserID, userID) {
+		if _, err := repository.FinalizeRun(ctx, claimed.ID, owner, claimed.Revision, store.RunStatusFailed, nil, new("recovery_context_mismatch"), now); err != nil {
 			slog.Warn("cleanup.failed", "operation", "repository.FinalizeRun", "error", err)
 		}
-		return errors.New("Recovered delivery run does not match the current invocation")
+		return errors.New("recovered delivery run does not match the current invocation")
 	}
 	return nil
 }
 
 func initializeAdmittedDelivery(ctx context.Context, repository *store.Repository, config RunConfig, run *durableRun, owner string, now float64) error {
 	var err error
-	run.checkpoint, err = repository.LoadCheckpoint(ctx, config.Workflow, config.DbName)
+	run.checkpoint, err = repository.LoadCheckpoint(ctx, config.Workflow, config.DBName)
 	if err != nil {
 		run.failBestEffort(ctx, repository, "checkpoint_load_failed", now)
 		return err
 	}
-	if _, err = repository.ReconcileAfterTakeover(ctx, run.run.Id, owner, run.run.Revision, now); err != nil {
+	if _, err = repository.ReconcileAfterTakeover(ctx, run.run.ID, owner, run.run.Revision, now); err != nil {
 		run.failBestEffort(ctx, repository, "recovery_failed", now)
 		return err
 	}
-	started, err := repository.StartRun(ctx, run.run.Id, owner, run.run.Revision, now)
+	started, err := repository.StartRun(ctx, run.run.ID, owner, run.run.Revision, now)
 	if err != nil {
 		run.failBestEffort(ctx, repository, "run_start_failed", now)
 		return err
 	}
 	run.run = started
 	if config.DedupeRetentionDays > 0 {
-		if _, err := repository.CleanupConfirmedDedupe(ctx, config.Workflow, config.DbName, math.Max(0, now-float64(config.DedupeRetentionDays)*86400)); err != nil {
+		if _, err := repository.CleanupConfirmedDedupe(ctx, config.Workflow, config.DBName, math.Max(0, now-float64(config.DedupeRetentionDays)*86400)); err != nil {
 			run.failBestEffort(ctx, repository, "dedupe_cleanup_failed", now)
 			return err
 		}
@@ -210,18 +209,18 @@ func newDeliveryOwner(config RunConfig) (string, *float64, error) {
 	owner := "worker-" + hex.EncodeToString(random[:])
 	var deadline *float64
 	if config.ExecutionControl != nil {
-		deadline = pointer(config.ExecutionControl.Deadline())
+		deadline = new(config.ExecutionControl.Deadline())
 	}
 	return owner, deadline, nil
 }
 
 func acquireDeliveryWorkflowLease(ctx context.Context, repository *store.Repository, config RunConfig, claimed *store.RunRecord, owner string, now float64) (store.LeaseOutcome, error) {
-	lease, err := repository.AcquireLease(ctx, config.Workflow, config.DbName, claimed.Id, owner, now, deliveryLeaseSeconds)
+	lease, err := repository.AcquireLease(ctx, config.Workflow, config.DBName, claimed.ID, owner, now, deliveryLeaseSeconds)
 	if err != nil {
 		return store.LeaseOutcome{}, err
 	}
 	if lease.Kind == "busy" {
-		if _, err := repository.FinalizeRun(ctx, claimed.Id, owner, claimed.Revision, store.RunStatusSkipped, nil, pointer("workflow_lease_busy"), now); err != nil {
+		if _, err := repository.FinalizeRun(ctx, claimed.ID, owner, claimed.Revision, store.RunStatusSkipped, nil, new("workflow_lease_busy"), now); err != nil {
 			slog.Warn("cleanup.failed", "operation", "repository.FinalizeRun", "error", err)
 		}
 		return store.LeaseOutcome{}, ErrBusy

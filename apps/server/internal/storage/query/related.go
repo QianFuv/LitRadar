@@ -59,13 +59,13 @@ var relatedHanStopRunes = map[rune]bool{}
 var relatedHanStopBigrams = map[string]bool{}
 
 func init() {
-	for _, word := range strings.Fields("a about after against among an and are as at based be between by can does during for from has have how in into is it its of on or over than that the their these this through to toward towards under using via was what when where which while with within without") {
+	for word := range strings.FieldsSeq("a about after against among an and are as at based be between by can does during for from has have how in into is it its of on or over than that the their these this through to toward towards under using via was what when where which while with within without") {
 		relatedLatinStopwords[word] = true
 	}
 	for _, character := range "的与和及对在中为之于或等是了把被从以其" {
 		relatedHanStopRunes[character] = true
 	}
-	for _, bigram := range strings.Fields("研究 分析 基于 影响 视角 探讨 问题 发展 实证 理论 机制 路径 效应 对策 现状 思考 我国 中国") {
+	for bigram := range strings.FieldsSeq("研究 分析 基于 影响 视角 探讨 问题 发展 实证 理论 机制 路径 效应 对策 现状 思考 我国 中国") {
 		relatedHanStopBigrams[bigram] = true
 	}
 }
@@ -223,7 +223,7 @@ func RelatedArticles(ctx context.Context, configuration config.Config, name *str
 	if limit < 1 || limit > RelatedArticleMaxLimit {
 		return nil, InvalidInput{"limit must be between 1 and 30"}
 	}
-	filename, err := configuration.ResolveIndexDbPath(name)
+	filename, err := configuration.ResolveIndexDBPath(name)
 	if err != nil {
 		return nil, err
 	}

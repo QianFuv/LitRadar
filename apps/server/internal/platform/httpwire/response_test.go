@@ -20,9 +20,9 @@ import (
 )
 
 type fixtureArticle struct {
-	ArticleId       identity.Id `json:"article_id"`
-	JournalId       identity.Id `json:"journal_id"`
-	IssueId         *int64      `json:"issue_id"`
+	ArticleID       identity.ID `json:"article_id"`
+	JournalID       identity.ID `json:"journal_id"`
+	IssueID         *int64      `json:"issue_id"`
 	Title           string      `json:"title"`
 	PublicationYear *int64      `json:"publication_year"`
 	Date            *string     `json:"date"`
@@ -177,7 +177,7 @@ func TestRestListenerWireContract(t *testing.T) {
 		name, path, method, authorization, rangeHeader string
 		status                                         int
 		body                                           string
-		isJson                                         bool
+		isJSON                                         bool
 	}{
 		{"auth-before-query", "/api/articles?limit=abc", "GET", "", "", 401, `{"title":"Unauthorized","status":401,"detail":"Authentication required"}`, true},
 		{"query-error", "/api/articles?limit=abc", "GET", "Bearer synthetic-fixture", "", 400, `{"title":"Bad Request","status":400,"detail":"Invalid integer for limit"}`, true},
@@ -210,7 +210,7 @@ func TestRestListenerWireContract(t *testing.T) {
 			if response.StatusCode != scenario.status {
 				t.Fatalf("status %d: %s", response.StatusCode, body)
 			}
-			if scenario.isJson {
+			if scenario.isJSON {
 				actual := decoded(t, body)
 				if !reflect.DeepEqual(actual, decoded(t, []byte(scenario.body))) {
 					t.Fatalf("contract mismatch: %s", body)
@@ -238,7 +238,7 @@ func TestRestListenerWireContract(t *testing.T) {
 			}
 		})
 	}
-	page.Items[0].ArticleId = identity.Id(9223372036854775807)
+	page.Items[0].ArticleID = identity.ID(9223372036854775807)
 	page.Items[0].Abstract = nil
 	writer := httptest.NewRecorder()
 	if err := JSON(writer, 200, page); err != nil {

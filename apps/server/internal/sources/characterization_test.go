@@ -33,7 +33,7 @@ func TestCnkiReturnsFirstOrdinalFailure(t *testing.T) {
 			}
 			var cache *cnkiPageCache
 			attempts := []scholarly.Attempt{}
-			_, err := index.fetchBatch(context.Background(), domain.JournalCatalogEntry{CatalogId: "J"}, domain.IndexFetchContext{}, &attempts, &cache)
+			_, err := index.fetchBatch(context.Background(), domain.JournalCatalogEntry{CatalogID: "J"}, domain.IndexFetchContext{}, &attempts, &cache)
 			var failure *provider.Error
 			if !errors.As(err, &failure) || failure.Kind != entry.wantKind || failure.Message != "domestic CNKI provider request failed" {
 				t.Fatal("first ordinal failure was not preserved", err)
@@ -78,18 +78,18 @@ func TestCnkiDetailFailurePrecedesPageOverflow(t *testing.T) {
 	state.page = func(_ any, page uint64) cnki.IssueArticlePage {
 		return cnki.IssueArticlePage{Articles: []any{cnkiTestRow("A")}, ArticleCount: 1, PageIndex: page, HasNextPage: true}
 	}
-	checkpoint := cnki.Checkpoint{Version: cnki.CheckpointVersion, CandidateHeadIssueId: "202601", CurrentIssueId: "202601", PageIndex: math.MaxUint64}
+	checkpoint := cnki.Checkpoint{Version: cnki.CheckpointVersion, CandidateHeadIssueID: "202601", CurrentIssueID: "202601", PageIndex: math.MaxUint64}
 	encoded, err := checkpoint.Encode()
 	if err != nil {
 		t.Fatal(err)
 	}
 	state.detail = func(string) (any, error) { return nil, &cnki.Error{Kind: "Request"} }
-	_, err = index.Fetch(context.Background(), domain.JournalCatalogEntry{CatalogId: "J"}, domain.IndexFetchContext{TraversalCheckpoint: &encoded})
+	_, err = index.Fetch(context.Background(), domain.JournalCatalogEntry{CatalogID: "J"}, domain.IndexFetchContext{TraversalCheckpoint: &encoded})
 	if err == nil || err.Error() != "domestic CNKI provider request failed" {
 		t.Fatal("overflow displaced detail failure", err)
 	}
 	state.detail = func(url string) (any, error) { return map[string]any{"title": url, "authors": "Author"}, nil }
-	_, err = index.Fetch(context.Background(), domain.JournalCatalogEntry{CatalogId: "J"}, domain.IndexFetchContext{TraversalCheckpoint: &encoded})
+	_, err = index.Fetch(context.Background(), domain.JournalCatalogEntry{CatalogID: "J"}, domain.IndexFetchContext{TraversalCheckpoint: &encoded})
 	if err == nil || err.Error() != "domestic CNKI page index overflowed" {
 		t.Fatal("successful details did not reach overflow check", err)
 	}

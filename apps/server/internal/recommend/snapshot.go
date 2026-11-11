@@ -46,12 +46,12 @@ func parseIssueKey(key string) (int64, int64, bool) {
 	if !exists {
 		return 0, 0, false
 	}
-	journalId, firstError := strconv.ParseInt(journal, 10, 64)
-	issueId, secondError := strconv.ParseInt(issue, 10, 64)
+	journalID, firstError := strconv.ParseInt(journal, 10, 64)
+	issueID, secondError := strconv.ParseInt(issue, 10, 64)
 	if firstError != nil || secondError != nil {
 		return 0, 0, false
 	}
-	return journalId, issueId, true
+	return journalID, issueID, true
 }
 
 func integerOrZero(value string) int64 {
@@ -64,7 +64,7 @@ func integerOrZero(value string) int64 {
 
 // IsDatabaseSelected compares the platform's basename and case-sensitive SQLite suffix.
 func IsDatabaseSelected(selected []string, dbName string) bool {
-	target := normalizeDbName(dbName)
+	target := normalizeDBName(dbName)
 	if target == "" {
 		return false
 	}
@@ -72,17 +72,17 @@ func IsDatabaseSelected(selected []string, dbName string) bool {
 		return true
 	}
 	for _, candidate := range selected {
-		if normalizeDbName(candidate) == target {
+		if normalizeDBName(candidate) == target {
 			return true
 		}
 	}
 	return false
 }
 
-func normalizeDbName(value string) string {
+func normalizeDBName(value string) string {
 	value = strings.TrimSpace(value)
 	if runtime.GOOS == "windows" && strings.HasPrefix(value, `\\?\`) {
-		return normalizeWindowsVerbatimDbName(value)
+		return normalizeWindowsVerbatimDBName(value)
 	}
 	for {
 		value = strings.TrimRightFunc(value, func(character rune) bool { return character < 128 && os.IsPathSeparator(uint8(character)) })
@@ -97,11 +97,11 @@ func normalizeDbName(value string) string {
 		if name == "." || name == ".." || name == filepath.VolumeName(value) {
 			return ""
 		}
-		return sqliteDbFilename(name)
+		return sqliteDBFilename(name)
 	}
 }
 
-func normalizeWindowsVerbatimDbName(value string) string {
+func normalizeWindowsVerbatimDBName(value string) string {
 	value = strings.TrimRight(value, `\`)
 	volume := filepath.VolumeName(value)
 	if value == volume {
@@ -117,10 +117,10 @@ func normalizeWindowsVerbatimDbName(value string) string {
 	if name == "" || name == "." || name == ".." {
 		return ""
 	}
-	return sqliteDbFilename(name)
+	return sqliteDBFilename(name)
 }
 
-func sqliteDbFilename(name string) string {
+func sqliteDBFilename(name string) string {
 	if strings.HasSuffix(name, ".sqlite") {
 		return name
 	}

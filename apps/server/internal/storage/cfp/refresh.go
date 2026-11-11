@@ -122,7 +122,7 @@ func (repository *Repository) PublishFullText(ctx context.Context, lease Refresh
 }
 
 func (repository *Repository) publish(ctx context.Context, lease RefreshLease, publication Publication, now int64, warning *string) error {
-	if strings.TrimSpace(publication.Capture) == "" || !domain.IsSourceUrl(publication.SourceUrl) {
+	if strings.TrimSpace(publication.Capture) == "" || !domain.IsSourceURL(publication.SourceURL) {
 		return invalid("CFP publication requires a verified capture and URL")
 	}
 	prepared, err := prepare(domain.Seed{FormatVersion: 1, Sources: publication.Sources, EmptyJournals: publication.EmptyJournals})
@@ -142,7 +142,7 @@ func (repository *Repository) publish(ctx context.Context, lease RefreshLease, p
 		if len(bindings) == 0 || !slices.Equal(bindings, slices.Sorted(maps.Keys(prepared))) {
 			return invalid("CFP publication does not cover every registered journal binding")
 		}
-		result, err := queries.PublishSource(ctx, connection, cfpdb.PublishSourceParams{SourceKey: sqlite.Text(lease.SourceKey), Generation: sqlite.Integer(lease.Generation), Capture: sqlite.Text(publication.Capture), CaptureFormat: sqlite.Text(publication.CaptureFormat), ContentHash: sqlite.Text(digest([]byte(publication.Capture))), URL: sqlite.Text(publication.SourceUrl), ParserVersion: sqlite.Integer(domain.ParserVersion), ConfigVersion: sqlite.Integer(publication.ConfigVersion), LastSuccess: new(sqlite.Integer(now)), LastError: (*sqlite.Text)(warning)})
+		result, err := queries.PublishSource(ctx, connection, cfpdb.PublishSourceParams{SourceKey: sqlite.Text(lease.SourceKey), Generation: sqlite.Integer(lease.Generation), Capture: sqlite.Text(publication.Capture), CaptureFormat: sqlite.Text(publication.CaptureFormat), ContentHash: sqlite.Text(digest([]byte(publication.Capture))), URL: sqlite.Text(publication.SourceURL), ParserVersion: sqlite.Integer(domain.ParserVersion), ConfigVersion: sqlite.Integer(publication.ConfigVersion), LastSuccess: new(sqlite.Integer(now)), LastError: (*sqlite.Text)(warning)})
 		if err != nil {
 			return err
 		}

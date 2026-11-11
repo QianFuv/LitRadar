@@ -40,7 +40,7 @@ func TestTelemetryDrainsOnPreparedClose(t *testing.T) {
 	if err := prepared.Close(); err != nil {
 		t.Fatal(err)
 	}
-	collector, err := telemetry.Open(context.Background(), configuration.Storage.TelemetryDbPath(), 90)
+	collector, err := telemetry.Open(context.Background(), configuration.Storage.TelemetryDBPath(), 90)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestDisabledTelemetryDoesNotCreateDatabase(t *testing.T) {
 	if prepared.services.Telemetry != nil {
 		t.Fatal("disabled collector opened")
 	}
-	if _, err := os.Stat(configuration.Storage.TelemetryDbPath()); !os.IsNotExist(err) {
+	if _, err := os.Stat(configuration.Storage.TelemetryDBPath()); !os.IsNotExist(err) {
 		t.Fatal("disabled telemetry created a database", err)
 	}
 }
@@ -90,7 +90,7 @@ func TestDisabledTelemetryDoesNotCreateDatabase(t *testing.T) {
 // TestTelemetryOpenFailureDoesNotFailService checks best-effort admission of optional load storage.
 func TestTelemetryOpenFailureDoesNotFailService(t *testing.T) {
 	configuration := runtimeConfiguration(t)
-	if err := os.MkdirAll(configuration.Storage.TelemetryDbPath(), 0700); err != nil {
+	if err := os.MkdirAll(configuration.Storage.TelemetryDBPath(), 0700); err != nil {
 		t.Fatal(err)
 	}
 	prepared, err := prepareResources(context.Background(), configuration)

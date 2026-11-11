@@ -217,8 +217,7 @@ func (child *Child) Terminate(grace time.Duration) (Termination, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		waitError := child.Wait(ctx)
-		var exitError *exec.ExitError
-		if errors.As(waitError, &exitError) {
+		if _, ok := errors.AsType[*exec.ExitError](waitError); ok {
 			waitError = nil
 		}
 		treeError := child.tree.waitEmpty(ctx)
@@ -323,8 +322,7 @@ func cleanupFailedStart(command *exec.Cmd, tree *nativeTree) {
 		reaped := make(chan struct{})
 		go func() {
 			if err := command.Wait(); err != nil {
-				var exitError *exec.ExitError
-				if !errors.As(err, &exitError) {
+				if _, ok := errors.AsType[*exec.ExitError](err); !ok {
 					slog.Warn("process.reap.failed", "error", err)
 				}
 			}

@@ -44,7 +44,7 @@ func authFixture(t *testing.T) (*authHandlers, *http.ServeMux, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := service.CreateTrustedToken(ctx, user.Id, "fixture", 3600, nil)
+	token, err := service.CreateTrustedToken(ctx, user.ID, "fixture", 3600, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func authRequest(router http.Handler, method, path, body, token string) *httptes
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
-	request = request.WithContext(context.WithValue(request.Context(), requestIdKey{}, "fixture-request"))
+	request = request.WithContext(context.WithValue(request.Context(), requestIDKey{}, "fixture-request"))
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	observeResponse(request, recorder)
@@ -121,7 +121,7 @@ func TestAuthValidationPrecedenceAndRateLimit(t *testing.T) {
 			t.Fatal(scenario.path, response.Code, response.Body.String())
 		}
 	}
-	for attempt := 0; attempt < 6; attempt++ {
+	for attempt := range 6 {
 		response := authRequest(router, "POST", "/api/auth/login", `{"username":"absent","password":"bad"}`, "")
 		expected := 401
 		if attempt == 5 {
@@ -203,7 +203,7 @@ func TestLogoutUnconfirmedClearsCookieAndKeepsDedicatedError(t *testing.T) {
 	defer slog.SetDefault(previous)
 	request := httptest.NewRequest("POST", "/api/auth/logout", nil)
 	request.AddCookie(&http.Cookie{Name: "litradar_session", Value: token})
-	request = request.WithContext(context.WithValue(request.Context(), requestIdKey{}, "logout-request"))
+	request = request.WithContext(context.WithValue(request.Context(), requestIDKey{}, "logout-request"))
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 	problem := requireProblem(t, response, 503, "Session revocation could not be confirmed")
@@ -240,7 +240,7 @@ func assertAuthPublicIdentity(t *testing.T, router *http.ServeMux, token string)
 		t.Fatal(me.Code, me.Body.String())
 	}
 	recorder := httptest.NewRecorder()
-	writeResponse(recorder, publicUser(domain.User{Id: identity.Id(9007199254740993), Username: "large", IsAdmin: false}))
+	writeResponse(recorder, publicUser(domain.User{ID: identity.ID(9007199254740993), Username: "large", IsAdmin: false}))
 	if !strings.Contains(recorder.Body.String(), `"id":9007199254740993`) {
 		t.Fatal("user precision", recorder.Body.String())
 	}
@@ -271,12 +271,12 @@ func assertAuthAccessTokenIssuance(t *testing.T, router *http.ServeMux, session 
 	}
 	var access struct {
 		Token string
-		Id    int64
+		ID    int64
 	}
 	if err := json.Unmarshal(issued.Body.Bytes(), &access); err != nil {
 		t.Fatal(err)
 	}
-	if access.Token == "" || access.Id == 0 {
+	if access.Token == "" || access.ID == 0 {
 		t.Fatal("missing issued token")
 	}
 

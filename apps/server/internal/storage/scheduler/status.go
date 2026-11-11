@@ -61,14 +61,14 @@ func (repository *Repository) Status(ctx context.Context, now, healthyWindow flo
 			return err
 		}
 		for _, row := range workers {
-			result.Workers = append(result.Workers, domain.Worker{WorkerId: string(row.WorkerID), StartedAt: float64(row.StartedAt), HeartbeatAt: float64(row.HeartbeatAt), IsHealthy: float64(row.HeartbeatAt) >= now-healthyWindow})
+			result.Workers = append(result.Workers, domain.Worker{WorkerID: string(row.WorkerID), StartedAt: float64(row.StartedAt), HeartbeatAt: float64(row.HeartbeatAt), IsHealthy: float64(row.HeartbeatAt) >= now-healthyWindow})
 		}
 		runs, err := queries.RecentRuns(ctx, connection, schedulerdb.RecentRunsParams{Limit: int64(limit)})
 		if err != nil {
 			return err
 		}
 		for _, row := range runs {
-			result.RecentRuns = append(result.RecentRuns, domain.Run{Id: int64(row.ID), TaskId: int64(row.TaskID), TaskName: string(row.TaskName), ScheduledFor: int64(row.ScheduledFor), Status: domain.PersistedState(string(row.Status)), WorkerId: (*string)(row.WorkerID), ClaimedAt: (*float64)(row.ClaimedAt), StartedAt: (*float64)(row.StartedAt), FinishedAt: (*float64)(row.FinishedAt)})
+			result.RecentRuns = append(result.RecentRuns, domain.Run{ID: int64(row.ID), TaskID: int64(row.TaskID), TaskName: string(row.TaskName), ScheduledFor: int64(row.ScheduledFor), Status: domain.PersistedState(string(row.Status)), WorkerID: (*string)(row.WorkerID), ClaimedAt: (*float64)(row.ClaimedAt), StartedAt: (*float64)(row.StartedAt), FinishedAt: (*float64)(row.FinishedAt)})
 		}
 		return nil
 	})

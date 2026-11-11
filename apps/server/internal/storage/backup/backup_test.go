@@ -29,10 +29,10 @@ func write(t *testing.T, filename string, data []byte) {
 func fixtureConfig(t *testing.T) config.Config {
 	t.Helper()
 	configuration := config.FromProjectRoot(t.TempDir())
-	if _, err := authmigration.Migrate(context.Background(), configuration.AuthDbPath); err != nil {
+	if _, err := authmigration.Migrate(context.Background(), configuration.AuthDBPath); err != nil {
 		t.Fatal(err)
 	}
-	database, err := storage.Open(configuration.AuthDbPath, false, 1)
+	database, err := storage.Open(configuration.AuthDBPath, false, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func fixtureConfig(t *testing.T) config.Config {
 }
 func optionsFor(t *testing.T, configuration config.Config) CreateOptions {
 	t.Helper()
-	return CreateOptions{Config: configuration, AuthDbPath: configuration.AuthDbPath, OutputDir: filepath.Join(t.TempDir(), "backup"), IncludeIndexDatabases: true, IncludePushState: true}
+	return CreateOptions{Config: configuration, AuthDBPath: configuration.AuthDBPath, OutputDir: filepath.Join(t.TempDir(), "backup"), IncludeIndexDatabases: true, IncludePushState: true}
 }
 func requireFailure(t *testing.T, err error, kind string) {
 	t.Helper()
@@ -77,7 +77,7 @@ func TestCreateCapturesCommittedWalAndExactSelectedGroups(t *testing.T) {
 	ctx := context.Background()
 	configuration := fixtureConfig(t)
 	options := optionsFor(t, configuration)
-	live, err := storage.Open(configuration.AuthDbPath, false, 1)
+	live, err := storage.Open(configuration.AuthDBPath, false, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestRestoreReplacesSelectedGroupsAndPreservesV1Metadata(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			report, err := restore(ctx, RestoreOptions{target, target.AuthDbPath, backup}, 1000, nil, nil)
+			report, err := restore(ctx, RestoreOptions{target, target.AuthDBPath, backup}, 1000, nil, nil)
 			if err != nil || report.RestoredMetadata != (version == 2) || report.RestoredDatabases != 2 {
 				t.Fatalf("%+v %v", report, err)
 			}
@@ -277,12 +277,12 @@ func TestRestorePostValidationFailureRollsBackAllReplacements(t *testing.T) {
 	}
 	target := fixtureConfig(t)
 	write(t, filepath.Join(target.MetaDir, "target.txt"), []byte("target"))
-	write(t, target.AuthDbPath+"-journal", make([]byte, 512))
+	write(t, target.AuthDBPath+"-journal", make([]byte, 512))
 	before, err := snapshot(filepath.Join(target.ProjectRoot, "data"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = restore(ctx, RestoreOptions{target, target.AuthDbPath, options.OutputDir}, 1000, nil, func() error {
+	_, err = restore(ctx, RestoreOptions{target, target.AuthDBPath, options.OutputDir}, 1000, nil, func() error {
 		return os.WriteFile(filepath.Join(target.MetaDir, "nested", "custom.csv"), []byte("corrupt"), 0600)
 	})
 	requireFailure(t, err, "integrity")
@@ -298,22 +298,22 @@ func TestRestorePostValidationFailureRollsBackAllReplacements(t *testing.T) {
 func TestHeartbeatBoundaryRenewalAndLateRestoreGate(t *testing.T) {
 	ctx := context.Background()
 	configuration := fixtureConfig(t)
-	if err := RecordHeartbeat(ctx, configuration.AuthDbPath, Api, "instance", 10); err != nil {
+	if err := RecordHeartbeat(ctx, configuration.AuthDBPath, API, "instance", 10); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordHeartbeat(ctx, configuration.AuthDbPath, Api, "instance", 20); err != nil {
+	if err := RecordHeartbeat(ctx, configuration.AuthDBPath, API, "instance", 20); err != nil {
 		t.Fatal(err)
 	}
-	assertHeartbeatRetainsStartTime(t, ctx, configuration.AuthDbPath)
-	assertRecentHeartbeatBoundaries(t, ctx, configuration.AuthDbPath)
-	if err := DeleteHeartbeat(ctx, configuration.AuthDbPath, Api, "instance"); err != nil {
+	assertHeartbeatRetainsStartTime(t, ctx, configuration.AuthDBPath)
+	assertRecentHeartbeatBoundaries(t, ctx, configuration.AuthDBPath)
+	if err := DeleteHeartbeat(ctx, configuration.AuthDBPath, API, "instance"); err != nil {
 		t.Fatal(err)
 	}
 	options := optionsFor(t, configuration)
 	if _, err := Create(ctx, options); err != nil {
 		t.Fatal(err)
 	}
-	_, err := restore(ctx, RestoreOptions{configuration, configuration.AuthDbPath, options.OutputDir}, 1000, func() error { return RecordHeartbeat(ctx, configuration.AuthDbPath, Worker, "late", 1001) }, nil)
+	_, err := restore(ctx, RestoreOptions{configuration, configuration.AuthDBPath, options.OutputDir}, 1000, func() error { return RecordHeartbeat(ctx, configuration.AuthDBPath, Worker, "late", 1001) }, nil)
 	if !errors.Is(err, ErrActiveTarget) {
 		t.Fatal(err)
 	}

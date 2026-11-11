@@ -20,14 +20,14 @@ import (
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
-func fixtureRepository(t *testing.T) (*Repository, config.Config, identity.Id) {
+func fixtureRepository(t *testing.T) (*Repository, config.Config, identity.ID) {
 	t.Helper()
 	configuration := config.FromProjectRoot(t.TempDir())
 	ctx := context.Background()
-	if _, err := migration.Migrate(ctx, configuration.AuthDbPath); err != nil {
+	if _, err := migration.Migrate(ctx, configuration.AuthDBPath); err != nil {
 		t.Fatal(err)
 	}
-	repository, err := auth.Open(configuration.AuthDbPath)
+	repository, err := auth.Open(configuration.AuthDBPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,9 +40,9 @@ func fixtureRepository(t *testing.T) (*Repository, config.Config, identity.Id) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(repository), configuration, owner.Id
+	return New(repository), configuration, owner.ID
 }
-func runSql(t *testing.T, repository *Repository, statement string) {
+func runSQL(t *testing.T, repository *Repository, statement string) {
 	t.Helper()
 	if err := repository.auth.WithConnection(context.Background(), func(connection *sql.Conn) error {
 		_, err := connection.ExecContext(context.Background(), statement)
@@ -51,7 +51,7 @@ func runSql(t *testing.T, repository *Repository, statement string) {
 		t.Fatal(err)
 	}
 }
-func createFolder(t *testing.T, repository *Repository, owner identity.Id, name string, tracking bool) Folder {
+func createFolder(t *testing.T, repository *Repository, owner identity.ID, name string, tracking bool) Folder {
 	t.Helper()
 	folder, err := repository.CreateFolder(context.Background(), owner, name, tracking)
 	if err != nil {
@@ -59,7 +59,7 @@ func createFolder(t *testing.T, repository *Repository, owner identity.Id, name 
 	}
 	return folder
 }
-func addFavorite(t *testing.T, repository *Repository, owner identity.Id, folder int64, id identity.Id, note string) Favorite {
+func addFavorite(t *testing.T, repository *Repository, owner identity.ID, folder int64, id identity.ID, note string) Favorite {
 	t.Helper()
 	favorite, err := repository.AddFavorite(context.Background(), owner, folder, Add{Reference{id, "metadata"}, note})
 	if err != nil {
@@ -89,10 +89,10 @@ func TestFolderTrackingOwnershipAndFailedInsertRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	selected, err := repository.TrackingFolder(ctx, owner)
-	if err != nil || selected == nil || selected.Id != first.Id {
+	if err != nil || selected == nil || selected.ID != first.ID {
 		t.Fatalf("%+v %v", selected, err)
 	}
-	assertTrackingOwnership(t, ctx, repository, owner, second.Id)
+	assertTrackingOwnership(t, ctx, repository, owner, second.ID)
 	for _, name := range []string{" ", strings.Repeat("文", 101)} {
 		if _, err := repository.CreateFolder(ctx, owner, name, false); err == nil || err.Error() != "Folder name must be 1-100 characters" {
 			t.Fatal(err)
@@ -104,12 +104,12 @@ func TestIgnoredTrackingUpdateRollsBackPreviousSelection(t *testing.T) {
 	repository, _, owner := fixtureRepository(t)
 	first := createFolder(t, repository, owner, "first", true)
 	second := createFolder(t, repository, owner, "second", false)
-	runSql(t, repository, `CREATE TRIGGER ignore_tracking BEFORE UPDATE OF is_tracking ON folders WHEN NEW.name='second' AND NEW.is_tracking=1 BEGIN SELECT RAISE(IGNORE); END;`)
-	if changed, err := repository.SetTrackingFolder(context.Background(), owner, second.Id); err != nil || changed {
+	runSQL(t, repository, `CREATE TRIGGER ignore_tracking BEFORE UPDATE OF is_tracking ON folders WHEN NEW.name='second' AND NEW.is_tracking=1 BEGIN SELECT RAISE(IGNORE); END;`)
+	if changed, err := repository.SetTrackingFolder(context.Background(), owner, second.ID); err != nil || changed {
 		t.Fatalf("%v %v", changed, err)
 	}
 	selected, err := repository.TrackingFolder(context.Background(), owner)
-	if err != nil || selected == nil || selected.Id != first.Id {
+	if err != nil || selected == nil || selected.ID != first.ID {
 		t.Fatalf("lost original tracking selection: %+v %v", selected, err)
 	}
 }
@@ -120,18 +120,18 @@ func TestRepeatedAddAndBulkMovePreserveInitialNotes(t *testing.T) {
 	ctx := context.Background()
 	source := createFolder(t, repository, owner, "source", false)
 	target := createFolder(t, repository, owner, "target", false)
-	initial := addFavorite(t, repository, owner, source.Id, 1001, "initial")
-	repeated := addFavorite(t, repository, owner, source.Id, 1001, "replacement")
+	initial := addFavorite(t, repository, owner, source.ID, 1001, "initial")
+	repeated := addFavorite(t, repository, owner, source.ID, 1001, "replacement")
 	if !reflect.DeepEqual(initial, repeated) {
 		t.Fatalf("duplicate changed %+v %+v", initial, repeated)
 	}
-	addFavorite(t, repository, owner, source.Id, 1002, "second")
-	existing := addFavorite(t, repository, owner, target.Id, 1001, "target note")
-	count, err := repository.BulkMove(ctx, owner, source.Id, target.Id, []Reference{{1001, "metadata"}, {1001, "metadata"}, {1002, "metadata"}, {999, "metadata"}})
+	addFavorite(t, repository, owner, source.ID, 1002, "second")
+	existing := addFavorite(t, repository, owner, target.ID, 1001, "target note")
+	count, err := repository.BulkMove(ctx, owner, source.ID, target.ID, []Reference{{1001, "metadata"}, {1001, "metadata"}, {1002, "metadata"}, {999, "metadata"}})
 	if err != nil || count != 2 {
 		t.Fatalf("move %d %v", count, err)
 	}
-	assertBulkMoveState(t, ctx, repository, owner, source.Id, target.Id, existing)
+	assertBulkMoveState(t, ctx, repository, owner, source.ID, target.ID, existing)
 }
 
 // TestBulkMutationsRollbackLateFailures retains late insert, move and remove rollback phases on one store.
@@ -140,23 +140,23 @@ func TestBulkMutationsRollbackLateFailures(t *testing.T) {
 	ctx := context.Background()
 	source := createFolder(t, repository, owner, "source", false)
 	target := createFolder(t, repository, owner, "target", false)
-	runSql(t, repository, `CREATE TRIGGER reject_second BEFORE INSERT ON favorites WHEN NEW.article_id=1002 BEGIN SELECT RAISE(ABORT,'late failure'); END;`)
-	assertFailedBulkInsert(t, ctx, repository, owner, source.Id)
-	runSql(t, repository, "DROP TRIGGER reject_second")
-	addFavorite(t, repository, owner, source.Id, 1001, "one")
-	addFavorite(t, repository, owner, source.Id, 1002, "two")
-	runSql(t, repository, `CREATE TRIGGER reject_delete BEFORE DELETE ON favorites WHEN OLD.article_id=1002 BEGIN SELECT RAISE(ABORT,'late failure'); END;`)
+	runSQL(t, repository, `CREATE TRIGGER reject_second BEFORE INSERT ON favorites WHEN NEW.article_id=1002 BEGIN SELECT RAISE(ABORT,'late failure'); END;`)
+	assertFailedBulkInsert(t, ctx, repository, owner, source.ID)
+	runSQL(t, repository, "DROP TRIGGER reject_second")
+	addFavorite(t, repository, owner, source.ID, 1001, "one")
+	addFavorite(t, repository, owner, source.ID, 1002, "two")
+	runSQL(t, repository, `CREATE TRIGGER reject_delete BEFORE DELETE ON favorites WHEN OLD.article_id=1002 BEGIN SELECT RAISE(ABORT,'late failure'); END;`)
 	refs := []Reference{{1001, "metadata"}, {1002, "metadata"}}
-	if count, err := repository.BulkMove(ctx, owner, source.Id, target.Id, refs); err == nil || count != 0 {
+	if count, err := repository.BulkMove(ctx, owner, source.ID, target.ID, refs); err == nil || count != 0 {
 		t.Fatalf("move=%d %v", count, err)
 	}
-	if count, err := repository.CountFavorites(ctx, owner, &target.Id); err != nil || count != 0 {
+	if count, err := repository.CountFavorites(ctx, owner, &target.ID); err != nil || count != 0 {
 		t.Fatalf("partial target=%d %v", count, err)
 	}
-	if count, err := repository.BulkRemove(ctx, owner, source.Id, refs); err == nil || count != 0 {
+	if count, err := repository.BulkRemove(ctx, owner, source.ID, refs); err == nil || count != 0 {
 		t.Fatalf("remove=%d %v", count, err)
 	}
-	if count, err := repository.CountFavorites(ctx, owner, &source.Id); err != nil || count != 2 {
+	if count, err := repository.CountFavorites(ctx, owner, &source.ID); err != nil || count != 2 {
 		t.Fatalf("partial deletion=%d %v", count, err)
 	}
 }
@@ -166,7 +166,7 @@ func TestBatchValidationAndEmptyOperationOrdering(t *testing.T) {
 	repository, _, owner := fixtureRepository(t)
 	ctx := context.Background()
 	folder := createFolder(t, repository, owner, "folder", false)
-	addFavorite(t, repository, owner, folder.Id, 1001, "one")
+	addFavorite(t, repository, owner, folder.ID, 1001, "one")
 	assertBatchMembership(t, ctx, repository, owner)
 	if _, err := repository.BatchIsFavorited(ctx, owner, make([]int64, 501), ""); err == nil || err.Error() != "article_ids must contain at most 500 items" {
 		t.Fatal(err)
@@ -180,7 +180,7 @@ func TestBatchValidationAndEmptyOperationOrdering(t *testing.T) {
 	if _, err := repository.BulkAdd(ctx, owner, 999, nil); !errors.Is(err, ErrFolderNotFound) {
 		t.Fatal(err)
 	}
-	if _, err := repository.AddFavorite(ctx, owner+1, folder.Id, Add{Reference{1001, "metadata"}, ""}); !errors.Is(err, ErrFolderNotFound) {
+	if _, err := repository.AddFavorite(ctx, owner+1, folder.ID, Add{Reference{1001, "metadata"}, ""}); !errors.Is(err, ErrFolderNotFound) {
 		t.Fatal(err)
 	}
 }
@@ -189,16 +189,16 @@ func TestDeleteTrackingFolderChecksNotificationDependencies(t *testing.T) {
 	repository, _, owner := fixtureRepository(t)
 	ctx := context.Background()
 	folder := createFolder(t, repository, owner, "tracking", true)
-	runSql(t, repository, `INSERT INTO notification_settings(user_id,delivery_method,pushplus_token,sync_to_tracking_folder,created_at,updated_at) SELECT id,'folder','',0,1,1 FROM users;`)
-	if changed, err := repository.DeleteFolder(ctx, owner, folder.Id); err == nil || changed || err.Error() != "A tracking folder is required when delivery_method is 'folder'" {
+	runSQL(t, repository, `INSERT INTO notification_settings(user_id,delivery_method,pushplus_token,sync_to_tracking_folder,created_at,updated_at) SELECT id,'folder','',0,1,1 FROM users;`)
+	if changed, err := repository.DeleteFolder(ctx, owner, folder.ID); err == nil || changed || err.Error() != "A tracking folder is required when delivery_method is 'folder'" {
 		t.Fatalf("%v %v", changed, err)
 	}
-	runSql(t, repository, `UPDATE notification_settings SET delivery_method='pushplus',pushplus_token='encrypted-token',sync_to_tracking_folder=1`)
-	if changed, err := repository.DeleteFolder(ctx, owner, folder.Id); err == nil || changed {
+	runSQL(t, repository, `UPDATE notification_settings SET delivery_method='pushplus',pushplus_token='encrypted-token',sync_to_tracking_folder=1`)
+	if changed, err := repository.DeleteFolder(ctx, owner, folder.ID); err == nil || changed {
 		t.Fatalf("%v %v", changed, err)
 	}
-	runSql(t, repository, `UPDATE notification_settings SET sync_to_tracking_folder=0`)
-	if changed, err := repository.DeleteFolder(ctx, owner, folder.Id); err != nil || !changed {
+	runSQL(t, repository, `UPDATE notification_settings SET sync_to_tracking_folder=0`)
+	if changed, err := repository.DeleteFolder(ctx, owner, folder.ID); err != nil || !changed {
 		t.Fatalf("%v %v", changed, err)
 	}
 }
@@ -210,7 +210,7 @@ func TestCursorGrammarAndOwnerBinding(t *testing.T) {
 			t.Fatalf("%s: %v %d %v", raw, stamp, id, err)
 		}
 	}
-	valid := encodeCursor(1, Favorite{Id: 3, FolderId: 2, CreatedAt: 0.5})
+	valid := encodeCursor(1, Favorite{ID: 3, FolderID: 2, CreatedAt: 0.5})
 	for _, cursor := range []string{valid + "=", valid + "\r\n", encode("1|2|2|0|3"), encode("1|1|3|0|3"), encode("1|1|2|7ff0000000000000|3"), encode("1|1|2|7ff8000000000001|3"), encode("1|1|2|bff0000000000000|3"), encode("1|1|2|0x0|3"), encode("1|1|2|0|0"), strings.Repeat("A", 129)} {
 		if _, _, err := decodeCursor(cursor, 1, 2); !errors.Is(err, ErrCursor) {
 			t.Fatalf("accepted %q", cursor)
@@ -228,21 +228,21 @@ func TestFavoritePageAndCitationSnapshotKeepStableOwnershipAndOrder(t *testing.T
 	ctx := context.Background()
 	folder := createFolder(t, repository, owner, "folder", false)
 	installMetadata(t, configuration)
-	addFavorite(t, repository, owner, folder.Id, 1001, "one")
-	addFavorite(t, repository, owner, folder.Id, 1012, "two")
-	addFavorite(t, repository, owner, folder.Id, 999, "missing")
-	runSql(t, repository, "UPDATE favorites SET created_at=12.25")
-	assertFavoriteCursorPages(t, ctx, repository, configuration, owner, folder.Id)
+	addFavorite(t, repository, owner, folder.ID, 1001, "one")
+	addFavorite(t, repository, owner, folder.ID, 1012, "two")
+	addFavorite(t, repository, owner, folder.ID, 999, "missing")
+	runSQL(t, repository, "UPDATE favorites SET created_at=12.25")
+	assertFavoriteCursorPages(t, ctx, repository, configuration, owner, folder.ID)
 	bad := "invalid"
-	if _, err := repository.ArticlePage(ctx, configuration, owner+1, folder.Id, 1, &bad); !errors.Is(err, ErrFolderNotFound) {
+	if _, err := repository.ArticlePage(ctx, configuration, owner+1, folder.ID, 1, &bad); !errors.Is(err, ErrFolderNotFound) {
 		t.Fatal(err)
 	}
-	snapshot, err := repository.LoadCitationSnapshot(ctx, owner, folder.Id, 0)
+	snapshot, err := repository.LoadCitationSnapshot(ctx, owner, folder.ID, 0)
 	if err != nil || !snapshot.HasMore || len(snapshot.References) != 0 || snapshot.FolderName != "folder" {
 		t.Fatalf("%+v %v", snapshot, err)
 	}
-	snapshot, err = repository.LoadCitationSnapshot(ctx, owner, folder.Id, 3)
-	if err != nil || snapshot.HasMore || len(snapshot.References) != 3 || snapshot.References[0].ArticleId != 999 {
+	snapshot, err = repository.LoadCitationSnapshot(ctx, owner, folder.ID, 3)
+	if err != nil || snapshot.HasMore || len(snapshot.References) != 3 || snapshot.References[0].ArticleID != 999 {
 		t.Fatalf("%+v %v", snapshot, err)
 	}
 }
@@ -275,7 +275,7 @@ func TestMetadataFailureIsGroupedButCitationFailsClosed(t *testing.T) {
 }
 
 // assertTrackingOwnership retains foreign-owner rejection before selecting the owned target.
-func assertTrackingOwnership(t *testing.T, ctx context.Context, repository *Repository, owner identity.Id, folder int64) {
+func assertTrackingOwnership(t *testing.T, ctx context.Context, repository *Repository, owner identity.ID, folder int64) {
 	t.Helper()
 	if changed, err := repository.SetTrackingFolder(ctx, owner+1, folder); err != nil || changed {
 		t.Fatalf("cross-owner %v %v", changed, err)
@@ -289,14 +289,14 @@ func assertTrackingOwnership(t *testing.T, ctx context.Context, repository *Repo
 }
 
 // assertBulkMoveState preserves target notes before checking source deletion count.
-func assertBulkMoveState(t *testing.T, ctx context.Context, repository *Repository, owner identity.Id, source, target int64, existing Favorite) {
+func assertBulkMoveState(t *testing.T, ctx context.Context, repository *Repository, owner identity.ID, source, target int64, existing Favorite) {
 	t.Helper()
 	items, err := repository.ListFavorites(ctx, owner, &target, -1, 0)
 	if err != nil || len(items) != 2 {
 		t.Fatalf("%+v %v", items, err)
 	}
 	for _, item := range items {
-		if item.ArticleId == 1001 && !reflect.DeepEqual(item, existing) {
+		if item.ArticleID == 1001 && !reflect.DeepEqual(item, existing) {
 			t.Fatalf("target overwritten %+v", item)
 		}
 	}
@@ -306,7 +306,7 @@ func assertBulkMoveState(t *testing.T, ctx context.Context, repository *Reposito
 }
 
 // assertFailedBulkInsert checks both reported zero and actual rollback before trigger replacement.
-func assertFailedBulkInsert(t *testing.T, ctx context.Context, repository *Repository, owner identity.Id, folder int64) {
+func assertFailedBulkInsert(t *testing.T, ctx context.Context, repository *Repository, owner identity.ID, folder int64) {
 	t.Helper()
 	if count, err := repository.BulkAdd(ctx, owner, folder, []Add{{Reference{1001, "metadata"}, "one"}, {Reference{1002, "metadata"}, "two"}}); err == nil || count != 0 {
 		t.Fatalf("bulk=%d %v", count, err)
@@ -317,23 +317,23 @@ func assertFailedBulkInsert(t *testing.T, ctx context.Context, repository *Repos
 }
 
 // assertBatchMembership preserves raw order and initialized empty memberships.
-func assertBatchMembership(t *testing.T, ctx context.Context, repository *Repository, owner identity.Id) {
+func assertBatchMembership(t *testing.T, ctx context.Context, repository *Repository, owner identity.ID) {
 	t.Helper()
 	items, err := repository.BatchIsFavorited(ctx, owner, []int64{1001, -1, 1001, 1002, 0}, "metadata")
-	if err != nil || len(items) != 2 || len(items[0].Folders) != 1 || items[1].ArticleId != 1002 || items[1].Folders == nil {
+	if err != nil || len(items) != 2 || len(items[0].Folders) != 1 || items[1].ArticleID != 1002 || items[1].Folders == nil {
 		t.Fatalf("%+v %v", items, err)
 	}
 }
 
 // assertFavoriteCursorPages retains the original first page and cursor for the second request.
-func assertFavoriteCursorPages(t *testing.T, ctx context.Context, repository *Repository, configuration config.Config, owner identity.Id, folder int64) {
+func assertFavoriteCursorPages(t *testing.T, ctx context.Context, repository *Repository, configuration config.Config, owner identity.ID, folder int64) {
 	t.Helper()
 	page, err := repository.ArticlePage(ctx, configuration, owner, folder, 1, nil)
-	if err != nil || len(page.Items) != 1 || page.Items[0].ArticleId != 999 || page.Items[0].MetadataStatus != "missing" || page.Page.NextCursor == nil {
+	if err != nil || len(page.Items) != 1 || page.Items[0].ArticleID != 999 || page.Items[0].MetadataStatus != "missing" || page.Page.NextCursor == nil {
 		t.Fatalf("%+v %v", page, err)
 	}
 	second, err := repository.ArticlePage(ctx, configuration, owner, folder, 1, page.Page.NextCursor)
-	if err != nil || len(second.Items) != 1 || second.Items[0].ArticleId != 1012 || second.Items[0].MetadataStatus != "available" {
+	if err != nil || len(second.Items) != 1 || second.Items[0].ArticleID != 1012 || second.Items[0].MetadataStatus != "available" {
 		t.Fatalf("%+v %v", second, err)
 	}
 }

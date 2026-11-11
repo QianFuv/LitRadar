@@ -34,7 +34,7 @@ func New(mux *http.ServeMux) huma.API {
 	}
 	config.Components.Schemas = newRegistry()
 	config.Formats = map[string]huma.Format{"application/json": {Marshal: func(writer io.Writer, value any) error {
-		encoded, err := jsonvalue.EncodeJson(value)
+		encoded, err := jsonvalue.EncodeJSON(value)
 		if err != nil {
 			return err
 		}

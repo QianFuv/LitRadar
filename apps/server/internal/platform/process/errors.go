@@ -21,8 +21,7 @@ func classifiedError(kind string, err error) error {
 
 // ErrorKind returns a classified cleanup phase without parsing platform-dependent error text.
 func ErrorKind(err error) string {
-	var failure *SupervisorError
-	if errors.As(err, &failure) {
+	if failure, ok := errors.AsType[*SupervisorError](err); ok {
 		return failure.Kind
 	}
 	return "wait_failed"

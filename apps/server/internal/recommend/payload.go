@@ -21,7 +21,7 @@ const (
 	SummaryPayload   PayloadKind = "summary"
 )
 
-var errStructuredPayload = errors.New("Structured response is not a JSON object")
+var errStructuredPayload = errors.New("structured response is not a JSON object")
 
 // ExtractResponsePayload normalizes the first OpenAI-compatible choice while honoring refusal and parsed-field precedence.
 func ExtractResponsePayload(response any, kind PayloadKind) (map[string]any, error) {
@@ -60,7 +60,7 @@ func normalizeContentText(content string, kind PayloadKind) (map[string]any, err
 		}
 		normalized = strings.TrimSpace(strings.Join(lines, "\n"))
 	}
-	value, err := transport.ParseJson([]byte(normalized))
+	value, err := transport.ParseJSON([]byte(normalized))
 	if err != nil {
 		value = normalized
 	}
@@ -83,8 +83,8 @@ func normalizePayload(value any, kind PayloadKind) (map[string]any, error) {
 			return map[string]any{"summary": extractSummary(object), "selected": coerceSelectedValue(selected)}, nil
 		}
 	}
-	if articleId, ok := jsonInt64(object["article_id"]); ok {
-		item := map[string]any{"article_id": articleId}
+	if articleID, ok := jsonInt64(object["article_id"]); ok {
+		item := map[string]any{"article_id": articleID}
 		if score, ok := jsonFloat64(object["score"]); ok {
 			item["score"] = finiteScore(score)
 		}
@@ -126,11 +126,11 @@ func coerceSelectedValue(value any) []any {
 		keys := slices.Sorted(maps.Keys(object))
 		items := []any{}
 		for _, key := range keys {
-			articleId, err := strconv.ParseInt(key, 10, 64)
+			articleID, err := strconv.ParseInt(key, 10, 64)
 			if err != nil {
 				continue
 			}
-			item := map[string]any{"article_id": articleId}
+			item := map[string]any{"article_id": articleID}
 			if score, ok := jsonFloat64(object[key]); ok {
 				item["score"] = finiteScore(score)
 			}
@@ -149,15 +149,15 @@ func coerceSelectedItems(items []any) []any {
 			result = append(result, object)
 			continue
 		}
-		if articleId, ok := jsonInt64(item); ok {
-			result = append(result, map[string]any{"article_id": articleId, "score": int64(0)})
+		if articleID, ok := jsonInt64(item); ok {
+			result = append(result, map[string]any{"article_id": articleID, "score": int64(0)})
 			continue
 		}
 		if values, ok := item.([]any); ok && len(values) >= 2 {
-			articleId, hasId := jsonInt64(values[0])
+			articleID, hasID := jsonInt64(values[0])
 			score, hasScore := jsonFloat64(values[1])
-			if hasId && hasScore {
-				result = append(result, map[string]any{"article_id": articleId, "score": finiteScore(score)})
+			if hasID && hasScore {
+				result = append(result, map[string]any{"article_id": articleID, "score": finiteScore(score)})
 			}
 		}
 	}

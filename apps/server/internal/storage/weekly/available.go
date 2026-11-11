@@ -100,16 +100,16 @@ func prepareAvailableManifests(manifests []Manifest, selected []string) ([]Manif
 	requested := map[string]map[int64]bool{}
 	retained := make([]Manifest, 0, len(manifests))
 	for _, manifest := range manifests {
-		if len(selected) > 0 && !slices.Contains(selected, manifest.DbName) {
+		if len(selected) > 0 && !slices.Contains(selected, manifest.DBName) {
 			continue
 		}
 		run := availableManifestRun(manifest)
-		manifest.RunId = &run
-		if requested[manifest.DbName] == nil {
-			requested[manifest.DbName] = map[int64]bool{}
+		manifest.RunID = &run
+		if requested[manifest.DBName] == nil {
+			requested[manifest.DBName] = map[int64]bool{}
 		}
 		for _, id := range manifest.ArticleIds {
-			requested[manifest.DbName][id] = true
+			requested[manifest.DBName][id] = true
 		}
 		retained = append(retained, manifest)
 	}
@@ -119,8 +119,8 @@ func prepareAvailableManifests(manifests []Manifest, selected []string) ([]Manif
 // availableManifestRun trims explicit run IDs or derives identity from the full original membership.
 func availableManifestRun(manifest Manifest) string {
 	run := ""
-	if manifest.RunId != nil {
-		run = strings.TrimSpace(*manifest.RunId)
+	if manifest.RunID != nil {
+		run = strings.TrimSpace(*manifest.RunID)
 	}
 	if run == "" {
 		ids := make([]string, len(manifest.ArticleIds))
@@ -128,7 +128,7 @@ func availableManifestRun(manifest Manifest) string {
 			ids[index] = strconv.FormatInt(id, 10)
 		}
 		display := strings.Replace(strings.TrimSuffix(manifest.GeneratedAt.Format(true), "Z"), "T", " ", 1) + " UTC"
-		value := manifest.DbName + ":" + display + ":[" + strings.Join(ids, ", ") + "]"
+		value := manifest.DBName + ":" + display + ":[" + strings.Join(ids, ", ") + "]"
 		run = "weekly-" + strconv.FormatInt(int64(identity.Stable(value, "weekly-manifest")), 10)
 	}
 	return run
@@ -157,7 +157,7 @@ func pruneAvailableManifests(retained []Manifest, available map[string]map[int64
 	for _, manifest := range retained {
 		ids := make([]int64, 0, len(manifest.ArticleIds))
 		for _, id := range manifest.ArticleIds {
-			if available[manifest.DbName][id] {
+			if available[manifest.DBName][id] {
 				ids = append(ids, id)
 			}
 		}

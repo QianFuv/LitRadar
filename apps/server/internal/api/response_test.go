@@ -72,7 +72,7 @@ func TestStorageAndWorkerFailuresDoNotExposePrivateDetails(t *testing.T) {
 		{config.ErrNoDatabases, 404, "No SQLite databases found"},
 		{query.NotFound{Message: "Article not found"}, 404, "Article not found"},
 		{query.InvalidInput{Message: "bad filter"}, 400, "bad filter"},
-		{query.ErrLegacyWeeklyLimit, 413, query.ErrLegacyWeeklyLimit.Error()},
+		{query.ErrLegacyWeeklyLimit, 413, "Weekly updates exceed 2000 articles; use /api/weekly-updates/summary and /api/weekly-updates/articles"},
 		{errors.New("SQL error in private/path.sqlite, secret=fixture"), 500, "Internal Server Error"},
 	} {
 		failure := mapIndexError(scenario.failure)

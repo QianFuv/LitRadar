@@ -33,7 +33,7 @@ func TestProxyHopLimitPrecedesMissingLocation(t *testing.T) {
 	live, server := loopbackLive(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		count := requests.Add(1)
 		if count < 5 {
-			http.Redirect(writer, request, fmt.Sprintf("/login/hop%d", count), 302)
+			http.Redirect(writer, request, fmt.Sprintf("/login/hop%d", count), http.StatusFound)
 			return
 		}
 		writer.WriteHeader(302)
@@ -80,7 +80,7 @@ func TestSearchDuplicateSkipsConflictingDownload(t *testing.T) {
 	if err != nil || len(results) != 1 {
 		t.Fatalf("duplicate download hint was inspected: %v %v", results, err)
 	}
-	if results[0].Title != "First" || results[0].DownloadUrl != nil {
+	if results[0].Title != "First" || results[0].DownloadURL != nil {
 		t.Fatal(results)
 	}
 }

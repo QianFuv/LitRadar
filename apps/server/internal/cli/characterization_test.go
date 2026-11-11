@@ -17,7 +17,7 @@ func TestParentMarkerFailureRetainsConsumedArgumentBoundary(t *testing.T) {
 		{[]string{"--litradar-parent-run-id", "first", "--litradar-parent-run-id", "second"}, []string{"--litradar-parent-run-id", "second"}},
 	} {
 		args := arguments(append([]string{}, item.values...))
-		if _, err := parentRunId(&args); err == nil || !reflect.DeepEqual([]string(args), item.remaining) {
+		if _, err := parentRunID(&args); err == nil || !reflect.DeepEqual([]string(args), item.remaining) {
 			t.Fatal(args, err)
 		}
 	}

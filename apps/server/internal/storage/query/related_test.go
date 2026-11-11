@@ -70,7 +70,7 @@ INSERT INTO article_listing(article_id,journal_id,date) SELECT article_id,journa
 	}
 	ids := make([]int64, len(related))
 	for index, article := range related {
-		ids[index] = int64(article.ArticleId)
+		ids[index] = int64(article.ArticleID)
 	}
 	if len(ids) == 0 || ids[0] != 2002 {
 		t.Fatalf("expected the title-overlap article first, got %v", ids)
@@ -89,7 +89,7 @@ INSERT INTO article_listing(article_id,journal_id,date) SELECT article_id,journa
 		t.Fatalf("articles were not enriched: %+v", related[0])
 	}
 	limited, err := RelatedArticles(ctx, configuration, nil, 2001, 1)
-	if err != nil || len(limited) != 1 || int64(limited[0].ArticleId) != 2002 {
+	if err != nil || len(limited) != 1 || int64(limited[0].ArticleID) != 2002 {
 		t.Fatalf("limit not applied: %+v, %v", limited, err)
 	}
 	for _, limit := range []int64{0, RelatedArticleMaxLimit + 1} {
@@ -150,7 +150,7 @@ INSERT INTO article_listing(article_id,journal_id,date) SELECT article_id,journa
 	}
 	ids := make([]int64, len(related))
 	for index, article := range related {
-		ids[index] = int64(article.ArticleId)
+		ids[index] = int64(article.ArticleID)
 	}
 	if !reflect.DeepEqual(ids, []int64{3002, 3003}) {
 		t.Fatalf("expected title overlap before abstract mentions, got %v", ids)

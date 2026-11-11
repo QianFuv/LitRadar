@@ -48,7 +48,7 @@ func decodeGraphResponse(t *testing.T, response *httptest.ResponseRecorder) favo
 			t.Fatal("missing response field", name)
 		}
 	}
-	if len(fields) != 8 || graph.Id <= 0 || graph.CreatedAt <= 0 || graph.UpdatedAt < graph.CreatedAt || fields["graph"][0] != '{' {
+	if len(fields) != 8 || graph.ID <= 0 || graph.CreatedAt <= 0 || graph.UpdatedAt < graph.CreatedAt || fields["graph"][0] != '{' {
 		t.Fatal("invalid graph shape", response.Body.String())
 	}
 	return graph
@@ -63,10 +63,10 @@ func TestRelationGraphFavoriteLifecycle(t *testing.T) {
 		t.Fatal(response.Body.String())
 	}
 	created := decodeGraphResponse(t, requireGraphRequest(t, router, token, "POST", base, graphRequestBody(" first ", 2, `{"nodes":[1,2],"large":9007199254740993}`), 200))
-	if created.Title != "first" || created.DbName != "source" || created.RootArticleId != 42 || created.NodeCount != 2 {
+	if created.Title != "first" || created.DBName != "source" || created.RootArticleID != 42 || created.NodeCount != 2 {
 		t.Fatal(created)
 	}
-	path := fmt.Sprintf("%s/%d", base, created.Id)
+	path := fmt.Sprintf("%s/%d", base, created.ID)
 	loaded := decodeGraphResponse(t, requireGraphRequest(t, router, token, "GET", path, "", 200))
 	if !reflect.DeepEqual(loaded, created) {
 		t.Fatal(loaded, created)
@@ -83,11 +83,11 @@ func TestRelationGraphFavoriteLifecycle(t *testing.T) {
 	second := decodeGraphResponse(t, requireGraphRequest(t, router, token, "POST", base, graphRequestBody("second", 1, `{}`), 200))
 	response = requireGraphRequest(t, router, token, "GET", base+"?limit=1", "", 200)
 	var page favorites.GraphPage
-	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || len(page.Items) != 1 || page.Items[0].Id != second.Id || page.NextCursor == nil || strings.Contains(response.Body.String(), `"graph"`) || strings.Contains(response.Body.String(), `"page"`) {
+	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || len(page.Items) != 1 || page.Items[0].ID != second.ID || page.NextCursor == nil || strings.Contains(response.Body.String(), `"graph"`) || strings.Contains(response.Body.String(), `"page"`) {
 		t.Fatal(response.Body.String(), err)
 	}
 	response = requireGraphRequest(t, router, token, "GET", base+"?limit=1&cursor="+*page.NextCursor, "", 200)
-	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || len(page.Items) != 1 || page.Items[0].Id != created.Id || page.NextCursor != nil {
+	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || len(page.Items) != 1 || page.Items[0].ID != created.ID || page.NextCursor != nil {
 		t.Fatal(response.Body.String(), err)
 	}
 	response = requireGraphRequest(t, router, token, "DELETE", path, "", 200)
@@ -105,7 +105,7 @@ func TestRelationGraphFavoriteAuthenticationAndOwnership(t *testing.T) {
 	auth, _, router, token := graphFixture(t)
 	const base = "/api/favorites/graphs"
 	created := decodeGraphResponse(t, requireGraphRequest(t, router, token, "POST", base, graphRequestBody("owned", 1, `{}`), 200))
-	path := fmt.Sprintf("%s/%d", base, created.Id)
+	path := fmt.Sprintf("%s/%d", base, created.ID)
 	for _, operation := range []struct{ method, path, body string }{
 		{"GET", base, ""}, {"POST", base, graphRequestBody("new", 1, `{}`)},
 		{"GET", path, ""}, {"PUT", path, `{"title":"new"}`}, {"DELETE", path, ""},
@@ -121,7 +121,7 @@ func TestRelationGraphFavoriteAuthenticationAndOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreignToken, err := auth.service.CreateTrustedToken(ctx, foreign.Id, "foreign", 3600, nil)
+	foreignToken, err := auth.service.CreateTrustedToken(ctx, foreign.ID, "foreign", 3600, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestRelationGraphFavoriteSizeBoundary(t *testing.T) {
 	if len(created.Graph) != favorites.MaxGraphBytes {
 		t.Fatal("snapshot size", len(created.Graph))
 	}
-	path := fmt.Sprintf("%s/%d", base, created.Id)
+	path := fmt.Sprintf("%s/%d", base, created.ID)
 	requireGraphRequest(t, router, token, "PUT", path, `{"node_count":1,"graph":`+graph+`}`, 200)
 	oversize := graph[:len(graph)-2] + `x"}`
 	for _, operation := range []struct{ method, path, body string }{
@@ -218,7 +218,7 @@ func TestRelationGraphFavoriteRegisteredRoutesAndContract(t *testing.T) {
 	if string(created.Graph) != `{"large":9007199254740993}` {
 		t.Fatal("validated request lost snapshot precision", string(created.Graph))
 	}
-	path := fmt.Sprintf("%s/%d", base, created.Id)
+	path := fmt.Sprintf("%s/%d", base, created.ID)
 	requireGraphRequest(t, router, token, "GET", base, "", 200)
 	requireGraphRequest(t, router, token, "GET", path, "", 200)
 	requireGraphRequest(t, router, token, "PUT", path, `{"title":"updated"}`, 200)
@@ -233,7 +233,7 @@ func TestRelationGraphFavoriteRegisteredRoutesAndContract(t *testing.T) {
 	}
 	var contract struct {
 		Paths map[string]map[string]struct {
-			OperationId string `json:"operationId"`
+			OperationID string `json:"operationId"`
 		} `json:"paths"`
 		Components struct {
 			Schemas map[string]json.RawMessage `json:"schemas"`
@@ -244,7 +244,7 @@ func TestRelationGraphFavoriteRegisteredRoutesAndContract(t *testing.T) {
 	}
 	for _, route := range (&favoriteHandlers{}).graphRoutes() {
 		operation := route.operation
-		if contract.Paths[operation.Path][strings.ToLower(operation.Method)].OperationId != operation.ID {
+		if contract.Paths[operation.Path][strings.ToLower(operation.Method)].OperationID != operation.ID {
 			t.Fatal("missing graph operation", operation)
 		}
 	}

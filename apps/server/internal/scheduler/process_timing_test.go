@@ -33,7 +33,7 @@ func TestSchedulerSharedDeadline(t *testing.T) {
 				commands := []string{}
 				runner := func(ctx context.Context, command scheduledProcess, claim store.Claim, ordinal int, receivedDeadline time.Time, heartbeatInterval time.Duration, heartbeat func() bool) processResult {
 					commands = append(commands, command.command)
-					if !receivedDeadline.Equal(deadline) || ordinal != len(commands) || claim.RunId != 42 || heartbeatInterval != processHeartbeatInterval || !heartbeat() {
+					if !receivedDeadline.Equal(deadline) || ordinal != len(commands) || claim.RunID != 42 || heartbeatInterval != processHeartbeatInterval || !heartbeat() {
 						t.Fatal("command lost its shared execution context", receivedDeadline, deadline, ordinal)
 					}
 					done := time.NewTimer(8 * time.Second)

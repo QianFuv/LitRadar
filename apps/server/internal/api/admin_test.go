@@ -30,7 +30,7 @@ func adminFixture(t *testing.T) (*authHandlers, *http.ServeMux, string, domain.U
 	if err != nil {
 		t.Fatal(err)
 	}
-	memberToken, err := auth.service.CreateTrustedToken(context.Background(), user.Id, "member", 3600, nil)
+	memberToken, err := auth.service.CreateTrustedToken(context.Background(), user.ID, "member", 3600, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func adminFixture(t *testing.T) (*authHandlers, *http.ServeMux, string, domain.U
 
 func TestAdministratorRoutesEnforceRolesSelfProtectionAndNumericIds(t *testing.T) {
 	auth, router, token, user, memberToken := adminFixture(t)
-	target := strconv.FormatInt(int64(user.Id), 10)
+	target := strconv.FormatInt(int64(user.ID), 10)
 	for _, scenario := range []struct {
 		method, path, body, bearer string
 		status                     int
@@ -111,14 +111,14 @@ func TestAdministratorInviteOptionalBodyAndRevocation(t *testing.T) {
 		t.Fatal(response.Code, response.Body.String())
 	}
 	var invite struct {
-		Id        int64
+		ID        int64
 		CreatedBy *int64 `json:"created_by"`
 	}
-	if err := json.Unmarshal(response.Body.Bytes(), &invite); err != nil || invite.Id == 0 || invite.CreatedBy != nil {
+	if err := json.Unmarshal(response.Body.Bytes(), &invite); err != nil || invite.ID == 0 || invite.CreatedBy != nil {
 		t.Fatal(response.Body.String(), err)
 	}
 	for _, status := range []int{200, 404} {
-		response = authRequest(router, "DELETE", "/api/admin/invite-codes/"+strconv.FormatInt(invite.Id, 10), "", token)
+		response = authRequest(router, "DELETE", "/api/admin/invite-codes/"+strconv.FormatInt(invite.ID, 10), "", token)
 		if response.Code != status {
 			t.Fatal(response.Code, response.Body.String())
 		}
@@ -164,7 +164,7 @@ func TestAdministratorCompletionAuditFailureRollsBackWithoutSecondAudit(t *testi
 		t.Fatal(err)
 	}
 	before := storage.AuditFailureCount()
-	response := authRequest(router, "PUT", "/api/admin/users/"+strconv.FormatInt(int64(user.Id), 10)+"/admin", `{"is_admin":true}`, token)
+	response := authRequest(router, "PUT", "/api/admin/users/"+strconv.FormatInt(int64(user.ID), 10)+"/admin", `{"is_admin":true}`, token)
 	if response.Code != 503 || storage.AuditFailureCount() != before+1 {
 		t.Fatal(response.Code, response.Body.String(), storage.AuditFailureCount()-before)
 	}
@@ -173,7 +173,7 @@ func TestAdministratorCompletionAuditFailureRollsBackWithoutSecondAudit(t *testi
 		t.Fatal(err)
 	}
 	for _, row := range users {
-		if row.Id == user.Id && row.IsAdmin {
+		if row.ID == user.ID && row.IsAdmin {
 			t.Fatal("failed audit committed role change")
 		}
 	}

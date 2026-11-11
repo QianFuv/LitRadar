@@ -18,17 +18,17 @@ func TestBootstrapRequiredUsesAnyUser(t *testing.T) {
 	if err != nil || !isRequired {
 		t.Fatalf("empty database: required=%t, err=%v", isRequired, err)
 	}
-	runSql(t, repository, "INSERT INTO users(id,username,password_hash,salt,is_admin,created_at,updated_at) VALUES(1,'member','hash','salt',0,1,1)")
+	runSQL(t, repository, "INSERT INTO users(id,username,password_hash,salt,is_admin,created_at,updated_at) VALUES(1,'member','hash','salt',0,1,1)")
 	isRequired, err = repository.BootstrapRequired(ctx)
 	if err != nil || isRequired {
 		t.Fatalf("non-administrator present: required=%t, err=%v", isRequired, err)
 	}
-	runSql(t, repository, "UPDATE users SET is_admin=1 WHERE id=1")
+	runSQL(t, repository, "UPDATE users SET is_admin=1 WHERE id=1")
 	isRequired, err = repository.BootstrapRequired(ctx)
 	if err != nil || isRequired {
 		t.Fatalf("administrator present: required=%t, err=%v", isRequired, err)
 	}
-	runSql(t, repository, "DELETE FROM users")
+	runSQL(t, repository, "DELETE FROM users")
 	isRequired, err = repository.BootstrapRequired(ctx)
 	if err != nil || !isRequired {
 		t.Fatalf("last user deleted: required=%t, err=%v", isRequired, err)

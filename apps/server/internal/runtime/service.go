@@ -56,7 +56,7 @@ func (prepared *Prepared) Run(ctx context.Context) (result error) {
 			<-ctx.Done()
 		}
 		return nil
-	}}, {"api", prepared.runHttp}, {"scheduler", prepared.runScheduler}, {"audit_retention", prepared.runAuditRetention}, {"delivery_dispatcher", prepared.runManualDispatcher}})
+	}}, {"api", prepared.runHTTP}, {"scheduler", prepared.runScheduler}, {"audit_retention", prepared.runAuditRetention}, {"delivery_dispatcher", prepared.runManualDispatcher}})
 }
 
 func coordinate(ctx context.Context, components []component) error {
@@ -110,9 +110,9 @@ func isOnlyCancellation(err error) bool {
 	return false
 }
 
-func (prepared *Prepared) runHttp(ctx context.Context) error {
+func (prepared *Prepared) runHTTP(ctx context.Context) error {
 	instance := fmt.Sprintf("api-%d-%d", os.Getpid(), time.Now().UnixNano())
-	filename := prepared.configuration.Storage.AuthDbPath
+	filename := prepared.configuration.Storage.AuthDBPath
 	if err := prepared.recordHeartbeat(ctx, instance); err != nil {
 		return err
 	}
@@ -124,7 +124,7 @@ func (prepared *Prepared) runHttp(ctx context.Context) error {
 	}()
 	requestContext, cancelRequests := context.WithCancel(ctx)
 	defer cancelRequests()
-	requests := &networkHandlers{next: redactHttpPanics(prepared.handler)}
+	requests := &networkHandlers{next: redactHTTPPanics(prepared.handler)}
 	server := &http.Server{Handler: requests, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, BaseContext: func(net.Listener) context.Context { return observability.WithoutSpans(requestContext) }}
 	serverDone := make(chan error, 1)
 	go func() {
@@ -147,7 +147,7 @@ func (prepared *Prepared) runHttp(ctx context.Context) error {
 	requests.stop()
 	cancelHeartbeat()
 	cancelRequests()
-	result = errors.Join(result, drainHttp(drainContext, server, prepared.handler.Close, requests))
+	result = errors.Join(result, drainHTTP(drainContext, server, prepared.handler.Close, requests))
 	if !isServerDone {
 		serverError := <-serverDone
 		if !errors.Is(serverError, http.ErrServerClosed) {
@@ -157,7 +157,7 @@ func (prepared *Prepared) runHttp(ctx context.Context) error {
 	if !isHeartbeatDone {
 		result = errors.Join(result, <-heartbeatDone)
 	}
-	result = errors.Join(result, backup.DeleteHeartbeat(context.Background(), filename, backup.Api, instance))
+	result = errors.Join(result, backup.DeleteHeartbeat(context.Background(), filename, backup.API, instance))
 	return result
 }
 
@@ -187,7 +187,7 @@ func (handlers *networkHandlers) stop() {
 	handlers.mutex.Unlock()
 }
 
-func drainHttp(ctx context.Context, server *http.Server, closeHandler func() error, handlers *networkHandlers) error {
+func drainHTTP(ctx context.Context, server *http.Server, closeHandler func() error, handlers *networkHandlers) error {
 	completed := make(chan error, 2)
 	go func() { completed <- guardedTask(ctx, "API session close task failed", closeHandler) }()
 	go func() {
@@ -222,7 +222,7 @@ func guardedTask(ctx context.Context, message string, operation func() error) (r
 	return operation()
 }
 
-func redactHttpPanics(next http.Handler) http.Handler {
+func redactHTTPPanics(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		defer func() {
 			if cause := recover(); cause != nil {
@@ -243,7 +243,7 @@ func (prepared *Prepared) runHeartbeat(ctx context.Context, instance string, int
 func (prepared *Prepared) recordHeartbeat(ctx context.Context, instance string) error {
 	operationContext, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	return backup.RecordHeartbeat(operationContext, prepared.configuration.Storage.AuthDbPath, backup.Api, instance, unixTime())
+	return backup.RecordHeartbeat(operationContext, prepared.configuration.Storage.AuthDBPath, backup.API, instance, unixTime())
 }
 
 func heartbeatLoop(ctx context.Context, interval time.Duration, record func(context.Context) error) error {

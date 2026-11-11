@@ -23,7 +23,7 @@ func NewClient(transport Transport, hasSemanticScholarKey bool) *Client {
 func (client *Client) FetchCrossrefPage(ctx context.Context, issn string, query CrossrefQuery) (CrossrefPage, error) {
 	client.mutex.Lock()
 	defer client.mutex.Unlock()
-	payload, err := client.transport.Request(ctx, Request{Service: Crossref, Endpoint: "journal_works", Method: "GET", Url: "https://api.crossref.org/journals/" + issn + "/works", Issn: issn, Query: query})
+	payload, err := client.transport.Request(ctx, Request{Service: Crossref, Endpoint: "journal_works", Method: "GET", URL: "https://api.crossref.org/journals/" + issn + "/works", Issn: issn, Query: query})
 	if err != nil {
 		return CrossrefPage{}, err
 	}
@@ -48,7 +48,7 @@ func (client *Client) FetchOpenAlexSourceByIssns(ctx context.Context, issns []st
 	client.mutex.Lock()
 	defer client.mutex.Unlock()
 	for _, issn := range issns {
-		payload, err := client.transport.Request(ctx, Request{Service: OpenAlex, Endpoint: "sources", Method: "GET", Url: "https://api.openalex.org/sources?filter=issn:" + issn + "&api_key=SECRET", Issn: issn})
+		payload, err := client.transport.Request(ctx, Request{Service: OpenAlex, Endpoint: "sources", Method: "GET", URL: "https://api.openalex.org/sources?filter=issn:" + issn + "&api_key=SECRET", Issn: issn})
 		if err != nil {
 			return nil, err
 		}
@@ -69,7 +69,7 @@ func (client *Client) FetchOpenAlexSourceByTitle(ctx context.Context, title stri
 	if normalized == "" {
 		return nil, nil
 	}
-	payload, err := client.transport.Request(ctx, Request{Service: OpenAlex, Endpoint: "source_search", Method: "GET", Url: "https://api.openalex.org/sources?search=" + title + "&api_key=SECRET", Title: title})
+	payload, err := client.transport.Request(ctx, Request{Service: OpenAlex, Endpoint: "source_search", Method: "GET", URL: "https://api.openalex.org/sources?search=" + title + "&api_key=SECRET", Title: title})
 	if err != nil {
 		return nil, err
 	}
@@ -81,12 +81,12 @@ func (client *Client) FetchOpenAlexSourceByTitle(ctx context.Context, title stri
 	return nil, nil
 }
 
-func sourceWorksRequest(sourceId string, fromDate, cursor *string) Request {
-	return Request{Service: OpenAlex, Endpoint: "source_works", Method: "GET", Url: "https://api.openalex.org/works?filter=primary_location.source.id:" + sourceId + "&api_key=SECRET", SourceId: sourceId, FromSyncDate: fromDate, Cursor: cursor}
+func sourceWorksRequest(sourceID string, fromDate, cursor *string) Request {
+	return Request{Service: OpenAlex, Endpoint: "source_works", Method: "GET", URL: "https://api.openalex.org/works?filter=primary_location.source.id:" + sourceID + "&api_key=SECRET", SourceID: sourceID, FromSyncDate: fromDate, Cursor: cursor}
 }
 
 // FetchOpenAlexWorksBySourcePage remembers paid-filter rejection across operations.
-func (client *Client) FetchOpenAlexWorksBySourcePage(ctx context.Context, sourceId string, fromDate, cursor *string) (WorksPage, error) {
+func (client *Client) FetchOpenAlexWorksBySourcePage(ctx context.Context, sourceID string, fromDate, cursor *string) (WorksPage, error) {
 	client.mutex.Lock()
 	defer client.mutex.Unlock()
 	effectiveDate := fromDate
@@ -97,12 +97,12 @@ func (client *Client) FetchOpenAlexWorksBySourcePage(ctx context.Context, source
 	if hasFallback {
 		cursor = nil
 	}
-	payload, err := client.transport.Request(ctx, sourceWorksRequest(sourceId, effectiveDate, cursor))
+	payload, err := client.transport.Request(ctx, sourceWorksRequest(sourceID, effectiveDate, cursor))
 	if err != nil && effectiveDate != nil && isPlanRestriction(err) {
 		slog.WarnContext(ctx, "source fallback activated", "event", "source.fallback.activated", "component", "source", "provider", OpenAlex, "endpoint", "source_works", "reason", "plan_restriction", "fallback", "full_source_pages")
 		client.isCreatedDateFilterUnavailable = true
 		hasFallback = true
-		payload, err = client.transport.Request(ctx, sourceWorksRequest(sourceId, nil, nil))
+		payload, err = client.transport.Request(ctx, sourceWorksRequest(sourceID, nil, nil))
 	}
 	if err != nil {
 		return WorksPage{}, err
@@ -151,7 +151,7 @@ func (client *Client) FetchSemanticScholarByDois(ctx context.Context, dois []str
 	batchSize = max(1, min(batchSize, 500))
 	for offset := 0; offset < len(normalized); offset += batchSize {
 		batch := append([]string{}, normalized[offset:min(offset+batchSize, len(normalized))]...)
-		payload, err := client.transport.Request(ctx, Request{Service: SemanticScholar, Endpoint: "paper_batch", Method: "POST", Url: "https://api.semanticscholar.org/graph/v1/paper/batch?fields=" + SemanticScholarFields + "&x-api-key=SECRET", Dois: batch})
+		payload, err := client.transport.Request(ctx, Request{Service: SemanticScholar, Endpoint: "paper_batch", Method: "POST", URL: "https://api.semanticscholar.org/graph/v1/paper/batch?fields=" + SemanticScholarFields + "&x-api-key=SECRET", Dois: batch})
 		if err != nil {
 			if isNoValidIds(err) {
 				continue

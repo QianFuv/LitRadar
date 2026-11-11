@@ -18,7 +18,7 @@ func hasTitle(selection *goquery.Selection, selector, title string) bool {
 	return false
 }
 func springerUpdateBody(original domain.Source, document Document, parsed *goquery.Document) *goquery.Selection {
-	location, err := whatwg.NewParser().Parse(document.FinalUrl)
+	location, err := whatwg.NewParser().Parse(document.FinalURL)
 	if err != nil || location.Hostname() != "link.springer.com" || !strings.HasPrefix(location.Pathname(), "/journal/10490/updates/") || !slices.Contains(original.CatalogIds, "issn-0217-4561") {
 		return nil
 	}
@@ -32,8 +32,8 @@ func springerUpdateBody(original domain.Source, document Document, parsed *goque
 
 // OriginalLinks binds recovery to the saved title and returns at most three list-navigation links.
 func OriginalLinks(source domain.Source, document Document) []string {
-	parsed := parseHtml(document.Text)
-	base, err := whatwg.NewParser().Parse(document.FinalUrl)
+	parsed := parseHTML(document.Text)
+	base, err := whatwg.NewParser().Parse(document.FinalURL)
 	details := []string{}
 	if err != nil {
 		return details

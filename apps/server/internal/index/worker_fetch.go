@@ -36,12 +36,10 @@ func workerProtocolFailure() error {
 	return &ExecutionError{Failure: WorkerFailure{Class: "worker", Operation: "worker_protocol"}, Message: "worker protocol operation failed"}
 }
 func workerFailure(err error) WorkerFailure {
-	var execution *ExecutionError
-	if errors.As(err, &execution) {
+	if execution, ok := errors.AsType[*ExecutionError](err); ok {
 		return execution.Failure
 	}
-	var source *provider.Error
-	if errors.As(err, &source) {
+	if _, ok := errors.AsType[*provider.Error](err); ok {
 		return WorkerFailure{Class: "provider", Operation: "provider_request"}
 	}
 	return WorkerFailure{Class: "worker", Operation: "worker_process"}
@@ -74,7 +72,7 @@ func RunFetchWorker(ctx context.Context, request WorkerRequest, input io.Reader,
 		}
 		return fetchWorkerAssignments(ctx, request, implementation, reader, output, &sequence)
 	}()
-	terminal := WorkerMessage{Type: "succeeded", ProtocolVersion: WorkerProtocolVersion, WorkerId: request.WorkerId, Sequence: sequence}
+	terminal := WorkerMessage{Type: "succeeded", ProtocolVersion: WorkerProtocolVersion, WorkerID: request.WorkerID, Sequence: sequence}
 	if execution != nil {
 		failure := workerFailure(execution)
 		terminal.Type = "failed"
@@ -87,11 +85,11 @@ func RunFetchWorker(ctx context.Context, request WorkerRequest, input io.Reader,
 }
 func validateWorkerBootstrap(request WorkerRequest, bootstrap WorkerBootstrap) error {
 	isScholarly := request.ProviderName == "scholarly"
-	if bootstrap.ProtocolVersion != WorkerProtocolVersion || bootstrap.WorkerId != request.WorkerId || request.ProviderName != "cnki" && bootstrap.CnkiCaptchaToken != nil || invalidScholarlyBootstrap(isScholarly, bootstrap) {
+	if bootstrap.ProtocolVersion != WorkerProtocolVersion || bootstrap.WorkerID != request.WorkerID || request.ProviderName != "cnki" && bootstrap.CnkiCaptchaToken != nil || invalidScholarlyBootstrap(isScholarly, bootstrap) {
 		return invalidWorker("worker bootstrap is invalid")
 	}
-	if bootstrap.ProviderProxyUrl != nil {
-		if _, err := transport.ExplicitProxy(*bootstrap.ProviderProxyUrl); err != nil {
+	if bootstrap.ProviderProxyURL != nil {
+		if _, err := transport.ExplicitProxy(*bootstrap.ProviderProxyURL); err != nil {
 			return invalidWorker("worker bootstrap is invalid")
 		}
 	}
@@ -103,7 +101,7 @@ func invalidScholarlyBootstrap(isScholarly bool, bootstrap WorkerBootstrap) bool
 	return isScholarly != (bootstrap.ScholarlyConfig != nil) || isScholarly != (bootstrap.ScholarlyWorksetDir != nil) || bootstrap.ScholarlyWorksetDir != nil && !filepath.IsAbs(*bootstrap.ScholarlyWorksetDir)
 }
 func validateWorkerRequest(request WorkerRequest) error {
-	if request.ProtocolVersion != WorkerProtocolVersion || request.ProcessCount == 0 || request.WorkerId >= request.ProcessCount {
+	if request.ProtocolVersion != WorkerProtocolVersion || request.ProcessCount == 0 || request.WorkerID >= request.ProcessCount {
 		return invalidWorker("worker protocol request is invalid")
 	}
 	if _, err := indexdomain.ValidateConcurrency(request.SourceWorkerCount, request.ProcessCount, request.ProviderName == "scholarly"); err != nil {
@@ -122,9 +120,9 @@ func validateWorkerRequest(request WorkerRequest) error {
 // LiveWorkerProvider creates the existing source adapters and returns their explicit cleanup operation.
 func LiveWorkerProvider(request WorkerRequest, bootstrap WorkerBootstrap) (provider.IndexContent, func(), error) {
 	proxy := transport.Proxy{}
-	if bootstrap.ProviderProxyUrl != nil {
+	if bootstrap.ProviderProxyURL != nil {
 		var err error
-		proxy, err = transport.ExplicitProxy(*bootstrap.ProviderProxyUrl)
+		proxy, err = transport.ExplicitProxy(*bootstrap.ProviderProxyURL)
 		if err != nil {
 			return nil, nil, invalidWorker("worker bootstrap is invalid")
 		}
@@ -145,7 +143,7 @@ func scholarlyWorkerProvider(request WorkerRequest, bootstrap WorkerBootstrap, p
 	if bootstrap.ScholarlyConfig == nil || bootstrap.ScholarlyWorksetDir == nil {
 		return nil, nil, invalidWorker("Scholarly workset directory is required")
 	}
-	config := bootstrap.ScholarlyConfig.WithWorkerContext(request.WorkerId, request.ProcessCount).WithScheduleEpoch(request.ScheduleEpochUnixMillis)
+	config := bootstrap.ScholarlyConfig.WithWorkerContext(request.WorkerID, request.ProcessCount).WithScheduleEpoch(request.ScheduleEpochUnixMillis)
 	client, err := scholarly.NewLiveTransport(config, int(request.SourceWorkerCount), proxy)
 	if err != nil {
 		return nil, nil, &ExecutionError{Failure: WorkerFailure{Class: "provider_setup", Operation: "provider_setup"}, Message: "scholarly indexing provider could not initialize", Cause: err}
@@ -190,12 +188,12 @@ func fetchWorkerAssignment(ctx context.Context, request WorkerRequest, assignmen
 	if checkpoint != nil {
 		seen[*checkpoint] = true
 	}
-	for page := uint64(0); page < maximumProviderPages; page++ {
+	for page := range maximumProviderPages {
 		batch, err := implementation.Fetch(ctx, assignment.Entry, domain.IndexFetchContext{Mode: assignment.Mode, CommittedAnchor: assignment.CommittedAnchor, TraversalCheckpoint: checkpoint})
 		if err != nil {
 			return &ExecutionError{Failure: WorkerFailure{Class: "provider", Operation: "provider_request"}, Message: err.Error(), Cause: err}
 		}
-		if batch.CatalogId != assignment.Entry.CatalogId {
+		if batch.CatalogID != assignment.Entry.CatalogID {
 			return invalidWorker("provider batch catalog identity is invalid")
 		}
 		if err := acknowledgeWorkerPage(request, assignment, batch, page, reader, writer, sequence); err != nil {
@@ -215,7 +213,7 @@ func fetchWorkerAssignment(ctx context.Context, request WorkerRequest, assignmen
 // acknowledgeWorkerPage advances the sequence only after an exactly correlated acknowledgement.
 func acknowledgeWorkerPage(request WorkerRequest, assignment WorkerAssignment, batch domain.ProviderBatch, page uint64, reader *ProtocolReader, writer io.Writer, sequence *uint64) error {
 	isComplete := batch.Progress.State == domain.Complete
-	if err := WriteProtocol(writer, WorkerMessage{Type: "batch", ProtocolVersion: WorkerProtocolVersion, WorkerId: request.WorkerId, Sequence: *sequence, JournalOrdinal: assignment.JournalOrdinal, PageIndex: page, Batch: &batch}); err != nil {
+	if err := WriteProtocol(writer, WorkerMessage{Type: "batch", ProtocolVersion: WorkerProtocolVersion, WorkerID: request.WorkerID, Sequence: *sequence, JournalOrdinal: assignment.JournalOrdinal, PageIndex: page, Batch: &batch}); err != nil {
 		return workerProtocolFailure()
 	}
 	var acknowledgement ParentMessage
@@ -231,7 +229,7 @@ func acknowledgeWorkerPage(request WorkerRequest, assignment WorkerAssignment, b
 
 // mismatchedWorkerAcknowledgement binds the acknowledgement to the emitted page and completion state.
 func mismatchedWorkerAcknowledgement(acknowledgement ParentMessage, request WorkerRequest, assignment WorkerAssignment, sequence, page uint64, isComplete bool) bool {
-	return acknowledgement.ProtocolVersion != WorkerProtocolVersion || acknowledgement.WorkerId != request.WorkerId || acknowledgement.Sequence != sequence || acknowledgement.JournalOrdinal != assignment.JournalOrdinal || acknowledgement.PageIndex != page || acknowledgement.IsComplete != isComplete
+	return acknowledgement.ProtocolVersion != WorkerProtocolVersion || acknowledgement.WorkerID != request.WorkerID || acknowledgement.Sequence != sequence || acknowledgement.JournalOrdinal != assignment.JournalOrdinal || acknowledgement.PageIndex != page || acknowledgement.IsComplete != isComplete
 }
 
 // advanceWorkerCheckpoint rejects missing, repeated and over-limit continuation after its commit.

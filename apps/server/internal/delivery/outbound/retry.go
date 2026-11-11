@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-// JsonTransport is the bounded request boundary shared by delivery providers.
-type JsonTransport interface {
-	PostJson(context.Context, string, http.Header, any, time.Duration) (Response, error)
+// JSONTransport is the bounded request boundary shared by delivery providers.
+type JSONTransport interface {
+	PostJSON(context.Context, string, http.Header, any, time.Duration) (Response, error)
 }
 
 // RetryDelay honors bounded numeric Retry-After, otherwise applying full jitter to capped exponential backoff.

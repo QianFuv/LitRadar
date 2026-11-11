@@ -34,7 +34,7 @@ type NotFound struct{ Message string }
 func (failure NotFound) Error() string { return failure.Message }
 
 func open(configuration config.Config, name *string) (*sql.DB, error) {
-	filename, err := configuration.ResolveIndexDbPath(name)
+	filename, err := configuration.ResolveIndexDBPath(name)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +61,7 @@ func orderBy(sort *string, fallback, alias string, allowed ...string) (string, e
 		input = *sort
 	}
 	specs := []string{}
-	for _, part := range strings.Split(input, ",") {
+	for part := range strings.SplitSeq(input, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue

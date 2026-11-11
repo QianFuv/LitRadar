@@ -1,6 +1,6 @@
 package index
 
-const batchCreateSql = `CREATE TABLE index_batches (
+const batchCreateSQL = `CREATE TABLE index_batches (
              batch_id TEXT PRIMARY KEY CHECK (length(batch_id) BETWEEN 1 AND 512),
              status TEXT NOT NULL
                  CHECK (status IN ('active', 'abandoning', 'completed', 'abandoned')),
@@ -92,7 +92,7 @@ const batchCreateSql = `CREATE TABLE index_batches (
          CREATE INDEX index_batch_catalogs_phase
              ON index_batch_catalogs(batch_id, phase);`
 
-const batchUpgradeSql = `ALTER TABLE index_batch_catalogs
+const batchUpgradeSQL = `ALTER TABLE index_batch_catalogs
                  ADD COLUMN notify_attempt_id TEXT CHECK (
                      notify_attempt_id IS NULL OR length(notify_attempt_id) BETWEEN 1 AND 512
                  );

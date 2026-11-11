@@ -21,11 +21,11 @@ type accessSessionReader struct {
 	data   *authstorage.CnkiData
 	err    error
 	calls  int
-	user   identity.Id
+	user   identity.ID
 	active bool
 }
 
-func (reader *accessSessionReader) Data(_ context.Context, user identity.Id, active bool) (*authstorage.CnkiData, error) {
+func (reader *accessSessionReader) Data(_ context.Context, user identity.ID, active bool) (*authstorage.CnkiData, error) {
 	reader.calls++
 	reader.user = user
 	reader.active = active
@@ -44,15 +44,15 @@ func (wire *observedZjlibTransport) Search(ctx context.Context, title string, li
 
 func TestZjlibFullTextAuthenticationPrecedesTransport(t *testing.T) {
 	for _, test := range []struct {
-		user    *identity.Id
+		user    *identity.ID
 		data    *authstorage.CnkiData
 		err     error
 		kind    provider.ErrorKind
 		message string
 	}{
 		{nil, nil, nil, provider.AuthenticationRequired, "authenticated CNKI session required"},
-		{new(identity.Id(9007199254740993)), nil, errors.New("private database path"), provider.Internal, "CNKI session unavailable"},
-		{new(identity.Id(3)), nil, nil, provider.AuthenticationRequired, "active CNKI session required"},
+		{new(identity.ID(9007199254740993)), nil, errors.New("private database path"), provider.Internal, "CNKI session unavailable"},
+		{new(identity.ID(3)), nil, nil, provider.AuthenticationRequired, "active CNKI session required"},
 	} {
 		t.Run(test.message, func(t *testing.T) {
 			reader := &accessSessionReader{data: test.data, err: test.err}
@@ -61,7 +61,7 @@ func TestZjlibFullTextAuthenticationPrecedesTransport(t *testing.T) {
 				t.Fatal("unauthenticated request created transport")
 				return nil, nil, nil
 			}
-			_, err := access.ResolveFullText(context.Background(), domain.ArticleLocator{}, domain.ArticleAccessContext{UserId: test.user})
+			_, err := access.ResolveFullText(context.Background(), domain.ArticleLocator{}, domain.ArticleAccessContext{UserID: test.user})
 			var failure *provider.Error
 			if !errors.As(err, &failure) || failure.Kind != test.kind || failure.Message != test.message {
 				t.Fatal(err)
@@ -96,7 +96,7 @@ func TestZjlibFullTextUsesFreshSessionAndExactTenCandidateMatch(t *testing.T) {
 	}
 	article := domain.ArticleLocator{Title: "Exact Article", JournalTitle: "Fixture CNKI Journal", Authors: []string{"Ada Lovelace", "Grace Hopper"}}
 	for range 2 {
-		result, err := access.ResolveFullText(context.Background(), article, domain.ArticleAccessContext{UserId: new(identity.Id(9)), Deadline: deadline})
+		result, err := access.ResolveFullText(context.Background(), article, domain.ArticleAccessContext{UserID: new(identity.ID(9)), Deadline: deadline})
 		assertExactZjlibDocument(t, result, err)
 	}
 	if created != 2 || closed != 2 || wires[0] == wires[1] || wires[0].limit != 10 || wires[1].limit != 10 || before != string(reader.data.SessionData) {

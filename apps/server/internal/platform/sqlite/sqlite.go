@@ -56,8 +56,8 @@ func (connection *connector) Connect(ctx context.Context) (driver.Conn, error) {
 
 func (connection *connector) Driver() driver.Driver { return connection.driver }
 
-// FileUri encodes filesystem punctuation as path data while keeping explicit SQLite options separate.
-func FileUri(filename, mode string) (string, error) {
+// FileURI encodes filesystem punctuation as path data while keeping explicit SQLite options separate.
+func FileURI(filename, mode string) (string, error) {
 	if mode != "ro" && mode != "rw" && mode != "rwc" {
 		return "", fmt.Errorf("unsupported SQLite open mode")
 	}
@@ -85,7 +85,7 @@ func FileUri(filename, mode string) (string, error) {
 
 // Open constructs a lazy pool with policy applied on physical opens and reconnects.
 func Open(config Config) (*sql.DB, error) {
-	dsn, err := FileUri(config.Filename, config.Mode)
+	dsn, err := FileURI(config.Filename, config.Mode)
 	if err != nil {
 		return nil, err
 	}

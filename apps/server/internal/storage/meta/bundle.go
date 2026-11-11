@@ -100,7 +100,7 @@ func findPackagedDirectory(directories []string) (string, error) {
 // object requires every declared field exactly once and rejects null or unknown values.
 func object(raw []byte, fields ...string) (map[string]json.RawMessage, error) {
 	invalid := errors.New("invalid metadata bundle manifest")
-	if !jsonvalue.ValidJson(string(raw)) {
+	if !jsonvalue.ValidJSON(string(raw)) {
 		return nil, invalid
 	}
 	return namedObject(raw, fields, invalid)
@@ -162,7 +162,7 @@ func validDigest(value string) bool {
 		return false
 	}
 	for _, character := range value {
-		if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f') {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
 			return false
 		}
 	}

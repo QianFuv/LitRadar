@@ -39,12 +39,12 @@ func TestEnqueueSlotIdentityAndCoalescing(t *testing.T) {
 	}
 	task.Coalesce = true
 	if err := repository.auth.Immediate(ctx, false, func(connection *sql.Conn) error {
-		_, err := connection.ExecContext(ctx, "UPDATE scheduled_tasks SET coalesce=1 WHERE id=?", task.Id)
+		_, err := connection.ExecContext(ctx, "UPDATE scheduled_tasks SET coalesce=1 WHERE id=?", task.ID)
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if admission, err := repository.ClaimManual(ctx, task.Id, "manual", 1000, 90); err != nil || admission.Claim == nil {
+	if admission, err := repository.ClaimManual(ctx, task.ID, "manual", 1000, 90); err != nil || admission.Claim == nil {
 		t.Fatal(admission, err)
 	}
 	if inserted, err := repository.Enqueue(ctx, *task, []int64{300, 360}); err != nil || inserted != 1 {
@@ -114,7 +114,7 @@ func BenchmarkEnqueueSlots(b *testing.B) {
 				}
 				b.StopTimer()
 				if err := repository.auth.Immediate(ctx, false, func(connection *sql.Conn) error {
-					_, err := connection.ExecContext(ctx, "DELETE FROM scheduled_task_runs WHERE task_id=?", task.Id)
+					_, err := connection.ExecContext(ctx, "DELETE FROM scheduled_task_runs WHERE task_id=?", task.ID)
 					return err
 				}); err != nil {
 					b.Fatal(err)

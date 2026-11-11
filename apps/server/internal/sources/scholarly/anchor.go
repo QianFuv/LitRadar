@@ -35,7 +35,7 @@ func (issue IssueFingerprint) MarshalJSON() ([]byte, error) {
 	switch issue.Kind {
 	case "volume_issue":
 		if issue.PublicationYear == nil {
-			return nil, errWorksetJson
+			return nil, errWorksetJSON
 		}
 		return encodeWorksetStruct(volumeIssueWire{issue.Kind, *issue.PublicationYear, issue.Volume, issue.Issue})
 	case "date":
@@ -43,7 +43,7 @@ func (issue IssueFingerprint) MarshalJSON() ([]byte, error) {
 	case "title":
 		return encodeWorksetStruct(titleIssueWire{issue.Kind, issue.PublicationYear, issue.Title})
 	default:
-		return nil, errWorksetJson
+		return nil, errWorksetJSON
 	}
 }
 
@@ -77,7 +77,7 @@ func (issue *IssueFingerprint) UnmarshalJSON(body []byte) error {
 		decoded.PublicationYear = wire.PublicationYear
 		decoded.Title = wire.Title
 	default:
-		return errWorksetJson
+		return errWorksetJSON
 	}
 	*issue = decoded
 	return nil
@@ -284,11 +284,12 @@ func normalizeIssueLabel(value *string) *string {
 // issueFingerprintFromFields preserves year-label, date and title precedence.
 func issueFingerprintFromFields(year *int64, date, title, volume, issue *string) (IssueFingerprint, bool) {
 	fingerprint := IssueFingerprint{}
-	if year != nil && validYear(*year) && (volume != nil || issue != nil) {
+	switch {
+	case year != nil && validYear(*year) && (volume != nil || issue != nil):
 		fingerprint = IssueFingerprint{Kind: "volume_issue", PublicationYear: clonePointer(year), Volume: volume, Issue: issue}
-	} else if date != nil {
+	case date != nil:
 		fingerprint = IssueFingerprint{Kind: "date", Date: *date}
-	} else if title != nil {
+	case title != nil:
 		normalized := domain.NormalizeBibliographicText(*title)
 		if normalized == "" {
 			return IssueFingerprint{}, false
@@ -297,7 +298,8 @@ func issueFingerprintFromFields(year *int64, date, title, volume, issue *string)
 		if year != nil && validYear(*year) {
 			fingerprint.PublicationYear = clonePointer(year)
 		}
-	} else {
+	default:
+
 		return IssueFingerprint{}, false
 	}
 	return fingerprint, true
