@@ -76,7 +76,7 @@ try {
     timeout: 60000,
   });
   const schemaSource = `${COMMENT_HEADER}${astToString(
-    await openapiTS(pathToFileURL(openapiPath), { alphabetize: true, silent: true }),
+    await openapiTS(pathToFileURL(openapiPath), { alphabetize: true, defaultNonNullable: false, silent: true }),
   )}`;
   const sources = {
     'openapi.json': await fs.readFile(openapiPath, 'utf8'),

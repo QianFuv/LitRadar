@@ -929,6 +929,7 @@
         "required": ["kind"],
         "type": "object"
       },
+      "IndexProviderRoutes": { "additionalProperties": { "type": "string" }, "type": "object" },
       "IndexStats": {
         "additionalProperties": false,
         "properties": {
@@ -944,6 +945,72 @@
       },
       "Info": {
         "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": { "field": { "const": "article_abstract_provider_orders" } },
+              "required": ["field"]
+            },
+            "then": {
+              "properties": {
+                "value": {
+                  "contentMediaType": "application/json",
+                  "contentSchema": { "$ref": "#/components/schemas/ProviderOrders" },
+                  "description": "JSON-encoded ProviderOrders; decode the string to access the named structure.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": { "field": { "const": "article_fulltext_provider_orders" } },
+              "required": ["field"]
+            },
+            "then": {
+              "properties": {
+                "value": {
+                  "contentMediaType": "application/json",
+                  "contentSchema": { "$ref": "#/components/schemas/ProviderOrders" },
+                  "description": "JSON-encoded ProviderOrders; decode the string to access the named structure.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": { "field": { "const": "index_provider_routes" } },
+              "required": ["field"]
+            },
+            "then": {
+              "properties": {
+                "value": {
+                  "contentMediaType": "application/json",
+                  "contentSchema": { "$ref": "#/components/schemas/IndexProviderRoutes" },
+                  "description": "JSON-encoded IndexProviderRoutes; decode the string to access the named structure.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": { "field": { "const": "provider_proxy_policy" } },
+              "required": ["field"]
+            },
+            "then": {
+              "properties": {
+                "value": {
+                  "contentMediaType": "application/json",
+                  "contentSchema": { "$ref": "#/components/schemas/ProviderProxyPolicy" },
+                  "description": "JSON-encoded ProviderProxyPolicy; decode the string to access the named structure.",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ],
         "properties": {
           "allowed_values": { "items": { "type": "string" }, "type": "array" },
           "apply_mode": {
@@ -1469,6 +1536,19 @@
         "required": ["providers", "catalogs"],
         "type": "object"
       },
+      "ProviderOrders": {
+        "additionalProperties": false,
+        "properties": {
+          "catalogs": {
+            "additionalProperties": { "items": { "type": "string" }, "type": "array" },
+            "type": "object"
+          },
+          "default": { "items": { "type": "string" }, "type": "array" }
+        },
+        "required": ["default", "catalogs"],
+        "type": "object"
+      },
+      "ProviderProxyPolicy": { "additionalProperties": { "type": "boolean" }, "type": "object" },
       "PushStats": {
         "additionalProperties": false,
         "properties": {
@@ -1627,6 +1707,32 @@
           "values": {
             "additionalProperties": { "type": ["string", "null"] },
             "description": "Values keyed by API field name; null clears and a blank secret preserves.",
+            "properties": {
+              "article_abstract_provider_orders": {
+                "contentMediaType": "application/json",
+                "contentSchema": { "$ref": "#/components/schemas/ProviderOrders" },
+                "description": "JSON-encoded ProviderOrders; decode the string to access the named structure.",
+                "type": ["string", "null"]
+              },
+              "article_fulltext_provider_orders": {
+                "contentMediaType": "application/json",
+                "contentSchema": { "$ref": "#/components/schemas/ProviderOrders" },
+                "description": "JSON-encoded ProviderOrders; decode the string to access the named structure.",
+                "type": ["string", "null"]
+              },
+              "index_provider_routes": {
+                "contentMediaType": "application/json",
+                "contentSchema": { "$ref": "#/components/schemas/IndexProviderRoutes" },
+                "description": "JSON-encoded IndexProviderRoutes; decode the string to access the named structure.",
+                "type": ["string", "null"]
+              },
+              "provider_proxy_policy": {
+                "contentMediaType": "application/json",
+                "contentSchema": { "$ref": "#/components/schemas/ProviderProxyPolicy" },
+                "description": "JSON-encoded ProviderProxyPolicy; decode the string to access the named structure.",
+                "type": ["string", "null"]
+              }
+            },
             "type": "object"
           }
         },

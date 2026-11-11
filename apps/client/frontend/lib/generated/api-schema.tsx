@@ -1970,14 +1970,14 @@ export interface components {
        * @description Whether the announcement is visible.
        * @default true
        */
-      enabled: boolean;
+      enabled?: boolean;
       /** @description Announcement message body. */
       message: string;
       /**
        * @description Priority label.
        * @default normal
        */
-      priority: string;
+      priority?: string;
       /** @description Announcement title. */
       title: string;
     };
@@ -2170,13 +2170,13 @@ export interface components {
        * @description Poll interval in seconds.
        * @default 2
        */
-      interval_seconds: number;
+      interval_seconds?: number;
       /**
        * Format: int64
        * @description Poll timeout in seconds.
        * @default 180
        */
-      timeout_seconds: number;
+      timeout_seconds?: number;
     };
     CnkiPollResponse: {
       session: components['schemas']['CnkiStatus'];
@@ -2281,7 +2281,7 @@ export interface components {
        * @default about:blank
        * @example https://example.com/errors/example
        */
-      type: string;
+      type?: string;
     };
     FavoriteAdd: {
       /** @description Article identifier. */
@@ -2465,6 +2465,9 @@ export interface components {
       notify?: boolean;
       push?: boolean;
     };
+    IndexProviderRoutes: {
+      [key: string]: string;
+    };
     IndexStats: {
       databases: components['schemas']['IndexDatabaseStats'][];
       /** Format: int64 */
@@ -2505,7 +2508,7 @@ export interface components {
       /** Format: double */
       updated_at?: number | null;
       value: string;
-    };
+    } & (unknown & unknown & unknown & unknown);
     InviteRequiredResponse: {
       bootstrap_required: boolean;
       required: boolean;
@@ -2697,33 +2700,33 @@ export interface components {
        * @description Retry attempts per AI endpoint.
        * @default 3
        */
-      ai_retry_attempts: number;
+      ai_retry_attempts?: number;
       /** @description Primary AI system prompt. */
       ai_system_prompt?: string;
       /**
        * @description Delivery method.
        * @default folder
        */
-      delivery_method: string;
+      delivery_method?: string;
       /** @description Research direction preferences. */
       directions?: string[];
       /**
        * @description Whether recommendations are enabled.
        * @default true
        */
-      enabled: boolean;
+      enabled?: boolean;
       /** @description Keyword preferences. */
       keywords?: string[];
       /**
        * @description PushPlus channel.
        * @default wechat
        */
-      pushplus_channel: string;
+      pushplus_channel?: string;
       /**
        * @description PushPlus template.
        * @default markdown
        */
-      pushplus_template: string;
+      pushplus_template?: string;
       /** @description PushPlus token update: omitted preserves, null clears, and non-empty replaces. */
       pushplus_token?: string | null;
       /** @description PushPlus topic. */
@@ -2773,6 +2776,15 @@ export interface components {
     ProviderCatalogResponse: {
       catalogs: components['schemas']['ProviderCatalog'][];
       providers: components['schemas']['CapabilityInfo'][];
+    };
+    ProviderOrders: {
+      catalogs: {
+        [key: string]: string[];
+      };
+      default: string[];
+    };
+    ProviderProxyPolicy: {
+      [key: string]: boolean;
     };
     PushStats: {
       db_name: string;
@@ -2874,6 +2886,15 @@ export interface components {
       };
       /** @description Values keyed by API field name; null clears and a blank secret preserves. */
       values?: {
+        /** @description JSON-encoded ProviderOrders; decode the string to access the named structure. */
+        article_abstract_provider_orders?: string | null;
+        /** @description JSON-encoded ProviderOrders; decode the string to access the named structure. */
+        article_fulltext_provider_orders?: string | null;
+        /** @description JSON-encoded IndexProviderRoutes; decode the string to access the named structure. */
+        index_provider_routes?: string | null;
+        /** @description JSON-encoded ProviderProxyPolicy; decode the string to access the named structure. */
+        provider_proxy_policy?: string | null;
+      } & {
         [key: string]: string | null;
       };
     };
@@ -2882,14 +2903,14 @@ export interface components {
        * @description Whether missed slots are collapsed to the latest slot.
        * @default true
        */
-      coalesce: boolean;
+      coalesce?: boolean;
       /** @description Five-field cron expression. */
       cron: string;
       /**
        * @description Whether the task is enabled.
        * @default true
        */
-      enabled: boolean;
+      enabled?: boolean;
       /** @description Validated job specification. */
       job:
         | components['schemas']['IndexJob']
@@ -2914,12 +2935,12 @@ export interface components {
        * @description Maximum execution time in seconds.
        * @default 3600
        */
-      timeout_seconds: number;
+      timeout_seconds?: number;
       /**
        * @description Explicit IANA time zone used for cron evaluation.
        * @default UTC
        */
-      timezone: string;
+      timezone?: string;
     };
     ScheduledTaskUpdate: {
       /** @description Optional coalescing flag. */
@@ -3054,7 +3075,7 @@ export interface components {
        * @description Requested token TTL in seconds.
        * @default 604800
        */
-      ttl: number;
+      ttl?: number;
     };
     TokenInfo: {
       /** Format: double */
