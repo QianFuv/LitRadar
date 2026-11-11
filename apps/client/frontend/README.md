@@ -13,18 +13,18 @@
 
 CI 与前端构建阶段使用：
 
-| 工具              | 版本                                                                    |
-| ----------------- | ----------------------------------------------------------------------- |
-| Node.js           | 26.11.1                                                                 |
-| pnpm              | 12.16.1                                                                 |
-| Vite+（`vp`）     | 1.5.x；内含 Vite 8、Vitest 5、Oxlint、Oxfmt，版本随 Vite+ 锁定          |
-| TanStack Router   | 1.x（代码式路由树，search 用 Zod 4 校验）                               |
-| React / React DOM | 19.2.3                                                                  |
+| 工具              | 版本                                                                                      |
+| ----------------- | ----------------------------------------------------------------------------------------- |
+| Node.js           | 26.11.1                                                                                   |
+| pnpm              | 12.16.1                                                                                   |
+| Vite+（`vp`）     | 1.5.x；内含 Vite 8、Vitest 5、Oxlint、Oxfmt，版本随 Vite+ 锁定                            |
+| TanStack Router   | 1.x（代码式路由树，search 用 Zod 4 校验）                                                 |
+| React / React DOM | 19.2.3                                                                                    |
 | React Compiler    | `babel-plugin-react-compiler` 1.x，经 `@rolldown/plugin-babel` 在 `vite.config.ts` 中启用 |
-| Motion for React  | 14.x                                                                    |
-| TypeScript        | 7.x                                                                     |
-| StyleX            | 0.19.x（`@stylexjs/unplugin` 编译为原子 CSS，经 Lightning CSS 处理）    |
-| Go                | 1.27.3；生成 OpenAPI、启动后端和 full-stack e2e 时需要，不需要 C 编译器 |
+| Motion for React  | 14.x                                                                                      |
+| TypeScript        | 7.x                                                                                       |
+| StyleX            | 0.19.x（`@stylexjs/unplugin` 编译为原子 CSS，经 Lightning CSS 处理）                      |
+| Go                | 1.27.3；生成 OpenAPI、启动后端和 full-stack e2e 时需要，不需要 C 编译器                   |
 
 依赖由仓库根目录的 pnpm workspace `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Router、TanStack Query、TanStack Pacer（防抖）、Zod、next-themes、Base UI（经 Animate UI primitives 封装）、StyleX、Motion 和 lucide-react；元素可见性用原生 IntersectionObserver（`lib/use-in-view.tsx`）。根目录 `.gitattributes` 让 `apps/client/frontend/**` 在所有平台以 LF 换行签出，与 Oxfmt 的格式检查一致。样式写在各组件文件末尾的 `stylex.create`，颜色与阴影引用 `lib/theme.stylex.tsx` 的 token；接受样式覆盖的组件使用 `xstyle` 属性（类型为 `stylex.StyleXStyles`），不再接受 `className`。Motion 只通过 `components/ui/motion.tsx` 的 `LazyMotion` / `domAnimation` 封装进入业务代码；Base UI 浮层的进出场由 Animate UI primitives 内置的 Motion 过渡驱动。
 
