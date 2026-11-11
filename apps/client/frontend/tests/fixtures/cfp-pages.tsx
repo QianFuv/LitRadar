@@ -2,7 +2,7 @@
 
 import type { CfpNoticePage } from '@/lib/api';
 
-export const CFP_FIXTURE_PAGES: Record<string, CfpNoticePage> = {
+export const CFP_FIXTURE_PAGES = {
   'issn-1949-3045': {
     journal: {
       catalogId: 'issn-1949-3045',
@@ -513,37 +513,48 @@ export const CFP_FIXTURE_PAGES: Record<string, CfpNoticePage> = {
       has_more: false,
     },
   },
-};
+  'issn-0922-6567': {
+    journal: {
+      catalogId: 'issn-0922-6567',
+      catalogAliases: [],
+      allIssns: ['0922-6567'],
+      titleAliases: [],
+      title: 'Machine Translation',
+      area: null,
+      coverage: 'adapted',
+      checkedOn: '2026-09-14',
+      sourceUrl: 'https://link.springer.com/journal/10590',
+      sourceStatement:
+        'Machine Translation is now archived and no longer receiving submissions with this publisher.',
+      noticeCount: 0,
+      currentCount: 0,
+      stateCounts: {},
+      canRefresh: false,
+      refreshStatus: 'snapshot',
+      lastAttempt: null,
+      lastSuccess: null,
+      lastError: null,
+    },
+    evaluatedAt: 1789473600,
+    items: [],
+    page: {
+      total: 0,
+      limit: 50,
+      offset: 0,
+      next_cursor: null,
+      has_more: false,
+    },
+  },
+} satisfies Record<string, CfpNoticePage>;
 
-CFP_FIXTURE_PAGES['issn-0922-6567'] = {
-  journal: {
-    catalogId: 'issn-0922-6567',
-    catalogAliases: [],
-    allIssns: ['0922-6567'],
-    titleAliases: [],
-    title: 'Machine Translation',
-    area: null,
-    coverage: 'adapted',
-    checkedOn: '2026-09-14',
-    sourceUrl: 'https://link.springer.com/journal/10590',
-    sourceStatement:
-      'Machine Translation is now archived and no longer receiving submissions with this publisher.',
-    noticeCount: 0,
-    currentCount: 0,
-    stateCounts: {},
-    canRefresh: false,
-    refreshStatus: 'snapshot',
-    lastAttempt: null,
-    lastSuccess: null,
-    lastError: null,
-  },
-  evaluatedAt: 1789473600,
-  items: [],
-  page: {
-    total: 0,
-    limit: 50,
-    offset: 0,
-    next_cursor: null,
-    has_more: false,
-  },
-};
+const CFP_FIXTURE_PAGE_LOOKUP = new Map<string, CfpNoticePage>(Object.entries(CFP_FIXTURE_PAGES));
+
+/**
+ * Find the fixture notice page of a catalog, if one exists.
+ *
+ * @param catalogId - Catalog id from a request.
+ * @returns Fixture page, or undefined for catalogs without fixtures.
+ */
+export function findCfpFixturePage(catalogId: string): CfpNoticePage | undefined {
+  return CFP_FIXTURE_PAGE_LOOKUP.get(catalogId);
+}

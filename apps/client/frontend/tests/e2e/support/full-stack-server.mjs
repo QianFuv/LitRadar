@@ -126,6 +126,16 @@ async function runCaptured(executable, args, label) {
 }
 
 /**
+ * Check whether a server address is a bound TCP address rather than a pipe name or nothing.
+ *
+ * @param {ReturnType<net.Server['address']>} address - Address reported by the server.
+ * @returns {address is net.AddressInfo} Whether the address has a port.
+ */
+function isPortAddress(address) {
+  return address instanceof Object;
+}
+
+/**
  * Reserve and release an ephemeral loopback port.
  *
  * @returns {Promise<number>} Available TCP port.
@@ -136,7 +146,7 @@ async function reserveLoopbackPort() {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', () => {
       const address = server.address();
-      if (!address || typeof address === 'string') {
+      if (!isPortAddress(address)) {
         server.close();
         reject(new Error('failed to reserve a loopback port'));
         return;

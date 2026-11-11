@@ -255,7 +255,7 @@ async function rendersApplicationFrame(): Promise<void> {
   for (const navigation of navigations) {
     expect(within(navigation).getAllByRole('link')).toHaveLength(5);
     expect(within(navigation).getByRole('link', { name: '文献检索' })).toHaveAttribute('href', '/');
-    expect(within(navigation).getByRole('link', { name: '每周更新' })).toHaveAttribute(
+    expect(within(navigation).getByRole('link', { name: /每周更新/ })).toHaveAttribute(
       'href',
       '/?view=weekly-updates',
     );

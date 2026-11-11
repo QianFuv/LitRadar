@@ -11,7 +11,7 @@ import { RuntimeSettingsCard } from '@/components/admin/runtime-settings-card';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
-let updatePayload: unknown = null;
+let updatePayload: unknown;
 
 /**
  * Return configured secret and non-secret runtime pools.
@@ -141,7 +141,7 @@ async function renderRuntimeSettings(runtimeSettings = runtimeSettingsFixture())
  * Verify stored masks and count render while an untouched pool is omitted.
  */
 async function rendersAndPreservesStoredSecrets(): Promise<void> {
-  updatePayload = null;
+  updatePayload = undefined;
   await renderRuntimeSettings();
   const user = userEvent.setup();
 
@@ -158,7 +158,7 @@ async function rendersAndPreservesStoredSecrets(): Promise<void> {
  * Verify one stored key can be removed, restored, and removed alongside an addition.
  */
 async function updatesStoredSecretPool(): Promise<void> {
-  updatePayload = null;
+  updatePayload = undefined;
   await renderRuntimeSettings();
   const user = userEvent.setup();
 
@@ -195,7 +195,7 @@ async function updatesStoredSecretPool(): Promise<void> {
  * Verify explicit clear sends JSON null without redundant item removals.
  */
 async function clearsSecretPoolWithNull(): Promise<void> {
-  updatePayload = null;
+  updatePayload = undefined;
   await renderRuntimeSettings();
   const user = userEvent.setup();
 
@@ -216,7 +216,7 @@ async function clearsSecretPoolWithNull(): Promise<void> {
  * Verify the non-secret Crossref pool keeps its existing plaintext row editor.
  */
 async function editsNonSecretPool(): Promise<void> {
-  updatePayload = null;
+  updatePayload = undefined;
   await renderRuntimeSettings();
   const user = userEvent.setup();
 
@@ -237,7 +237,7 @@ async function editsNonSecretPool(): Promise<void> {
  * Verify persisted logging controls submit explicit restart-required values.
  */
 async function editsRuntimeLoggingSettings(): Promise<void> {
-  updatePayload = null;
+  updatePayload = undefined;
   await renderRuntimeSettings();
   const user = userEvent.setup();
 
@@ -267,7 +267,7 @@ async function editsRuntimeLoggingSettings(): Promise<void> {
  */
 async function managesScalarProviderProxyUrl(): Promise<void> {
   const secretSentinel = 'socks5h://proxy-user:runtime-proxy-secret-sentinel@proxy.example:1080';
-  updatePayload = null;
+  updatePayload = undefined;
   await renderRuntimeSettings([providerProxyUrlFixture()]);
   const user = userEvent.setup();
 

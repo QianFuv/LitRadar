@@ -20,9 +20,6 @@ export function createFavoriteScenarioHandlers(folders: FolderScenario[] = []): 
   return [http.get(`${API_URL}/favorites/folders`, () => HttpResponse.json(folders))];
 }
 
-/** Stable favorites happy-path handlers. */
-export const FAVORITE_SCENARIO_HANDLERS = createFavoriteScenarioHandlers();
-
 /**
  * Return a bounded favorite page for component and API-flow fixtures.
  *

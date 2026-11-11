@@ -55,6 +55,3 @@ export function createTrackingScenarioHandlers(
     ),
   ];
 }
-
-/** Stable tracking happy-path handlers. */
-export const TRACKING_SCENARIO_HANDLERS = createTrackingScenarioHandlers();

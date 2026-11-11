@@ -54,8 +54,7 @@ function validatesAccountIdentityContracts(): void {
 
   expect(parseAuthUser(oidcUser)).toBe(oidcUser);
   for (const field of ['email', 'auth_kind', 'is_oidc_linked'] as const) {
-    const missing: Record<string, unknown> = { ...user };
-    delete missing[field];
+    const missing = Object.fromEntries(Object.entries(user).filter(([key]) => key !== field));
     expect(() => parseAuthUser(missing)).toThrow(ApiContractError);
   }
   expect(() => parseAuthUser({ ...user, auth_kind: 'ldap' })).toThrow(ApiContractError);

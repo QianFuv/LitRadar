@@ -448,7 +448,7 @@ async function reconcilesExternalSessions(): Promise<void> {
   expect(await screen.findByText('restored_admin')).toBeInTheDocument();
   queryClient.setQueryData(['private-old-user'], 'private data');
   currentUser = createAuthUserScenario({ id: 22, username: 'replacement', is_admin: false });
-  act(() =>
+  void act(() =>
     window.dispatchEvent(
       new StorageEvent('storage', {
         key: 'litradar:v1:user',
@@ -462,7 +462,7 @@ async function reconcilesExternalSessions(): Promise<void> {
   expect(await screen.findByText('replacement')).toBeInTheDocument();
   expect(screen.queryByText('untrusted')).not.toBeInTheDocument();
   currentUser = null;
-  act(() => document.dispatchEvent(new Event('visibilitychange')));
+  await act(() => document.dispatchEvent(new Event('visibilitychange')));
   await waitFor(() => expect(screen.getByText('ready')).toBeInTheDocument());
   expect(screen.getByText('anonymous')).toBeInTheDocument();
 }
@@ -490,7 +490,7 @@ async function ignoresStaleSessionRestoration(): Promise<void> {
     </AuthProvider>,
   );
   await waitFor(() => expect(requestCount).toBe(1));
-  act(() => window.dispatchEvent(new StorageEvent('storage', { key: 'litradar:v1:user' })));
+  await act(() => window.dispatchEvent(new StorageEvent('storage', { key: 'litradar:v1:user' })));
   expect(await screen.findByText('replacement')).toBeInTheDocument();
   await act(async () => {
     releaseResponse?.(HttpResponse.json(RESTORED_USER));
@@ -515,7 +515,7 @@ async function preservesUnchangedVisibleSession(): Promise<void> {
   );
   expect(await screen.findByText('restored_admin')).toBeInTheDocument();
   queryClient.setQueryData(['private-same-user'], 'draft context');
-  act(() => document.dispatchEvent(new Event('visibilitychange')));
+  await act(() => document.dispatchEvent(new Event('visibilitychange')));
   expect(screen.queryByText('loading')).not.toBeInTheDocument();
   await waitFor(() => expect(requestCount).toBe(2));
   expect(queryClient.getQueryData(['private-same-user'])).toBe('draft context');

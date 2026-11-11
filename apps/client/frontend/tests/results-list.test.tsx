@@ -8,9 +8,9 @@ import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 const resultsListMocks = vi.hoisted(() => ({
-  favoriteChecksByArticle: {
-    '9001': [{ folder_id: 7, folder_name: 'Reading' }],
-  } as Record<string, { folder_id: number; folder_name: string }[]>,
+  favoriteChecksByArticle: Object.fromEntries([
+    ['9001', [{ folder_id: 7, folder_name: 'Reading' }]],
+  ]),
   isFavoriteStatePending: true,
   onFetchNextPage: null as (() => void) | null,
   user: { id: 21, username: 'results_user', is_admin: false },

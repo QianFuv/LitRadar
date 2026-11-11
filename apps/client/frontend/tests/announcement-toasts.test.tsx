@@ -152,7 +152,7 @@ async function showsEachAnnouncementOncePerPage(): Promise<void> {
   await waitFor(() => expect(hasToast(31)).toBe(false));
   expect(window.localStorage.getItem(`${STORAGE_PREFIX}31`)).toBeNull();
 
-  act(() => queryClient.setQueryData(['announcements'], [first, second]));
+  await act(() => queryClient.setQueryData(['announcements'], [first, second]));
 
   await findToast(32);
   expect(hasToast(31)).toBe(false);

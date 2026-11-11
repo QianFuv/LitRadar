@@ -129,7 +129,7 @@ async function opensAndNavigatesSettingsDialog(): Promise<void> {
     expect(readRouterUrl(view.router)).toBe(`${WORKSPACE_URL}&settings=notifications`),
   );
 
-  await user.click(screen.getByRole('button', { name: '关闭' }));
+  await user.click(screen.getByRole('button', { name: '返回' }));
   await waitFor(() => expect(readRouterUrl(view.router)).toBe(WORKSPACE_URL));
 }
 
@@ -228,7 +228,7 @@ async function restoresFocusToTransientMenuTrigger(): Promise<void> {
   expect(menuTrigger).not.toHaveAttribute(SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE);
   menu.remove();
 
-  await user.click(screen.getByRole('button', { name: '关闭' }));
+  await user.click(screen.getByRole('button', { name: '返回' }));
   await waitFor(() => expect(menuTrigger).toHaveFocus());
   menuTrigger.remove();
 }

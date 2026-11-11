@@ -9,14 +9,23 @@ import { getFocusedOrigin, revealThemeChange } from '@/lib/theme-transition';
 type StartViewTransition = (options: unknown) => { ready: Promise<void> };
 
 /**
+ * Check whether a view transition argument is the bare update callback.
+ *
+ * @param options - Argument passed to `document.startViewTransition`.
+ * @returns Whether the argument is the update callback.
+ */
+function isUpdateCallback(options: unknown): options is () => void {
+  return typeof options === 'function';
+}
+
+/**
  * Install a view transition stub that runs its update right away.
  *
  * @returns Stubbed `document.startViewTransition`.
  */
 function stubViewTransitions() {
   const start = vi.fn<StartViewTransition>((options) => {
-    const update =
-      typeof options === 'function' ? options : (options as { update: () => void }).update;
+    const update = isUpdateCallback(options) ? options : (options as { update: () => void }).update;
     update();
     return { ready: Promise.resolve() };
   });

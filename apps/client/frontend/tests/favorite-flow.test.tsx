@@ -70,7 +70,7 @@ vi.mock('@/components/feature/article-dialog-card', async () => {
   };
 });
 
-let favoriteRequestBody: unknown = null;
+let favoriteRequestBody: unknown;
 let removeRequestCount = 0;
 
 /**
@@ -223,7 +223,7 @@ async function rendersFavoritesWorkspace(): Promise<void> {
  * Verify a successful mutation updates the immediate favorite state and query cache.
  */
 async function updatesFavoriteCache(): Promise<void> {
-  favoriteRequestBody = null;
+  favoriteRequestBody = undefined;
   server.use(
     http.get('http://localhost/api/auth/me', currentUserResponse),
     http.get('http://localhost/api/favorites/folders', foldersResponse),
@@ -421,7 +421,7 @@ async function togglesFavoriteInCurrentFolder(): Promise<void> {
  */
 async function confirmsBulkFavoriteRemoval(): Promise<void> {
   let articles = [favoriteArticleFixture(1), favoriteArticleFixture(2)];
-  let requestBody: unknown = null;
+  let requestBody: unknown;
   server.use(
     http.get('http://localhost/api/favorites/folders', () =>
       HttpResponse.json([
@@ -451,7 +451,7 @@ async function confirmsBulkFavoriteRemoval(): Promise<void> {
 
   await user.click(await screen.findByRole('checkbox', { name: '选择当前已加载文章' }));
   await user.click(screen.getByRole('button', { name: '删除所选' }));
-  expect(requestBody).toBeNull();
+  expect(requestBody).toBeUndefined();
   expect(screen.getByRole('alertdialog', { name: '移除所选收藏？' })).toHaveTextContent('2 篇');
   await user.click(screen.getByRole('button', { name: '确认移除' }));
 
@@ -731,7 +731,7 @@ async function loadsFavoriteCursorPages(): Promise<void> {
 /** Verify failed membership lookup blocks folder actions until a successful retry. */
 async function retriesUnknownFavoriteState(): Promise<void> {
   let shouldFail = true;
-  favoriteRequestBody = null;
+  favoriteRequestBody = undefined;
   server.use(
     http.get('http://localhost/api/auth/me', currentUserResponse),
     http.get('http://localhost/api/favorites/folders', foldersResponse),
@@ -752,13 +752,13 @@ async function retriesUnknownFavoriteState(): Promise<void> {
   expect(await screen.findByRole('alert')).toHaveTextContent('Favorite lookup unavailable');
   expect(screen.getByRole('button', { name: '收藏状态未知' })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Reading' })).not.toBeInTheDocument();
-  expect(favoriteRequestBody).toBeNull();
+  expect(favoriteRequestBody).toBeUndefined();
   shouldFail = false;
   await user.click(screen.getByRole('button', { name: '重试收藏状态' }));
   const folder = await screen.findByRole('button', { name: 'Reading' });
   await waitFor(() => expect(folder).toBeEnabled());
   await user.click(folder);
-  await waitFor(() => expect(favoriteRequestBody).not.toBeNull());
+  await waitFor(() => expect(favoriteRequestBody).not.toBeUndefined());
 }
 
 /**

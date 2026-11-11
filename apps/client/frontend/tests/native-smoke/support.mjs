@@ -32,9 +32,9 @@ export const MEMBER_USERNAME = 'fullstack_member';
 /** Password of {@link MEMBER_USERNAME}. */
 export const MEMBER_PASSWORD = 'FullStackMember!2026';
 /** Seeded administrator account of the full-stack fixture. */
-export const ADMIN_USERNAME = 'fullstack_admin';
+const ADMIN_USERNAME = 'fullstack_admin';
 /** Password of {@link ADMIN_USERNAME}. */
-export const ADMIN_PASSWORD = 'FullStackAdmin!2026';
+const ADMIN_PASSWORD = 'FullStackAdmin!2026';
 /** Title of the seeded article used by the journeys. */
 export const ARTICLE_TITLE = 'Evidence Graphs for Living Literature Reviews';
 

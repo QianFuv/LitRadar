@@ -192,11 +192,11 @@ describe('native sign-in surface', () => {
 
   test('shows the browser wait and returns to idle when cancelled', async () => {
     const user = userEvent.setup();
-    const captured: { signal: AbortSignal | null } = { signal: null };
+    let capturedSignal: AbortSignal | undefined;
     shellMocks.signInWithNativeOidc.mockImplementation(
       (signal: AbortSignal) =>
         new Promise((_resolve, reject) => {
-          captured.signal = signal;
+          capturedSignal = signal;
           signal.addEventListener('abort', () => reject(signal.reason), { once: true });
         }),
     );
@@ -208,7 +208,7 @@ describe('native sign-in surface', () => {
     expect(screen.getByRole('button', { name: '登录' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: '取消单点登录' }));
 
-    expect(captured.signal?.aborted).toBe(true);
+    expect(capturedSignal?.aborted).toBe(true);
     expect(await screen.findByRole('button', { name: '使用 校园身份 登录' })).toBeEnabled();
     expect(screen.queryByRole('alert')).toBeNull();
   });

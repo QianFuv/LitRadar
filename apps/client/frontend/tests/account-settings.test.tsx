@@ -170,7 +170,19 @@ async function managesLocalAccountEmail(): Promise<void> {
  */
 async function startsSingleSignOnLink(): Promise<void> {
   const assign = vi.fn();
-  vi.stubGlobal('location', { ...window.location, assign });
+  const { href, origin, protocol, host, hostname, port, pathname, search, hash } = window.location;
+  vi.stubGlobal('location', {
+    href,
+    origin,
+    protocol,
+    host,
+    hostname,
+    port,
+    pathname,
+    search,
+    hash,
+    assign,
+  });
   installAccountUser();
   const user = userEvent.setup();
   await renderWithQuery(<AccountSignInCard oidcLinkResult={null} />);
@@ -435,7 +447,7 @@ async function createsTokenAndRetainsFailedRevocation(): Promise<void> {
   expect(await screen.findByText('automation')).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: '新建' }));
   await user.type(screen.getByLabelText('名称'), 'integration');
-  await user.click(screen.getByRole('button', { name: '30天' }));
+  await user.click(screen.getByRole('radio', { name: '30天' }));
   await user.click(screen.getByRole('button', { name: '创建' }));
 
   expect(await screen.findByText('new-raw-token')).toBeInTheDocument();

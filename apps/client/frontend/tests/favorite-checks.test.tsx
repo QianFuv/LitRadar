@@ -16,6 +16,7 @@ import {
 import { checkFavorite, checkFavoritesBatch, type ArticleId, type FavoriteCheck } from '@/lib/api';
 import { createTestQueryClient } from '@/tests/render';
 import { server } from '@/tests/mocks/server';
+import { isRecord, isString } from '@/lib/type-guards';
 
 type BatchRequest = {
   article_ids: ArticleId[];
@@ -386,7 +387,7 @@ async function retainsLinearMembershipStorage(): Promise<void> {
     .reduce((count, query) => {
       const data: unknown = query.state.data;
       if (Array.isArray(data)) return count + 1;
-      return data && typeof data === 'object' ? count + Object.keys(data).length : count;
+      return isRecord(data) ? count + Object.keys(data).length : count;
     }, 0);
   expect(membershipCount).toBe(1000);
   await waitFor(() =>
@@ -452,7 +453,7 @@ async function synchronizesOverlappingConsumers(): Promise<void> {
   expect(requestedIds).toEqual([['101', '102'], ['103']]);
 
   const changedMembership = [{ folder_id: 9, folder_name: 'Reading' }];
-  act(() =>
+  await act(() =>
     queryClient.setQueryData(['fav-check', 21, 'fixture.sqlite', '102'], changedMembership),
   );
   await waitFor(() => {
@@ -529,7 +530,7 @@ async function boundsMembershipSubscriptionTracking(count: number): Promise<void
     ).length;
     expect(dataTrackingCalls).toBeLessThanOrEqual(4 * count);
     const changedMembership = [{ folder_id: 9, folder_name: 'Reading' }];
-    act(() =>
+    await act(() =>
       queryClient.setQueryData(
         ['fav-check', 21, 'fixture.sqlite', articleIds[0]],
         changedMembership,
@@ -543,7 +544,7 @@ async function boundsMembershipSubscriptionTracking(count: number): Promise<void
         (values) =>
           Array.isArray(values) &&
           values.length === count &&
-          typeof values[0] === 'string' &&
+          isString(values[0]) &&
           values[0].startsWith('cached-'),
       ),
     ).toHaveLength(0);

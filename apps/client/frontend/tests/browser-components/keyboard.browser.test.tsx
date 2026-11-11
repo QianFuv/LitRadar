@@ -261,7 +261,7 @@ async function dismissesPopoverWithEscape(): Promise<void> {
 
 /** Render a segmented period switch and a radio group. */
 function CompositeHarness() {
-  const [period, setPeriod] = useState<string>(PERIODS[0]);
+  const [period, setPeriod] = useState<(typeof PERIODS)[number]>(PERIODS[0]);
   const [method, setMethod] = useState('folder');
   return (
     <>
@@ -280,20 +280,25 @@ function CompositeHarness() {
   );
 }
 
-/** Verify arrow keys rove focus in a toggle group and move the checked radio in a radio group. */
+/**
+ * Verify the segmented control and the radio group are radio groups whose arrow keys move the
+ * focused and checked radio together.
+ */
 async function rovesCompositeControlsWithArrowKeys(): Promise<void> {
   render(<CompositeHarness />);
-  const firstPeriod = page.getByRole('button', { name: '7 天' });
-  const secondPeriod = page.getByRole('button', { name: '30 天' });
+  const periods = page.getByRole('radiogroup', { name: '统计周期' });
+  const firstPeriod = periods.getByRole('radio', { name: '7 天' });
+  const secondPeriod = periods.getByRole('radio', { name: '30 天' });
 
   await press('{Tab}');
   await expect.element(firstPeriod).toHaveFocus();
   await press('{ArrowRight}');
   await expect.element(secondPeriod).toHaveFocus();
-  await expect.element(firstPeriod).toHaveAttribute('aria-pressed', 'true');
-  await press(' ');
-  await expect.element(secondPeriod).toHaveAttribute('aria-pressed', 'true');
-  await expect.element(firstPeriod).toHaveAttribute('aria-pressed', 'false');
+  await expect.element(secondPeriod).toHaveAttribute('aria-checked', 'true');
+  await expect.element(firstPeriod).toHaveAttribute('aria-checked', 'false');
+  await press('{ArrowLeft}');
+  await expect.element(firstPeriod).toHaveFocus();
+  await expect.element(firstPeriod).toHaveAttribute('aria-checked', 'true');
 
   await press('{Tab}');
   const folderRadio = page.getByRole('radio', { name: '追踪文件夹推送' });

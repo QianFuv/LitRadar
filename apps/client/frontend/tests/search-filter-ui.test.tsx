@@ -33,10 +33,6 @@ vi.mock('next-themes', () => ({
   useTheme: () => ({ setTheme: vi.fn(), theme: 'dark' }),
 }));
 
-vi.mock('react-intersection-observer', () => ({
-  useInView: () => ({ ref: vi.fn() }),
-}));
-
 /**
  * Replace one query parameter from outside the search form.
  *
@@ -167,16 +163,15 @@ async function operatesSearchHistoryFromKeyboard(): Promise<void> {
   const input = screen.getByRole('combobox', { name: '搜索文章' });
 
   await user.click(input);
-  expect(await screen.findByRole('listbox', { name: '最近搜索' })).toBeInTheDocument();
+  expect(await screen.findByRole('group', { name: '最近搜索' })).toBeInTheDocument();
   expect(screen.getByRole('option', { name: 'first query' }).parentElement).toHaveAttribute(
     'data-motion-history-key',
     'first query',
   );
   await user.keyboard('{ArrowDown}');
-  expect(screen.getByRole('option', { name: 'first query' })).toHaveAttribute(
-    'aria-selected',
-    'true',
-  );
+  const firstQuery = screen.getByRole('option', { name: 'first query' });
+  expect(firstQuery).toHaveAttribute('data-highlighted');
+  expect(input).toHaveAttribute('aria-activedescendant', firstQuery.id);
   await user.keyboard('{ArrowDown}{Enter}');
   await waitFor(() =>
     expect(screen.getByTestId('history-query')).toHaveTextContent('second query'),
@@ -184,16 +179,56 @@ async function operatesSearchHistoryFromKeyboard(): Promise<void> {
 
   await user.click(input);
   await user.keyboard('{Escape}');
-  expect(screen.queryByRole('listbox', { name: '最近搜索' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('group', { name: '最近搜索' })).not.toBeInTheDocument();
   expect(input).toHaveFocus();
 
   await user.click(input);
   await user.click(screen.getByRole('button', { name: '清空' }));
   await waitFor(() =>
-    expect(screen.queryByRole('listbox', { name: '最近搜索' })).not.toBeInTheDocument(),
+    expect(screen.queryByRole('group', { name: '最近搜索' })).not.toBeInTheDocument(),
   );
   expect(window.localStorage.getItem('litradar:v1:search_history')).toBeNull();
   expect(input).toHaveFocus();
+}
+
+/**
+ * Verify the history list opens from either arrow key, stops at both ends, and Enter without a
+ * highlighted entry submits the typed draft.
+ */
+async function navigatesSearchHistoryEdges(): Promise<void> {
+  window.localStorage.setItem(
+    'litradar:v1:search_history',
+    JSON.stringify(['first query', 'second query', 'third query']),
+  );
+  const user = userEvent.setup();
+  await renderWithQuery(
+    <>
+      <SearchBar />
+      <SearchParamProbe parameter="q" testId="history-query" />
+    </>,
+    { url: '/' },
+  );
+  const input = screen.getByRole('combobox', { name: '搜索文章' });
+  input.focus();
+
+  await user.keyboard('{ArrowUp}');
+  const thirdQuery = await screen.findByRole('option', { name: 'third query' });
+  await waitFor(() => expect(input).toHaveAttribute('aria-activedescendant', thirdQuery.id));
+  await user.keyboard('{ArrowDown}');
+  expect(input).toHaveAttribute('aria-activedescendant', thirdQuery.id);
+  await user.keyboard('{ArrowUp}{ArrowUp}{ArrowUp}');
+  expect(input).toHaveAttribute(
+    'aria-activedescendant',
+    screen.getByRole('option', { name: 'first query' }).id,
+  );
+
+  await user.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('listbox')).not.toBeInTheDocument());
+  expect(input).toHaveFocus();
+  await user.type(input, 'typed draft', { skipClick: true });
+  expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  await user.keyboard('{Enter}');
+  await waitFor(() => expect(screen.getByTestId('history-query')).toHaveTextContent('typed draft'));
 }
 
 /**
@@ -725,6 +760,7 @@ describe('search and filter UI', () => {
     'operates search history with Arrow keys, Enter, and Escape',
     operatesSearchHistoryFromKeyboard,
   );
+  test('stops history navigation at both ends', navigatesSearchHistoryEdges);
   test('targets an optional search query parameter', targetsOptionalQueryParameter);
   test(
     'summarizes applied filters on pills and clears them without changing database',

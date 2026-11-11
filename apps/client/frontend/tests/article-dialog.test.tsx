@@ -135,7 +135,7 @@ async function opensAndClosesAccessibleDialog(): Promise<void> {
 
   expect(screen.getByText('Selectable title').closest('button')).toBeNull();
   expect(screen.getByText('Selectable abstract text').closest('button')).toBeNull();
-  const card = screen.getByRole('button', { name: '查看文章详情：Selectable title' });
+  const card = screen.getByRole('button', { name: /^查看文章详情：\s*Selectable title/ });
   expect(card).toHaveAttribute('tabindex', '0');
   expect(card.querySelector('[data-slot="card-footer"]')).toBeNull();
   expect(screen.queryByText('查看详情')).not.toBeInTheDocument();
@@ -461,7 +461,9 @@ async function showsMissingTitleWithoutCopyingPlaceholder(title: Article['title'
   const article = { ...SAFE_ARTICLE, title };
   await renderArticleCard(article);
   const label = '标题缺失 · DOI: 10.1000/example';
-  const trigger = screen.getByRole('button', { name: `查看文章详情：${label}` });
+  const trigger = screen.getByRole('button', {
+    name: new RegExp(String.raw`^查看文章详情：\s*${label}`),
+  });
   expect(trigger).toHaveTextContent(label);
   await user.click(trigger);
   expect(await screen.findByRole('dialog')).toHaveAccessibleName(

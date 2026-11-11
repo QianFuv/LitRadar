@@ -164,7 +164,7 @@ async function navigatesPersistentAdministratorPanels(): Promise<void> {
     expect(readRouterUrl(view.router)).toBe(`${WORKSPACE_URL}&admin=runtime-settings`),
   );
 
-  await user.click(screen.getByRole('button', { name: '关闭' }));
+  await user.click(screen.getByRole('button', { name: '返回' }));
   await waitFor(() => expect(readRouterUrl(view.router)).toBe(WORKSPACE_URL));
   await waitFor(() => expect(menuTrigger).toHaveFocus());
   menuTrigger.remove();

@@ -126,10 +126,14 @@ function installTestAnimationApis(): void {
     StaticTestIntersectionObserver as unknown as typeof IntersectionObserver;
   globalThis.SVGGeometryElement ??= class extends SVGElement {} as typeof SVGGeometryElement;
   globalThis.DOMMatrix ??= IdentityTestDOMMatrix as unknown as typeof DOMMatrix;
-  Element.prototype.getAnimations ??= () => [];
-  Element.prototype.animate ??= function animate() {
-    return new FinishedTestAnimation() as unknown as Animation;
-  };
+  if (!Reflect.has(Element.prototype, 'getAnimations')) {
+    Element.prototype.getAnimations = () => [];
+  }
+  if (!Reflect.has(Element.prototype, 'animate')) {
+    Element.prototype.animate = function animate() {
+      return new FinishedTestAnimation() as unknown as Animation;
+    };
+  }
 }
 
 /**
@@ -156,7 +160,7 @@ function disableReactOwnerStackCapture(): void {
     Object.defineProperty(reactInternals, 'recentlyCreatedOwnerStacks', {
       configurable: true,
       get: () => Number.POSITIVE_INFINITY,
-      set: () => undefined,
+      set() {},
     });
   }
 }

@@ -5,7 +5,7 @@
 import '@/src/globals.css';
 
 import { act, render, screen, waitFor } from '@testing-library/react';
-import { Circle } from 'lucide-react';
+import { Star } from '@/components/ui/animated-icons';
 import { useRef, useState } from 'react';
 import { page, userEvent } from 'vite-plus/test/browser';
 import { describe, expect, test } from 'vite-plus/test';
@@ -26,13 +26,13 @@ import { MotionDiv, MotionPresence, MotionProvider, REVEAL_VARIANTS } from '@/co
 const SECTIONED_BROWSER_SECTIONS = [
   {
     description: '第一分类说明',
-    icon: Circle,
+    icon: Star,
     id: 'first',
     label: '第一分类',
   },
   {
     description: '第二分类说明',
-    icon: Circle,
+    icon: Star,
     id: 'second',
     label: '第二分类',
   },
@@ -120,7 +120,7 @@ function SectionedDialogHarness() {
       </button>
       <SectionedDialogFrame
         activeSection={activeSection}
-        centerIcon={Circle}
+        centerIcon={Star}
         centerSubtitle="浏览器生命周期测试"
         centerTitle="分区测试"
         contentLabelSuffix="测试内容"

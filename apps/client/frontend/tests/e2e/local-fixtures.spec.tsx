@@ -2,9 +2,10 @@
  * Browser flows backed exclusively by Playwright route fixtures.
  */
 
+import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Browser, type Locator, type Page, type Route } from '@playwright/test';
 
-import { CFP_FIXTURE_PAGES } from '../fixtures/cfp-pages';
+import { CFP_FIXTURE_PAGES, findCfpFixturePage } from '../fixtures/cfp-pages';
 import type { CfpJournalSummary } from '../../lib/api';
 
 /**
@@ -728,7 +729,7 @@ async function verifiesAggregatedSettingsCenter(page: Page): Promise<void> {
   await expect(page).toHaveURL('/?view=favorites&folder=4&settings=account');
   await expect(page.getByRole('heading', { name: '账号与安全', exact: true })).toBeVisible();
 
-  await settingsDialog.getByRole('button', { name: '关闭' }).click();
+  await settingsDialog.getByRole('button', { name: '返回' }).click();
   await expect(page).toHaveURL('/?view=favorites&folder=4');
   await expect(settingsDialog).toHaveCount(0);
   await expect(settingsInitiator).toBeFocused();
@@ -881,7 +882,7 @@ async function verifiesAdministratorCenter(page: Page): Promise<void> {
   await taskDialog.getByRole('button', { name: '取消' }).click();
   await expect(taskDialog).toHaveCount(0);
   await page.screenshot({ path: '../../../output/ui/admin-scheduled-desktop.png', fullPage: true });
-  await adminDialog.getByRole('button', { name: '关闭' }).click();
+  await adminDialog.getByRole('button', { name: '返回' }).click();
   await expect(page).toHaveURL('/?q=graph');
   await expect(adminDialog).toHaveCount(0);
   await expect(accountTrigger).toBeFocused();
@@ -1106,7 +1107,7 @@ async function verifiesSettingsMenuFocus(page: Page, trigger: Locator): Promise<
     'borderColor',
     'color',
   ]);
-  await settingsDialog.getByRole('button', { name: '关闭' }).click();
+  await settingsDialog.getByRole('button', { name: '返回' }).click();
   await expect(page).toHaveURL('/?q=graph');
   await expect(trigger).toBeFocused();
 
@@ -1645,7 +1646,7 @@ async function articleTitleWrappingTest(page: Page, titleText: string): Promise<
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/');
 
-  const card = page.getByRole('button', { name: `查看文章详情：${titleText}`, exact: true });
+  const card = page.getByRole('button', { name: articleTriggerName(titleText) });
   const cardTitle = card.getByRole('heading', { name: titleText, exact: true });
   await expect(cardTitle).toBeVisible();
   await expectArticleTitleToFillFirstLine(cardTitle);
@@ -1746,7 +1747,7 @@ async function expectConsistentDialogClose(dialog: Locator, size: number): Promi
  * @param minimumSize - Minimum control width and height in CSS pixels.
  */
 async function expectTakeoverClose(dialog: Locator, minimumSize: number): Promise<void> {
-  const close = dialog.getByRole('button', { name: '关闭', exact: true });
+  const close = dialog.getByRole('button', { name: '返回', exact: true });
   await expect(close).toBeInViewport();
   await expect.poll(async () => (await close.boundingBox())?.y ?? Infinity).toBeLessThan(24);
   await expect
@@ -1810,6 +1811,55 @@ async function expectReadableControlText(control: Locator): Promise<void> {
     return (Math.max(...luminances) + 0.05) / (Math.min(...luminances) + 0.05);
   });
   expect(contrast).toBeGreaterThanOrEqual(4.5);
+}
+
+/**
+ * Verify the search suggestions keep their keyboard contract in Chromium: arrow keys open the
+ * list on its first or last option (the builder entry) and stop at both ends, Escape closes the list
+ * and keeps focus, and Enter on a highlighted history entry searches it.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function searchSuggestionKeyboardTest({ page }: { page: Page }): Promise<void> {
+  await page.route('**/api/**', serveInterfacePolishApi);
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      'litradar:v1:search_history',
+      JSON.stringify(['first query', 'second query', 'third query']),
+    );
+  });
+  await page.goto('/');
+  const input = page.getByRole('combobox', { name: '搜索文章' });
+  const history = page.getByRole('group', { name: '最近搜索' });
+  const expectHighlighted = async (name: string) => {
+    const option = history.getByRole('option', { name });
+    await expect(option).toHaveAttribute('data-highlighted', '');
+    await expect(input).toHaveAttribute(
+      'aria-activedescendant',
+      (await option.getAttribute('id')) ?? '',
+    );
+  };
+
+  await input.focus();
+  await page.keyboard.press('ArrowDown');
+  await expectHighlighted('first query');
+  await page.keyboard.press('ArrowUp');
+  await expectHighlighted('first query');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('listbox', { name: '搜索建议' })).toHaveCount(0);
+  await expect(input).toBeFocused();
+
+  await page.keyboard.press('ArrowUp');
+  const builder = page.getByRole('option', { name: /使用高级检索构建器/ });
+  await expect(builder).toHaveAttribute('data-highlighted', '');
+  await page.keyboard.press('ArrowDown');
+  await expect(builder).toHaveAttribute('data-highlighted', '');
+  await page.keyboard.press('ArrowUp');
+  await expectHighlighted('third query');
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/[?&]q=third(\+|%20)query/);
+  await expect(page.getByRole('listbox', { name: '搜索建议' })).toHaveCount(0);
+  await expect(input).toHaveValue('third query');
 }
 
 /**
@@ -1936,7 +1986,7 @@ async function interfacePolishFavoriteTest({ page }: { page: Page }): Promise<vo
   await page.evaluate(() => document.fonts.ready);
   const initialWidth = (await trigger.boundingBox())?.width ?? 0;
   await trigger.click();
-  const folder = page.getByRole('button', { name: 'Tracking', exact: true });
+  const folder = page.getByRole('button', { name: /^Tracking/ });
   await folder.click();
   const selectedTrigger = page.getByRole('button', { name: '已收藏', exact: true });
   await expect(selectedTrigger).toBeVisible();
@@ -2137,7 +2187,7 @@ test('scrolls many favorite folder tabs horizontally without moving the page', a
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 844 });
     await page.goto('/?view=favorites');
-    const tabs = page.getByRole('group', { name: '收藏夹' });
+    const tabs = page.getByRole('group', { name: '收藏夹' }).locator('[data-slot="scroll-fade"]');
     const lastTab = tabs.getByRole('button', { name: 'Folder 24', exact: true });
     await expect(lastTab).toBeAttached();
     const heading = page.getByRole('heading', { name: '我的收藏' });
@@ -2303,7 +2353,7 @@ async function databaseSwitchArticleClickTest({ page }: { page: Page }): Promise
       await page.getByRole('option', { name: database, exact: true }).click();
     }
     const title = `Article from ${database}.sqlite`;
-    const card = page.getByRole('button', { name: `查看文章详情：${title}`, exact: true });
+    const card = page.getByRole('button', { name: articleTriggerName(title) });
     await expect(card).toBeVisible();
     await expect.poll(() => scrollContainer.evaluate((element) => element.scrollTop)).toBe(0);
     await expect(card).toBeInViewport();
@@ -2334,7 +2384,7 @@ async function pinnedFilterHeaderTest({ page }: { page: Page }): Promise<void> {
   const scrollContainer = page.locator('#results-scroll-container');
   const header = page.locator('[data-slot="workspace-list-header"]');
   await expect(
-    page.getByRole('button', { name: '查看文章详情：Graph evidence fixture 1', exact: true }),
+    page.getByRole('button', { name: articleTriggerName('Graph evidence fixture 1') }),
   ).toBeVisible();
   for (const width of [1280, 800, 390]) {
     await page.setViewportSize({ width, height: 844 });
@@ -2360,7 +2410,7 @@ async function filterRowWheelScrollTest({ page }: { page: Page }): Promise<void>
   await page.route('**/api/**', serveTrackingApi);
   await page.setViewportSize({ width: 600, height: 844 });
   await page.goto('/?q=graph&area=Economics');
-  const row = page.getByRole('group', { name: '筛选条件' });
+  const row = page.getByRole('group', { name: '筛选条件' }).locator('[data-slot="scroll-fade"]');
   await expect(row.getByRole('combobox', { name: /^领域：/ })).toBeVisible();
   const overflow = await row.evaluate((element) => element.scrollWidth - element.clientWidth);
   expect(overflow, 'the row overflows at this width').toBeGreaterThan(0);
@@ -2468,6 +2518,11 @@ async function mobileSidebarScrollTest({ page }: { page: Page }): Promise<void> 
 
   await page.mouse.click(300, 40);
   await expect(drawer).toHaveCount(0);
+  const suggestions = page.getByRole('listbox', { name: '搜索建议' });
+  if (await suggestions.isVisible()) {
+    await page.keyboard.press('Escape');
+    await expect(suggestions).toHaveCount(0);
+  }
   await trigger.click();
   await expect(drawer).toBeVisible();
   await page.keyboard.press('Escape');
@@ -2632,7 +2687,7 @@ async function articleDataSourceSettingsTest({ page }: { page: Page }): Promise<
     await settingsDialog.getByRole('button', { name: '刷新 CNKI 登录状态' }).click();
     await expect(settingsDialog).toBeVisible();
     await expect(page.getByRole('dialog')).toHaveCount(1);
-    await settingsDialog.getByRole('button', { name: '关闭', exact: true }).click();
+    await settingsDialog.getByRole('button', { name: '返回', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`${workspace.replace('?', '\\?')}$`));
     await expect(settingsDialog).toHaveCount(0);
   }
@@ -2707,7 +2762,7 @@ test(
  * @param id - Article identifier.
  * @returns Article record.
  */
-function relationArticle(id: string): Record<string, unknown> {
+function relationArticle(id: string) {
   return {
     article_id: id,
     journal_id: '1',
@@ -2859,7 +2914,7 @@ async function relationGraphTest({ page }: { page: Page }): Promise<void> {
   await page.getByRole('button', { name: /^收起相关文章：关系文章 .+\.1$/ }).click();
   await expect(page.getByRole('button', { name: /^相关文章：/ })).toHaveCount(3);
 
-  await page.getByRole('button', { name: '列表' }).click();
+  await page.getByRole('radio', { name: '列表' }).click();
   await expect(page.getByRole('list', { name: '关系节点列表' }).getByRole('listitem')).toHaveCount(
     4,
   );
@@ -2943,8 +2998,8 @@ test.describe('mobile relation graph', () => {
     await expect(page.getByRole('button', { name: /^相关文章：/ })).toHaveCount(3);
 
     for (const control of [
-      page.getByRole('button', { name: '网络' }),
-      page.getByRole('button', { name: '列表' }),
+      page.getByRole('radio', { name: '网络' }),
+      page.getByRole('radio', { name: '列表' }),
       page.getByRole('button', { name: '重新排列' }),
       page.getByRole('button', { name: '适应窗口' }),
     ]) {
@@ -2994,7 +3049,7 @@ async function mobileSettingsNavigationTest(page: Page, workspace: string): Prom
   await expect(settings).toBeVisible();
   await settings.getByRole('button', { name: '账号与安全', exact: true }).tap();
   await expect(settings.getByRole('region', { name: '账号与安全设置内容' })).toBeVisible();
-  await settings.getByRole('button', { name: '关闭', exact: true }).tap();
+  await settings.getByRole('button', { name: '返回', exact: true }).tap();
   await expect(settings).toHaveCount(0);
   await expect(page.getByRole('menu')).toHaveCount(0);
   await expect(page.locator('body')).not.toHaveCSS('pointer-events', 'none');
@@ -3010,7 +3065,7 @@ async function mobileSettingsNavigationTest(page: Page, workspace: string): Prom
   await expect(page.getByRole('dialog')).toHaveCount(1);
   await settings.getByRole('button', { name: '常规', exact: true }).tap();
   await expect(settings.getByRole('region', { name: '常规设置内容' })).toBeVisible();
-  await settings.getByRole('button', { name: '关闭', exact: true }).tap();
+  await settings.getByRole('button', { name: '返回', exact: true }).tap();
   await expect(settings).toHaveCount(0);
   await expect(page.locator('body')).not.toHaveCSS('pointer-events', 'none');
 }
@@ -3115,6 +3170,7 @@ test('unfolds a new invite code row without overshooting', inviteRowUnfoldTest);
 test('supports three deep-linkable root workspaces', unifiedRootWorkspacesTest);
 test('supports accessible navigation and theme selection', userMenuNavigationTest);
 test('polishes search targets and restrained control feedback', interfacePolishControlsTest);
+test('keeps the search suggestion keyboard contract', searchSuggestionKeyboardTest);
 test('polishes stable and semantic favorite feedback', interfacePolishFavoriteTest);
 
 /**
@@ -3235,7 +3291,7 @@ test(
 /** Return authoritative fixture metadata without any original-text parsing in the browser. */
 function cfpFixtureJournal(catalogId: string, title: string): CfpJournalSummary {
   return (
-    CFP_FIXTURE_PAGES[catalogId]?.journal ?? {
+    findCfpFixturePage(catalogId)?.journal ?? {
       catalogId,
       catalogAliases: [],
       title,
@@ -3279,7 +3335,7 @@ async function serveCfpNoticePage(
   noticeMatch: RegExpExecArray,
 ): Promise<void> {
   const catalogId = decodeURIComponent(noticeMatch[1]);
-  const base = CFP_FIXTURE_PAGES[catalogId];
+  const base = findCfpFixturePage(catalogId);
   const selected = base?.journal ?? cfpFixtureJournal(catalogId, 'Ad Hoc Networks');
   const items = (base?.items ?? []).filter(
     (notice) =>
@@ -3298,20 +3354,23 @@ async function serveCfpNoticePage(
 /** Serve the three real catalog names with representative maintained journal identities. */
 async function serveCfpApi(route: Route): Promise<void> {
   const url = new URL(route.request().url());
-  const catalogs: Record<string, { catalog_id: string; title: string }[]> = {
-    'ccf_computer_journals.sqlite': [
-      { catalog_id: 'issn-1949-3045', title: 'IEEE Transactions on Affective Computing' },
-      { catalog_id: 'issn-1570-8705', title: 'Ad Hoc Networks' },
-    ],
-    'chinese_journals.sqlite': [{ catalog_id: 'issn-1004-4833', title: '审计与经济研究' }],
-    'english_journals.sqlite': [{ catalog_id: 'issn-0022-2429', title: 'Journal of Marketing' }],
-  };
+  const catalogs = new Map<string, { catalog_id: string; title: string }[]>(
+    Object.entries({
+      'ccf_computer_journals.sqlite': [
+        { catalog_id: 'issn-1949-3045', title: 'IEEE Transactions on Affective Computing' },
+        { catalog_id: 'issn-1570-8705', title: 'Ad Hoc Networks' },
+      ],
+      'chinese_journals.sqlite': [{ catalog_id: 'issn-1004-4833', title: '审计与经济研究' }],
+      'english_journals.sqlite': [{ catalog_id: 'issn-0022-2429', title: 'Journal of Marketing' }],
+    }),
+  );
+
   if (url.pathname === '/api/meta/databases') {
-    await fulfillJson(route, Object.keys(catalogs));
+    await fulfillJson(route, [...catalogs.keys()]);
     return;
   }
   if (url.pathname === '/api/cfp/journals') {
-    const items = (catalogs[url.searchParams.get('db') ?? ''] ?? []).map((journal) =>
+    const items = (catalogs.get(url.searchParams.get('db') ?? '') ?? []).map((journal) =>
       cfpFixtureJournal(journal.catalog_id, journal.title),
     );
     await fulfillJson(route, cfpFixtureCatalog(items, url.searchParams.get('db') ?? ''));
@@ -3502,8 +3561,8 @@ async function cfpFullTextScrollTest({ page }: { page: Page }): Promise<void> {
   await page.setViewportSize({ width: 1500, height: 1000 });
   await page.emulateMedia({ colorScheme: 'light' });
   await page.goto('/?view=cfp-tracking&cfp_journal=issn-1949-3045');
-  const scopeRegion = page.locator('[data-slot="cfp-scope"] [role="region"]');
-  const requirementsRegion = page.locator('[data-slot="cfp-requirements"] [role="region"]');
+  const scopeRegion = page.locator('[data-slot="cfp-scope"]').getByRole('region');
+  const requirementsRegion = page.locator('[data-slot="cfp-requirements"]').getByRole('region');
   await expect(scopeRegion).toHaveText(scope);
   await expect(requirementsRegion).toHaveText(requirements);
 
@@ -3554,7 +3613,7 @@ test('keeps full CFP scope and requirements in independent scroll regions', cfpF
 async function serveExpandedCfpApi(route: Route): Promise<void> {
   const url = new URL(route.request().url());
   if (url.pathname === '/api/cfp/journals') {
-    const items = ['issn-0024-6301', 'issn-1067-5027', 'issn-0922-6567'].map(
+    const items = (['issn-0024-6301', 'issn-1067-5027', 'issn-0922-6567'] as const).map(
       (id) => CFP_FIXTURE_PAGES[id].journal,
     );
     await fulfillJson(route, cfpFixtureCatalog(items, url.searchParams.get('db') ?? ''));
@@ -3728,3 +3787,85 @@ test(
   'groups CFP journals and pins sidebar controls above independently scrolling lists',
   cfpGroupedSidebarTest,
 );
+
+/**
+ * Match the accessible name of an article card, which starts with a hidden action prefix and the
+ * whole title and continues with the rest of the card text.
+ *
+ * @param title - Article title.
+ * @returns Pattern for the card trigger's accessible name.
+ */
+function articleTriggerName(title: string): RegExp {
+  const escapedTitle = title.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+  return new RegExp(String.raw`^查看文章详情：\s*` + escapedTitle + String.raw`(?:\s|$)`);
+}
+
+/** Main pages and overlays checked with axe; each waits for the element that proves it rendered. */
+const ACCESSIBILITY_PAGES = [
+  { name: 'search', url: '/?q=graph', ready: 'main', serveApi: serveTrackingApi },
+  { name: 'favorites', url: '/?view=favorites', ready: 'main', serveApi: serveTrackingApi },
+  {
+    name: 'weekly updates',
+    url: '/?view=weekly-updates',
+    ready: 'main',
+    serveApi: serveTrackingApi,
+  },
+  { name: 'CFP tracking', url: '/?view=cfp-tracking', ready: 'main', serveApi: serveTrackingApi },
+  { name: 'relations', url: '/?view=relations', ready: 'main', serveApi: serveTrackingApi },
+  {
+    name: 'settings center',
+    url: '/?q=graph&settings=general',
+    ready: 'dialog',
+    serveApi: serveTrackingApi,
+  },
+  {
+    name: 'administrator center',
+    url: '/?q=graph&admin=overview',
+    ready: 'dialog',
+    serveApi: serveAdministratorApi,
+  },
+] as const;
+
+/**
+ * Fail on axe violations of serious or critical impact, listing each rule and its elements.
+ *
+ * @param page - Rendered page to analyze.
+ */
+async function expectNoSeriousAccessibilityViolations(page: Page): Promise<void> {
+  const results = await new AxeBuilder({ page }).analyze();
+  const blocking = results.violations
+    .filter((violation) => violation.impact === 'serious' || violation.impact === 'critical')
+    .map(
+      (violation) =>
+        `${violation.impact} ${violation.id}: ${violation.nodes
+          .map((node) => node.target.join(' '))
+          .join(' | ')}`,
+    );
+  expect(blocking).toEqual([]);
+}
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  for (const { name, url, ready, serveApi } of ACCESSIBILITY_PAGES) {
+    test(`has no serious accessibility violations on ${name} in ${colorScheme}`, async ({
+      page,
+    }) => {
+      await page.route('**/api/**', serveApi);
+      await page.emulateMedia({ colorScheme });
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.goto(url);
+      await expect(page.getByRole(ready).first()).toBeVisible();
+      await page.waitForTimeout(1000);
+      await expectNoSeriousAccessibilityViolations(page);
+    });
+  }
+
+  test(`has no serious accessibility violations on login in ${colorScheme}`, async ({ page }) => {
+    await page.route('**/api/**', serveBootstrapApi);
+    await page.emulateMedia({ colorScheme });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/login');
+    await expect(page.getByLabel('用户名')).toBeVisible();
+    await page.waitForTimeout(1000);
+    await expectNoSeriousAccessibilityViolations(page);
+  });
+}

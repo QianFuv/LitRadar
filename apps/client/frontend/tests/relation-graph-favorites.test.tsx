@@ -306,7 +306,7 @@ async function managesSavedGraphs(): Promise<void> {
     'href',
     '/?view=relations&db=fixture.sqlite&article=41&saved=1',
   );
-  expect(screen.getByRole('button', { name: '关系图' })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByRole('radio', { name: '关系图' })).toHaveAttribute('aria-checked', 'true');
 
   await user.click(screen.getByRole('button', { name: '管理关系图 First graph' }));
   await user.click(await screen.findByRole('menuitem', { name: '重命名' }));

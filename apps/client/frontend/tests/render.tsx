@@ -57,7 +57,7 @@ function TestContent() {
  * @param url - Initial location.
  * @returns Router over the test route tree.
  */
-export function createTestRouter(url = '/') {
+function createTestRouter(url = '/') {
   const rootRoute = createRootRoute();
   const loginRoute = createRoute({
     getParentRoute: () => rootRoute,

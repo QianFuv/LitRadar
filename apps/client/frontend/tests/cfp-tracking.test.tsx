@@ -10,7 +10,7 @@ import { READER_DOCK_MEDIA_QUERY } from '@/lib/use-media-query';
 
 import { CfpTrackingView } from '@/components/cfp/cfp-tracking-view';
 import type { CfpJournalSummary, CfpNoticePage } from '@/lib/api';
-import { CFP_FIXTURE_PAGES } from '@/tests/fixtures/cfp-pages';
+import { findCfpFixturePage } from '@/tests/fixtures/cfp-pages';
 import { SELECTED_DATABASE_KEY } from '@/lib/api/client';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
@@ -28,7 +28,7 @@ const DATABASES = [
 /** Build an API journal summary, keeping unknown sources explicitly unadapted. */
 function journal(catalogId: string, title: string): CfpJournalSummary {
   return (
-    CFP_FIXTURE_PAGES[catalogId]?.journal ?? {
+    findCfpFixturePage(catalogId)?.journal ?? {
       catalogId,
       catalogAliases: [],
       title,
@@ -44,14 +44,16 @@ function journal(catalogId: string, title: string): CfpJournalSummary {
   );
 }
 
-const JOURNALS: Record<string, CfpJournalSummary[]> = {
-  [DATABASES[0]]: [
-    journal('issn-1949-3045', 'IEEE Transactions on Affective Computing'),
-    journal('issn-unadapted', '未适配示例期刊'),
-  ],
-  [DATABASES[1]]: [journal('issn-1004-4833', '审计与经济研究')],
-  [DATABASES[2]]: [journal('issn-0022-2429', 'Journal of Marketing')],
-};
+const JOURNALS = new Map<string, CfpJournalSummary[]>(
+  Object.entries({
+    [DATABASES[0]]: [
+      journal('issn-1949-3045', 'IEEE Transactions on Affective Computing'),
+      journal('issn-unadapted', '未适配示例期刊'),
+    ],
+    [DATABASES[1]]: [journal('issn-1004-4833', '审计与经济研究')],
+    [DATABASES[2]]: [journal('issn-0022-2429', 'Journal of Marketing')],
+  }),
+);
 
 /** Return one complete lightweight catalog response. */
 function catalog(items: CfpJournalSummary[], database: string) {
@@ -70,7 +72,7 @@ function catalog(items: CfpJournalSummary[], database: string) {
 
 /** Provide an explicitly server-filtered notice page for the request. */
 function noticePage(catalogId: string, includeClosed: boolean): CfpNoticePage {
-  const base = CFP_FIXTURE_PAGES[catalogId];
+  const base = findCfpFixturePage(catalogId);
   const selected = base?.journal ?? journal(catalogId, '未适配示例期刊');
   const items = (base?.items ?? []).filter(
     (notice) => includeClosed || !['closed', 'historical'].includes(notice.state),
@@ -151,7 +153,7 @@ beforeEach(() => {
     http.get('http://localhost/api/meta/databases', () => HttpResponse.json(DATABASES)),
     http.get('http://localhost/api/cfp/journals', ({ request }) => {
       const database = new URL(request.url).searchParams.get('db')!;
-      return HttpResponse.json(catalog(JOURNALS[database] ?? [], database));
+      return HttpResponse.json(catalog(JOURNALS.get(database) ?? [], database));
     }),
     http.get('http://localhost/api/cfp/journals/:catalogId/notices', ({ request, params }) =>
       HttpResponse.json(

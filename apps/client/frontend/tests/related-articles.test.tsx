@@ -14,8 +14,8 @@ import { createAuthUserScenario } from '@/tests/mocks/scenarios';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
-vi.mock('react-intersection-observer', () => ({
-  useInView: () => ({ ref: () => undefined, inView: true }),
+vi.mock('@/lib/use-in-view', () => ({
+  useInView: () => ({ ref: () => undefined, isInView: true }),
 }));
 
 const SOURCE: Article = {

@@ -180,8 +180,8 @@ async function searchesWithBuilder(): Promise<void> {
     '精确短语',
   );
   await user.click(
-    within(within(dialog).getByRole('group', { name: '第 2 个条件的连接方式' })).getByRole(
-      'button',
+    within(within(dialog).getByRole('radiogroup', { name: '第 2 个条件的连接方式' })).getByRole(
+      'radio',
       { name: '不含' },
     ),
   );
@@ -216,8 +216,8 @@ async function blocksLeadingExclusion(): Promise<void> {
   const dialog = await screen.findByRole('dialog', { name: '高级检索' });
   expect(within(dialog).getByRole('button', { name: '检索' })).toBeDisabled();
   await user.click(
-    within(within(dialog).getByRole('group', { name: '第 2 个条件的连接方式' })).getByRole(
-      'button',
+    within(within(dialog).getByRole('radiogroup', { name: '第 2 个条件的连接方式' })).getByRole(
+      'radio',
       { name: '不含' },
     ),
   );
@@ -229,8 +229,8 @@ async function blocksLeadingExclusion(): Promise<void> {
   expect(within(dialog).getByRole('alert')).toHaveTextContent('不含');
   expect(within(dialog).getByRole('button', { name: '检索' })).toBeDisabled();
   await user.click(
-    within(within(dialog).getByRole('group', { name: '第 1 个条件的连接方式' })).getByRole(
-      'button',
+    within(within(dialog).getByRole('radiogroup', { name: '第 1 个条件的连接方式' })).getByRole(
+      'radio',
       { name: '且' },
     ),
   );
@@ -247,15 +247,16 @@ async function rewritesDraftFromKeyboard(): Promise<void> {
   const input = screen.getByRole('combobox', { name: '搜索文章' });
 
   await user.type(input, 'graph neural');
-  const rewrites = await screen.findByRole('listbox', { name: '改写当前输入' });
-  expect(within(rewrites).getByRole('option', { name: /^"graph neural"/ })).toBeInTheDocument();
+  const rewrites = await screen.findByRole('group', { name: '改写当前输入' });
+  const phrase = within(rewrites).getByRole('option', { name: /^"graph neural"/ });
 
   await user.keyboard('{ArrowDown}');
-  expect(input).toHaveAttribute('aria-activedescendant', 'search-assist-option-rewrite-phrase');
+  expect(input).toHaveAttribute('aria-activedescendant', phrase.id);
+  expect(phrase).toHaveAttribute('data-highlighted');
   await user.keyboard('{Enter}');
   expect(input).toHaveValue('"graph neural"');
   expect(screen.getByTestId('query-value')).toHaveTextContent('');
-  expect(screen.getByText('将按高级语法检索')).toBeInTheDocument();
+  expect(await screen.findByText('将按高级语法检索')).toBeInTheDocument();
 
   await user.keyboard('{Enter}');
   await waitFor(() =>
@@ -274,14 +275,14 @@ async function keepsHistoryBesideBuilder(): Promise<void> {
   const input = screen.getByRole('combobox', { name: '搜索文章' });
 
   await user.click(input);
-  const history = await screen.findByRole('listbox', { name: '最近搜索' });
+  const history = await screen.findByRole('group', { name: '最近搜索' });
   expect(within(history).getAllByRole('option')).toHaveLength(2);
-  expect(screen.getByRole('listbox', { name: '高级检索构建器' })).toBeInTheDocument();
+  expect(screen.getByRole('group', { name: '高级检索构建器' })).toBeInTheDocument();
 
   await user.type(input, 'gra', { skipClick: true });
   await waitFor(() =>
     expect(
-      within(screen.getByRole('listbox', { name: '最近搜索' })).getAllByRole('option'),
+      within(screen.getByRole('group', { name: '最近搜索' })).getAllByRole('option'),
     ).toHaveLength(1),
   );
   await user.click(screen.getByRole('option', { name: 'graph theory' }));
@@ -291,7 +292,7 @@ async function keepsHistoryBesideBuilder(): Promise<void> {
   await user.click(input);
   await user.click(screen.getByRole('button', { name: '清空' }));
   expect(window.localStorage.getItem('litradar:v1:search_history')).toBeNull();
-  expect(screen.queryByRole('listbox', { name: '最近搜索' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('group', { name: '最近搜索' })).not.toBeInTheDocument();
 
   await user.click(screen.getByRole('option', { name: /使用高级检索构建器/ }));
   expect(await screen.findByRole('dialog', { name: '高级检索' })).toBeInTheDocument();

@@ -181,10 +181,10 @@ async function rendersReportAndRequestsFilters(): Promise<void> {
   expect(within(table).getByRole('columnheader', { name: 'P95 ≈ ms' })).toBeInTheDocument();
   expect(rows[1]).toHaveTextContent('8.19');
 
-  expect(screen.getByRole('img', { name: /HTTP 接口每小时调用趋势/ })).toHaveAccessibleName(
+  expect(screen.getByRole('figure', { name: /HTTP 接口每小时调用趋势/ })).toHaveAccessibleName(
     /共 40 次调用 · 0 次错误 · 峰值 30 次\/小时/,
   );
-  expect(screen.getByRole('img', { name: /MCP 工具每小时调用趋势/ })).toBeInTheDocument();
+  expect(screen.getByRole('figure', { name: /MCP 工具每小时调用趋势/ })).toBeInTheDocument();
   expect(screen.getByRole('table', { name: /HTTP 接口每小时调用与错误/ })).toBeInTheDocument();
   expect(screen.getByRole('region', { name: '命中量级 · 总命中数' })).toBeInTheDocument();
   expect(
@@ -192,9 +192,9 @@ async function rendersReportAndRequestsFilters(): Promise<void> {
   ).toBeInTheDocument();
   expect(screen.getByRole('region', { name: '命中计数口径' })).toHaveTextContent('总命中数');
 
-  await user.click(screen.getByRole('button', { name: '7 天' }));
+  await user.click(screen.getByRole('radio', { name: '7 天' }));
   await waitFor(() => expect(queries.at(-1)).toBe('?period=7d'));
-  await user.click(screen.getByRole('button', { name: '检索' }));
+  await user.click(screen.getByRole('radio', { name: '检索' }));
   await waitFor(() => expect(queries.at(-1)).toBe('?period=7d&kind=search'));
 }
 
@@ -224,7 +224,7 @@ async function showsEmptyWindow(): Promise<void> {
   await renderWithQuery(<LoadTelemetryCard isEnabled />);
 
   expect(await screen.findByText('暂无负载数据')).toBeInTheDocument();
-  expect(screen.queryByRole('img')).not.toBeInTheDocument();
+  expect(screen.queryByRole('figure')).not.toBeInTheDocument();
 }
 
 /**

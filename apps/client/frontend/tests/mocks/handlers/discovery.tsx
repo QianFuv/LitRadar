@@ -49,6 +49,3 @@ export function createDiscoveryScenarioHandlers(
     ),
   ];
 }
-
-/** Stable discovery happy-path handlers. */
-export const DISCOVERY_SCENARIO_HANDLERS = createDiscoveryScenarioHandlers();

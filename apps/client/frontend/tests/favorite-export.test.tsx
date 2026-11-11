@@ -34,8 +34,8 @@ vi.mock('@/components/feature/article-dialog-card', () => ({
   ArticleDialogCard: ({ article }: { article: FavoriteArticleItem }) => <div>{article.title}</div>,
 }));
 
-const originalCreateObjectUrl = URL.createObjectURL;
-const originalRevokeObjectUrl = URL.revokeObjectURL;
+const originalCreateObjectUrl = URL.createObjectURL.bind(URL);
+const originalRevokeObjectUrl = URL.revokeObjectURL.bind(URL);
 
 /**
  * Install the common authenticated favorites-page handlers.

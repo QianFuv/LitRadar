@@ -12,6 +12,7 @@ import type { ProviderCatalogResponse, RuntimeSettingInfo, RuntimeSettingsUpdate
 import { ApiContractError, parseRuntimeSettingList } from '@/lib/api-contract';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
+import { isString } from '@/lib/type-guards';
 
 let updatePayload: RuntimeSettingsUpdate | null = null;
 
@@ -402,7 +403,7 @@ async function renderProviderConfiguration(
         if (!setting.is_secret) {
           return {
             ...setting,
-            value: typeof updatedValue === 'string' ? updatedValue : setting.value,
+            value: isString(updatedValue) ? updatedValue : setting.value,
           };
         }
         if (updatedValue === null) {
@@ -416,7 +417,7 @@ async function renderProviderConfiguration(
             updated_at: 2,
           };
         }
-        if (typeof updatedValue === 'string' && updatedValue.trim().length > 0) {
+        if (isString(updatedValue) && updatedValue.trim().length > 0) {
           return {
             ...setting,
             value: '',

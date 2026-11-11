@@ -74,6 +74,3 @@ export function createAccountScenarioHandlers(
     }),
   ];
 }
-
-/** Stable authentication happy-path handlers. */
-export const AUTH_SCENARIO_HANDLERS = createAuthScenarioHandlers();

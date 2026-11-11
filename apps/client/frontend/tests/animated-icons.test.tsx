@@ -5,9 +5,15 @@
 import type { PointerEvent } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import * as stylex from '@stylexjs/stylex';
+import { Circle } from 'lucide-react';
 import { describe, expect, test } from 'vite-plus/test';
 
-import { IconTriggerProvider, Search, useIconTrigger } from '@/components/ui/animated-icons';
+import {
+  IconTriggerProvider,
+  Search,
+  useIconTrigger,
+  type AppIcon,
+} from '@/components/ui/animated-icons';
 import { Button } from '@/components/ui/button';
 
 const styles = stylex.create({ icon: { width: '1.25rem' } });
@@ -103,7 +109,17 @@ function playsWhenBecomingCurrent(): void {
   expect(container.querySelector('svg')).not.toHaveClass('lucide-search');
 }
 
+/** Keep raw lucide-react icons, which ignore `xstyle`, out of application icon slots. */
+function rejectsRawLucideIcons(): void {
+  // @ts-expect-error A raw lucide-react icon lacks the styled icon marker.
+  const rawIcon: AppIcon = Circle;
+  const styledIcon: AppIcon = Search;
+  expect(styledIcon.canApplyXstyle).toBe(true);
+  expect('canApplyXstyle' in rawIcon).toBe(false);
+}
+
 describe('animated icons', () => {
+  test('reject raw lucide-react icons in icon slots', rejectsRawLucideIcons);
   test('render still until their control is triggered', rendersStillUntilTriggered);
   test('swap in on mouse hover', swapsInOnMouseHover);
   test('swap in on a touch press', swapsInOnTouchPress);

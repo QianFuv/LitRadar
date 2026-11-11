@@ -13,11 +13,12 @@ import { ScheduledTasksCard } from '@/components/admin/scheduled-tasks-card';
 import type { AdminInviteCode } from '@/lib/api';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
+import { isRecord } from '@/lib/type-guards';
 
 let isTaskEnabled = true;
 let isTaskDeleted = false;
-let createdTask: unknown = null;
-let taskPatch: unknown = null;
+let createdTask: unknown;
+let taskPatch: unknown;
 
 /**
  * Build the current scheduled-task fixture.
@@ -129,8 +130,8 @@ function scheduledTaskListResponse(): Response {
  */
 async function updateScheduledTaskResponse(context: { request: Request }): Promise<Response> {
   taskPatch = await context.request.json();
-  if (taskPatch && typeof taskPatch === 'object' && 'enabled' in taskPatch) {
-    isTaskEnabled = Boolean((taskPatch as Record<string, unknown>).enabled);
+  if (isRecord(taskPatch) && 'enabled' in taskPatch) {
+    isTaskEnabled = Boolean(taskPatch.enabled);
   }
   return HttpResponse.json(scheduledTaskFixture());
 }
@@ -151,7 +152,7 @@ function deleteScheduledTaskResponse(): Response {
 async function updatesAndDeletesTask(): Promise<void> {
   isTaskEnabled = true;
   isTaskDeleted = false;
-  taskPatch = null;
+  taskPatch = undefined;
   server.use(
     http.get('http://localhost/api/admin/scheduled-tasks', scheduledTaskListResponse),
     http.get('http://localhost/api/admin/scheduler/status', schedulerStatusResponse),
@@ -187,7 +188,7 @@ async function updatesAndDeletesTask(): Promise<void> {
  */
 async function createsTypedScheduledTask(): Promise<void> {
   isTaskDeleted = true;
-  createdTask = null;
+  createdTask = undefined;
   server.use(
     http.get('http://localhost/api/admin/scheduled-tasks', scheduledTaskListResponse),
     http.get('http://localhost/api/admin/scheduler/status', schedulerStatusResponse),
@@ -306,7 +307,7 @@ async function preventsDuplicateScheduledTaskCreation(): Promise<void> {
  * Verify a legacy command is read-only until replaced by a typed job.
  */
 async function replacesLegacyScheduledTask(): Promise<void> {
-  taskPatch = null;
+  taskPatch = undefined;
   server.use(
     http.get('http://localhost/api/admin/scheduled-tasks', () =>
       HttpResponse.json([legacyScheduledTaskFixture()]),

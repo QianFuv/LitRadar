@@ -12,6 +12,7 @@ import Providers from '@/src/providers';
 import { reportClientError, type ClientErrorEvent } from '@/lib/client-logger';
 import { ApiError, requestDownload, requestJson } from '@/lib/api/client';
 import { renderWithQuery } from '@/tests/render';
+import { isRecord } from '@/lib/type-guards';
 
 vi.mock('@/lib/auth-context', () => {
   /**
@@ -80,6 +81,16 @@ function countListenerCalls(calls: readonly unknown[][], eventType: string): num
 }
 
 /**
+ * Check whether a console argument is a client error event.
+ *
+ * @param value - Second console argument.
+ * @returns Whether the value is a client error event.
+ */
+function isClientErrorEvent(value: unknown): value is ClientErrorEvent {
+  return isRecord(value) && value.event === 'client.error';
+}
+
+/**
  * Select structured client error payloads from console calls while ignoring framework warnings.
  *
  * @param calls - Console spy calls.
@@ -89,12 +100,8 @@ function clientErrorPayloads(calls: readonly unknown[][]): ClientErrorEvent[] {
   const events: ClientErrorEvent[] = [];
   for (const call of calls) {
     const value = call[1];
-    if (
-      typeof value === 'object' &&
-      value !== null &&
-      Reflect.get(value, 'event') === 'client.error'
-    ) {
-      events.push(value as ClientErrorEvent);
+    if (isClientErrorEvent(value)) {
+      events.push(value);
     }
   }
   return events;
