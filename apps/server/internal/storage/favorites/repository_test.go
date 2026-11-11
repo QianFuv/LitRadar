@@ -31,7 +31,11 @@ func fixtureRepository(t *testing.T) (*Repository, config.Config, identity.Id) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { repository.Close() })
+	t.Cleanup(func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	})
 	owner, err := repository.Bootstrap(ctx, "owner", "hash", "salt", 10, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -256,7 +260,9 @@ func TestMetadataFailureIsGroupedButCitationFailsClosed(t *testing.T) {
 	if _, err := database.ExecContext(ctx, "UPDATE articles SET authors_json='broken' WHERE article_id=1012"); err != nil {
 		t.Fatal(err)
 	}
-	database.Close()
+	if err := database.Close(); err != nil {
+		t.Fatalf("database.Close: %v", err)
+	}
 	enriched := Enrich(ctx, configuration, favorites)
 	assertUnavailableMetadataGroup(t, enriched)
 	if _, err := LoadCitationRecords(ctx, configuration, []Reference{{1001, "metadata"}, {1012, "metadata"}}); err == nil {

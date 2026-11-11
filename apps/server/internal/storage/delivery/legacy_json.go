@@ -131,7 +131,9 @@ func decodeLegacyMap(data []byte, value reflect.Value) error {
 	}
 	value.Set(reflect.MakeMap(value.Type()))
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.Token()
+	if _, err := decoder.Token(); err != nil {
+		return &Error{Kind: "json", cause: err}
+	}
 	for decoder.More() {
 		before := decoder.InputOffset()
 		token, err := decoder.Token()
@@ -211,7 +213,9 @@ func decodeLegacyStructSequence(data []byte, value reflect.Value, seen []bool) e
 
 func decodeLegacyStructObject(data []byte, value reflect.Value, fields map[string]int, seen []bool) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.Token()
+	if _, err := decoder.Token(); err != nil {
+		return &Error{Kind: "json", cause: err}
+	}
 	for decoder.More() {
 		before := decoder.InputOffset()
 		token, err := decoder.Token()

@@ -191,22 +191,38 @@ type secretValue struct {
 var storageQueries secretsdb.Queries
 
 // visit owns connection and optional transaction lifetimes across ordered table reads.
-func visit(ctx context.Context, filename string, isMutation bool, visitor func(string, string) (*string, error)) error {
+func visit(ctx context.Context, filename string, isMutation bool, visitor func(string, string) (*string, error)) (resultError error) {
 	database, err := platformsqlite.Open(platformsqlite.Config{Filename: filename, Mode: "rwc", MaxConnections: 1})
 	if err != nil {
 		return err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
+	hasTransaction := false
 	if isMutation {
 		if _, err := connection.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 			return err
 		}
-		defer connection.ExecContext(context.Background(), "ROLLBACK")
+		hasTransaction = true
+		defer func() {
+			if hasTransaction {
+				if _, rollbackError := connection.ExecContext(context.Background(), "ROLLBACK"); rollbackError != nil {
+					slog.Error("storage.rollback.failed", "error", rollbackError)
+				}
+			}
+		}()
 	}
 	for _, query := range []func(context.Context, *sql.Conn) ([]secretValue, error){notificationValues, runtimeValues, cnkiValues} {
 		values, err := query(ctx, connection)
@@ -219,6 +235,7 @@ func visit(ctx context.Context, filename string, isMutation bool, visitor func(s
 	}
 	if isMutation {
 		_, err = connection.ExecContext(ctx, "COMMIT")
+		hasTransaction = err != nil
 		return err
 	}
 	return nil

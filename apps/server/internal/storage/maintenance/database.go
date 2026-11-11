@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/url"
 	"os"
@@ -19,17 +21,25 @@ import (
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
-func readConnection(ctx context.Context, filename string, read func(*sql.Conn) error) error {
+func readConnection(ctx context.Context, filename string, read func(*sql.Conn) error) (resultError error) {
 	database, err := storage.Open(filename, true, 1)
 	if err != nil {
 		return err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	if _, err := connection.ExecContext(ctx, "PRAGMA temp_store=FILE"); err != nil {
 		return err
 	}
@@ -79,13 +89,17 @@ type resultDigest struct {
 	hash  [32]byte
 }
 
-func searchDigest(ctx context.Context, connection *sql.Conn, query string) (resultDigest, error) {
+func searchDigest(ctx context.Context, connection *sql.Conn, query string) (resultValue1 resultDigest, resultError error) {
 	query = search.PrepareQuery(query, domain.SearchAdvanced)
 	rows, err := connection.QueryContext(ctx, "SELECT rowid FROM article_search WHERE article_search MATCH ? ORDER BY rowid", query)
 	if err != nil {
 		return resultDigest{}, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeError := rows.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close rows: %w", closeError))
+		}
+	}()
 	hasher := sha256.New()
 	count := uint64(0)
 	for rows.Next() {
@@ -145,17 +159,25 @@ func buildDatabase(ctx context.Context, source sourceDatabase, destination strin
 }
 
 // copyCanonical retains the transaction rollback until copy and post-commit maintenance finish.
-func copyCanonical(ctx context.Context, source sourceDatabase, destination string) error {
+func copyCanonical(ctx context.Context, source sourceDatabase, destination string) (resultError error) {
 	database, err := storage.Open(destination, false, 1)
 	if err != nil {
 		return err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	if _, err := connection.ExecContext(ctx, "PRAGMA foreign_keys=ON; PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; PRAGMA temp_store=FILE;"); err != nil {
 		return err
 	}
@@ -166,13 +188,21 @@ func copyCanonical(ctx context.Context, source sourceDatabase, destination strin
 	if err := attachCanonicalSource(ctx, connection, source.path); err != nil {
 		return err
 	}
-	defer connection.ExecContext(context.Background(), "ROLLBACK")
+	hasTransaction := true
+	defer func() {
+		if hasTransaction {
+			if _, rollbackError := connection.ExecContext(context.Background(), "ROLLBACK"); rollbackError != nil {
+				slog.Error("storage.rollback.failed", "error", rollbackError)
+			}
+		}
+	}()
 	if err := copyCanonicalTables(ctx, connection); err != nil {
 		return err
 	}
 	if _, err := connection.ExecContext(ctx, "COMMIT; DETACH DATABASE source;"); err != nil {
 		return err
 	}
+	hasTransaction = false
 	if err := restoreCanonicalIndexes(ctx, connection, indexes); err != nil {
 		return err
 	}
@@ -190,13 +220,17 @@ func readCanonicalIndexes(ctx context.Context, connection *sql.Conn) ([][2]strin
 	for rows.Next() {
 		var name, definition storage.Text
 		if err := rows.Scan(&name, &definition); err != nil {
-			rows.Close()
+			if err := rows.Close(); err != nil {
+				slog.Warn("cleanup.failed", "operation", "rows.Close", "error", err)
+			}
 			return nil, err
 		}
 		indexes = append(indexes, [2]string{string(name), string(definition)})
 	}
 	err = rows.Err()
-	rows.Close()
+	if err := rows.Close(); err != nil {
+		slog.Warn("cleanup.failed", "operation", "rows.Close", "error", err)
+	}
 	if err != nil {
 		return nil, err
 	}

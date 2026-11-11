@@ -207,7 +207,11 @@ func ListArticles(ctx context.Context, configuration config.Config, name *string
 	if err != nil {
 		return empty, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			failure = errors.Join(failure, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	if params.Query != nil && strings.TrimSpace(*params.Query) != "" {
 		if collector := telemetry.FromContext(ctx); collector != nil {
 			filename, resolveError := configuration.ResolveIndexDbPath(name)
@@ -268,12 +272,16 @@ func articlePage(ctx context.Context, database *sql.DB, positions []articlePosit
 }
 
 // GetArticle returns canonical data and sorted retraction identifiers, independent of search projections.
-func GetArticle(ctx context.Context, configuration config.Config, name *string, id int64) (domain.Article, error) {
+func GetArticle(ctx context.Context, configuration config.Config, name *string, id int64) (resultValue1 domain.Article, resultError error) {
 	database, err := open(configuration, name)
 	if err != nil {
 		return domain.Article{}, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	items, err := fetchArticles(ctx, database, []int64{id})
 	if err != nil {
 		return domain.Article{}, err
@@ -312,7 +320,7 @@ func articleFromRow(row scanner) (domain.Article, error) {
 }
 
 // fetchArticles decodes canonical rows and retractions before retaining requested identifier order.
-func fetchArticles(ctx context.Context, database rowQuerier, ids []int64) ([]domain.Article, error) {
+func fetchArticles(ctx context.Context, database rowQuerier, ids []int64) (resultValue1 []domain.Article, resultError error) {
 	if len(ids) == 0 {
 		return []domain.Article{}, nil
 	}
@@ -329,7 +337,11 @@ func fetchArticles(ctx context.Context, database rowQuerier, ids []int64) ([]dom
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeError := rows.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close rows: %w", closeError))
+		}
+	}()
 	if err := appendArticleRetractions(rows, byId); err != nil {
 		return nil, err
 	}

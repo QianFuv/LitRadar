@@ -59,7 +59,11 @@ func BenchmarkBootstrapRequired(benchmark *testing.B) {
 			if err != nil {
 				benchmark.Fatal(err)
 			}
-			benchmark.Cleanup(func() { repository.Close() })
+			benchmark.Cleanup(func() {
+				if err := repository.Close(); err != nil {
+					benchmark.Errorf("repository.Close: %v", err)
+				}
+			})
 			if users > 0 {
 				if _, err := repository.database.Exec(`WITH RECURSIVE ids(id) AS (VALUES(1) UNION ALL SELECT id+1 FROM ids WHERE id<?)
 INSERT INTO users(id,username,password_hash,salt,created_at,updated_at) SELECT id,printf('synthetic-%d',id),'hash','salt',1,1 FROM ids`, users); err != nil {

@@ -31,7 +31,11 @@ func BenchmarkCandidateRowDecoding(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			b.Errorf("database.Close: %v", err)
+		}
+	}()
 	for _, variant := range []struct {
 		name   string
 		decode func(scanner) (domain.ArticleCandidate, error)

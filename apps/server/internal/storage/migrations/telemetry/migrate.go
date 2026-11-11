@@ -3,7 +3,10 @@ package telemetry
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -11,7 +14,7 @@ import (
 )
 
 // Migrate admits the schema version before enabling writable storage policy.
-func Migrate(ctx context.Context, filename string) error {
+func Migrate(ctx context.Context, filename string) (resultError error) {
 	if err := os.MkdirAll(filepath.Dir(filename), 0700); err != nil {
 		return err
 	}
@@ -19,7 +22,11 @@ func Migrate(ctx context.Context, filename string) error {
 	if err != nil {
 		return err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	var version int
 	if err := database.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return err
@@ -34,7 +41,11 @@ func Migrate(ctx context.Context, filename string) error {
 	if err != nil {
 		return err
 	}
-	defer transaction.Rollback()
+	defer func() {
+		if err := transaction.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			slog.Error("storage.rollback.failed", "error", err)
+		}
+	}()
 	if _, err := transaction.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS hourly_load(hour INTEGER NOT NULL, dimensions TEXT NOT NULL, aggregate TEXT NOT NULL, PRIMARY KEY(hour,dimensions)) WITHOUT ROWID; PRAGMA user_version=1;`); err != nil {
 		return err
 	}

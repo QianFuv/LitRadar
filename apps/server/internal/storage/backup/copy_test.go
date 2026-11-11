@@ -22,7 +22,11 @@ func createCopyFixture(testing testing.TB, megabytes int) (string, int) {
 	if err != nil {
 		testing.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			testing.Errorf("database.Close: %v", err)
+		}
+	}()
 	rows := megabytes * 16
 	_, err = database.Exec(`CREATE TABLE payload(id INTEGER PRIMARY KEY, data BLOB NOT NULL);
 WITH RECURSIVE entries(id) AS (VALUES(1) UNION ALL SELECT id+1 FROM entries WHERE id<?)
@@ -43,24 +47,40 @@ func TestBackupLockedSourceRetryAndCancellation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer writer.Close()
+			defer func() {
+				if err := writer.Close(); err != nil {
+					t.Errorf("writer.Close: %v", err)
+				}
+			}()
 			input, err := storage.OpenPlain(source)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer input.Close()
+			defer func() {
+				if err := input.Close(); err != nil {
+					t.Errorf("input.Close: %v", err)
+				}
+			}()
 			output, err := storage.OpenPlain(destination)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer output.Close()
+			defer func() {
+				if err := output.Close(); err != nil {
+					t.Errorf("output.Close: %v", err)
+				}
+			}()
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			sourceConnection, err := input.Conn(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer sourceConnection.Close()
+			defer func() {
+				if err := sourceConnection.Close(); err != nil {
+					t.Errorf("sourceConnection.Close: %v", err)
+				}
+			}()
 			if _, err := sourceConnection.ExecContext(ctx, "PRAGMA busy_timeout=0"); err != nil {
 				t.Fatal(err)
 			}
@@ -76,13 +96,25 @@ func TestBackupLockedSourceRetryAndCancellation(t *testing.T) {
 					return err
 				}
 				if _, err := writer.Exec("BEGIN EXCLUSIVE"); err != nil {
-					backup.Finish()
+					if err := backup.Finish(); err != nil {
+						t.Errorf("backup.Finish: %v", err)
+					}
 					return err
 				}
-				defer writer.Exec("ROLLBACK")
+				hasTransaction := true
+				defer func() {
+					if !hasTransaction {
+						return
+					}
+					if _, err := writer.Exec("ROLLBACK"); err != nil {
+						t.Errorf("writer.Exec: %v", err)
+					}
+				}()
 				var busy *native.Error
 				if more, err := backup.Step(128); more || !errors.As(err, &busy) || busy.Code()&255 != sqlite3.SQLITE_BUSY || backup.PageCount() != 0 {
-					backup.Finish()
+					if err := backup.Finish(); err != nil {
+						t.Errorf("backup.Finish: %v", err)
+					}
 					t.Fatal("fixture did not produce a native BUSY step", more, err)
 				}
 				triggered := make(chan error, 1)
@@ -102,6 +134,7 @@ func TestBackupLockedSourceRetryAndCancellation(t *testing.T) {
 				if err := <-triggered; err != nil {
 					return err
 				}
+				hasTransaction = shouldCancel
 				if shouldCancel && !errors.Is(failure, context.Canceled) || !shouldCancel && failure != nil {
 					t.Fatal("backup lost retry/cancellation behavior", failure)
 				}
@@ -111,7 +144,9 @@ func TestBackupLockedSourceRetryAndCancellation(t *testing.T) {
 			if err != nil {
 				t.Fatal("backup did not finish or release its destination transaction", err)
 			}
-			output.Close()
+			if err := output.Close(); err != nil {
+				t.Errorf("output.Close: %v", err)
+			}
 			if !shouldCancel {
 				assertCopiedPayload(t, destination, rows)
 			}
@@ -126,7 +161,11 @@ func assertCopiedPayload(testing testing.TB, filename string, expectedRows int) 
 	if err != nil {
 		testing.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			testing.Errorf("database.Close: %v", err)
+		}
+	}()
 	var count, bytes int
 	if err := database.QueryRow("SELECT count(*),sum(length(data)) FROM payload").Scan(&count, &bytes); err != nil || count != expectedRows || bytes != expectedRows*65536 {
 		testing.Fatalf("incomplete payload: rows=%d bytes=%d error=%v", count, bytes, err)

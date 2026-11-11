@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
@@ -39,7 +40,7 @@ func DecodeAuthorNames(payload string) ([]string, error) {
 }
 
 // Rebuild streams canonical rows into search inside the caller's existing transaction and write exclusion.
-func Rebuild(ctx context.Context, connection *sql.Conn) error {
+func Rebuild(ctx context.Context, connection *sql.Conn) (resultError error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -50,12 +51,20 @@ func Rebuild(ctx context.Context, connection *sql.Conn) error {
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeError := rows.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close rows: %w", closeError))
+		}
+	}()
 	insert, err := connection.PrepareContext(ctx, `INSERT INTO article_search(rowid,article_id,title,abstract_text,doi,pmid,authors,journal_title) VALUES(?1,?1,?2,?3,?4,?5,?6,?7)`)
 	if err != nil {
 		return err
 	}
-	defer insert.Close()
+	defer func() {
+		if closeError := insert.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close insert: %w", closeError))
+		}
+	}()
 	for rows.Next() {
 		if err := insertSearchRow(ctx, rows, insert); err != nil {
 			return err

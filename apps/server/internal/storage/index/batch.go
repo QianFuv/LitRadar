@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -27,7 +28,9 @@ func OpenBatch(ctx context.Context, path string) (*Connection, error) {
 	}
 	physical, err := database.Conn(ctx)
 	if err != nil {
-		database.Close()
+		if err := database.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "database.Close", "error", err)
+		}
 		return nil, err
 	}
 	connection := &Connection{physical, database}
@@ -35,7 +38,9 @@ func OpenBatch(ctx context.Context, path string) (*Connection, error) {
 		err = InitBatch(ctx, physical)
 	}
 	if err != nil {
-		connection.Close()
+		if err := connection.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "connection.Close", "error", err)
+		}
 		return nil, err
 	}
 	return connection, nil

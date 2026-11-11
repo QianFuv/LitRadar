@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/cfp"
@@ -14,7 +15,7 @@ import (
 // insertNotices preserves source order while reusing the insert statement for multi-notice publications.
 var queries cfpdb.Queries
 
-func insertNotices(ctx context.Context, connection *sql.Conn, key, sourceKey string, notices []preparedNotice) error {
+func insertNotices(ctx context.Context, connection *sql.Conn, key, sourceKey string, notices []preparedNotice) (resultError error) {
 	var statement *sql.Stmt
 	if len(notices) > 1 {
 		var err error
@@ -22,7 +23,11 @@ func insertNotices(ctx context.Context, connection *sql.Conn, key, sourceKey str
 		if err != nil {
 			return err
 		}
-		defer statement.Close()
+		defer func() {
+			if closeError := statement.Close(); closeError != nil {
+				resultError = errors.Join(resultError, fmt.Errorf("close statement: %w", closeError))
+			}
+		}()
 	}
 	for order, pair := range notices {
 		source, err := jsonvalue.EncodeJson(pair.source)

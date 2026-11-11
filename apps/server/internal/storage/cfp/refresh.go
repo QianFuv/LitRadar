@@ -24,7 +24,11 @@ func (repository *Repository) BeginRefresh(ctx context.Context, sourceKey string
 	if err != nil {
 		return RefreshLease{}, err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	if now > math.MaxInt64-leaseSeconds {
 		return RefreshLease{}, invalid("Invalid CFP lease timestamp")
 	}

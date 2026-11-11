@@ -3,6 +3,7 @@ package favorites
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -43,7 +44,7 @@ func (repository *Repository) BulkAdd(ctx context.Context, owner identity.Id, fo
 		}
 	}
 	var count int64
-	err := repository.auth.Immediate(ctx, false, func(connection *sql.Conn) error {
+	err := repository.auth.Immediate(ctx, false, func(connection *sql.Conn) (resultError error) {
 		if err := ensureFolder(ctx, connection, owner, folder, ErrFolderNotFound); err != nil {
 			return err
 		}
@@ -51,7 +52,11 @@ func (repository *Repository) BulkAdd(ctx context.Context, owner identity.Id, fo
 		if err != nil {
 			return err
 		}
-		defer statement.Close()
+		defer func() {
+			if closeError := statement.Close(); closeError != nil {
+				resultError = errors.Join(resultError, fmt.Errorf("close statement: %w", closeError))
+			}
+		}()
 		now := nowSeconds()
 		for _, item := range items {
 			result, err := statement.ExecContext(ctx, owner, folder, item.ArticleId, item.DbName, item.Note, now)
@@ -90,7 +95,7 @@ func (repository *Repository) BulkRemove(ctx context.Context, owner identity.Id,
 		return 0, nil
 	}
 	var count int64
-	err := repository.auth.Immediate(ctx, false, func(connection *sql.Conn) error {
+	err := repository.auth.Immediate(ctx, false, func(connection *sql.Conn) (resultError error) {
 		if err := ensureFolder(ctx, connection, owner, folder, ErrFolderNotFound); err != nil {
 			return err
 		}
@@ -98,7 +103,11 @@ func (repository *Repository) BulkRemove(ctx context.Context, owner identity.Id,
 		if err != nil {
 			return err
 		}
-		defer statement.Close()
+		defer func() {
+			if closeError := statement.Close(); closeError != nil {
+				resultError = errors.Join(resultError, fmt.Errorf("close statement: %w", closeError))
+			}
+		}()
 		for _, item := range items {
 			result, err := statement.ExecContext(ctx, owner, folder, item.ArticleId, item.DbName)
 			if err != nil {
@@ -142,7 +151,7 @@ func (repository *Repository) BulkMove(ctx context.Context, owner identity.Id, s
 		return 0, nil
 	}
 	var count storage.Integer
-	err := repository.auth.Immediate(ctx, false, func(connection *sql.Conn) error {
+	err := repository.auth.Immediate(ctx, false, func(connection *sql.Conn) (resultError error) {
 		if err := ensureFolder(ctx, connection, owner, source, ErrSourceFolderNotFound); err != nil {
 			return err
 		}
@@ -153,7 +162,11 @@ func (repository *Repository) BulkMove(ctx context.Context, owner identity.Id, s
 		if err != nil {
 			return err
 		}
-		defer insert.Close()
+		defer func() {
+			if closeError := insert.Close(); closeError != nil {
+				resultError = errors.Join(resultError, fmt.Errorf("close insert: %w", closeError))
+			}
+		}()
 		now := nowSeconds()
 		for _, item := range items {
 			if _, err := insert.ExecContext(ctx, target, now, owner, source, item.ArticleId, item.DbName); err != nil {
@@ -175,7 +188,11 @@ func (repository *Repository) BulkMove(ctx context.Context, owner identity.Id, s
 		if err != nil {
 			return err
 		}
-		defer remove.Close()
+		defer func() {
+			if closeError := remove.Close(); closeError != nil {
+				resultError = errors.Join(resultError, fmt.Errorf("close remove: %w", closeError))
+			}
+		}()
 		for _, item := range items {
 			if _, err := remove.ExecContext(ctx, owner, source, item.ArticleId, item.DbName); err != nil {
 				return err
@@ -248,13 +265,17 @@ func (repository *Repository) BatchIsFavorited(ctx context.Context, owner identi
 	if len(result) == 0 {
 		return result, nil
 	}
-	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
+	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) (resultError error) {
 		marks := strings.TrimSuffix(strings.Repeat("?,", len(result)), ",")
 		rows, err := connection.QueryContext(ctx, "SELECT fav.article_id,fav.folder_id,f.name FROM favorites fav JOIN folders f ON fav.folder_id=f.id WHERE fav.user_id=? AND fav.db_name=? AND fav.article_id IN ("+marks+") ORDER BY fav.article_id,fav.created_at", values...)
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
+		defer func() {
+			if closeError := rows.Close(); closeError != nil {
+				resultError = errors.Join(resultError, fmt.Errorf("close rows: %w", closeError))
+			}
+		}()
 		for rows.Next() {
 			var article, folder storage.Integer
 			var name storage.Text

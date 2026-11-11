@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -108,7 +109,7 @@ func Enrich(ctx context.Context, configuration config.Config, favorites []Favori
 }
 
 // loadMetadata admits all 500-ID chunks atomically while retaining one plain database owner.
-func loadMetadata(ctx context.Context, filename, name string, ids []int64) (map[Reference]Article, error) {
+func loadMetadata(ctx context.Context, filename, name string, ids []int64) (resultValue1 map[Reference]Article, resultError error) {
 	_, values := queryIds(ids)
 	result := map[Reference]Article{}
 	if len(values) == 0 {
@@ -118,7 +119,11 @@ func loadMetadata(ctx context.Context, filename, name string, ids []int64) (map[
 	if err != nil {
 		return nil, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	for start := 0; start < len(values); start += 500 {
 		chunk := values[start:min(start+500, len(values))]
 		if err := loadMetadataChunk(ctx, database, name, chunk, result); err != nil {
@@ -166,7 +171,7 @@ func LoadCitationRecords(ctx context.Context, configuration config.Config, refer
 	return result, nil
 }
 
-func loadCitations(ctx context.Context, filename, name string, ids []int64) (map[Reference]domain.FavoriteCitation, error) {
+func loadCitations(ctx context.Context, filename, name string, ids []int64) (resultValue1 map[Reference]domain.FavoriteCitation, resultError error) {
 	marks, values := queryIds(ids)
 	result := map[Reference]domain.FavoriteCitation{}
 	if len(values) == 0 {
@@ -176,12 +181,20 @@ func loadCitations(ctx context.Context, filename, name string, ids []int64) (map
 	if err != nil {
 		return nil, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	rows, err := database.QueryContext(ctx, "SELECT a.article_id,a.title,a.authors_json,j.title,a.date,a.doi FROM articles a JOIN journals j ON j.journal_id=a.journal_id WHERE a.article_id IN ("+marks+")", values...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeError := rows.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close rows: %w", closeError))
+		}
+	}()
 	for rows.Next() {
 		var id storage.Integer
 		var title, journal, date, doi storage.OptionalText
@@ -254,13 +267,17 @@ func loadMetadataChunk(ctx context.Context, database *sql.DB, name string, chunk
 	for rows.Next() {
 		id, item, err := metadataArticleFromRow(rows)
 		if err != nil {
-			rows.Close()
+			if err := rows.Close(); err != nil {
+				slog.Warn("cleanup.failed", "operation", "rows.Close", "error", err)
+			}
 			return err
 		}
 		result[Reference{id, name}] = item
 	}
 	err = rows.Err()
-	rows.Close()
+	if err := rows.Close(); err != nil {
+		slog.Warn("cleanup.failed", "operation", "rows.Close", "error", err)
+	}
 	return err
 }
 

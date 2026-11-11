@@ -25,7 +25,11 @@ func secretDatabase(t *testing.T) (string, *sql.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { database.Close() })
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	})
 	statement := `INSERT INTO users(id,username,password_hash,salt,created_at,updated_at) VALUES(1,'synthetic','hash','salt',1,1);
 INSERT INTO notification_settings(user_id,pushplus_token,ai_api_key,ai_backup_api_key,created_at,updated_at) VALUES(1,'notify-token','ai-key','',1,1);
 INSERT INTO runtime_settings(key,value,updated_at) VALUES('provider_proxy_url','http://synthetic:credential@127.0.0.1:8080',1),('unknown_secret_like_field','untouched',1),('crossref_mailto_pool','contact@example.invalid',1);

@@ -3,6 +3,7 @@ package meta
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,7 +22,11 @@ func replaceFile(target string, data []byte) (*replacement, error) {
 		return nil, err
 	}
 	stagePath := stage.Name()
-	defer os.Remove(stagePath)
+	defer func() {
+		if err := os.Remove(stagePath); err != nil {
+			slog.Warn("cleanup.failed", "operation", "os.Remove", "error", err)
+		}
+	}()
 	if err := writeReplacementStage(stage, data); err != nil {
 		return nil, err
 	}
@@ -42,11 +47,15 @@ func replaceFile(target string, data []byte) (*replacement, error) {
 // writeReplacementStage preserves write/sync/close error precedence.
 func writeReplacementStage(stage *os.File, data []byte) error {
 	if _, err := stage.Write(data); err != nil {
-		stage.Close()
+		if err := stage.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "stage.Close", "error", err)
+		}
 		return err
 	}
 	if err := stage.Sync(); err != nil {
-		stage.Close()
+		if err := stage.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "stage.Close", "error", err)
+		}
 		return err
 	}
 	return stage.Close()

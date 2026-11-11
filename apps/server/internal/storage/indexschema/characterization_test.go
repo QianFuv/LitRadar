@@ -17,12 +17,20 @@ func schemaFixture(t *testing.T, version int) *sql.Conn {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { database.Close() })
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	})
 	connection, err := database.Conn(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { connection.Close() })
+	t.Cleanup(func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("connection.Close: %v", err)
+		}
+	})
 	if _, err := connection.ExecContext(context.Background(), schemaFixtureSql(version)); err != nil {
 		t.Fatal(err)
 	}

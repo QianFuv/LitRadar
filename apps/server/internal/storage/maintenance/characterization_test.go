@@ -114,7 +114,7 @@ func requireMaintenancePresence(t *testing.T, filename string, expected bool) {
 }
 
 // createLateMaintenanceLease creates an active control lease without touching source databases.
-func createLateMaintenanceLease(configuration config.Config) error {
+func createLateMaintenanceLease(configuration config.Config) (resultError error) {
 	if err := os.MkdirAll(configuration.IndexControlDir, 0700); err != nil {
 		return err
 	}
@@ -122,7 +122,7 @@ func createLateMaintenanceLease(configuration config.Config) error {
 	if err != nil {
 		return err
 	}
-	defer database.Close()
+	defer func() { resultError = errors.Join(resultError, database.Close()) }()
 	_, err = database.Exec("CREATE TABLE index_batch_lease(lease_key INTEGER,expires_at INTEGER); INSERT INTO index_batch_lease VALUES(1,1001)")
 	return err
 }

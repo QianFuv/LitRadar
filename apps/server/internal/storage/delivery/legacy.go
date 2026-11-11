@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -105,7 +106,7 @@ func validateLegacy(name string, state legacyState) error {
 }
 
 // ImportLegacyFiles validates every source before atomically importing the scan, preserving source bytes and raw-byte hashes.
-func ImportLegacyFiles(ctx context.Context, config storageconfig.Config, now float64) (LegacyImportResult, error) {
+func ImportLegacyFiles(ctx context.Context, config storageconfig.Config, now float64) (resultValue1 LegacyImportResult, resultError error) {
 	if err := validateTime(now, "Legacy delivery import time is invalid"); err != nil {
 		return LegacyImportResult{}, err
 	}
@@ -119,7 +120,11 @@ func ImportLegacyFiles(ctx context.Context, config storageconfig.Config, now flo
 	if err != nil {
 		return LegacyImportResult{}, err
 	}
-	defer repository.Close()
+	defer func() {
+		if closeError := repository.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close repository: %w", closeError))
+		}
+	}()
 	result, err := repository.importLegacy(ctx, inputs, now)
 	if err != nil {
 		emitLegacyImportFailure(ctx, started, err)

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"reflect"
 	"slices"
 	"strings"
@@ -240,13 +241,17 @@ func readProviderSettings(ctx context.Context, connection *sql.Conn, retire bool
 	for rows.Next() {
 		var item providerSettingRow
 		if err := rows.Scan(&item.key, &item.value); err != nil {
-			rows.Close()
+			if err := rows.Close(); err != nil {
+				slog.Warn("cleanup.failed", "operation", "rows.Close", "error", err)
+			}
 			return nil, err
 		}
 		entries = append(entries, item)
 	}
 	err = rows.Err()
-	rows.Close()
+	if err := rows.Close(); err != nil {
+		slog.Warn("cleanup.failed", "operation", "rows.Close", "error", err)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -516,18 +521,24 @@ func validateNotificationLists(ctx context.Context, connection *sql.Conn) error 
 	for rows.Next() {
 		var values [3]string
 		if err := rows.Scan(&values[0], &values[1], &values[2]); err != nil {
-			rows.Close()
+			if err := rows.Close(); err != nil {
+				slog.Warn("cleanup.failed", "operation", "rows.Close", "error", err)
+			}
 			return err
 		}
 		for _, value := range values {
 			if _, err := stringList(json.RawMessage(value)); err != nil {
-				rows.Close()
+				if err := rows.Close(); err != nil {
+					slog.Warn("cleanup.failed", "operation", "rows.Close", "error", err)
+				}
 				return ErrNotificationState
 			}
 		}
 	}
 	err = rows.Err()
-	rows.Close()
+	if err := rows.Close(); err != nil {
+		slog.Warn("cleanup.failed", "operation", "rows.Close", "error", err)
+	}
 	if err != nil {
 		return err
 	}

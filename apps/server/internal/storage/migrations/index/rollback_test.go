@@ -20,7 +20,11 @@ func mutateFixture(t *testing.T, filename, statement string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	if _, err := database.Exec(statement); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +66,9 @@ func databaseSnapshot(t *testing.T, filename string) string {
 			if err := rows.Err(); err != nil {
 				t.Fatal(err)
 			}
-			rows.Close()
+			if err := rows.Close(); err != nil {
+				t.Errorf("rows.Close: %v", err)
+			}
 			result[table] = values
 		}
 	})

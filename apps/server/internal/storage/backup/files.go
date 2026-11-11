@@ -3,6 +3,8 @@ package backup
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,12 +19,16 @@ type snapshotFile struct {
 	Sha256 string
 }
 
-func hashFile(filename string) (string, error) {
+func hashFile(filename string) (resultValue1 string, resultError error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
+	defer func() {
+		if closeError := file.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close file: %w", closeError))
+		}
+	}()
 	hash := sha256.New()
 	if _, err := io.CopyBuffer(hash, file, make([]byte, 65536)); err != nil {
 		return "", err
@@ -75,12 +81,16 @@ func snapshot(root string) ([]snapshotFile, error) {
 	slices.SortFunc(result, func(first, second snapshotFile) int { return strings.Compare(first.Path, second.Path) })
 	return result, err
 }
-func copyFile(source, destination string) error {
+func copyFile(source, destination string) (resultError error) {
 	input, err := os.Open(source)
 	if err != nil {
 		return err
 	}
-	defer input.Close()
+	defer func() {
+		if closeError := input.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close input: %w", closeError))
+		}
+	}()
 	info, err := input.Stat()
 	if err != nil {
 		return err

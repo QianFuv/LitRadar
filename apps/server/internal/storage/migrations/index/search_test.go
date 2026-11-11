@@ -21,7 +21,11 @@ func obsoleteSearchFixture(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	if _, err := database.Exec("UPDATE articles SET title='研究 O''Brien AB12',abstract_text='😀' WHERE article_id=1001;PRAGMA writable_schema=ON"); err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +59,9 @@ func TestObsoleteSimpleRebuildsOnEveryEntrance(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				connection.Close()
+				if err := connection.Close(); err != nil {
+					t.Errorf("connection.Close: %v", err)
+				}
 			}
 			inspectConnection(t, filename, func(connection *sql.Conn) {
 				if needed, err := search.NeedsRebuild(ctx, connection); err != nil || needed {

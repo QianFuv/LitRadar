@@ -4,6 +4,7 @@ package query
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -153,12 +154,16 @@ type rowQuerier interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
-func collect[Record any](ctx context.Context, database rowQuerier, statement string, values []any, decode func(scanner) (Record, error)) ([]Record, error) {
+func collect[Record any](ctx context.Context, database rowQuerier, statement string, values []any, decode func(scanner) (Record, error)) (resultValue1 []Record, resultError error) {
 	rows, err := database.QueryContext(ctx, statement, values...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeError := rows.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close rows: %w", closeError))
+		}
+	}()
 	items := []Record{}
 	for rows.Next() {
 		record, err := decode(rows)

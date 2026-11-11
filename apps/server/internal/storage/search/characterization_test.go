@@ -51,12 +51,20 @@ func searchFixture(t *testing.T) (*sql.Conn, context.Context) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { database.Close() })
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	})
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { connection.Close() })
+	t.Cleanup(func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("connection.Close: %v", err)
+		}
+	})
 	if _, err := connection.ExecContext(ctx, `CREATE TABLE journals(journal_id INTEGER,title TEXT);
 CREATE TABLE articles(article_id INTEGER,title TEXT,abstract_text TEXT,doi TEXT,pmid TEXT,authors_json TEXT,journal_id INTEGER);
 INSERT INTO journals VALUES(1,'JÖURNAL');
@@ -108,7 +116,15 @@ func TestRebuildLeavesPartialWritesForCallerRollback(t *testing.T) {
 	if _, err := connection.ExecContext(ctx, "UPDATE articles SET authors_json='null' WHERE article_id=2; BEGIN IMMEDIATE"); err != nil {
 		t.Fatal(err)
 	}
-	defer connection.ExecContext(ctx, "ROLLBACK")
+	hasTransaction := true
+	defer func() {
+		if !hasTransaction {
+			return
+		}
+		if _, err := connection.ExecContext(ctx, "ROLLBACK"); err != nil {
+			t.Errorf("connection.ExecContext: %v", err)
+		}
+	}()
 	if err := Rebuild(ctx, connection); !errors.Is(err, ErrInvalidAuthors) {
 		t.Fatalf("late author error changed: %v", err)
 	}
@@ -116,6 +132,7 @@ func TestRebuildLeavesPartialWritesForCallerRollback(t *testing.T) {
 	if _, err := connection.ExecContext(ctx, "ROLLBACK"); err != nil {
 		t.Fatal(err)
 	}
+	hasTransaction = false
 	var identifier int64
 	if err := connection.QueryRowContext(ctx, "SELECT rowid FROM article_search").Scan(&identifier); err != nil || identifier != 99 {
 		t.Fatalf("caller rollback lost stale projection: %d %v", identifier, err)
@@ -128,7 +145,11 @@ func TestRebuildRejectsNativeTextBeforeAuthorDecoding(t *testing.T) {
 	if _, err := connection.ExecContext(ctx, "UPDATE articles SET title=x'ff',authors_json='null' WHERE article_id=2; BEGIN IMMEDIATE"); err != nil {
 		t.Fatal(err)
 	}
-	defer connection.ExecContext(ctx, "ROLLBACK")
+	defer func() {
+		if _, err := connection.ExecContext(ctx, "ROLLBACK"); err != nil {
+			t.Errorf("connection.ExecContext: %v", err)
+		}
+	}()
 	err := Rebuild(ctx, connection)
 	if err == nil || errors.Is(err, ErrInvalidAuthors) {
 		t.Fatalf("native text failure was bypassed: %v", err)

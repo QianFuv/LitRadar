@@ -24,7 +24,11 @@ func testRepository(t *testing.T) *Repository {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { repository.Close() })
+	t.Cleanup(func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	})
 	return repository
 }
 
@@ -71,7 +75,11 @@ func TestRepositoryOpenDoesNotMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	}()
 	if _, err := repository.BootstrapRequired(context.Background()); err == nil {
 		t.Fatal("read unexpectedly created schema")
 	}

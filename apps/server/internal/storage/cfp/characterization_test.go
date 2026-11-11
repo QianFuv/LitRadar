@@ -71,7 +71,11 @@ func preparationRepository(t testing.TB) *Repository {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { repository.Close() })
+	t.Cleanup(func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	})
 	return repository
 }
 

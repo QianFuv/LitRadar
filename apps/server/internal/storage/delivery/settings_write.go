@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -21,7 +23,7 @@ import (
 var ErrEndpointNotAllowed = errors.New("Outbound endpoint is not allowed")
 
 // UpsertNotificationSettings authenticates existing secrets and checks endpoint and folder policy in the same write transaction.
-func (repository *Repository) UpsertNotificationSettings(ctx context.Context, codec *secrets.Codec, userId int64, update domain.NotificationSettingsUpdate) (*domain.NotificationSettings, error) {
+func (repository *Repository) UpsertNotificationSettings(ctx context.Context, codec *secrets.Codec, userId int64, update domain.NotificationSettingsUpdate) (resultValue1 *domain.NotificationSettings, resultError error) {
 	if err := domain.ValidateNotificationSettings(update); err != nil {
 		return nil, err
 	}
@@ -33,11 +35,22 @@ func (repository *Repository) UpsertNotificationSettings(ctx context.Context, co
 	if err != nil {
 		return nil, err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	if _, err := connection.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return nil, err
 	}
-	defer connection.ExecContext(context.Background(), "ROLLBACK")
+	hasTransaction := true
+	defer func() {
+		if hasTransaction {
+			if _, rollbackError := connection.ExecContext(context.Background(), "ROLLBACK"); rollbackError != nil {
+				slog.Error("storage.rollback.failed", "error", rollbackError)
+			}
+		}
+	}()
 	prepared, err := prepareNotificationSettingsWrite(ctx, connection, codec, userId, update)
 	if err != nil {
 		return nil, err
@@ -58,6 +71,7 @@ func (repository *Repository) UpsertNotificationSettings(ctx context.Context, co
 	if _, err := connection.ExecContext(ctx, "COMMIT"); err != nil {
 		return nil, err
 	}
+	hasTransaction = false
 	return stored, nil
 }
 

@@ -20,7 +20,11 @@ func aliasClaimFixture(t *testing.T) (*Connection, domain.JournalCatalogEntry, d
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { connection.Close() })
+	t.Cleanup(func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("connection.Close: %v", err)
+		}
+	})
 	catalog, batch := contentInput(t)
 	article := &batch.Articles[0]
 	article.Title = "A sufficiently rich original research title"
@@ -148,7 +152,11 @@ func legacyAliasFixture(t *testing.T, change func(*domain.ArticleDraft, *domain.
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { connection.Close() })
+	t.Cleanup(func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("connection.Close: %v", err)
+		}
+	})
 	catalog, _ := contentInput(t)
 	legacy := domain.ArticleDraft{CatalogId: catalog.CatalogId, Title: "Iterated Learning in Dynamic Social Networks", PublicationYear: new(int64(2019)), Date: new("2019-01-01"), Volume: new("20"), IssueNumber: new("29"), StartPage: new("1"), EndPage: new("28")}
 	strong := domain.ArticleDraft{CatalogId: catalog.CatalogId, Title: "Iterated learning in dynamic social networks", PublicationYear: new(int64(2019)), Date: new("2019-01-01"), Doi: new("10.5555/3322706.3322735")}

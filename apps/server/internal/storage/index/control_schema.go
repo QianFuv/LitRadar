@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
 	"io"
+	"log/slog"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
@@ -95,13 +96,17 @@ func migrateLegacyAnchors(ctx context.Context, connection *sql.Conn) error {
 	for rows.Next() {
 		var value [5]sqlite.Text
 		if err := rows.Scan(&value[0], &value[1], &value[2], &value[3], &value[4]); err != nil {
-			rows.Close()
+			if err := rows.Close(); err != nil {
+				slog.Warn("cleanup.failed", "operation", "rows.Close", "error", err)
+			}
 			return err
 		}
 		values = append(values, value)
 	}
 	err = rows.Err()
-	rows.Close()
+	if err := rows.Close(); err != nil {
+		slog.Warn("cleanup.failed", "operation", "rows.Close", "error", err)
+	}
 	if err != nil {
 		return err
 	}

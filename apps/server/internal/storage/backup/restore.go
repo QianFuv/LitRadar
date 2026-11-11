@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -160,7 +161,9 @@ func restore(ctx context.Context, options RestoreOptions, now float64, beforeRep
 	defer func() {
 		var failed Failure
 		if !errors.As(returnError, &failed) || failed.Kind != "rollback" {
-			os.RemoveAll(authWorkspace)
+			if err := os.RemoveAll(authWorkspace); err != nil {
+				slog.Warn("cleanup.failed", "operation", "os.RemoveAll", "error", err)
+			}
 		}
 	}()
 	dataWorkspace, err := os.MkdirTemp(data, ".litradar-data-restore-")
@@ -170,7 +173,9 @@ func restore(ctx context.Context, options RestoreOptions, now float64, beforeRep
 	defer func() {
 		var failed Failure
 		if !errors.As(returnError, &failed) || failed.Kind != "rollback" {
-			os.RemoveAll(dataWorkspace)
+			if err := os.RemoveAll(dataWorkspace); err != nil {
+				slog.Warn("cleanup.failed", "operation", "os.RemoveAll", "error", err)
+			}
 		}
 	}()
 	items, err := stageRestoreReplacements(options, manifest, data, authWorkspace, dataWorkspace)

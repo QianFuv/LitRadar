@@ -19,7 +19,11 @@ func TestPublicationFailureRetainsOutboxAndPreparedCursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer content.Close()
+	defer func() {
+		if err := content.Close(); err != nil {
+			t.Errorf("content.Close: %v", err)
+		}
+	}()
 	catalog, batch := contentInput(t)
 	if _, err := WriteContentBatch(ctx, content.Conn, catalog, batch, "first", "epoch"); err != nil {
 		t.Fatal(err)

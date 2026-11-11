@@ -20,12 +20,20 @@ func testConnection(t *testing.T, filename string) *sql.Conn {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { database.Close() })
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	})
 	connection, err := database.Conn(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { connection.Close() })
+	t.Cleanup(func() {
+		if err := connection.Close(); err != nil && !errors.Is(err, sql.ErrConnDone) {
+			t.Errorf("connection.Close: %v", err)
+		}
+	})
 	return connection
 }
 
@@ -91,7 +99,9 @@ func TestMigrationNeverReconfiguresCurrentOrFutureDatabase(t *testing.T) {
 			filename := filepath.Join(t.TempDir(), "auth.sqlite")
 			connection := testConnection(t, filename)
 			mustExecute(t, connection, fmt.Sprintf("CREATE TABLE marker(value TEXT); INSERT INTO marker VALUES ('unchanged'); PRAGMA user_version=%d", version))
-			connection.Close()
+			if err := connection.Close(); err != nil && !errors.Is(err, sql.ErrConnDone) {
+				t.Errorf("connection.Close: %v", err)
+			}
 			before, err := os.ReadFile(filename)
 			if err != nil {
 				t.Fatal(err)
@@ -446,7 +456,9 @@ func TestMalformedSchemaDoesNotPreemptVersionCheck(t *testing.T) {
 			filename := filepath.Join(t.TempDir(), "auth.sqlite")
 			connection := testConnection(t, filename)
 			mustExecute(t, connection, fmt.Sprintf("CREATE TABLE marker(value TEXT); PRAGMA user_version=%d; PRAGMA writable_schema=ON; UPDATE sqlite_schema SET sql='CREATE TABLE marker(' WHERE name='marker'", version))
-			connection.Close()
+			if err := connection.Close(); err != nil && !errors.Is(err, sql.ErrConnDone) {
+				t.Errorf("connection.Close: %v", err)
+			}
 			before, err := os.ReadFile(filename)
 			if err != nil {
 				t.Fatal(err)

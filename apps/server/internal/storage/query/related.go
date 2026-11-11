@@ -3,6 +3,8 @@ package query
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -217,7 +219,7 @@ func relatedTermCost(ctx context.Context, connection *sql.Conn, filename string,
 }
 
 // RelatedArticles returns articles ranked by FTS5 bm25 similarity to the source article title.
-func RelatedArticles(ctx context.Context, configuration config.Config, name *string, id int64, limit int64) ([]domain.Article, error) {
+func RelatedArticles(ctx context.Context, configuration config.Config, name *string, id int64, limit int64) (resultValue1 []domain.Article, resultError error) {
 	if limit < 1 || limit > RelatedArticleMaxLimit {
 		return nil, InvalidInput{"limit must be between 1 and 30"}
 	}
@@ -229,7 +231,11 @@ func RelatedArticles(ctx context.Context, configuration config.Config, name *str
 	if err != nil {
 		return nil, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	sources, err := fetchArticles(ctx, database, []int64{id})
 	if err != nil {
 		return nil, err
@@ -284,7 +290,11 @@ func relatedArticleIds(ctx context.Context, database *sql.DB, filename string, t
 	if err != nil {
 		return nil, err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			failure = errors.Join(failure, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	terms := relatedTerms(title)
 	if len(terms) == 0 {
 		return []int64{}, nil
@@ -309,7 +319,11 @@ func relatedArticleIds(ctx context.Context, database *sql.DB, filename string, t
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeError := rows.Close(); closeError != nil {
+			failure = errors.Join(failure, fmt.Errorf("close rows: %w", closeError))
+		}
+	}()
 	ids := []int64{}
 	for rows.Next() {
 		var related int64

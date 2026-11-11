@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
@@ -76,7 +77,7 @@ func decodeIssue(row querydb.Issue) domain.Issue {
 }
 
 // ListJournals validates public filters in their original order and counts all matching journals.
-func ListJournals(ctx context.Context, configuration config.Config, name *string, params JournalListParams) (domain.Page[domain.Journal], error) {
+func ListJournals(ctx context.Context, configuration config.Config, name *string, params JournalListParams) (resultValue1 domain.Page[domain.Journal], resultError error) {
 	empty := domain.Page[domain.Journal]{}
 	if err := validatePagination(params.Limit, params.Offset); err != nil {
 		return empty, err
@@ -88,7 +89,11 @@ func ListJournals(ctx context.Context, configuration config.Config, name *string
 	if err != nil {
 		return empty, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	if err := database.PingContext(ctx); err != nil {
 		return empty, err
 	}
@@ -112,12 +117,16 @@ func ListJournals(ctx context.Context, configuration config.Config, name *string
 }
 
 // GetJournal returns one canonical row without imposing a new positive-ID restriction.
-func GetJournal(ctx context.Context, configuration config.Config, name *string, id int64) (domain.Journal, error) {
+func GetJournal(ctx context.Context, configuration config.Config, name *string, id int64) (resultValue1 domain.Journal, resultError error) {
 	database, err := open(configuration, name)
 	if err != nil {
 		return domain.Journal{}, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	row, err := queries.JournalByID(ctx, database, querydb.JournalByIDParams{JournalID: storage.Integer(id)})
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Journal{}, NotFound{"Journal not found"}
@@ -129,7 +138,7 @@ func GetJournal(ctx context.Context, configuration config.Config, name *string, 
 }
 
 // ListIssues counts and pages the issue inventory rather than deriving it from articles.
-func ListIssues(ctx context.Context, configuration config.Config, name *string, params IssueListParams) (domain.Page[domain.Issue], error) {
+func ListIssues(ctx context.Context, configuration config.Config, name *string, params IssueListParams) (resultValue1 domain.Page[domain.Issue], resultError error) {
 	empty := domain.Page[domain.Issue]{}
 	if err := validatePagination(params.Limit, params.Offset); err != nil {
 		return empty, err
@@ -138,7 +147,11 @@ func ListIssues(ctx context.Context, configuration config.Config, name *string, 
 	if err != nil {
 		return empty, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	if err := database.PingContext(ctx); err != nil {
 		return empty, err
 	}
@@ -165,12 +178,16 @@ func ListIssues(ctx context.Context, configuration config.Config, name *string, 
 }
 
 // GetIssue preserves stored date text while deriving its validated precision.
-func GetIssue(ctx context.Context, configuration config.Config, name *string, id int64) (domain.Issue, error) {
+func GetIssue(ctx context.Context, configuration config.Config, name *string, id int64) (resultValue1 domain.Issue, resultError error) {
 	database, err := open(configuration, name)
 	if err != nil {
 		return domain.Issue{}, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	row, err := queries.IssueByID(ctx, database, querydb.IssueByIDParams{IssueID: storage.Integer(id)})
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Issue{}, NotFound{"Issue not found"}
@@ -191,12 +208,16 @@ func valueCountFromRow(row scanner) (domain.ValueCount, error) {
 }
 
 // ListAreas counts nonempty stored labels, including labels containing only whitespace.
-func ListAreas(ctx context.Context, configuration config.Config, name *string) ([]domain.ValueCount, error) {
+func ListAreas(ctx context.Context, configuration config.Config, name *string) (resultValue1 []domain.ValueCount, resultError error) {
 	database, err := open(configuration, name)
 	if err != nil {
 		return nil, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	rows, err := queries.Areas(ctx, database)
 	if err != nil {
 		return nil, err
@@ -212,12 +233,16 @@ func ListAreas(ctx context.Context, configuration config.Config, name *string) (
 }
 
 // ListJournalRatings includes four arrays and counts journals without articles.
-func ListJournalRatings(ctx context.Context, configuration config.Config, name *string) (domain.RatingOptions, error) {
+func ListJournalRatings(ctx context.Context, configuration config.Config, name *string) (resultValue1 domain.RatingOptions, resultError error) {
 	database, err := open(configuration, name)
 	if err != nil {
 		return domain.RatingOptions{}, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	result := domain.RatingOptions{}
 	for _, group := range []struct {
 		field  string
@@ -232,12 +257,16 @@ func ListJournalRatings(ctx context.Context, configuration config.Config, name *
 }
 
 // ListJournalOptions returns the complete title-ordered journal selector inventory.
-func ListJournalOptions(ctx context.Context, configuration config.Config, name *string) ([]domain.JournalOption, error) {
+func ListJournalOptions(ctx context.Context, configuration config.Config, name *string) (resultValue1 []domain.JournalOption, resultError error) {
 	database, err := open(configuration, name)
 	if err != nil {
 		return nil, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	rows, err := queries.JournalOptions(ctx, database)
 	if err != nil {
 		return nil, err
@@ -250,12 +279,16 @@ func ListJournalOptions(ctx context.Context, configuration config.Config, name *
 }
 
 // ListYears counts distinct issues and journals grouped by stored publication year.
-func ListYears(ctx context.Context, configuration config.Config, name *string) ([]domain.YearSummary, error) {
+func ListYears(ctx context.Context, configuration config.Config, name *string) (resultValue1 []domain.YearSummary, resultError error) {
 	database, err := open(configuration, name)
 	if err != nil {
 		return nil, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	rows, err := queries.Years(ctx, database)
 	if err != nil {
 		return nil, err

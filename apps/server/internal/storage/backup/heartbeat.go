@@ -3,6 +3,8 @@ package backup
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"math"
 	"os"
 	"strings"
@@ -14,7 +16,7 @@ import (
 var heartbeatQueries backupdb.Queries
 
 // RecordHeartbeat retains process start time on renewal and expires seven-day-old rows.
-func RecordHeartbeat(ctx context.Context, filename string, service ServiceKind, instance string, at float64) error {
+func RecordHeartbeat(ctx context.Context, filename string, service ServiceKind, instance string, at float64) (resultError error) {
 	if strings.TrimSpace(instance) == "" || math.IsNaN(at) || math.IsInf(at, 0) {
 		return failure("input", "service heartbeat values are invalid")
 	}
@@ -22,7 +24,11 @@ func RecordHeartbeat(ctx context.Context, filename string, service ServiceKind, 
 	if err != nil {
 		return err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	if _, err := heartbeatQueries.RecordHeartbeat(ctx, database, backupdb.RecordHeartbeatParams{Service: string(service), InstanceID: instance, StartedAt: at, HeartbeatAt: at}); err != nil {
 		return err
 	}
@@ -31,18 +37,22 @@ func RecordHeartbeat(ctx context.Context, filename string, service ServiceKind, 
 }
 
 // DeleteHeartbeat removes only the requested service instance during graceful shutdown.
-func DeleteHeartbeat(ctx context.Context, filename string, service ServiceKind, instance string) error {
+func DeleteHeartbeat(ctx context.Context, filename string, service ServiceKind, instance string) (resultError error) {
 	database, err := storage.Open(filename, false, 1)
 	if err != nil {
 		return err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	_, err = heartbeatQueries.DeleteHeartbeat(ctx, database, backupdb.DeleteHeartbeatParams{Service: string(service), InstanceID: instance})
 	return err
 }
 
 // HasRecentHeartbeat treats missing legacy tables as inactive and includes future timestamps.
-func HasRecentHeartbeat(ctx context.Context, filename string, now, maximumAge float64) (bool, error) {
+func HasRecentHeartbeat(ctx context.Context, filename string, now, maximumAge float64) (resultValue1 bool, resultError error) {
 	if _, err := os.Stat(filename); err != nil {
 		return false, nil
 	}
@@ -53,7 +63,11 @@ func HasRecentHeartbeat(ctx context.Context, filename string, now, maximumAge fl
 	if err != nil {
 		return false, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	for _, table := range []string{"service_heartbeats", "scheduler_workers"} {
 		active, err := recentTableHeartbeat(ctx, database, table, now-maximumAge)
 		if err != nil || active {

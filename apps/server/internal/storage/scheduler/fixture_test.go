@@ -25,7 +25,11 @@ func fixture(t testing.TB) (*Repository, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { repository.Close() })
+	t.Cleanup(func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	})
 	return repository, filename
 }
 
@@ -40,7 +44,9 @@ func snapshot(t *testing.T, repository *Repository) map[string]any {
 			}
 			columns, err := rows.Columns()
 			if err != nil {
-				rows.Close()
+				if err := rows.Close(); err != nil {
+					t.Errorf("rows.Close: %v", err)
+				}
 				return err
 			}
 			records := [][]any{}
@@ -51,7 +57,9 @@ func snapshot(t *testing.T, repository *Repository) map[string]any {
 					targets[index] = &values[index]
 				}
 				if err := rows.Scan(targets...); err != nil {
-					rows.Close()
+					if err := rows.Close(); err != nil {
+						t.Errorf("rows.Close: %v", err)
+					}
 					return err
 				}
 				for index, value := range values {
@@ -72,7 +80,9 @@ func snapshot(t *testing.T, repository *Repository) map[string]any {
 				records = append(records, values)
 			}
 			err = rows.Err()
-			rows.Close()
+			if err := rows.Close(); err != nil {
+				t.Errorf("rows.Close: %v", err)
+			}
 			if err != nil {
 				return err
 			}
@@ -92,7 +102,11 @@ func applyFixtureSql(t *testing.T, repository *Repository, statement string) {
 		return
 	}
 	if err := repository.auth.WithConnection(context.Background(), func(connection *sql.Conn) error {
-		defer connection.ExecContext(context.Background(), "PRAGMA ignore_check_constraints=OFF")
+		defer func() {
+			if _, err := connection.ExecContext(context.Background(), "PRAGMA ignore_check_constraints=OFF"); err != nil {
+				t.Errorf("connection.ExecContext: %v", err)
+			}
+		}()
 		_, err := connection.ExecContext(context.Background(), "PRAGMA ignore_check_constraints=ON;"+statement)
 		return err
 	}); err != nil {

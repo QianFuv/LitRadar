@@ -5,6 +5,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -51,37 +53,57 @@ func Open(filename string) (*Repository, error) {
 func (repository *Repository) Close() error { return repository.database.Close() }
 
 // WithConnection runs an explicit non-transactional read using the auth pool's connection policy.
-func (repository *Repository) WithConnection(ctx context.Context, read func(*sql.Conn) error) error {
+func (repository *Repository) WithConnection(ctx context.Context, read func(*sql.Conn) error) (resultError error) {
 	connection, err := repository.database.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	return read(connection)
 }
 
 // Immediate keeps the entire protected mutation and required audit on one connection.
 // The bounded revocation policy is restored before returning a connection to the pool.
-func (repository *Repository) Immediate(ctx context.Context, isRevocation bool, mutate func(*sql.Conn) error) error {
+func (repository *Repository) Immediate(ctx context.Context, isRevocation bool, mutate func(*sql.Conn) error) (resultError error) {
 	connection, err := repository.database.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	if isRevocation {
 		if _, err := connection.ExecContext(ctx, "PRAGMA busy_timeout=250"); err != nil {
 			return err
 		}
-		defer connection.ExecContext(context.Background(), "PRAGMA busy_timeout=30000")
+		defer func() {
+			if _, err := connection.ExecContext(context.Background(), "PRAGMA busy_timeout=30000"); err != nil {
+				slog.Error("storage.busy_timeout.restore_failed", "error", err)
+			}
+		}()
 	}
 	if _, err := connection.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return err
 	}
-	defer connection.ExecContext(context.Background(), "ROLLBACK")
+	hasTransaction := true
+	defer func() {
+		if hasTransaction {
+			if _, rollbackError := connection.ExecContext(context.Background(), "ROLLBACK"); rollbackError != nil {
+				slog.Error("storage.rollback.failed", "error", rollbackError)
+			}
+		}
+	}()
 	if err := mutate(connection); err != nil {
 		return err
 	}
 	_, err = connection.ExecContext(ctx, "COMMIT")
+	hasTransaction = err != nil
 	return err
 }
 

@@ -45,7 +45,11 @@ func TestActiveServiceHeartbeatPrecedesMalformedLegacyTable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	executeBackupCharacterizationSql(t, database, "DROP TABLE scheduler_workers; CREATE TABLE scheduler_workers(unrelated TEXT); DROP TABLE service_heartbeats; CREATE TABLE service_heartbeats(service TEXT,instance_id TEXT,started_at REAL,heartbeat_at REAL); INSERT INTO service_heartbeats(service,instance_id,started_at,heartbeat_at) VALUES('api','active',100,100)")
 	assertBackupHeartbeat(t, configuration.AuthDbPath, true)
 	executeBackupCharacterizationSql(t, database, "DELETE FROM service_heartbeats; INSERT INTO service_heartbeats(service,instance_id,started_at,heartbeat_at) VALUES('other','ignored',100,100)")

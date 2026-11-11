@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"strconv"
 	"strings"
@@ -44,11 +45,19 @@ func (repository *Repository) readSnapshot(ctx context.Context, read func(*sql.C
 		if _, err := connection.ExecContext(ctx, "BEGIN"); err != nil {
 			return err
 		}
-		defer connection.ExecContext(context.Background(), "ROLLBACK")
+		hasTransaction := true
+		defer func() {
+			if hasTransaction {
+				if _, rollbackError := connection.ExecContext(context.Background(), "ROLLBACK"); rollbackError != nil {
+					slog.Error("storage.rollback.failed", "error", rollbackError)
+				}
+			}
+		}()
 		if err := read(connection); err != nil {
 			return err
 		}
 		_, err := connection.ExecContext(ctx, "COMMIT")
+		hasTransaction = err != nil
 		return err
 	})
 }

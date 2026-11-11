@@ -3,6 +3,9 @@ package delivery
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -89,20 +92,32 @@ func Open(filename string) (*Repository, error) {
 // Close releases physical connections.
 func (repository *Repository) Close() error { return storageError(repository.database.Close()) }
 
-func (repository *Repository) immediate(ctx context.Context, mutate func(*sql.Conn) error) error {
+func (repository *Repository) immediate(ctx context.Context, mutate func(*sql.Conn) error) (resultError error) {
 	connection, err := repository.database.Conn(ctx)
 	if err != nil {
 		return storageError(err)
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	if _, err := connection.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return storageError(err)
 	}
-	defer connection.ExecContext(context.Background(), "ROLLBACK")
+	hasTransaction := true
+	defer func() {
+		if hasTransaction {
+			if _, rollbackError := connection.ExecContext(context.Background(), "ROLLBACK"); rollbackError != nil {
+				slog.Error("storage.rollback.failed", "error", rollbackError)
+			}
+		}
+	}()
 	if err := mutate(connection); err != nil {
 		return storageError(err)
 	}
 	_, err = connection.ExecContext(ctx, "COMMIT")
+	hasTransaction = err != nil
 	return storageError(err)
 }
 

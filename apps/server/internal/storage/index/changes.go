@@ -32,7 +32,7 @@ type PreparedContentChangeManifest struct {
 
 // Format excludes publication payload bytes from diagnostic output.
 func (value PreparedContentChangeManifest) Format(state fmt.State, verb rune) {
-	fmt.Fprintf(state, "PreparedContentChangeManifest{payload_bytes:%d through_event_id:%v event_count:%d}", len(value.Payload), value.ThroughEventId, value.EventCount)
+	_, _ = fmt.Fprintf(state, "PreparedContentChangeManifest{payload_bytes:%d through_event_id:%v event_count:%d}", len(value.Payload), value.ThroughEventId, value.EventCount)
 }
 
 // ListContentChangeEvents reads at most 10,000 typed outbox events in identifier order.

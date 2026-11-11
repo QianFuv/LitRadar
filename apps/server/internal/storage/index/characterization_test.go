@@ -72,7 +72,11 @@ func TestLateAliasFailureRollsBackContentProjectionsEventsAndCounters(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer content.Close()
+	defer func() {
+		if err := content.Close(); err != nil {
+			t.Errorf("content.Close: %v", err)
+		}
+	}()
 	catalog, batch := contentInput(t)
 	if _, err := content.ExecContext(ctx, "CREATE TRIGGER reject_alias BEFORE INSERT ON article_identity_keys BEGIN SELECT RAISE(ABORT,'late alias failure'); END"); err != nil {
 		t.Fatal(err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/deliverydb"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
@@ -65,7 +66,7 @@ func (repository *Repository) insertItems(ctx context.Context, runId int64, item
 		identities[key] = true
 	}
 	records := []RunItemRecord{}
-	err := repository.immediate(ctx, func(connection *sql.Conn) error {
+	err := repository.immediate(ctx, func(connection *sql.Conn) (resultError error) {
 		run, err := loadRunRecord(ctx, connection, runId)
 		if err != nil {
 			return err
@@ -86,12 +87,20 @@ func (repository *Repository) insertItems(ctx context.Context, runId int64, item
 			if err != nil {
 				return err
 			}
-			defer insertStatement.Close()
+			defer func() {
+				if closeError := insertStatement.Close(); closeError != nil {
+					resultError = errors.Join(resultError, fmt.Errorf("close insertStatement: %w", closeError))
+				}
+			}()
 			selectStatement, err = connection.PrepareContext(ctx, deliverydb.ItemIdentity)
 			if err != nil {
 				return err
 			}
-			defer selectStatement.Close()
+			defer func() {
+				if closeError := selectStatement.Close(); closeError != nil {
+					resultError = errors.Join(resultError, fmt.Errorf("close selectStatement: %w", closeError))
+				}
+			}()
 		}
 		for _, item := range items {
 			if insertStatement == nil {

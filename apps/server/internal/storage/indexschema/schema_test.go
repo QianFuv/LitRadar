@@ -15,13 +15,21 @@ func TestNewSchemaInventoryAndForeignKeyValidationHaveDifferentScopes(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	ctx := context.Background()
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connection.Close()
+	defer func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("connection.Close: %v", err)
+		}
+	}()
 	if _, err := connection.ExecContext(ctx, ContentTables); err != nil {
 		t.Fatal(err)
 	}

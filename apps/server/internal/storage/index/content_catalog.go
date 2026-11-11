@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -270,7 +271,7 @@ func upsertJournal(ctx context.Context, connection *sql.Conn, catalog domain.Jou
 }
 
 // refreshJournal republishes canonical metadata with one prepared statement pair and journal title per refresh.
-func refreshJournal(ctx context.Context, connection *sql.Conn, catalog domain.JournalCatalogEntry, refresh projectionRefresh) error {
+func refreshJournal(ctx context.Context, connection *sql.Conn, catalog domain.JournalCatalogEntry, refresh projectionRefresh) (resultError error) {
 	journal := JournalId(catalog.CatalogId)
 	if refresh.shouldRefreshArea {
 		if _, err := contentQueries.UpdateListingArea(ctx, connection, contentdb.UpdateListingAreaParams{Area: (*sqlite.Text)(catalog.Area), JournalID: sqlite.Integer(journal)}); err != nil {
@@ -291,12 +292,20 @@ func refreshJournal(ctx context.Context, connection *sql.Conn, catalog domain.Jo
 	if err != nil {
 		return err
 	}
-	defer deleteProjection.Close()
+	defer func() {
+		if closeError := deleteProjection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close deleteProjection: %w", closeError))
+		}
+	}()
 	insertProjection, err := connection.PrepareContext(ctx, searchInsertSql)
 	if err != nil {
 		return err
 	}
-	defer insertProjection.Close()
+	defer func() {
+		if closeError := insertProjection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close insertProjection: %w", closeError))
+		}
+	}()
 	journalTitle := search.PrepareText(catalog.Title)
 	for _, value := range projections {
 		if _, err := deleteProjection.ExecContext(ctx, value.id); err != nil {

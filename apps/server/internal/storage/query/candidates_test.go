@@ -24,7 +24,11 @@ func candidateFixture(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	_, err = database.Exec(`CREATE TABLE journals(journal_id INTEGER PRIMARY KEY,title TEXT);
 CREATE TABLE articles(article_id INTEGER PRIMARY KEY,journal_id INTEGER,issue_id INTEGER,title TEXT,abstract_text TEXT,date TEXT,open_access INTEGER,in_press INTEGER,doi TEXT);
 INSERT INTO journals VALUES(1,'one'),(2,'two'),(50001,'large'),(65535,'inpress');
@@ -41,13 +45,21 @@ func TestLargeCandidateCancellationCleansPinnedConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	started := installCandidateCancellationSignal(t, database)
 	connection, err := database.Conn(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connection.Close()
+	defer func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("connection.Close: %v", err)
+		}
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	done := make(chan error, 1)

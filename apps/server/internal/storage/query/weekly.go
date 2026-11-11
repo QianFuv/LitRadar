@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -61,11 +63,18 @@ func loadWeeklyBuckets(configuration config.Config, end weekly.Timestamp, cache 
 }
 
 // installWeeklyMembership atomically loads exact IDs and sampled TEMP statistics for query planning.
-func installWeeklyMembership(ctx context.Context, connection *sql.Conn, ids []int64) error {
+func installWeeklyMembership(ctx context.Context, connection *sql.Conn, ids []int64) (resultError error) {
 	if _, err := connection.ExecContext(ctx, "CREATE TEMP TABLE weekly_membership(article_id INTEGER PRIMARY KEY) WITHOUT ROWID; BEGIN;"); err != nil {
 		return err
 	}
-	defer connection.ExecContext(context.Background(), "ROLLBACK")
+	hasTransaction := true
+	defer func() {
+		if hasTransaction {
+			if _, rollbackError := connection.ExecContext(context.Background(), "ROLLBACK"); rollbackError != nil {
+				slog.Error("storage.rollback.failed", "error", rollbackError)
+			}
+		}
+	}()
 	const insertPrefix = "INSERT OR IGNORE INTO temp.weekly_membership(article_id) VALUES"
 	width := min(500, max(1, len(ids)))
 	insertSql := insertPrefix + "(?)"
@@ -76,7 +85,11 @@ func installWeeklyMembership(ctx context.Context, connection *sql.Conn, ids []in
 	if err != nil {
 		return err
 	}
-	defer statement.Close()
+	defer func() {
+		if closeError := statement.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close statement: %w", closeError))
+		}
+	}()
 	for len(ids) >= width {
 		var err error
 		if width == 1 {
@@ -95,6 +108,7 @@ func installWeeklyMembership(ctx context.Context, connection *sql.Conn, ids []in
 		}
 	}
 	_, err = connection.ExecContext(ctx, "PRAGMA analysis_limit=500; ANALYZE temp.weekly_membership; COMMIT")
+	hasTransaction = err != nil
 	return err
 }
 
@@ -171,17 +185,25 @@ func WeeklySummary(ctx context.Context, configuration config.Config, end weekly.
 	return result, nil
 }
 
-func weeklyJournalCounts(ctx context.Context, filename string, ids []int64) ([]domain.WeeklyJournalSummary, error) {
+func weeklyJournalCounts(ctx context.Context, filename string, ids []int64) (resultValue1 []domain.WeeklyJournalSummary, resultError error) {
 	database, err := storage.Open(filename, false, 1)
 	if err != nil {
 		return nil, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	if err := installWeeklyMembership(ctx, connection, ids); err != nil {
 		return nil, err
 	}
@@ -222,7 +244,11 @@ func WeeklyArticles(ctx context.Context, configuration config.Config, params Wee
 	if err != nil {
 		return empty, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			failure = errors.Join(failure, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	if params.Query != nil && strings.TrimSpace(*params.Query) != "" {
 		if collector := telemetry.FromContext(ctx); collector != nil {
 			started := time.Now()
@@ -238,7 +264,11 @@ func WeeklyArticles(ctx context.Context, configuration config.Config, params Wee
 	if err != nil {
 		return empty, err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			failure = errors.Join(failure, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	filters, err := weeklyArticleFilters(ctx, configuration, params, cache, connection, end, name)
 	if err != nil {
 		return empty, err
@@ -289,12 +319,16 @@ func WeeklyUpdates(ctx context.Context, configuration config.Config, end weekly.
 	return result, nil
 }
 
-func fetchLegacyWeeklyArticles(ctx context.Context, filename string, ids []int64) ([]domain.WeeklyArticle, error) {
+func fetchLegacyWeeklyArticles(ctx context.Context, filename string, ids []int64) (resultValue1 []domain.WeeklyArticle, resultError error) {
 	database, err := storage.Open(filename, false, 1)
 	if err != nil {
 		return nil, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	byId := map[int64]domain.WeeklyArticle{}
 	for start := 0; start < len(ids); start += 500 {
 		chunk := ids[start:min(start+500, len(ids))]

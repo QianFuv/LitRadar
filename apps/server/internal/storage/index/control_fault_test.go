@@ -28,7 +28,11 @@ func preparedControl(t *testing.T) (*Connection, SyncRun, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { control.Close() })
+	t.Cleanup(func() {
+		if err := control.Close(); err != nil {
+			t.Errorf("control.Close: %v", err)
+		}
+	})
 	run := SyncRun{Scope: SyncScope{"catalog", "scholarly", "catalog:example"}, BatchId: "batch-1", RunId: "run-1", Mode: domain.Incremental}
 	if _, err := PrepareJournalSync(ctx, control.Conn, run, true, "epoch"); err != nil {
 		t.Fatal(err)
@@ -50,7 +54,11 @@ func TestContentCommitSurvivesProgressFailureAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer content.Close()
+	defer func() {
+		if err := content.Close(); err != nil {
+			t.Errorf("content.Close: %v", err)
+		}
+	}()
 	catalog, batch := contentInput(t)
 	if _, err := control.ExecContext(ctx, `CREATE TRIGGER fail_progress BEFORE INSERT ON provider_sync_anchors BEGIN SELECT RAISE(ABORT,'injected control'); END`); err != nil {
 		t.Fatal(err)
@@ -126,7 +134,11 @@ func TestControlLockFencesTakeoverAcrossContentCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer contender.Close()
+	defer func() {
+		if err := contender.Close(); err != nil {
+			t.Errorf("contender.Close: %v", err)
+		}
+	}()
 	started := make(chan struct{})
 	acquired := make(chan error, 1)
 	_, err = CommitContentThenProgress(ctx, control.Conn, run, domain.ProviderProgress{State: domain.Continue, Checkpoint: ptr("next")}, "later", func() (int, error) {
@@ -208,17 +220,27 @@ func TestContentRuntimeChecksStructureWithoutForeignKeyDataScan(t *testing.T) {
 	if _, err := content.ExecContext(ctx, "PRAGMA foreign_keys=OFF; INSERT INTO article_retraction_dois VALUES(123,'10.1/orphan')"); err != nil {
 		t.Fatal(err)
 	}
-	content.Close()
+	if err := content.Close(); err != nil {
+		t.Fatalf("content.Close: %v", err)
+	}
 	reopened, err := OpenContent(ctx, path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reopened.Close()
+	defer func() {
+		if err := reopened.Close(); err != nil {
+			t.Errorf("reopened.Close: %v", err)
+		}
+	}()
 	rows, err := reopened.QueryContext(ctx, "PRAGMA foreign_key_check")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			t.Errorf("rows.Close: %v", err)
+		}
+	}()
 	if !rows.Next() {
 		t.Fatal("fixture did not retain orphan")
 	}

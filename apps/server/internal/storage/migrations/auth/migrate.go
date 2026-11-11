@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -38,7 +39,7 @@ func (failure UnsupportedVersion) Error() string {
 
 // Migrate upgrades each historical version in its own immediate transaction.
 // Current databases are not revalidated or reconfigured by this entry point.
-func Migrate(ctx context.Context, filename string) (Summary, error) {
+func Migrate(ctx context.Context, filename string) (resultValue1 Summary, resultError error) {
 	if err := os.MkdirAll(filepath.Dir(filename), 0700); err != nil {
 		return Summary{}, err
 	}
@@ -46,12 +47,20 @@ func Migrate(ctx context.Context, filename string) (Summary, error) {
 	if err != nil {
 		return Summary{}, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		return Summary{}, err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	var version int
 	if err := connection.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return Summary{}, err
@@ -103,7 +112,14 @@ func migrateStep(ctx context.Context, connection *sql.Conn, version, fromVersion
 	if err := execute(ctx, connection, "BEGIN IMMEDIATE"); err != nil {
 		return version, err
 	}
-	defer connection.ExecContext(context.Background(), "ROLLBACK")
+	hasTransaction := true
+	defer func() {
+		if hasTransaction {
+			if _, rollbackError := connection.ExecContext(context.Background(), "ROLLBACK"); rollbackError != nil {
+				slog.Error("storage.rollback.failed", "error", rollbackError)
+			}
+		}
+	}()
 	var locked int
 	if err := connection.QueryRowContext(ctx, "PRAGMA user_version").Scan(&locked); err != nil {
 		return version, err
@@ -124,6 +140,7 @@ func migrateStep(ctx context.Context, connection *sql.Conn, version, fromVersion
 	if err := execute(ctx, connection, "COMMIT"); err != nil {
 		return version, err
 	}
+	hasTransaction = false
 	return next, nil
 }
 
@@ -159,12 +176,16 @@ func execute(ctx context.Context, connection *sql.Conn, statement string, argume
 	return err
 }
 
-func columns(ctx context.Context, connection *sql.Conn, table string) ([]string, error) {
+func columns(ctx context.Context, connection *sql.Conn, table string) (resultValue1 []string, resultError error) {
 	rows, err := connection.QueryContext(ctx, "SELECT name FROM pragma_table_info(?) ORDER BY cid", table)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeError := rows.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close rows: %w", closeError))
+		}
+	}()
 	result := []string{}
 	for rows.Next() {
 		var name string

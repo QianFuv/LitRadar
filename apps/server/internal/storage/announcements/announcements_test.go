@@ -27,7 +27,11 @@ func testRepository(t *testing.T) (*auth.Repository, identity.Id) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { repository.Close() })
+	t.Cleanup(func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	})
 	admin, err := repository.Bootstrap(context.Background(), "admin", "hash", "salt", 10, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +85,11 @@ func TestPublicReadPreservesPlainConnectionAndMissingParent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	if _, err := database.Exec("CREATE TABLE announcements(id INTEGER,title TEXT,message TEXT,priority TEXT,enabled INTEGER,created_at REAL,updated_at REAL)"); err != nil {
 		t.Fatal(err)
 	}

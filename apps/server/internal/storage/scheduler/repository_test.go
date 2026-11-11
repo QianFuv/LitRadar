@@ -24,7 +24,11 @@ func TestSchedulerConcurrentTaskAdmission(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer competitor.Close()
+			defer func() {
+				if err := competitor.Close(); err != nil {
+					t.Errorf("competitor.Close: %v", err)
+				}
+			}()
 			ctx := context.Background()
 			task, err := repository.Create(ctx, taskInput(), nil, nil)
 			if err != nil {

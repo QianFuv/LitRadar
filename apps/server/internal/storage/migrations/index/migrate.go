@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -58,17 +59,25 @@ type inspection struct {
 	objects int64
 }
 
-func withReadOnly(ctx context.Context, filename string, read func(*sql.Conn) error) error {
+func withReadOnly(ctx context.Context, filename string, read func(*sql.Conn) error) (resultError error) {
 	database, err := storage.Open(filename, true, 1)
 	if err != nil {
 		return err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	return read(connection)
 }
 
@@ -142,7 +151,7 @@ func Migrate(ctx context.Context, filename string) (Summary, error) {
 	return loggedMigration(ctx, filename)
 }
 
-func migrate(ctx context.Context, filename string) (Summary, error) {
+func migrate(ctx context.Context, filename string) (resultValue1 Summary, resultError error) {
 	observed, err := inspect(ctx, filename)
 	if err != nil {
 		return Summary{}, err
@@ -158,12 +167,20 @@ func migrate(ctx context.Context, filename string) (Summary, error) {
 	if err != nil {
 		return Summary{from, from}, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		return Summary{from, from}, err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	if from == 0 {
 		if err := connection.QueryRowContext(ctx, "PRAGMA user_version").Scan(&from); err != nil {
 			return Summary{}, err
@@ -216,13 +233,21 @@ func migrateContentConnection(ctx context.Context, connection *sql.Conn, from in
 	if _, err := connection.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return Summary{from, from}, err
 	}
-	defer connection.ExecContext(context.Background(), "ROLLBACK")
+	hasTransaction := true
+	defer func() {
+		if hasTransaction {
+			if _, rollbackError := connection.ExecContext(context.Background(), "ROLLBACK"); rollbackError != nil {
+				slog.Error("storage.rollback.failed", "error", rollbackError)
+			}
+		}
+	}()
 	if err := apply(ctx, connection, from, isUpgrade); err != nil {
 		return Summary{from, from}, err
 	}
 	if _, err := connection.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d; COMMIT", indexschema.Version)); err != nil {
 		return Summary{from, from}, err
 	}
+	hasTransaction = false
 	summary := Summary{from, indexschema.Version}
 	if isUpgrade {
 		if _, err := connection.ExecContext(ctx, "PRAGMA foreign_keys=ON"); err != nil {
@@ -321,12 +346,16 @@ func versionFive(ctx context.Context, connection *sql.Conn) error {
 }
 
 // readLegacyJournalIdentities closes the ordered typed read before any semantic checks.
-func readLegacyJournalIdentities(ctx context.Context, connection *sql.Conn) ([]legacyJournalIdentity, error) {
+func readLegacyJournalIdentities(ctx context.Context, connection *sql.Conn) (resultValue1 []legacyJournalIdentity, resultError error) {
 	rows, err := connection.QueryContext(ctx, "SELECT catalog_id,issns_json,issn,eissn FROM journals ORDER BY catalog_id")
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeError := rows.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close rows: %w", closeError))
+		}
+	}()
 	journals := []legacyJournalIdentity{}
 	for rows.Next() {
 		var journal legacyJournalIdentity
@@ -338,7 +367,9 @@ func readLegacyJournalIdentities(ctx context.Context, connection *sql.Conn) ([]l
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	rows.Close()
+	if err := rows.Close(); err != nil {
+		slog.Warn("cleanup.failed", "operation", "rows.Close", "error", err)
+	}
 	return journals, nil
 }
 

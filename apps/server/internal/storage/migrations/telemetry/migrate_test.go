@@ -20,7 +20,11 @@ func TestMigrateIsRepeatableAndRejectsFutureVersions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	if _, err := database.Exec("PRAGMA user_version=2"); err != nil {
 		t.Fatal(err)
 	}

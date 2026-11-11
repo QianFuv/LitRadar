@@ -22,7 +22,11 @@ func testRepository(t testing.TB) *Repository {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { repository.Close() })
+	t.Cleanup(func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	})
 	if _, err := repository.database.Exec(`INSERT INTO users(id,username,password_hash,salt,created_at,updated_at) VALUES(1,'fixture','hash','salt',1,1)`); err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +449,11 @@ func assertStoredRunEnumIsRedacted(t *testing.T, repository *Repository, ctx con
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connection.Close()
+	defer func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("connection.Close: %v", err)
+		}
+	}()
 	if _, err := connection.ExecContext(ctx, `PRAGMA ignore_check_constraints=ON`); err != nil {
 		t.Fatal(err)
 	}

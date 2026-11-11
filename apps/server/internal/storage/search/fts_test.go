@@ -51,7 +51,9 @@ func TestRebuildStoresEveryFieldAsTokenPositions(t *testing.T) {
 		if err := rows.Err(); err != nil {
 			t.Fatal(err)
 		}
-		rows.Close()
+		if err := rows.Close(); err != nil {
+			t.Fatalf("rows.Close: %v", err)
+		}
 		if strings.Join(actual, " ") != field.expected {
 			t.Fatalf("%s tokens=%q expected=%q", column, actual, field.expected)
 		}
@@ -113,7 +115,9 @@ func TestPrepareQueryMatchesPrefixAndBooleanPhrases(t *testing.T) {
 		if err := rows.Err(); err != nil {
 			t.Fatal(err)
 		}
-		rows.Close()
+		if err := rows.Close(); err != nil {
+			t.Fatalf("rows.Close: %v", err)
+		}
 		if actual := strings.Join(ids, ","); actual != expected {
 			t.Fatalf("%s: %s expected %s", expression, actual, expected)
 		}

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -179,12 +180,16 @@ func (repository *Repository) ListGraphPage(ctx context.Context, owner identity.
 	}
 	statement += " ORDER BY updated_at DESC,id DESC LIMIT ?"
 	values = append(values, limit+1)
-	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
+	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) (resultError error) {
 		rows, err := connection.QueryContext(ctx, statement, values...)
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
+		defer func() {
+			if closeError := rows.Close(); closeError != nil {
+				resultError = errors.Join(resultError, fmt.Errorf("close rows: %w", closeError))
+			}
+		}()
 		for rows.Next() {
 			value, err := scanGraphSummary(rows)
 			if err != nil {

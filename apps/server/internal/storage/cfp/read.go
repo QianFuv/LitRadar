@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -13,12 +15,16 @@ import (
 )
 
 // readRows closes each cursor before the next statement while retaining the caller's transaction.
-func readRows(ctx context.Context, connection *sql.Conn, query string, args []any, scan func(*sql.Rows) error) error {
+func readRows(ctx context.Context, connection *sql.Conn, query string, args []any, scan func(*sql.Rows) error) (resultError error) {
 	rows, err := connection.QueryContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeError := rows.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close rows: %w", closeError))
+		}
+	}()
 	for rows.Next() {
 		if err = scan(rows); err != nil {
 			return err
@@ -228,7 +234,11 @@ func (repository *Repository) LoadOriginals(ctx context.Context, sourceKey strin
 	if err != nil {
 		return nil, err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	originals, err := queries.Originals(ctx, connection, cfpdb.OriginalsParams{SourceKey: sqlite.Text(sourceKey)})
 	if err != nil {
 		return nil, err

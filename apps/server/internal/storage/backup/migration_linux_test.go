@@ -38,7 +38,11 @@ func TestMetadataBackupRejectsLinksAndSpecialFiles(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					t.Cleanup(func() { listener.Close() })
+					t.Cleanup(func() {
+						if err := listener.Close(); err != nil {
+							t.Error(err)
+						}
+					})
 				case "fifo":
 					if err := syscall.Mkfifo(target, 0600); err != nil {
 						t.Fatal(err)

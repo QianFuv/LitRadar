@@ -46,7 +46,9 @@ func availableCountFixture(t testing.TB, count int) (config.Config, Timestamp) {
 			t.Fatal(err)
 		}
 		if _, err := database.Exec("CREATE TABLE journals(journal_id INTEGER PRIMARY KEY); INSERT INTO journals VALUES(1); CREATE TABLE article_listing(article_id INTEGER PRIMARY KEY,journal_id INTEGER)"); err != nil {
-			database.Close()
+			if err := database.Close(); err != nil {
+				t.Fatalf("database.Close: %v", err)
+			}
 			t.Fatal(err)
 		}
 		_, err = database.Exec(`WITH RECURSIVE ids(id) AS (VALUES(1) UNION ALL SELECT id+1 FROM ids WHERE id<?) INSERT INTO article_listing SELECT id,CASE WHEN id%10=0 THEN 999 ELSE 1 END FROM ids`, count)
@@ -101,7 +103,9 @@ func TestCountAvailableRetainsDatabasePairIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := database.Exec("INSERT INTO journals VALUES(999)"); err != nil {
-		database.Close()
+		if err := database.Close(); err != nil {
+			t.Fatalf("database.Close: %v", err)
+		}
 		t.Fatal(err)
 	}
 	if err := database.Close(); err != nil {

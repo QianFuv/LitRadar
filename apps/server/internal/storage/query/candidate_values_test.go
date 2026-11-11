@@ -16,7 +16,11 @@ func TestCandidateFlattenedValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	for _, scenario := range []struct {
 		name, values, abstract, invalidColumn string
 		isOpenAccess, isInPress               bool

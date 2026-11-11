@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -103,12 +105,16 @@ func checkControlDatabase(ctx context.Context, directory string, entry os.DirEnt
 }
 
 // checkLeases admits batch and provider leases in their original priority order.
-func checkLeases(ctx context.Context, filename, name string, now int64) error {
+func checkLeases(ctx context.Context, filename, name string, now int64) (resultError error) {
 	database, err := storage.Open(filename, true, 1)
 	if err != nil {
 		return err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	for _, lease := range []leaseCheck{
 		{"index_batch_lease", "index batch lease", "SELECT expires_at FROM index_batch_lease WHERE lease_key=1 AND expires_at>?"},
 		{"provider_leases", "Provider lease", "SELECT MAX(expires_at) FROM provider_leases WHERE expires_at>?"},
@@ -140,7 +146,9 @@ func checkLease(ctx context.Context, database *sql.DB, lease leaseCheck, name st
 		err = rows.Scan(&expiration)
 	}
 	rowError := rows.Err()
-	rows.Close()
+	if err := rows.Close(); err != nil {
+		slog.Warn("cleanup.failed", "operation", "rows.Close", "error", err)
+	}
 	if err != nil {
 		return err
 	}
@@ -152,7 +160,7 @@ func checkLease(ctx context.Context, database *sql.DB, lease leaseCheck, name st
 	}
 	return nil
 }
-func acquireMarker(paths RecoveryPaths, now int64) error {
+func acquireMarker(paths RecoveryPaths, now int64) (resultError error) {
 	if err := os.MkdirAll(filepath.Dir(paths.Marker), 0777); err != nil {
 		return err
 	}
@@ -163,7 +171,11 @@ func acquireMarker(paths RecoveryPaths, now int64) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		if closeError := file.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close file: %w", closeError))
+		}
+	}()
 	raw, err := json.MarshalIndent(map[string]any{"format": "litradar-index-maintenance", "version": 1, "started_at_epoch_seconds": now, "process_id": os.Getpid(), "staging": paths.Staging, "rollback": paths.Rollback}, "", "  ")
 	if err != nil {
 		return invalid(fmt.Sprintf("maintenance marker serialization failed: %v", err))
@@ -309,7 +321,9 @@ func sourceVersion(ctx context.Context, source sourceDatabase) (int64, error) {
 		}
 		var stored storage.Integer
 		err = database.QueryRowContext(ctx, "PRAGMA user_version").Scan(&stored)
-		database.Close()
+		if err := database.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "database.Close", "error", err)
+		}
 		if err != nil {
 			return 0, err
 		}

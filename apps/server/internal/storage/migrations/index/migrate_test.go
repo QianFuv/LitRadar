@@ -45,12 +45,20 @@ func inspectConnection(t *testing.T, filename string, read func(*sql.Conn)) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	connection, err := database.Conn(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connection.Close()
+	defer func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("connection.Close: %v", err)
+		}
+	}()
 	read(connection)
 }
 
@@ -60,7 +68,11 @@ func stringsFromQuery(t *testing.T, connection *sql.Conn, statement string, args
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			t.Errorf("rows.Close: %v", err)
+		}
+	}()
 	result := []string{}
 	for rows.Next() {
 		var value string
@@ -114,7 +126,9 @@ func assertRejectedDatabaseEntrance(t *testing.T, ctx context.Context, version i
 	if _, err := database.Exec("CREATE TABLE legacy(value TEXT); PRAGMA user_version=" + strconv.Itoa(version)); err != nil {
 		t.Fatal(err)
 	}
-	database.Close()
+	if err := database.Close(); err != nil {
+		t.Fatalf("database.Close: %v", err)
+	}
 	before, err := os.ReadFile(filename)
 	if err != nil {
 		t.Fatal(err)

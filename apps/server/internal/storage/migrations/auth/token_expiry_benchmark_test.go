@@ -29,7 +29,11 @@ func BenchmarkTokenExpiry(benchmark *testing.B) {
 			if err != nil {
 				benchmark.Fatal(err)
 			}
-			defer database.Close()
+			defer func() {
+				if err := database.Close(); err != nil {
+					benchmark.Errorf("database.Close: %v", err)
+				}
+			}()
 			if _, err := database.ExecContext(ctx, `INSERT INTO users(id,username,password_hash,salt,created_at,updated_at) VALUES(1,'synthetic','hash','salt',1,1);
 WITH RECURSIVE ids(id) AS (VALUES(1) UNION ALL SELECT id+1 FROM ids WHERE id<?)
 INSERT INTO access_tokens(user_id,token_hash,name,expires_at,created_at)
@@ -45,12 +49,16 @@ SELECT 1,printf('synthetic-%d',id),'personal',CASE WHEN id<=? THEN 100 ELSE 200 
 				}
 				result, err := transaction.ExecContext(ctx, "DELETE FROM access_tokens WHERE expires_at<=?", 100)
 				if err != nil {
-					transaction.Rollback()
+					if err := transaction.Rollback(); err != nil {
+						benchmark.Errorf("transaction.Rollback: %v", err)
+					}
 					benchmark.Fatal(err)
 				}
 				count, err := result.RowsAffected()
 				if err != nil || count != int64(scenario.expired) {
-					transaction.Rollback()
+					if err := transaction.Rollback(); err != nil {
+						benchmark.Errorf("transaction.Rollback: %v", err)
+					}
 					benchmark.Fatal(fmt.Sprintf("deleted %d rows, expected %d: %v", count, scenario.expired, err))
 				}
 				if err := transaction.Rollback(); err != nil {

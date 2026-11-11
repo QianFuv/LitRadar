@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"unicode"
@@ -50,18 +51,19 @@ type ProviderRunCheckpoint struct {
 // Format excludes opaque state from diagnostic formatting, including pointer and Go-syntax forms.
 var controlQueries controldb.Queries
 
+// Format writes checkpoint metadata without exposing persisted provider payloads.
 func (value ProviderRunCheckpoint) Format(state fmt.State, verb rune) {
-	fmt.Fprintf(state, "ProviderRunCheckpoint{has_batch:%t run:%q mode:%s has_base:%t has_checkpoint:%t started:%q updated:%q}", value.BatchId != nil, value.RunId, value.Mode, value.BaseAnchor != nil, value.TraversalCheckpoint != nil, value.StartedAt, value.UpdatedAt)
+	_, _ = fmt.Fprintf(state, "ProviderRunCheckpoint{has_batch:%t run:%q mode:%s has_base:%t has_checkpoint:%t started:%q updated:%q}", value.BatchId != nil, value.RunId, value.Mode, value.BaseAnchor != nil, value.TraversalCheckpoint != nil, value.StartedAt, value.UpdatedAt)
 }
 
 // Format exposes only the presence of opaque completed state.
 func (value ProviderSyncAnchor) Format(state fmt.State, verb rune) {
-	fmt.Fprintf(state, "ProviderSyncAnchor{has_anchor:%t completed:%q has_batch:%t}", value.CommittedAnchor != nil, value.CompletedAt, value.CompletedBatchId != nil)
+	_, _ = fmt.Fprintf(state, "ProviderSyncAnchor{has_anchor:%t completed:%q has_batch:%t}", value.CommittedAnchor != nil, value.CompletedAt, value.CompletedBatchId != nil)
 }
 
 // Format retains safe ownership information without exposing the frozen provider anchor.
 func (value SyncRun) Format(state fmt.State, verb rune) {
-	fmt.Fprintf(state, "SyncRun{scope:%v batch:%q run:%q mode:%s has_base:%t}", value.Scope, value.BatchId, value.RunId, value.Mode, value.BaseAnchor != nil)
+	_, _ = fmt.Fprintf(state, "SyncRun{scope:%v batch:%q run:%q mode:%s has_base:%t}", value.Scope, value.BatchId, value.RunId, value.Mode, value.BaseAnchor != nil)
 }
 
 // JournalSyncPreparation skips only same-batch completed coverage when resume is enabled.
@@ -153,16 +155,22 @@ func OpenControl(ctx context.Context, path string) (*Connection, error) {
 	}
 	physical, err := database.Conn(ctx)
 	if err != nil {
-		database.Close()
+		if err := database.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "database.Close", "error", err)
+		}
 		return nil, err
 	}
 	connection := &Connection{physical, database}
 	if _, err := physical.ExecContext(ctx, "PRAGMA busy_timeout=30000"); err != nil {
-		connection.Close()
+		if err := connection.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "connection.Close", "error", err)
+		}
 		return nil, err
 	}
 	if err := InitControl(ctx, physical); err != nil {
-		connection.Close()
+		if err := connection.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "connection.Close", "error", err)
+		}
 		return nil, err
 	}
 	return connection, nil

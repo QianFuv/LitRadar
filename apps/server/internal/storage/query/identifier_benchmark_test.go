@@ -14,7 +14,11 @@ func BenchmarkIdentifierWorkloads(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			b.Errorf("database.Close: %v", err)
+		}
+	}()
 	if _, err := database.Exec("UPDATE article_listing SET doi='dense' WHERE article_id%2=0"); err != nil {
 		b.Fatal(err)
 	}
@@ -51,7 +55,9 @@ func BenchmarkIdentifierWorkloads(b *testing.B) {
 					if err := rows.Err(); err != nil {
 						b.Fatal(err)
 					}
-					rows.Close()
+					if err := rows.Close(); err != nil {
+						b.Errorf("rows.Close: %v", err)
+					}
 				}
 			})
 		}

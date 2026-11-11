@@ -23,7 +23,11 @@ func batchFixture(t *testing.T) (*Connection, IndexBatch, BatchRequest, string) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { connection.Close() })
+	t.Cleanup(func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("connection.Close: %v", err)
+		}
+	})
 	entry, _ := contentInput(t)
 	request, err := NewBatchRequest([]CatalogInput{{Filename: "journal.csv", CatalogName: "journal", CsvSha256: strings.Repeat("a", 64), ProviderName: "scholarly", Entries: []domain.JournalCatalogEntry{entry}}}, "all", domain.Incremental, 10, true, false)
 	if err != nil {
@@ -63,7 +67,11 @@ func TestBatchV1QuarantinesAmbiguousNotifications(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer other.Close()
+			defer func() {
+				if err := other.Close(); err != nil {
+					t.Errorf("other.Close: %v", err)
+				}
+			}()
 			values, err := ReadBatchCatalogs(ctx, other.Conn, batch.BatchId)
 			if err != nil {
 				t.Fatal(err)
@@ -100,14 +108,18 @@ func TestBatchFuturePreflightPreservesBytes(t *testing.T) {
 	if _, err := database.ExecContext(ctx, "CREATE TABLE sentinel(value TEXT); INSERT INTO sentinel VALUES('keep'); PRAGMA user_version=3"); err != nil {
 		t.Fatal(err)
 	}
-	database.Close()
+	if err := database.Close(); err != nil {
+		t.Fatalf("database.Close: %v", err)
+	}
 	before, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	connection, err := OpenBatch(ctx, path)
 	if connection != nil {
-		connection.Close()
+		if err := connection.Close(); err != nil {
+			t.Fatalf("connection.Close: %v", err)
+		}
 		t.Fatal("future database accepted")
 	}
 	var version *BatchError
@@ -154,7 +166,11 @@ func TestBatchCompetingConnectionsAndLeaseBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer other.Close()
+	defer func() {
+		if err := other.Close(); err != nil {
+			t.Errorf("other.Close: %v", err)
+		}
+	}()
 	if _, err := AdmitBatch(ctx, other.Conn, request, true, "other", 399); err == nil {
 		t.Fatal("unexpired lease stolen")
 	}

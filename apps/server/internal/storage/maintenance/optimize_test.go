@@ -132,7 +132,9 @@ func TestCurrentAndProviderLeasesRejectBeforeMarker(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err = database.Exec(statement)
-		database.Close()
+		if err := database.Close(); err != nil {
+			t.Fatalf("database.Close: %v", err)
+		}
 		if err != nil {
 			t.Fatal(err)
 		}

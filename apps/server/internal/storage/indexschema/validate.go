@@ -3,6 +3,7 @@ package indexschema
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -28,12 +29,16 @@ func quoteList(values []string, isSet bool) string {
 	return "[" + strings.Join(quoted, ", ") + "]"
 }
 
-func names(ctx context.Context, connection *sql.Conn, statement string) ([]string, error) {
+func names(ctx context.Context, connection *sql.Conn, statement string) (resultValue1 []string, resultError error) {
 	rows, err := connection.QueryContext(ctx, statement)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeError := rows.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close rows: %w", closeError))
+		}
+	}()
 	result := []string{}
 	for rows.Next() {
 		var value string

@@ -33,7 +33,12 @@ func testSettings(t *testing.T) (*Repository, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { auth.Close(); codec.Close() })
+	t.Cleanup(func() {
+		if err := auth.Close(); err != nil {
+			t.Errorf("auth.Close: %v", err)
+		}
+		codec.Close()
+	})
 	return New(auth, codec), filename
 }
 func executeSettings(t *testing.T, repository *Repository, statement string, args ...any) {

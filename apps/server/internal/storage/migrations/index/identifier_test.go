@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -53,13 +54,21 @@ func TestIdentifierIndexFailureRollsBackVersionAndFirstIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	ctx := context.Background()
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connection.Close()
+	defer func() {
+		if err := connection.Close(); err != nil && !errors.Is(err, sql.ErrConnDone) {
+			t.Errorf("connection.Close: %v", err)
+		}
+	}()
 	hasDeniedSecondIndex := false
 	if err := connection.Raw(func(value any) error {
 		return value.(native.AuthorizerRegisterer).RegisterAuthorizer(func(operation native.AuthorizerActionCode, name, table, database, trigger string) native.AuthorizerReturnCode {
@@ -81,8 +90,12 @@ func TestIdentifierIndexFailureRollsBackVersionAndFirstIndex(t *testing.T) {
 	if failure == nil || !hasDeniedSecondIndex || summary != (Summary{9, 9}) {
 		t.Fatalf("second-index failure was not retained: %+v, %v, denied=%t", summary, failure, hasDeniedSecondIndex)
 	}
-	connection.Close()
-	database.Close()
+	if err := connection.Close(); err != nil {
+		t.Fatalf("connection.Close: %v", err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatalf("database.Close: %v", err)
+	}
 	if after := databaseSnapshot(t, filename); after != before {
 		t.Fatal("failed index creation changed schema, version, or content")
 	}

@@ -164,7 +164,11 @@ func rebuildQueryFixtureSearch(test testing.TB, database *sql.DB) {
 	if err != nil {
 		test.Fatal(err)
 	}
-	defer connection.Close()
+	defer func() {
+		if err := connection.Close(); err != nil {
+			test.Errorf("connection.Close: %v", err)
+		}
+	}()
 	if err := search.Rebuild(context.Background(), connection); err != nil {
 		test.Fatal(err)
 	}

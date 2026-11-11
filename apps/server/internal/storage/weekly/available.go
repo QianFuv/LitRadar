@@ -2,6 +2,9 @@ package weekly
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -36,12 +39,16 @@ func loadAvailableMembership(ctx context.Context, configuration config.Config, e
 	return retained, available, nil
 }
 
-func availableIds(ctx context.Context, filename string, requested map[int64]bool) (map[int64]bool, error) {
+func availableIds(ctx context.Context, filename string, requested map[int64]bool) (resultValue1 map[int64]bool, resultError error) {
 	database, err := storage.Open(filename, false, 1)
 	if err != nil {
 		return nil, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	ids := make([]any, 0, len(requested))
 	for id := range requested {
 		ids = append(ids, id)
@@ -57,13 +64,17 @@ func availableIds(ctx context.Context, filename string, requested map[int64]bool
 		for rows.Next() {
 			var id storage.Integer
 			if err := rows.Scan(&id); err != nil {
-				rows.Close()
+				if err := rows.Close(); err != nil {
+					slog.Warn("cleanup.failed", "operation", "rows.Close", "error", err)
+				}
 				return nil, err
 			}
 			existing[int64(id)] = true
 		}
 		err = rows.Err()
-		rows.Close()
+		if err := rows.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "rows.Close", "error", err)
+		}
 		if err != nil {
 			return nil, err
 		}

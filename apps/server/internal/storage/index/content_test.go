@@ -16,6 +16,22 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
+// TestConnectionCloseAfterExplicitClose verifies deferred cleanup after an explicit close.
+func TestConnectionCloseAfterExplicitClose(t *testing.T) {
+	connection, err := OpenContent(context.Background(), filepath.Join(t.TempDir(), "content.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("deferred close: %v", err)
+		}
+	})
+	if err := connection.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func selectedSnapshot(t *testing.T, connection *sql.Conn, selected []string) map[string]any {
 	t.Helper()
 	tables := map[string]any{}
@@ -52,7 +68,11 @@ func TestContentRuntimeVersionBoundary(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer connection.Close()
+			defer func() {
+				if err := connection.Close(); err != nil {
+					t.Errorf("connection.Close: %v", err)
+				}
+			}()
 			var stored sqlite.Integer
 			if err := connection.QueryRowContext(ctx, "PRAGMA user_version").Scan(&stored); err != nil || int(stored) != version {
 				t.Fatalf("version=%v err=%v", stored, err)
@@ -87,7 +107,9 @@ func snapshotTableRows(t *testing.T, connection *sql.Conn, table string) [][]any
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	rows.Close()
+	if err := rows.Close(); err != nil {
+		t.Fatalf("rows.Close: %v", err)
+	}
 	return values
 }
 

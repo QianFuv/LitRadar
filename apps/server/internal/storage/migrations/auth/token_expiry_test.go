@@ -38,17 +38,23 @@ func TestTokenExpiryIndexPreservesRowsAndBoundary(t *testing.T) {
 				var identifier, parent, unused int
 				var detail string
 				if err := rows.Scan(&identifier, &parent, &unused, &detail); err != nil {
-					rows.Close()
+					if err := rows.Close(); err != nil {
+						t.Errorf("rows.Close: %v", err)
+					}
 					t.Fatal(err)
 				}
 				hasExpirySearch = hasExpirySearch || strings.HasPrefix(detail, "SEARCH access_tokens ") && strings.Contains(detail, "idx_access_tokens_expires")
 				planDetails = append(planDetails, detail)
 			}
 			if err := rows.Err(); err != nil {
-				rows.Close()
+				if err := rows.Close(); err != nil {
+					t.Errorf("rows.Close: %v", err)
+				}
 				t.Fatal(err)
 			}
-			rows.Close()
+			if err := rows.Close(); err != nil {
+				t.Errorf("rows.Close: %v", err)
+			}
 			if !hasExpirySearch {
 				t.Fatal("token cleanup did not use an expiry range search", planDetails)
 			}

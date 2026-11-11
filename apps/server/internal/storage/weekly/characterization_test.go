@@ -86,7 +86,11 @@ func TestAvailableRunIdentityPrecedesPruningAndSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	directory, end := availableSourceFixture(t, configuration, database)
 	first, err := LoadAvailable(context.Background(), configuration, end, nil)
 	if err != nil {

@@ -53,7 +53,11 @@ func favoriteMetadataFixture(t testing.TB) (config.Config, *sql.DB, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { database.Close() })
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	})
 	return configuration, database, filename
 }
 

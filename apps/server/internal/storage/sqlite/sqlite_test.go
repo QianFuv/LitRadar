@@ -13,7 +13,11 @@ func TestProductionBuildProvidesFtsAndStorageMeasurement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	assertStorageCapabilities(t, database)
 	assertPlainConnectionRole(t, database)
 }
@@ -34,8 +38,12 @@ func TestSidecarCleanupPreservesActiveWriterAndCleansIdleReader(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertActiveWriterSidecars(t, ctx, filename, connection)
-	connection.Close()
-	database.Close()
+	if err := connection.Close(); err != nil {
+		t.Fatalf("connection.Close: %v", err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatalf("database.Close: %v", err)
+	}
 	assertIdleReaderContents(t, ctx, filename)
 	if outcome, err := CleanupSidecars(ctx, filename); err != nil || outcome != SidecarCleaned {
 		t.Fatalf("idle reader: %s %v", outcome, err)
@@ -117,5 +125,7 @@ func assertIdleReaderContents(t *testing.T, ctx context.Context, filename string
 	if err := reader.QueryRowContext(ctx, "SELECT count(*) FROM item").Scan(&count); err != nil || count != 1 {
 		t.Fatal(err)
 	}
-	reader.Close()
+	if err := reader.Close(); err != nil {
+		t.Fatalf("reader.Close: %v", err)
+	}
 }

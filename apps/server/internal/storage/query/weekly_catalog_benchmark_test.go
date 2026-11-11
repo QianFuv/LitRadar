@@ -45,12 +45,20 @@ func weeklyCatalogFixture(b *testing.B, isUneven bool) (config.Config, weekly.Ti
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			b.Errorf("database.Close: %v", err)
+		}
+	}()
 	tx, err := database.BeginTx(context.Background(), nil)
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		if err := tx.Rollback(); err != nil {
+			b.Errorf("tx.Rollback: %v", err)
+		}
+	}()
 	articleId := 0
 	for index, record := range records[1:] {
 		journalId := index + 1

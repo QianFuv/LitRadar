@@ -30,7 +30,11 @@ func metadataBenchmarkFixture(t testing.TB, count, groups int) (config.Config, [
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { database.Close() })
+			t.Cleanup(func() {
+				if err := database.Close(); err != nil {
+					t.Errorf("database.Close: %v", err)
+				}
+			})
 		}
 		if _, err := database.Exec(`WITH RECURSIVE ids(id) AS (VALUES(1) UNION ALL SELECT id+1 FROM ids WHERE id<?) INSERT INTO articles(article_id,journal_id,title,authors_json,date,doi,abstract_text) SELECT id+2000,1,?||id,'[{"display_name":"Researcher"}]','2026-01-02','10.1234/metadata.'||id,'Research abstract' FROM ids`, count, name+" article "); err != nil {
 			t.Fatal(err)

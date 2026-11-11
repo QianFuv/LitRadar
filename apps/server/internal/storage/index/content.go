@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/indexschema"
@@ -18,9 +19,13 @@ type Connection struct {
 	database *sql.DB
 }
 
-// Close releases the pinned connection and closes its backing pool.
+// Close releases the pinned connection and closes its backing pool, including repeated cleanup calls.
 func (connection *Connection) Close() error {
-	return errors.Join(connection.Conn.Close(), connection.database.Close())
+	connectionError := connection.Conn.Close()
+	if errors.Is(connectionError, sql.ErrConnDone) {
+		connectionError = nil
+	}
+	return errors.Join(connectionError, connection.database.Close())
 }
 
 // OpenContent opens runtime content and rebuilds obsolete search storage on supported layouts.
@@ -31,16 +36,22 @@ func OpenContent(ctx context.Context, path string) (*Connection, error) {
 	}
 	physical, err := database.Conn(ctx)
 	if err != nil {
-		database.Close()
+		if err := database.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "database.Close", "error", err)
+		}
 		return nil, err
 	}
 	connection := &Connection{physical, database}
 	if _, err := connection.ExecContext(ctx, "PRAGMA busy_timeout=30000"); err != nil {
-		connection.Close()
+		if err := connection.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "connection.Close", "error", err)
+		}
 		return nil, err
 	}
 	if err := InitContent(ctx, connection.Conn); err != nil {
-		connection.Close()
+		if err := connection.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "connection.Close", "error", err)
+		}
 		return nil, err
 	}
 	return connection, nil

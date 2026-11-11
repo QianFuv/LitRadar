@@ -37,14 +37,20 @@ func fixtureConfig(t *testing.T) config.Config {
 		t.Fatal(err)
 	}
 	if _, err := database.Exec("INSERT INTO users(id,username,password_hash,salt,created_at,updated_at) VALUES(1,'synthetic','hash','salt',1,1)"); err != nil {
-		database.Close()
+		if err := database.Close(); err != nil {
+			t.Fatalf("database.Close: %v", err)
+		}
 		t.Fatal(err)
 	}
 	if _, err := database.Exec("PRAGMA journal_mode=DELETE"); err != nil {
-		database.Close()
+		if err := database.Close(); err != nil {
+			t.Fatalf("database.Close: %v", err)
+		}
 		t.Fatal(err)
 	}
-	database.Close()
+	if err := database.Close(); err != nil {
+		t.Fatalf("database.Close: %v", err)
+	}
 	if err := contentfixture.Create(filepath.Join(configuration.IndexDir, "metadata.sqlite"), 9); err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +81,11 @@ func TestCreateCapturesCommittedWalAndExactSelectedGroups(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer live.Close()
+	defer func() {
+		if err := live.Close(); err != nil {
+			t.Errorf("live.Close: %v", err)
+		}
+	}()
 	if _, err := live.ExecContext(ctx, "PRAGMA wal_autocheckpoint=0; UPDATE users SET username='committed-wal' WHERE id=1"); err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +354,11 @@ func assertCommittedBackupUsername(t *testing.T, ctx context.Context, directory 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	var name string
 	if err := database.QueryRowContext(ctx, "SELECT username FROM users WHERE id=1").Scan(&name); err != nil || name != "committed-wal" {
 		t.Fatalf("%q %v", name, err)
@@ -368,7 +382,9 @@ func assertHeartbeatRetainsStartTime(t *testing.T, ctx context.Context, filename
 	if err := database.QueryRowContext(ctx, "SELECT started_at FROM service_heartbeats WHERE instance_id='instance'").Scan(&started); err != nil || started != 10 {
 		t.Fatalf("%f %v", started, err)
 	}
-	database.Close()
+	if err := database.Close(); err != nil {
+		t.Fatalf("database.Close: %v", err)
+	}
 }
 
 func assertRecentHeartbeatBoundaries(t *testing.T, ctx context.Context, filename string) {

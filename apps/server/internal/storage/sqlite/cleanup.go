@@ -2,6 +2,9 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 	"os"
 
 	native "modernc.org/sqlite"
@@ -27,7 +30,7 @@ func hasSidecars(filename string) bool {
 }
 
 // CleanupSidecars asks SQLite to remove idle sidecars on final close without directly deleting active state.
-func CleanupSidecars(ctx context.Context, filename string) (SidecarCleanup, error) {
+func CleanupSidecars(ctx context.Context, filename string) (resultValue1 SidecarCleanup, resultError error) {
 	if !hasSidecars(filename) {
 		return SidecarNotPresent, nil
 	}
@@ -35,12 +38,20 @@ func CleanupSidecars(ctx context.Context, filename string) (SidecarCleanup, erro
 	if err != nil {
 		return "", err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		return "", err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil && !errors.Is(closeError, sql.ErrConnDone) {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	if _, err := connection.ExecContext(ctx, "PRAGMA busy_timeout=0"); err != nil {
 		return "", err
 	}

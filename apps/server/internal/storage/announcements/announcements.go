@@ -97,17 +97,25 @@ func enabledValue(isEnabled bool) storage.Integer {
 }
 
 // ListActive returns only enabled=1 rows, ordered by priority and creation time without an added tie-breaker.
-func ListActive(ctx context.Context, filename string) ([]Announcement, error) {
+func ListActive(ctx context.Context, filename string) (resultValue1 []Announcement, resultError error) {
 	database, err := storage.OpenPlain(filename)
 	if err != nil {
 		return nil, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	return decodeList(queries.Active(ctx, connection))
 }
 

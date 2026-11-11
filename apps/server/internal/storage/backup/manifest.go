@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"math"
 	"os"
 	"path"
@@ -150,12 +152,16 @@ func validateLayout(item Component, selection Selection) error {
 	return nil
 }
 
-func databaseVersion(ctx context.Context, filename string) (int64, error) {
+func databaseVersion(ctx context.Context, filename string) (resultValue1 int64, resultError error) {
 	database, err := storage.Open(filename, true, 1)
 	if err != nil {
 		return 0, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	var check storage.Text
 	if err := database.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&check); err != nil {
 		return 0, err

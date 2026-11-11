@@ -24,12 +24,20 @@ func TestWeeklyMembershipPreservesExactIntegerSet(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer database.Close()
+			defer func() {
+				if err := database.Close(); err != nil {
+					t.Errorf("database.Close: %v", err)
+				}
+			}()
 			connection, err := database.Conn(context.Background())
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer connection.Close()
+			defer func() {
+				if err := connection.Close(); err != nil {
+					t.Errorf("connection.Close: %v", err)
+				}
+			}()
 			ids := make([]int64, count)
 			for index := range ids {
 				ids[index] = int64(index + 1)
@@ -55,7 +63,11 @@ func TestWeeklyMembershipPreservesExactIntegerSet(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer rows.Close()
+			defer func() {
+				if err := rows.Close(); err != nil {
+					t.Errorf("rows.Close: %v", err)
+				}
+			}()
 			actual := map[int64]bool{}
 			for rows.Next() {
 				var id int64
@@ -116,12 +128,20 @@ func assertWeeklyMembershipFailure(t *testing.T, shouldRejectStatistics bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	connection, err := database.Conn(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connection.Close()
+	defer func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("connection.Close: %v", err)
+		}
+	}()
 	insertAuthorizations := 0
 	hasRejected, hasCanonicalAnalyze := false, false
 	if err := connection.Raw(func(raw any) error {

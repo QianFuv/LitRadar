@@ -5,6 +5,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"log/slog"
 	"sync"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/cfp"
@@ -46,7 +48,9 @@ func (repository *Repository) Close() error {
 // clearSnapshot discards connection-local version identity whenever its connection is released.
 func (repository *Repository) clearSnapshot() {
 	if repository.snapshotConnection != nil {
-		repository.snapshotConnection.Close()
+		if err := repository.snapshotConnection.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "repository.snapshotConnection.Close", "error", err)
+		}
 	}
 	repository.snapshotConnection = nil
 	repository.snapshot = nil
@@ -58,7 +62,11 @@ func (repository *Repository) transaction(ctx context.Context, isImmediate bool,
 	if err != nil {
 		return err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	return connectionTransaction(ctx, connection, isImmediate, operation)
 }
 
@@ -71,11 +79,19 @@ func connectionTransaction(ctx context.Context, connection *sql.Conn, isImmediat
 	if _, err := connection.ExecContext(ctx, begin); err != nil {
 		return err
 	}
-	defer connection.ExecContext(context.Background(), "ROLLBACK")
+	hasTransaction := true
+	defer func() {
+		if hasTransaction {
+			if _, rollbackError := connection.ExecContext(context.Background(), "ROLLBACK"); rollbackError != nil {
+				slog.Error("storage.rollback.failed", "error", rollbackError)
+			}
+		}
+	}()
 	if err := operation(connection); err != nil {
 		return err
 	}
 	_, err := connection.ExecContext(ctx, "COMMIT")
+	hasTransaction = err != nil
 	return err
 }
 

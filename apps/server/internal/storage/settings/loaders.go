@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"strconv"
@@ -19,7 +20,7 @@ type LoggingSettings struct {
 
 // LoadLogging reads only logging fields before migrations or deployment-key loading.
 // A missing file or table returns defaults without creating a database or parent directory.
-func LoadLogging(ctx context.Context, filename string) (LoggingSettings, error) {
+func LoadLogging(ctx context.Context, filename string) (resultValue1 LoggingSettings, resultError error) {
 	result := LoggingSettings{LogFilter: findDefinition("log_filter").Default, LogFormat: findDefinition("log_format").Default}
 	if _, err := os.Stat(filename); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -31,7 +32,11 @@ func LoadLogging(ctx context.Context, filename string) (LoggingSettings, error) 
 	if err != nil {
 		return LoggingSettings{}, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	database.SetMaxOpenConns(1)
 	var hasTable bool
 	if err := database.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='runtime_settings')").Scan(&hasTable); err != nil {

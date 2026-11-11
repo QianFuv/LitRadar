@@ -29,7 +29,11 @@ func queryFixture(t *testing.T) (config.Config, *sql.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { database.Close() })
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	})
 	if _, err := database.Exec(`UPDATE journals SET area='X',abs_rating='4*';
  UPDATE articles SET date=NULL WHERE article_id=1001;
  UPDATE article_listing SET date=NULL WHERE article_id=1001;

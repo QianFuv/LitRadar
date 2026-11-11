@@ -24,7 +24,11 @@ func projectionBenchmarkFixture(test testing.TB, count, version int) (*Connectio
 	if err != nil {
 		test.Fatal(err)
 	}
-	test.Cleanup(func() { connection.Close() })
+	test.Cleanup(func() {
+		if err := connection.Close(); err != nil {
+			test.Errorf("connection.Close: %v", err)
+		}
+	})
 	catalog, batch := contentfixture.Batch()
 	catalog.Title = "Revue française d’économie & systèmes — 期刊"
 	template := batch.Articles[0]

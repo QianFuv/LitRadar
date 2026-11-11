@@ -27,7 +27,11 @@ func TestConcurrentSeedAndGenerationFencing(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer repository.Close()
+		defer func() {
+			if err := repository.Close(); err != nil {
+				t.Errorf("repository.Close: %v", err)
+			}
+		}()
 		repositories = append(repositories, repository)
 	}
 	var workers sync.WaitGroup
@@ -66,7 +70,11 @@ func TestReadersSeeOnePublicationSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	}()
 	source := domain.Source{CatalogIds: []string{"a"}, JournalTitle: "Journal", Title: "Topic", TypeText: "Special Issue", DateText: "Submission deadline: 31 December 2026", SourceUrl: "https://example.org/cfp", CheckedOn: "2026-09-15", Scope: "revision-1"}
 	payload, _ := json.Marshal(domain.Seed{FormatVersion: 1, Sources: []domain.Source{source}, EmptyJournals: []domain.EmptyJournal{}})
 	if _, err = repository.ImportSeed(ctx, "fixture", payload); err != nil {

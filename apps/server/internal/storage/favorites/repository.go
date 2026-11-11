@@ -367,12 +367,16 @@ func (repository *Repository) RemoveFavorite(ctx context.Context, owner identity
 	return changed, err
 }
 
-func favoriteRows(ctx context.Context, connection *sql.Conn, statement string, values ...any) ([]Favorite, error) {
+func favoriteRows(ctx context.Context, connection *sql.Conn, statement string, values ...any) (resultValue1 []Favorite, resultError error) {
 	rows, err := connection.QueryContext(ctx, statement, values...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeError := rows.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close rows: %w", closeError))
+		}
+	}()
 	result := []Favorite{}
 	for rows.Next() {
 		item, err := scanFavorite(rows)

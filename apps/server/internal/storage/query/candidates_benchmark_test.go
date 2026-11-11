@@ -31,7 +31,11 @@ func benchmarkCatalogRows(benchmark testing.TB, count int) (config.Config, strin
 	if err != nil {
 		benchmark.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			benchmark.Errorf("database.Close: %v", err)
+		}
+	}()
 	_, err = database.ExecContext(ctx, `BEGIN;
 WITH RECURSIVE sequence(id) AS (VALUES(1) UNION ALL SELECT id+1 FROM sequence WHERE id<8)
 INSERT INTO journals(journal_id,catalog_id,title,title_aliases_json,issns_json)
@@ -105,7 +109,11 @@ func BenchmarkArticleLookup(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			b.Errorf("database.Close: %v", err)
+		}
+	}()
 	logArticleLookupPlans(b, ctx, database)
 }
 
@@ -190,7 +198,11 @@ func benchmarkWarmArticleSelect(b *testing.B, ctx context.Context, filename stri
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			b.Errorf("database.Close: %v", err)
+		}
+	}()
 	if err := database.PingContext(ctx); err != nil {
 		b.Fatal(err)
 	}
@@ -233,6 +245,8 @@ func logArticleLookupPlans(b *testing.B, ctx context.Context, database *sql.DB) 
 		if err := rows.Err(); err != nil {
 			b.Fatal(err)
 		}
-		rows.Close()
+		if err := rows.Close(); err != nil {
+			b.Fatalf("rows.Close: %v", err)
+		}
 	}
 }

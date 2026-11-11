@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -42,7 +44,7 @@ func Prepare(ctx context.Context, configuration config.Config, directory string)
 }
 
 // prepare keeps the SQL transaction and compensation owners alive through final file cleanup.
-func prepare(ctx context.Context, configuration config.Config, directory string, hook hooks) (Report, error) {
+func prepare(ctx context.Context, configuration config.Config, directory string, hook hooks) (resultValue1 Report, resultError error) {
 	bundle, err := validateBundle(directory)
 	if err != nil {
 		return Report{}, err
@@ -51,16 +53,31 @@ func prepare(ctx context.Context, configuration config.Config, directory string,
 	if err != nil {
 		return Report{}, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		return Report{}, err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	if _, err := connection.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return Report{}, err
 	}
-	defer connection.ExecContext(context.Background(), "ROLLBACK")
+	hasTransaction := true
+	defer func() {
+		if hasTransaction {
+			if _, rollbackError := connection.ExecContext(context.Background(), "ROLLBACK"); rollbackError != nil {
+				slog.Error("storage.rollback.failed", "error", rollbackError)
+			}
+		}
+	}()
 	if err := admitBundleVersion(ctx, connection, bundle.version); err != nil {
 		return Report{}, err
 	}
@@ -73,9 +90,14 @@ func prepare(ctx context.Context, configuration config.Config, directory string,
 		_, err = connection.ExecContext(ctx, "COMMIT")
 	}
 	if err != nil {
-		connection.ExecContext(context.Background(), "ROLLBACK")
+		if _, rollbackError := connection.ExecContext(context.Background(), "ROLLBACK"); rollbackError != nil {
+			slog.Error("storage.rollback.failed", "error", rollbackError)
+		} else {
+			hasTransaction = false
+		}
 		return Report{}, rollbackAfter(err, changes)
 	}
+	hasTransaction = false
 	if err := finishReplacements(changes); err != nil {
 		return Report{}, err
 	}

@@ -102,7 +102,11 @@ func TestSnapshotCacheObservesAnotherProcess(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer repository.Close()
+		defer func() {
+			if err := repository.Close(); err != nil {
+				t.Errorf("repository.Close: %v", err)
+			}
+		}()
 		importPreparationSource(t, repository, preparationSource([]string{"external"}, "Imported by another process"))
 		return
 	}
@@ -137,7 +141,11 @@ func TestDecodedNoticesObserveIndependentWriters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer writer.Close()
+	defer func() {
+		if err := writer.Close(); err != nil {
+			t.Errorf("writer.Close: %v", err)
+		}
+	}()
 	ctx := context.Background()
 	assertFresh := func() []JournalSnapshot {
 		t.Helper()

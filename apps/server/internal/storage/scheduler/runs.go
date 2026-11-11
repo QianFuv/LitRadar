@@ -3,6 +3,8 @@ package scheduler
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"math"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/scheduler"
@@ -94,7 +96,7 @@ func (repository *Repository) Enqueue(ctx context.Context, task domain.Task, slo
 		return 0, nil
 	}
 	inserted := 0
-	err := repository.auth.Immediate(ctx, false, func(connection *sql.Conn) error {
+	err := repository.auth.Immediate(ctx, false, func(connection *sql.Conn) (resultError error) {
 		selected := slots
 		if task.Coalesce {
 			latest := slots[len(slots)-1]
@@ -130,7 +132,11 @@ func (repository *Repository) Enqueue(ctx context.Context, task domain.Task, slo
 			if err != nil {
 				return err
 			}
-			defer statement.Close()
+			defer func() {
+				if closeError := statement.Close(); closeError != nil {
+					resultError = errors.Join(resultError, fmt.Errorf("close statement: %w", closeError))
+				}
+			}()
 		}
 		for _, slot := range selected {
 			var result sql.Result

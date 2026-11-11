@@ -30,7 +30,7 @@ type CatalogInput struct {
 
 // Format excludes filesystem paths and CSV digests from diagnostics.
 func (value CatalogInput) Format(state fmt.State, verb rune) {
-	fmt.Fprintf(state, "CatalogInput{file_name:%q catalog_name:%q provider_name:%q journal_count:%d}", value.Filename, value.CatalogName, value.ProviderName, len(value.Entries))
+	_, _ = fmt.Fprintf(state, "CatalogInput{file_name:%q catalog_name:%q provider_name:%q journal_count:%d}", value.Filename, value.CatalogName, value.ProviderName, len(value.Entries))
 }
 
 // BatchRequest contains only inputs whose changes invalidate resumable work.
@@ -156,7 +156,7 @@ type ManifestIntent struct {
 
 // Format excludes publication bytes, digests and directory components.
 func (value ManifestIntent) Format(state fmt.State, verb rune) {
-	fmt.Fprintf(state, "ManifestIntent{payload_bytes:%d has_cursor:%t file_name:%q run_id:%q generated_at:%q}", len(value.Payload), value.ThroughEventId != nil, filepath.Base(value.Path), value.RunId, value.GeneratedAt)
+	_, _ = fmt.Fprintf(state, "ManifestIntent{payload_bytes:%d has_cursor:%t file_name:%q run_id:%q generated_at:%q}", len(value.Payload), value.ThroughEventId != nil, filepath.Base(value.Path), value.RunId, value.GeneratedAt)
 }
 
 // NewManifestIntent validates bounded metadata without interpreting the already prepared JSON bytes.

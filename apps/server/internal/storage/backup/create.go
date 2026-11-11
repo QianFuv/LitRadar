@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -42,17 +44,25 @@ func backupDatabase(ctx context.Context, source, destination string) error {
 }
 
 // copyDatabase creates a standalone online snapshot and finalizes its rollback journal.
-func copyDatabase(ctx context.Context, source, destination string) error {
+func copyDatabase(ctx context.Context, source, destination string) (resultError error) {
 	input, err := storage.Open(source, true, 1)
 	if err != nil {
 		return err
 	}
-	defer input.Close()
+	defer func() {
+		if closeError := input.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close input: %w", closeError))
+		}
+	}()
 	sourceConnection, err := input.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer sourceConnection.Close()
+	defer func() {
+		if closeError := sourceConnection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close sourceConnection: %w", closeError))
+		}
+	}()
 	destinationUri, err := backupDestinationUri(destination)
 	if err != nil {
 		return err
@@ -73,7 +83,11 @@ func copyDatabase(ctx context.Context, source, destination string) error {
 	if err != nil {
 		return err
 	}
-	defer output.Close()
+	defer func() {
+		if closeError := output.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close output: %w", closeError))
+		}
+	}()
 	_, err = output.ExecContext(ctx, "PRAGMA journal_mode=DELETE")
 	return err
 }
@@ -153,7 +167,7 @@ func databaseComponent(ctx context.Context, kind, relative, filename string) (Co
 	}
 	return Component{kind, relative, uint64(info.Size()), digest, &version}, nil
 }
-func writeManifest(directory string, manifest Manifest) error {
+func writeManifest(directory string, manifest Manifest) (resultError error) {
 	raw, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return err
@@ -162,7 +176,11 @@ func writeManifest(directory string, manifest Manifest) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		if closeError := file.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close file: %w", closeError))
+		}
+	}()
 	if _, err := file.Write(append(raw, '\n')); err != nil {
 		return err
 	}
@@ -208,7 +226,11 @@ func create(ctx context.Context, options CreateOptions, afterMetaCopy func(strin
 	if err != nil {
 		return empty, err
 	}
-	defer os.RemoveAll(stage)
+	defer func() {
+		if err := os.RemoveAll(stage); err != nil {
+			slog.Warn("cleanup.failed", "operation", "os.RemoveAll", "error", err)
+		}
+	}()
 	components, err := copyInitialBackupComponents(ctx, options, stage, afterMetaCopy)
 	if err != nil {
 		return empty, err
@@ -235,25 +257,41 @@ func create(ctx context.Context, options CreateOptions, afterMetaCopy func(strin
 	manifest := Manifest{"litradar-backup", FormatVersion, float64(now.Unix()) + float64(now.Nanosecond())/1e9, Selection{true, options.IncludeIndexDatabases, options.IncludePushState}, components}
 	return publishBackupStage(ctx, options.OutputDir, stage, manifest)
 }
-func withAuthGate(ctx context.Context, filename string, read func(*sql.Conn) error) error {
+func withAuthGate(ctx context.Context, filename string, read func(*sql.Conn) error) (resultError error) {
 	database, err := storage.Open(filename, false, 1)
 	if err != nil {
 		return err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	if _, err := connection.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return err
 	}
-	defer connection.ExecContext(context.Background(), "ROLLBACK")
+	hasTransaction := true
+	defer func() {
+		if hasTransaction {
+			if _, rollbackError := connection.ExecContext(context.Background(), "ROLLBACK"); rollbackError != nil {
+				slog.Error("storage.rollback.failed", "error", rollbackError)
+			}
+		}
+	}()
 	if err := read(connection); err != nil {
 		return err
 	}
 	_, err = connection.ExecContext(ctx, "ROLLBACK")
+	hasTransaction = err != nil
 	return err
 }
 
