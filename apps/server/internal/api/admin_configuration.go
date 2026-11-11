@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"maps"
 	"slices"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/sources"
@@ -10,7 +11,7 @@ import (
 
 // validateRuntimeValues checks normalized shapes before validating raw provider capabilities.
 func validateRuntimeValues(values map[string]*string) *apiError {
-	keys := sortedRuntimeKeys(values)
+	keys := slices.Sorted(maps.Keys(values))
 	if failure := validateRuntimeNormalization(values, keys); failure != nil {
 		return failure
 	}
@@ -24,16 +25,6 @@ func validateRuntimeValues(values map[string]*string) *apiError {
 		}
 	}
 	return nil
-}
-
-// sortedRuntimeKeys preserves deterministic field and catalog validation order.
-func sortedRuntimeKeys[Value any](values map[string]Value) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	return keys
 }
 
 // validateRuntimeNormalization validates known settings without replacing the original raw values.
@@ -102,7 +93,7 @@ func (validator runtimeProviderValidator) routes(field, value string) *apiError 
 	if json.Unmarshal([]byte(value), &routes) != nil || routes == nil {
 		return badRequest("Invalid index Provider routes")
 	}
-	for _, catalog := range sortedRuntimeKeys(routes) {
+	for _, catalog := range slices.Sorted(maps.Keys(routes)) {
 		if failure := validator.provider(routes[catalog], field); failure != nil {
 			return failure
 		}
@@ -116,7 +107,7 @@ func (validator runtimeProviderValidator) proxyPolicy(field, value string) *apiE
 	if json.Unmarshal([]byte(value), &policy) != nil || policy == nil {
 		return badRequest("Invalid Provider proxy policy")
 	}
-	for _, name := range sortedRuntimeKeys(policy) {
+	for _, name := range slices.Sorted(maps.Keys(policy)) {
 		if failure := validator.provider(name, field); failure != nil {
 			return failure
 		}
@@ -131,7 +122,7 @@ func (validator runtimeProviderValidator) orders(field, value string) *apiError 
 		return badRequest("Invalid " + field)
 	}
 	orders := [][]string{configuration.Default}
-	for _, catalog := range sortedRuntimeKeys(configuration.Catalogs) {
+	for _, catalog := range slices.Sorted(maps.Keys(configuration.Catalogs)) {
 		orders = append(orders, configuration.Catalogs[catalog])
 	}
 	for _, order := range orders {

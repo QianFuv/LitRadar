@@ -1,10 +1,11 @@
 package recommend
 
 import (
+	"cmp"
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -18,21 +19,14 @@ type Snapshot struct {
 // ComputeChangedIssueKeys retains current additions and changed counts in numeric issue order.
 func ComputeChangedIssueKeys(previous, current map[string]int64) []string {
 	changed := changedKeys(previous, current)
-	sort.SliceStable(changed, func(left, right int) bool {
-		leftJournal, leftIssue, _ := parseIssueKey(changed[left])
-		rightJournal, rightIssue, _ := parseIssueKey(changed[right])
-		if leftJournal != rightJournal {
-			return leftJournal < rightJournal
-		}
-		return leftIssue < rightIssue
-	})
+	slices.SortStableFunc(changed, compareIssueKeys)
 	return changed
 }
 
 // ComputeChangedInpressKeys retains current additions and changed counts in numeric journal order.
 func ComputeChangedInpressKeys(previous, current map[string]int64) []string {
 	changed := changedKeys(previous, current)
-	sort.SliceStable(changed, func(left, right int) bool { return integerOrZero(changed[left]) < integerOrZero(changed[right]) })
+	slices.SortStableFunc(changed, func(first, second string) int { return cmp.Compare(integerOrZero(first), integerOrZero(second)) })
 	return changed
 }
 
@@ -43,7 +37,7 @@ func changedKeys(previous, current map[string]int64) []string {
 			changed = append(changed, key)
 		}
 	}
-	sort.Strings(changed)
+	slices.Sort(changed)
 	return changed
 }
 

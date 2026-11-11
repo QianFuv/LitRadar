@@ -109,7 +109,7 @@ func visible(document *goquery.Document, exclusions string) string {
 		walk(node)
 	}
 	lines := []string{}
-	for _, line := range strings.Split(domain.CleanText(result.String()), "\n") {
+	for line := range strings.SplitSeq(domain.CleanText(result.String()), "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" {
 			lines = append(lines, line)
@@ -282,7 +282,7 @@ func recordRequirements(body string) string {
 // recordScopeLines stops at the first date, status, editorial or submission boundary.
 func recordScopeLines(body string) []string {
 	scopeLines := []string{}
-	for _, line := range strings.Split(plain(body), "\n") {
+	for line := range strings.SplitSeq(plain(body), "\n") {
 		if pattern(dateLabelPattern, line) || pattern(statusPattern, line) || pattern(`(?i)^guest editors?|^submission (?:instructions|guidelines)|^manuscript requirements|^投稿要求|^稿件要求`, line) {
 			break
 		}
@@ -295,7 +295,7 @@ func recordScopeLines(body string) []string {
 
 // recordInvitationStatus appends only the first invitation-only observation.
 func recordInvitationStatus(title, body, status string) string {
-	for _, line := range strings.Split(plain(title+"\n"+body), "\n") {
+	for line := range strings.SplitSeq(plain(title+"\n"+body), "\n") {
 		if pattern(`(?i)invit(?:ation|e|ed)[ -]*only|invitation required|invited (?:submissions|papers) only|仅限受邀`, line) {
 			status += "\n" + line
 			break

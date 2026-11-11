@@ -55,7 +55,7 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 		config.Port = port
 	}
 	if value, ok := lookup(EnvOriginPatterns); ok {
-		for _, pattern := range strings.Split(value, ",") {
+		for pattern := range strings.SplitSeq(value, ",") {
 			if pattern = strings.TrimSpace(pattern); pattern != "" {
 				config.OriginPatterns = append(config.OriginPatterns, pattern)
 			}

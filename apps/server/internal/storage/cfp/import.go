@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/cfp"
@@ -102,7 +104,7 @@ func (repository *Repository) ImportPrepared(ctx context.Context, seedId string,
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		for _, key := range sortedKeys(seed.journals) {
+		for _, key := range slices.Sorted(maps.Keys(seed.journals)) {
 			journal := seed.journals[key]
 			sourceKey := "journal:" + key
 			originals := []domain.Source{}

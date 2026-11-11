@@ -1,8 +1,9 @@
 package recommend
 
 import (
+	"cmp"
 	"math"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -122,21 +123,13 @@ func ApplySelectionRules(result domain.SelectionResult, subscriber domain.Subscr
 				supplemental = append(supplemental, domain.RankedSelection{ArticleId: candidate.ArticleId})
 			}
 		}
-		sort.Slice(supplemental, func(left, right int) bool {
-			leftMatch, rightMatch := matchScore(supplemental[left].ArticleId), matchScore(supplemental[right].ArticleId)
-			if leftMatch != rightMatch {
-				return leftMatch > rightMatch
-			}
-			return supplemental[left].ArticleId > supplemental[right].ArticleId
+		slices.SortFunc(supplemental, func(first, second domain.RankedSelection) int {
+			return cmp.Or(cmp.Compare(matchScore(second.ArticleId), matchScore(first.ArticleId)), cmp.Compare(second.ArticleId, first.ArticleId))
 		})
 		eligible = append(eligible, supplemental...)
 	}
-	sort.SliceStable(eligible, func(left, right int) bool {
-		leftMatch, rightMatch := matchScore(eligible[left].ArticleId), matchScore(eligible[right].ArticleId)
-		if leftMatch != rightMatch {
-			return leftMatch > rightMatch
-		}
-		return orderedScore(eligible[left].Score) > orderedScore(eligible[right].Score)
+	slices.SortStableFunc(eligible, func(first, second domain.RankedSelection) int {
+		return cmp.Or(cmp.Compare(matchScore(second.ArticleId), matchScore(first.ArticleId)), cmp.Compare(orderedScore(second.Score), orderedScore(first.Score)))
 	})
 	if len(eligible) > MaxArticlesPerPush {
 		eligible = eligible[:MaxArticlesPerPush]

@@ -3,8 +3,9 @@ package recommend
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"math"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -122,11 +123,7 @@ func extractSummary(object map[string]any) string {
 
 func coerceSelectedValue(value any) []any {
 	if object, ok := value.(map[string]any); ok {
-		keys := make([]string, 0, len(object))
-		for key := range object {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
+		keys := slices.Sorted(maps.Keys(object))
 		items := []any{}
 		for _, key := range keys {
 			articleId, err := strconv.ParseInt(key, 10, 64)

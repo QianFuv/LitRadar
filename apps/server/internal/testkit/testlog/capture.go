@@ -27,7 +27,7 @@ func Capture(t *testing.T) (context.Context, func() []map[string]any) {
 	return ctx, func() []map[string]any {
 		guard.Shutdown()
 		var events []map[string]any
-		for _, line := range strings.Split(strings.TrimSpace(output.String()), "\n") {
+		for line := range strings.SplitSeq(strings.TrimSpace(output.String()), "\n") {
 			if line == "" {
 				continue
 			}

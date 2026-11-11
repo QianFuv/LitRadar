@@ -239,7 +239,7 @@ func validProviderNameByte(character byte, index int) bool {
 // validRedirectHost retains host bounds and validates every DNS label.
 func validRedirectHost(host string) bool {
 	isValid := len(host) >= 1 && len(host) <= 253 && strings.Contains(host, ".")
-	for _, label := range strings.Split(host, ".") {
+	for label := range strings.SplitSeq(host, ".") {
 		if !validRedirectLabel(label) {
 			isValid = false
 			break

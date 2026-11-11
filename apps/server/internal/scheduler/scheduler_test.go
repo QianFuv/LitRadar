@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/scheduler"
@@ -72,11 +73,16 @@ func TestSchedulerLoadAndManualDryRunDoNotMutate(t *testing.T) {
 	ctx := context.Background()
 	first := createTask(t, repository)
 	second := createTask(t, repository)
+	legacySunday := createTask(t, repository)
+	fixtureSql(t, filename, "UPDATE scheduled_tasks SET cron='0 8 * * 7' WHERE id=?", legacySunday.Id)
 	fixtureSql(t, filename, "UPDATE scheduled_tasks SET cron='invalid',enabled=0 WHERE id=?", first.Id)
 	fixtureSql(t, filename, "UPDATE scheduled_tasks SET cron='invalid' WHERE id=?", second.Id)
 	loaded, err := LoadJobs(ctx, repository)
-	if err != nil || len(loaded.Jobs) != 0 || len(loaded.Skipped) != 1 {
+	if err != nil || len(loaded.Jobs) != 0 || len(loaded.Skipped) != 2 {
 		t.Fatalf("%#v %v", loaded, err)
+	}
+	if !slices.ContainsFunc(loaded.Skipped, func(task SkippedTask) bool { return task.Id == legacySunday.Id && task.Reason != "" }) {
+		t.Fatal("unsupported persisted cron must be skipped with a diagnostic", loaded.Skipped)
 	}
 	executed := false
 	runner := func(context.Context, domain.Task, store.Claim, func() bool) processResult {

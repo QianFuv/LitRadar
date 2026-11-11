@@ -79,7 +79,7 @@ func HashPassword(password string) (string, error) {
 // validPasswordParameters admits only the fixed costs after rejecting duplicate or malformed fields.
 func validPasswordParameters(fields string) bool {
 	parameters := make(map[string]uint64)
-	for _, field := range strings.Split(fields, ",") {
+	for field := range strings.SplitSeq(fields, ",") {
 		key, value, ok := strings.Cut(field, "=")
 		if !ok {
 			return false

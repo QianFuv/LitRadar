@@ -56,7 +56,7 @@ func parseForwardingChain(headers http.Header) ([]netip.Addr, string) {
 		if !validForwardingHeader(value) {
 			return nil, "trusted_proxy_invalid_header"
 		}
-		for _, element := range strings.Split(value, ",") {
+		for element := range strings.SplitSeq(value, ",") {
 			address := forwardingElement(element, isForwarded)
 			if !address.IsValid() {
 				return nil, "trusted_proxy_invalid_header"
@@ -83,7 +83,7 @@ func forwardingElement(element string, isForwarded bool) netip.Addr {
 		return parseForwardedNode(strings.TrimSpace(element))
 	}
 	var address netip.Addr
-	for _, parameter := range strings.Split(element, ";") {
+	for parameter := range strings.SplitSeq(element, ";") {
 		name, raw, hasEquals := strings.Cut(strings.TrimSpace(parameter), "=")
 		if !hasEquals {
 			return netip.Addr{}

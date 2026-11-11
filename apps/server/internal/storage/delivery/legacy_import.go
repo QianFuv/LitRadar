@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
@@ -194,7 +196,7 @@ func importLegacyRun(ctx context.Context, connection *sql.Conn, input legacyInpu
 
 func importLegacyDedupe(ctx context.Context, connection *sql.Conn, input legacyInput, runId *int64, now float64) error {
 	state := input.state
-	for _, key := range sortedKeys(state.DeliveryDedupe) {
+	for _, key := range slices.Sorted(maps.Keys(state.DeliveryDedupe)) {
 		userId, articleId, err := legacyPair(key)
 		if err != nil {
 			return err

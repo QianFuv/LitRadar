@@ -1,12 +1,13 @@
 package recommend
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -84,7 +85,7 @@ func (client *AiClient) SelectArticles(ctx context.Context, config AiRuntimeConf
 			result.Selections = append(result.Selections, domain.RankedSelection{ArticleId: articleId, Score: score})
 		}
 	}
-	sort.SliceStable(result.Selections, func(first, second int) bool { return result.Selections[first].Score > result.Selections[second].Score })
+	slices.SortStableFunc(result.Selections, func(first, second domain.RankedSelection) int { return cmp.Compare(second.Score, first.Score) })
 	return result, nil
 }
 

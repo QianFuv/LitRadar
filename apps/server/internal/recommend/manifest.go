@@ -2,11 +2,12 @@ package recommend
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -67,16 +68,6 @@ func ParseChangeManifest(data []byte, dbName string) (ChangeManifest, error) {
 		}
 	}
 	return result, nil
-}
-
-func dedupeAdjacent(values []string) []string {
-	result := values[:0]
-	for _, value := range values {
-		if len(result) == 0 || result[len(result)-1] != value {
-			result = append(result, value)
-		}
-	}
-	return result
 }
 
 func manifestFields(data []byte, known map[string]bool) (map[string]any, error) {
@@ -164,15 +155,8 @@ func manifestIssueKeys(value any) []string {
 			}
 		}
 	}
-	sort.SliceStable(keys, func(first, second int) bool {
-		firstJournal, firstIssue, _ := parseIssueKey(keys[first])
-		secondJournal, secondIssue, _ := parseIssueKey(keys[second])
-		if firstJournal != secondJournal {
-			return firstJournal < secondJournal
-		}
-		return firstIssue < secondIssue
-	})
-	keys = dedupeAdjacent(keys)
+	slices.SortStableFunc(keys, compareIssueKeys)
+	keys = slices.Compact(keys)
 	return keys
 }
 
@@ -184,10 +168,8 @@ func manifestInpressKeys(value any) []string {
 			keys = append(keys, strconv.FormatInt(id, 10))
 		}
 	}
-	sort.SliceStable(keys, func(first, second int) bool {
-		return integerOrZero(keys[first]) < integerOrZero(keys[second])
-	})
-	keys = dedupeAdjacent(keys)
+	slices.SortStableFunc(keys, func(first, second string) int { return cmp.Compare(integerOrZero(first), integerOrZero(second)) })
+	keys = slices.Compact(keys)
 	return keys
 }
 
@@ -304,4 +286,11 @@ func validateManifestDatabase(database *string, dbName string) error {
 		return fmt.Errorf("Change manifest database mismatch: expected %s, got %s", dbName, strings.TrimSpace(*database))
 	}
 	return nil
+}
+
+// compareIssueKeys orders journal and issue identifiers numerically without changing equal-key order.
+func compareIssueKeys(first, second string) int {
+	firstJournal, firstIssue, _ := parseIssueKey(first)
+	secondJournal, secondIssue, _ := parseIssueKey(second)
+	return cmp.Or(cmp.Compare(firstJournal, secondJournal), cmp.Compare(firstIssue, secondIssue))
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -221,7 +222,7 @@ func readJournals(ctx context.Context, connection *sql.Conn, catalogIds []string
 		return nil, err
 	}
 	result := make([]JournalSnapshot, 0, len(journals))
-	for _, key := range sortedKeys(journals) {
+	for _, key := range slices.Sorted(maps.Keys(journals)) {
 		result = append(result, *journals[key])
 	}
 	return result, nil

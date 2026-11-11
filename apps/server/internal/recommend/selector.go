@@ -1,10 +1,12 @@
 package recommend
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -119,12 +121,9 @@ func selectRounds(ctx context.Context, client selectionClient, config AiRuntimeC
 }
 
 func mergedSelection(summary string, aggregated map[int64]domain.RankedSelection) domain.SelectionResult {
-	selections := make([]domain.RankedSelection, 0, len(aggregated))
-	for _, selection := range aggregated {
-		selections = append(selections, selection)
-	}
-	sort.Slice(selections, func(first, second int) bool { return selections[first].ArticleId < selections[second].ArticleId })
-	sort.SliceStable(selections, func(first, second int) bool { return selections[first].Score > selections[second].Score })
+	selections := slices.AppendSeq([]domain.RankedSelection{}, maps.Values(aggregated))
+	slices.SortFunc(selections, func(first, second domain.RankedSelection) int { return cmp.Compare(first.ArticleId, second.ArticleId) })
+	slices.SortStableFunc(selections, func(first, second domain.RankedSelection) int { return cmp.Compare(second.Score, first.Score) })
 	return domain.SelectionResult{Summary: summary, Selections: selections}
 }
 

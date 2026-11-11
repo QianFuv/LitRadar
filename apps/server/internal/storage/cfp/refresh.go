@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -138,7 +139,7 @@ func (repository *Repository) publish(ctx context.Context, lease RefreshLease, p
 			bindings = append(bindings, string(key))
 		}
 		slices.Sort(bindings)
-		if len(bindings) == 0 || !slices.Equal(bindings, sortedKeys(prepared)) {
+		if len(bindings) == 0 || !slices.Equal(bindings, slices.Sorted(maps.Keys(prepared))) {
 			return invalid("CFP publication does not cover every registered journal binding")
 		}
 		result, err := queries.PublishSource(ctx, connection, cfpdb.PublishSourceParams{SourceKey: sqlite.Text(lease.SourceKey), Generation: sqlite.Integer(lease.Generation), Capture: sqlite.Text(publication.Capture), CaptureFormat: sqlite.Text(publication.CaptureFormat), ContentHash: sqlite.Text(digest([]byte(publication.Capture))), URL: sqlite.Text(publication.SourceUrl), ParserVersion: sqlite.Integer(domain.ParserVersion), ConfigVersion: sqlite.Integer(publication.ConfigVersion), LastSuccess: new(sqlite.Integer(now)), LastError: (*sqlite.Text)(warning)})
@@ -152,7 +153,7 @@ func (repository *Repository) publish(ctx context.Context, lease RefreshLease, p
 		if changed != 1 || now > lease.ExpiresAt {
 			return ErrStaleRefresh
 		}
-		for _, key := range sortedKeys(prepared) {
+		for _, key := range slices.Sorted(maps.Keys(prepared)) {
 			journal := prepared[key]
 			rows, err := queries.JournalAliases(ctx, connection, cfpdb.JournalAliasesParams{JournalKey: sqlite.Text(key)})
 			if err != nil {

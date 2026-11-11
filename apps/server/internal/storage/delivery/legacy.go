@@ -1,15 +1,17 @@
 package delivery
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -37,22 +39,10 @@ func collectLegacy(root string) ([]legacyInput, error) {
 		inputs = append(inputs, found...)
 
 	}
-	sort.Slice(inputs, func(left, right int) bool {
-		if inputs[left].workflow != inputs[right].workflow {
-			return inputs[left].workflow < inputs[right].workflow
-		}
-		return inputs[left].sourceName < inputs[right].sourceName
+	slices.SortFunc(inputs, func(first, second legacyInput) int {
+		return cmp.Or(cmp.Compare(first.workflow, second.workflow), cmp.Compare(first.sourceName, second.sourceName))
 	})
 	return inputs, nil
-}
-
-func sortedKeys[V any](values map[string]V) []string {
-	result := make([]string, 0, len(values))
-	for key := range values {
-		result = append(result, key)
-	}
-	sort.Strings(result)
-	return result
 }
 
 func legacyNumeric(value string) (int64, error) {
@@ -94,7 +84,7 @@ func validateLegacy(name string, state legacyState) error {
 			return err
 		}
 	}
-	for _, key := range sortedKeys(state.DeliveryDedupe) {
+	for _, key := range slices.Sorted(maps.Keys(state.DeliveryDedupe)) {
 		if _, _, err := legacyPair(key); err != nil {
 			return err
 		}
@@ -191,7 +181,7 @@ func readLegacySource(path, name string, workflow Workflow) (legacyInput, error)
 }
 
 func validateLegacySnapshot(snapshot legacySnapshot) error {
-	for _, key := range sortedKeys(snapshot.IssueArticleCounts) {
+	for _, key := range slices.Sorted(maps.Keys(snapshot.IssueArticleCounts)) {
 		if _, _, err := legacyPair(key); err != nil {
 			return err
 		}
@@ -199,7 +189,7 @@ func validateLegacySnapshot(snapshot legacySnapshot) error {
 			return &Error{Kind: "invalid_legacy"}
 		}
 	}
-	for _, key := range sortedKeys(snapshot.InpressArticleCounts) {
+	for _, key := range slices.Sorted(maps.Keys(snapshot.InpressArticleCounts)) {
 		if _, err := legacyNumeric(key); err != nil {
 			return err
 		}

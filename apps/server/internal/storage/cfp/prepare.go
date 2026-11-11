@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -51,15 +52,6 @@ func PrepareSeed(input []byte) (*PreparedSeed, error) {
 	}
 	return result, nil
 }
-func sortedKeys[V any](values map[string]V) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	return keys
-}
-
 func prepare(seed domain.Seed) (map[string]*preparedJournal, error) {
 	if seed.FormatVersion != 1 {
 		return nil, invalid("Unsupported CFP input format")
@@ -153,7 +145,7 @@ func prepareEmptyJournal(journals map[string]*preparedJournal, empty domain.Empt
 func prepareAliasOwners(journals map[string]*preparedJournal) (uint64, error) {
 	owners := map[string]string{}
 	count := uint64(0)
-	for _, key := range sortedKeys(journals) {
+	for _, key := range slices.Sorted(maps.Keys(journals)) {
 		journal := journals[key]
 		slices.Sort(journal.aliases)
 		journal.aliases = slices.Compact(journal.aliases)
