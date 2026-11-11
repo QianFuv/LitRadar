@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/animated-icons';
 import { controlIconStyle } from '@/components/ui/button';
 import { RevealScope } from '@/components/ui/reveal';
+import { popupLayerStyle } from '@/components/ui/popup-layer';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
@@ -60,7 +61,7 @@ function DropdownMenuContent({
   ...props
 }: DropdownMenuContentProps) {
   return (
-    <DropdownMenuPrimitive.Portal>
+    <DropdownMenuPrimitive.Portal {...stylex.props(popupLayerStyle)}>
       <DropdownMenuPrimitive.Positioner
         align={align}
         side={side}

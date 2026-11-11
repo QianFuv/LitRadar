@@ -129,7 +129,8 @@ type FilterFacetProps = {
 };
 
 /**
- * Render one filter pill whose free-form panel opens as a popover.
+ * Render one filter pill whose free-form panel opens as a modal popover, so like the other filter
+ * panels it holds the only highlight in the bar until it closes.
  *
  * @param props - Pill label and summary, panel copy, clear action, and panel content.
  * @returns Filter pill with its popover panel.
@@ -151,7 +152,7 @@ export function FilterFacet({
   );
 
   return (
-    <Popover>
+    <Popover modal>
       <PopoverTrigger
         render={
           <button

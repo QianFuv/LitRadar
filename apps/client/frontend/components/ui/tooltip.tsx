@@ -4,6 +4,7 @@
 
 import * as React from 'react';
 import { Tooltip as TooltipPrimitive } from '@animate-ui/react/primitives/base-ui/tooltip';
+import { popupLayerStyle } from '@/components/ui/popup-layer';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
@@ -25,7 +26,7 @@ function IconTooltip({ children, label }: IconTooltipProps) {
     <TooltipPrimitive.Provider delay={300}>
       <TooltipPrimitive.Root>
         <TooltipPrimitive.Trigger render={children} />
-        <TooltipPrimitive.Portal>
+        <TooltipPrimitive.Portal {...stylex.props(popupLayerStyle)}>
           <TooltipPrimitive.Positioner
             side="top"
             sideOffset={6}

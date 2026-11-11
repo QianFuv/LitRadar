@@ -10,6 +10,7 @@ import { CheckIcon, Search } from 'lucide-react';
 import { listStyles } from '@/components/ui/multi-select';
 import { PresenceBoundary } from '@/components/ui/motion';
 import { RevealScope } from '@/components/ui/reveal';
+import { popupLayerStyle } from '@/components/ui/popup-layer';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
@@ -36,7 +37,7 @@ function ComboboxContent({
   ...props
 }: Omit<ComboboxContentProps, 'className'> & { xstyle?: stylex.StyleXStyles }) {
   return (
-    <ComboboxPrimitive.Portal>
+    <ComboboxPrimitive.Portal {...stylex.props(popupLayerStyle)}>
       <ComboboxPrimitive.Positioner
         align={align}
         sideOffset={sideOffset}

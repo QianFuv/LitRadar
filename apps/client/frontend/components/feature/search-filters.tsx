@@ -763,6 +763,7 @@ function JournalFacet({ state }: { state: SearchFilterState }) {
   return (
     <Combobox
       multiple
+      modal
       virtualized
       open={isOpen}
       onOpenChange={setIsOpen}
@@ -841,6 +842,7 @@ function AreaFacet({ state }: { state: SearchFilterState }) {
   return (
     <Combobox
       multiple
+      modal
       items={areaValues}
       value={areas}
       onValueChange={(values: string[]) => handleAreasChange(values)}

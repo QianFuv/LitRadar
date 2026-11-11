@@ -8,6 +8,7 @@ import { CheckIcon } from 'lucide-react';
 
 import { PresenceBoundary } from '@/components/ui/motion';
 import { RevealScope } from '@/components/ui/reveal';
+import { popupLayerStyle } from '@/components/ui/popup-layer';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
@@ -35,7 +36,7 @@ function MultiSelectContent({
   ...props
 }: Omit<MultiSelectContentProps, 'className'> & { xstyle?: stylex.StyleXStyles }) {
   return (
-    <SelectPrimitive.Portal>
+    <SelectPrimitive.Portal {...stylex.props(popupLayerStyle)}>
       <SelectPrimitive.Positioner
         align={align}
         sideOffset={sideOffset}

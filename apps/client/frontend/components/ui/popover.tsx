@@ -6,6 +6,7 @@ import * as React from 'react';
 import { Popover as PopoverPrimitive } from '@animate-ui/react/primitives/base-ui/popover';
 
 import { RevealScope } from '@/components/ui/reveal';
+import { popupLayerStyle } from '@/components/ui/popup-layer';
 import * as stylex from '@stylexjs/stylex';
 import { colors, shadows } from '@/lib/theme.stylex';
 
@@ -52,7 +53,7 @@ function PopoverContent({
   ...props
 }: PopoverContentProps) {
   return (
-    <PopoverPrimitive.Portal>
+    <PopoverPrimitive.Portal {...stylex.props(popupLayerStyle)}>
       <PopoverPrimitive.Positioner
         align={align}
         side={side}

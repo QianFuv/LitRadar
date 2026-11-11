@@ -10,6 +10,7 @@ import { IconStyleProvider } from '@/components/ui/animated-icons';
 import { controlIconStyle } from '@/components/ui/button';
 import { menuItemIconStyle } from '@/components/ui/dropdown-menu';
 import { RevealScope } from '@/components/ui/reveal';
+import { popupLayerStyle } from '@/components/ui/popup-layer';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
@@ -122,7 +123,7 @@ function SelectContent({
   ...props
 }: SelectContentProps) {
   return (
-    <SelectPrimitive.Portal>
+    <SelectPrimitive.Portal {...stylex.props(popupLayerStyle)}>
       <SelectPrimitive.Positioner
         align={align}
         sideOffset={4}

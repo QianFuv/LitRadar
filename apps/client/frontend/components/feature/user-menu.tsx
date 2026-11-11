@@ -32,6 +32,7 @@ import { useAuth, type LogoutRevocationWarning } from '@/lib/auth-context';
 import { WORKSPACE_ROUTE_ID } from '@/lib/search-params';
 import { withSettingsSection } from '@/lib/settings-center';
 import { getFocusedOrigin, revealThemeChange } from '@/lib/theme-transition';
+import { popupLayerStyle } from '@/components/ui/popup-layer';
 import * as stylex from '@stylexjs/stylex';
 import { accountMenuMarker } from '@/lib/markers.stylex';
 import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
@@ -240,7 +241,7 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
           <span {...stylex.props(styles.userMenuSpan2)}>{user.username}</span>
         </DropdownMenuPrimitive.Trigger>
 
-        <DropdownMenuPrimitive.Portal>
+        <DropdownMenuPrimitive.Portal {...stylex.props(popupLayerStyle)}>
           <DropdownMenuPrimitive.Positioner
             align="end"
             side={placement === 'rail' ? 'right' : 'top'}
