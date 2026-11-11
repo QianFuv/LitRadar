@@ -68,7 +68,7 @@ pnpm --filter litradar-frontend dev
 
 - 请求统一经过 `lib/platform/` 的 `ClientPlatform`；Web 实现从 `window.location.origin` 生成同源 API URL 并携带会话 Cookie。
 - `lib/api/client.tsx` 为每次请求设置 60 秒超时，传递调用方 `AbortSignal`，并对幂等 GET 在网络失败或不超过 5 秒的 `Retry-After`（429/503）时最多重试两次。
-- 非 2xx 响应体按 RFC 9457 `application/problem+json` 用 Zod 解析为 `ApiError`：`detail` 作为显示文本（缺失时使用调用方的回退文案），`type`、`title`、`instance` 与 `errors[]` 原样保留，`findErrorDetail(location)` 读取 `errors[]` 中某个 `location` 的 `message`（例如 CNKI 工作流的 `code` 与 `phase`）。只有带 `Retry-After` 的 429/503 响应才标记为 `retryable`；格式异常的成员按缺失处理。
+- 非 2xx 响应体按 RFC 9457 `application/problem+json` 用 Zod 解析为 `ApiError`：`errors[]` 中带 `body`/`path`/`query`/`header`/`cookie` 校验位置的条目（如 422）拼成"请求参数无效：字段（原因）"的中文提示，最多列 3 条；其余情况以 `detail` 作为显示文本（缺失时使用调用方的回退文案），`type`、`title`、`instance` 与 `errors[]` 原样保留，`findErrorDetail(location)` 读取 `errors[]` 中某个 `location` 的 `message`（例如 CNKI 工作流的 `code` 与 `phase`）。只有带 `Retry-After` 的 429/503 响应才标记为 `retryable`；格式异常的成员按缺失处理。
 - `pnpm dev` / `pnpm preview` 只使用 `vite.config.ts` 中的开发代理。
 - 生产环境由外部反向代理让网页与 API 共用一个 Origin。
 - 浏览器跨源直连和构建时 API 地址覆盖不再受支持；需要不同公网入口时，应在同一 Origin 前部署反向代理。
