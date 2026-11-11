@@ -288,6 +288,7 @@ Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制�
 - 搜索框、清空、搜索、帮助、筛选胶囊、数据库胶囊、收藏夹标签与收藏操作在移动端保留至少 44 px 的实际命中高度，桌面多为 32–40 px；不使用会重叠的伪元素扩展命中区。
 - 手机底栏与内容底部留白都计入 `--safe-area-inset-bottom`。
 - 长列表使用独立滚动容器、原生 IntersectionObserver（`lib/use-in-view.tsx`）和 `content-visibility: auto`；结果与收藏按页渐进显示，不做虚拟滚动。
+- 选项很多的选择器（期刊筛选）用 TanStack Virtual 配合 Base UI Combobox 的虚拟化模式，只挂载可见行；每个选项带 `index`、`aria-setsize`、`aria-posinset`。使用 `useVirtualizer` 的组件以 `'use no memo'` 退出 React Compiler。jsdom 没有布局，这类列表的键盘与滚动行为放在 Browser Mode 中测试。
 
 ## 无障碍与动效
 
