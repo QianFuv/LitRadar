@@ -124,7 +124,7 @@ ThemeProvider 使用 `attribute="class"`、`defaultTheme="system"` 和 `enableSy
 
 外观变体：`default`、`destructive`、`outline`、`secondary`、`ghost`、`link`；尺寸：`xs`、`sm`、`default`、`lg` 与 `icon-xs`、`icon-sm`、`icon`、`icon-lg`。
 
-Button 统一使用 8 px 圆角、禁用态 opacity、有限属性 transition 和 3 px `focus-visible` ring。非 link 按钮在按下时使用 `scale(0.96)`，只在未请求 reduced motion 且未禁用时启用；`static` 可关闭按压缩放，用于搜索清空、关闭按钮等需要保持锚点稳定的操作。图标按钮必须提供可访问名称。
+Button 统一使用 8 px 圆角、禁用态 opacity、有限属性 transition 和 3 px `focus-visible` ring。非 link 按钮在按下时使用 `scale(0.96)`，未禁用时启用；`static` 可关闭按压缩放，用于搜索清空、关闭按钮等需要保持锚点稳定的操作。图标按钮必须提供可访问名称。
 
 ### Badge
 
@@ -267,7 +267,7 @@ Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制�
 - **高级检索构建器**（`SearchBuilderDialog`，搜索框右侧「高级」按钮或下拉面板入口打开）：每行一个条件，依次是连接方式（且 / 或 / 不含三段式切换，首行显示「检索」）、字段（全部字段 / 标题 / 摘要 / 作者 / 期刊 / DOI）、匹配方式（包含全部词 / 精确短语 / 包含任一词 / 前缀匹配）、检索词与删除按钮，可添加至 8 行。不再单独显示预览，条件行本身即为直观描述；「不含」条件前没有包含条件时给出提示并禁用检索。
 - **生成规则**（`lib/search-builder.tsx`）：用户只填写普通文字；每个词加引号并转义内部引号，字段用 `列 : ( … )` 作用于整组，前缀写作 `"词" *`，多个条件逐级加括号组合，因此生成的检索式总是合法的 FTS5 表达式。
 - **已应用条件**：用构建器检索后，搜索框下方显示条件标签（连接词 + 「字段 · 匹配 · 词」），点标签回到构建器继续编辑，点 × 移除该条件并立即重新检索；会让「不含」条件变成首个条件的移除被禁用。构建器状态按检索式记录在 `sessionStorage`，只有当前检索式与记录一致时才恢复。
-- **下拉面板**：点击或输入时弹出，包括「改写当前输入」（精确短语、AND、OR、按标题/作者/期刊、前缀、排除，均生成合法表达式）、「最近搜索」（沿用 `litradar:v1:search_history` 与「清空」，输入时按子串过滤）和「使用高级检索构建器」入口。三组共用方向键导航，`Enter` 执行，`Esc` 关闭；底部提示本次以普通关键词还是高级语法执行。
+- **下拉面板**：点击或输入时弹出，包括「改写当前输入」（精确短语、AND、OR、按标题/作者/期刊、前缀、排除，均生成合法表达式）、「最近搜索」（沿用 `litradar:v1:search_history` 与「清空」，输入时按子串过滤）和「使用高级检索构建器」入口。面板是 Base UI Autocomplete：一个 `搜索建议` listbox，三组为带标题的 `group`；方向键从输入框打开面板时落在第一项（↓）或最后一项（↑），到两端停止，`Enter` 执行高亮项，没有高亮项时提交输入，`Esc` 关闭并保留输入框焦点；底部提示本次以普通关键词还是高级语法执行。
 
 `lib/search-syntax.tsx` 识别 FTS5 语法，`getArticles` 在请求未显式指定时据此选择 `search_mode=advanced` 或 `simple`；语法错误返回的 `Invalid search expression` 在结果区显示为中文说明。手写语法的速查表折叠在构建器底部。周报检索只支持普通模式，因此周报页的检索栏只保留搜索历史，不显示「高级」按钮。
 
@@ -287,22 +287,26 @@ Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制�
 - 全视口 shell 使用 `100dvh` 高度，固定头部与滚动正文用 flex、`min-height: 0` 和 `flex: 1` 分配高度。
 - 搜索框、清空、搜索、帮助、筛选胶囊、数据库胶囊、收藏夹标签与收藏操作在移动端保留至少 44 px 的实际命中高度，桌面多为 32–40 px；不使用会重叠的伪元素扩展命中区。
 - 手机底栏与内容底部留白都计入 `--safe-area-inset-bottom`。
-- 长列表使用独立滚动容器、Intersection Observer 和 `content-visibility: auto`。
+- 长列表使用独立滚动容器、原生 IntersectionObserver（`lib/use-in-view.tsx`）和 `content-visibility: auto`；结果与收藏按页渐进显示，不做虚拟滚动。
 
 ## 无障碍与动效
 
 根级保障：
 
 - `<html lang="zh-CN">`；首个可聚焦元素是「跳到主要内容」链接，主区域 `id="main-content"`。
-- `prefers-reduced-motion: reduce` 将 animation/transition 缩短到 0.01 ms，并关闭平滑滚动；雷达扫描动画因此静止。
+- 动效不随系统的 `prefers-reduced-motion` 偏好减弱：`MotionProvider` 以 `ReducedMotionContext` 的 `never` 让 Motion 与 Animate UI 动画保持完整，样式中也没有 reduced-motion 媒体查询。
 - 滚动条同时提供 Firefox 与 WebKit 样式。
 
 组件保障：
 
+- 图标统一从 `components/ui/animated-icons.tsx` 引入：`AppIcon` 类型带 `canApplyXstyle` 标记，原始 lucide-react 图标（不接受 `xstyle`）不能放进图标位。
+- 可访问名称包含可见文字（WCAG 2.5.3）：文章卡片以视觉隐藏的「查看文章详情：」前缀加卡片内容命名，导航短标签与全称不同时名称为「短标签 全称」，设置/管理中心侧栏关闭按钮名为「返回」。
+- 状态文字用 `<output>`，分组用 `<fieldset>`，命名区域用 `<section>`，搜索表单外包 `<search>`，统计图表的 `<figure>` 以 `aria-label` 命名、内部 SVG 对辅助技术隐藏。
+
 - 交互控件使用可见的 ring；图标按钮使用 `aria-label` 或 `sr-only` 文本。
 - 加载、成功与错误反馈使用 `role="status"` / `role="alert"`。
 - 展开、选中和当前状态使用 Base UI data attributes 或对应 ARIA 属性（`aria-current`、`aria-pressed`、`aria-checked`、`aria-expanded`）。
-- Dialog、DropdownMenu、Select、Popover、Checkbox、Switch、RadioGroup 和分段控件（ToggleGroup，按钮 + `aria-pressed`）复用 Base UI 的键盘与焦点行为，`tests/browser-components/keyboard.browser.test.tsx` 在真实 Chromium 中覆盖焦点约束、Esc 关闭与方向键导航；侧滑面板关闭后焦点回到打开它的条目或期刊。
+- Dialog、DropdownMenu、Select、Popover、Checkbox、Switch、RadioGroup 和分段控件（`ToggleGroup`：多选一，Base UI RadioGroup 渲染的 `radiogroup` + `radio`，方向键移动选中项，选中底色由 Animate UI Highlight 滑动）复用 Base UI 的键盘与焦点行为，`tests/browser-components/keyboard.browser.test.tsx` 在真实 Chromium 中覆盖焦点约束、Esc 关闭与方向键导航；侧滑面板关闭后焦点回到打开它的条目或期刊。
 - 颜色不能作为唯一状态信号。
 
 ### 动效约定
@@ -327,7 +331,7 @@ Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制�
 1. 先选择语义 token，再决定是否需要场景色。
 2. 先扩展现有 primitive variant，再创建新的基础组件。
 3. 同时验证 system/light/dark。
-4. 保留键盘焦点、可访问名称、状态角色和 reduced-motion 行为。
+4. 保留键盘焦点、可访问名称和状态角色。
 5. 新工作区复用 `AppFrame` + `WorkspaceShell`；列表条目需要参与阅读台时使用 `ArticleReaderContext` 与 `data-reader-item`。
 6. 运行前端包说明中的格式、类型、测试和构建检查。
 

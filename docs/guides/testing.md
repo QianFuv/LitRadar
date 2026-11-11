@@ -9,7 +9,7 @@
 | 1. 单元                 | Go 包内 `*_test.go`；Vitest 的纯 helper 测试                                                               | 解析、规范化、状态机、序列化、错误映射和纯业务规则                                               | HTTP、真实浏览器或进程装配        |
 | 2. 契约与适配器         | Go 集成测试、临时 SQLite、net/http 与 httptest、MCP、loopback transport、共享 JSON 场景                    | 路由/存储/迁移/Provider/CLI 边界，以及真实响应与 OpenAPI 场景的一致性                            | 页面交互和浏览器语义              |
 | 3. 前端功能组件         | `apps/client/frontend/tests/*.test.tsx` 的 Vitest/jsdom/MSW；仅必要时使用 `apps/client/frontend/tests/browser-components/*.browser.test.tsx` | 页面状态、mutation、缓存、路由、错误呈现；焦点、Clipboard、IntersectionObserver 等浏览器原生语义 | 完整后端或部署拓扑                |
-| 4. 浏览器 fixture smoke | `apps/client/frontend/tests/e2e/local-fixtures.spec.tsx` 的 Playwright Chromium                                             | 少量跨页面 UI、可访问导航、主题和响应式关键流；API 由显式页面 fixture 提供                       | 后端、Cookie、SQLite 持久化真实性 |
+| 4. 浏览器 fixture smoke | `apps/client/frontend/tests/e2e/local-fixtures.spec.tsx` 的 Playwright Chromium                                             | 少量跨页面 UI、可访问导航、主题和响应式关键流，以及 `@axe-core/playwright` 对主要页面（明暗两套配色）的严重/关键违规检查；API 由显式页面 fixture 提供 | 后端、Cookie、SQLite 持久化真实性 |
 | 5. 真实系统边界         | `apps/client/frontend/tests/e2e/full-stack/`、`apps/server/`、`apps/server/tests/container-smoke.mjs`                                  | Vite 前端 → 实际 Go listener → 临时 SQLite，以及真实进程、信号、镜像安全和清理                    | 组合式边界条件枚举                |
 
 一个改动可以由多层共同拥有，但每条业务规则必须有一个最低充分所有者。高层 smoke 只证明关键装配，不复制低层的全部输入组合。
@@ -110,7 +110,7 @@ node apps/server/scripts/check-go.mjs
 
 `all` 不包含 race 或替换依赖包测试；后两者由 `check-go.mjs` 提供。`--ci` 设置 CI 环境与前端 JUnit 路径，不生成 Go JUnit。安装浏览器依赖使用 `pnpm --dir app exec playwright install --with-deps chromium`。
 
-聚焦 Go 检查使用 `go test -count=1 -mod=readonly ./相关包`；涉及并发时增加 `-race`（需 `CGO_ENABLED=1` 与 C 编译器）。前端可在 `apps/client/frontend/` 单独运行 `pnpm generate:api:check`、`pnpm test:unit`、`pnpm test:browser-components`、`pnpm test:e2e:fixtures` 或 `pnpm test:e2e:full-stack`。
+聚焦 Go 检查使用 `go test -count=1 -mod=readonly ./相关包`；涉及并发时增加 `-race`（需 `CGO_ENABLED=1` 与 C 编译器）。前端可在 `apps/client/frontend/` 单独运行 `pnpm check`、`pnpm knip`、`pnpm generate:api:check`、`pnpm test:unit`、`pnpm test:browser-components`、`pnpm test:e2e:fixtures` 或 `pnpm test:e2e:full-stack`。
 
 容器边界必须测试将要发布的确切本地镜像：
 

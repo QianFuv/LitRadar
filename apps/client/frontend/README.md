@@ -25,7 +25,7 @@ CI 与前端构建阶段使用：
 | StyleX            | 0.19.x（`@stylexjs/unplugin` 编译为原子 CSS，经 Lightning CSS 处理）    |
 | Go                | 1.27.3；生成 OpenAPI、启动后端和 full-stack e2e 时需要，不需要 C 编译器 |
 
-依赖由仓库根目录的 pnpm workspace `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Router、TanStack Query、Zod、next-themes、Base UI（经 Animate UI primitives 封装）、StyleX、Motion 和 lucide-react。样式写在各组件文件末尾的 `stylex.create`，颜色与阴影引用 `lib/theme.stylex.tsx` 的 token；接受样式覆盖的组件使用 `xstyle` 属性（类型为 `stylex.StyleXStyles`），不再接受 `className`。Motion 只通过 `components/ui/motion.tsx` 的 `LazyMotion` / `domAnimation` 封装进入业务代码；Base UI 浮层的进出场由 Animate UI primitives 内置的 Motion 过渡驱动。
+依赖由仓库根目录的 pnpm workspace `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Router、TanStack Query、TanStack Pacer（防抖）、Zod、next-themes、Base UI（经 Animate UI primitives 封装）、StyleX、Motion 和 lucide-react；元素可见性用原生 IntersectionObserver（`lib/use-in-view.tsx`）。样式写在各组件文件末尾的 `stylex.create`，颜色与阴影引用 `lib/theme.stylex.tsx` 的 token；接受样式覆盖的组件使用 `xstyle` 属性（类型为 `stylex.StyleXStyles`），不再接受 `className`。Motion 只通过 `components/ui/motion.tsx` 的 `LazyMotion` / `domAnimation` 封装进入业务代码；Base UI 浮层的进出场由 Animate UI primitives 内置的 Motion 过渡驱动。
 
 ## 本地运行
 
@@ -209,12 +209,12 @@ pnpm test:e2e:full-stack
 pnpm build
 ```
 
-`pnpm check`（`vp check`）依次运行 Oxfmt 格式检查、Oxlint 检查和 TypeScript 7 类型检查；lint、格式和测试配置都在 `vite.config.ts` 的 `lint`、`fmt`、`test` 块中。Oxlint 经 `jsPlugins` 加载 `@stylexjs/eslint-plugin` 与 `oxlint-anti-slop`，生成文件（`lib/generated/`、Wails 绑定、路由树）不参与 lint。`pnpm knip` 检查未使用的文件、依赖与导出。
+`pnpm check`（`vp check`）依次运行 Oxfmt 格式检查、Oxlint 检查和 TypeScript 7 类型检查；lint、格式和测试配置都在 `vite.config.ts` 的 `lint`、`fmt`、`test` 块中。Oxlint 经 `jsPlugins` 加载 `@stylexjs/eslint-plugin` 与 `oxlint-anti-slop`，生成文件（`lib/generated/`、Wails 绑定、路由树）不参与 lint。`pnpm knip` 检查未使用的文件、依赖与导出（生成的 `lib/generated/api-schema.tsx` 除外），CI 要求结果为空。Oxlint 开启 anti-slop 的 `no-unnecessary-type-widening` 与 `no-typeof-outside-guards`：外部数据用 `lib/type-guards.tsx` 的类型守卫或 Zod 校验，查表用 `Map`。lint 警告与错误都必须为零。
 
 测试边界：
 
 - `unit-jsdom` 通过 `tests/setup.tsx` 注册 handler-free MSW server；每个套件显式安装所需领域场景，未声明请求直接失败。
-- `component-browser` 运行需要真实 Chromium 的原生语义与动效套件；普通组件行为仍留在 jsdom。动效套件验证真实退出生命周期、reduced-motion override 与抽屉焦点归还。
+- `component-browser` 运行需要真实 Chromium 的原生语义与动效套件；普通组件行为仍留在 jsdom。动效套件验证真实退出生命周期、分区标题过渡与抽屉焦点归还；键盘套件验证 Dialog、Menu、Select、Popover 与单选组的焦点、Esc 和方向键行为。
 - `fixture-chromium` 构建后在 `127.0.0.1:3100` 启动 `vp preview` 并使用页面路由 fixture；`full-stack-chromium` 构建 `dist/`，启动实际 Go 服务、临时 SQLite 与代理到该服务的 `vp preview`，目录内禁止请求拦截。
 - Playwright 本地零重试；CI 最多一次重试以保留 trace/video，并通过 `failOnFlakyTests` 让 retry-pass 仍失败。
 - 覆盖率排除生成代码和 `components/ui/`，只作独立诊断，不设置完成阈值。
