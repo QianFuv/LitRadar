@@ -18,7 +18,9 @@ func TestPerUserCookiesAcrossRealRedirect(t *testing.T) {
 			http.Redirect(writer, request, "/private/check", http.StatusTemporaryRedirect)
 			return
 		}
-		io.WriteString(writer, request.Header.Get("Cookie"))
+		if _, err := io.WriteString(writer, request.Header.Get("Cookie")); err != nil {
+			t.Errorf("io.WriteString: %v", err)
+		}
 	}))
 	defer server.Close()
 	for _, user := range []string{"alice", "bob"} {
@@ -36,7 +38,9 @@ func TestPerUserCookiesAcrossRealRedirect(t *testing.T) {
 				t.Fatal(err)
 			}
 			body, err := io.ReadAll(response.Body)
-			response.Body.Close()
+			if err := response.Body.Close(); err != nil {
+				t.Fatalf("response.Body.Close: %v", err)
+			}
 			if err != nil || string(body) != scenario.expected {
 				t.Fatalf("user %s path %s cookie %q %v", user, scenario.path, body, err)
 			}

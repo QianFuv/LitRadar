@@ -34,7 +34,11 @@ func (connection *delayedHandshakeConnection) Read(body []byte) (int, error) {
 }
 
 func TestSourceTlsHandshakeUsesRequestBudget(t *testing.T) {
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) { io.WriteString(response, "ready") }))
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if _, err := io.WriteString(response, "ready"); err != nil {
+			t.Errorf("io.WriteString: %v", err)
+		}
+	}))
 	server.Listener = delayedHandshakeListener{server.Listener, 10500 * time.Millisecond}
 	server.StartTLS()
 	defer server.Close()

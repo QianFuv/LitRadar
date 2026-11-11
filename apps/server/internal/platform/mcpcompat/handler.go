@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -204,13 +205,17 @@ func readLegacyMessage(writer http.ResponseWriter, request *http.Request) ([]byt
 		}
 		writer.Header()["Content-Type"] = nil
 		writer.WriteHeader(500)
-		io.WriteString(writer, "Failed to read request body: "+err.Error())
+		if _, err := io.WriteString(writer, "Failed to read request body: "+err.Error()); err != nil {
+			slog.Warn("cleanup.failed", "operation", "io.WriteString", "error", err)
+		}
 		return nil, false
 	}
 	if err := mcp.ValidateLitRadarMessage(body); err != nil {
 		writer.Header()["Content-Type"] = nil
 		writer.WriteHeader(415)
-		io.WriteString(writer, "fail to deserialize request body "+err.Error())
+		if _, err := io.WriteString(writer, "fail to deserialize request body "+err.Error()); err != nil {
+			slog.Warn("cleanup.failed", "operation", "io.WriteString", "error", err)
+		}
 		return nil, false
 	}
 	return body, true

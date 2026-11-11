@@ -35,7 +35,11 @@ func bodyHandler(t *testing.T) *Handler {
 		}
 		return Principal{UserId: 1, ExpiresAt: time.Now().Add(time.Hour)}, true
 	}, HostOriginPolicy{AllowedHosts: []string{"localhost", "127.0.0.1"}, AllowedOrigins: []string{"http://localhost"}})
-	t.Cleanup(func() { handler.Close() })
+	t.Cleanup(func() {
+		if err := handler.Close(); err != nil {
+			t.Errorf("handler.Close: %v", err)
+		}
+	})
 	return handler
 }
 
@@ -101,7 +105,11 @@ func TestBodyBudgetRejectsChunkedOversize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			t.Errorf("response.Body.Close: %v", err)
+		}
+	}()
 	if response.StatusCode != 413 {
 		t.Fatal("chunked body bypassed budget", response.StatusCode)
 	}

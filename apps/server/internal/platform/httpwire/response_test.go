@@ -88,7 +88,11 @@ func TestFileStreamsBeforeEofAndCancelsReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			t.Errorf("response.Body.Close: %v", err)
+		}
+	}()
 	first := make([]byte, 32768)
 	if _, err := io.ReadFull(response.Body, first); err != nil {
 		t.Fatal(err)
@@ -194,7 +198,11 @@ func TestRestListenerWireContract(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer response.Body.Close()
+			defer func() {
+				if err := response.Body.Close(); err != nil {
+					t.Errorf("response.Body.Close: %v", err)
+				}
+			}()
 			body, err := io.ReadAll(response.Body)
 			if err != nil {
 				t.Fatal(err)

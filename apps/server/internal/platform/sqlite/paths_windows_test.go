@@ -15,7 +15,11 @@ func TestExtendedWindowsPathOpensExactTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	if _, err := database.Exec("CREATE TABLE proof(value TEXT); INSERT INTO proof VALUES('exact target')"); err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +33,11 @@ func TestExtendedWindowsPathOpensExactTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reopened.Close()
+	defer func() {
+		if err := reopened.Close(); err != nil {
+			t.Errorf("reopened.Close: %v", err)
+		}
+	}()
 	var value string
 	if err := reopened.QueryRow("SELECT value FROM proof").Scan(&value); err != nil || value != "exact target" {
 		t.Fatalf("wrong database %q %v", value, err)

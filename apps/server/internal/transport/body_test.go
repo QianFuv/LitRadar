@@ -23,7 +23,11 @@ func rawResponse(t *testing.T, headers string, body []byte) *http.Response {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { listener.Close() })
+	t.Cleanup(func() {
+		if err := listener.Close(); err != nil {
+			t.Errorf("listener.Close: %v", err)
+		}
+	})
 	complete := make(chan error, 1)
 	go func() {
 		connection, err := listener.Accept()
@@ -31,14 +35,22 @@ func rawResponse(t *testing.T, headers string, body []byte) *http.Response {
 			complete <- err
 			return
 		}
-		defer connection.Close()
-		connection.SetDeadline(time.Now().Add(3 * time.Second))
+		defer func() {
+			if err := connection.Close(); err != nil {
+				t.Errorf("connection.Close: %v", err)
+			}
+		}()
+		if err := connection.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+			t.Errorf("connection.SetDeadline: %v", err)
+		}
 		request, err := http.ReadRequest(bufio.NewReader(connection))
 		if err != nil {
 			complete <- err
 			return
 		}
-		request.Body.Close()
+		if err := request.Body.Close(); err != nil {
+			t.Errorf("request.Body.Close: %v", err)
+		}
 		_, err = fmt.Fprintf(connection, "HTTP/1.1 200 OK\r\n%sConnection: close\r\n\r\n", headers)
 		if err == nil {
 			_, err = connection.Write(body)
@@ -56,7 +68,9 @@ func rawResponse(t *testing.T, headers string, body []byte) *http.Response {
 		t.Fatal(err)
 	}
 	if err := <-complete; err != nil {
-		response.Body.Close()
+		if err := response.Body.Close(); err != nil {
+			t.Fatalf("response.Body.Close: %v", err)
+		}
 		t.Fatal(err)
 	}
 	return response
@@ -65,8 +79,12 @@ func rawResponse(t *testing.T, headers string, body []byte) *http.Response {
 func TestDecodedBodyLimitsOverRealHttp(t *testing.T) {
 	var compressed bytes.Buffer
 	writer := gzip.NewWriter(&compressed)
-	writer.Write(bytes.Repeat([]byte("a"), 256))
-	writer.Close()
+	if _, err := writer.Write(bytes.Repeat([]byte("a"), 256)); err != nil {
+		t.Fatalf("writer.Write: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("writer.Close: %v", err)
+	}
 	for _, test := range []struct {
 		name, headers string
 		body          []byte

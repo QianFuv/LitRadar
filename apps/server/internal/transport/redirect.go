@@ -69,10 +69,10 @@ func RedirectSequence(ctx context.Context, wire http.RoundTripper, jar http.Cook
 			return response, nil
 		}
 		if err := policy(next, previousCount); err != nil {
-			response.Body.Close()
+			_ = response.Body.Close()
 			return nil, err
 		}
-		response.Body.Close()
+		_ = response.Body.Close()
 		method, body = redirectMethod(status, method, body, headers)
 		headers.Set("Referer", request.URL.String())
 		location = next

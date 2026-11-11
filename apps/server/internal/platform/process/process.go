@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"sync"
@@ -99,25 +100,49 @@ func startWithHook(ctx context.Context, config Config, hook startHook) (*Child, 
 	configureChildPipes(command, config, pipes)
 	tree, err := prepareTree(command)
 	if err != nil {
-		pipes.inputReader.Close()
-		pipes.inputWriter.Close()
-		pipes.outputReader.Close()
-		pipes.outputWriter.Close()
-		pipes.errorReader.Close()
-		pipes.errorWriter.Close()
+		if err := pipes.inputReader.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "pipes.inputReader.Close", "error", err)
+		}
+		if err := pipes.inputWriter.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "pipes.inputWriter.Close", "error", err)
+		}
+		if err := pipes.outputReader.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "pipes.outputReader.Close", "error", err)
+		}
+		if err := pipes.outputWriter.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "pipes.outputWriter.Close", "error", err)
+		}
+		if err := pipes.errorReader.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "pipes.errorReader.Close", "error", err)
+		}
+		if err := pipes.errorWriter.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "pipes.errorWriter.Close", "error", err)
+		}
 		return nil, fmt.Errorf("spawn_or_assign_failed")
 	}
 	if err = command.Start(); err == nil {
 		err = tree.attach(command, hook)
 	}
-	pipes.inputReader.Close()
-	pipes.outputWriter.Close()
-	pipes.errorWriter.Close()
+	if err := pipes.inputReader.Close(); err != nil {
+		slog.Warn("cleanup.failed", "operation", "pipes.inputReader.Close", "error", err)
+	}
+	if err := pipes.outputWriter.Close(); err != nil {
+		slog.Warn("cleanup.failed", "operation", "pipes.outputWriter.Close", "error", err)
+	}
+	if err := pipes.errorWriter.Close(); err != nil {
+		slog.Warn("cleanup.failed", "operation", "pipes.errorWriter.Close", "error", err)
+	}
 	if err != nil {
 		cleanupFailedStart(command, tree)
-		pipes.inputWriter.Close()
-		pipes.outputReader.Close()
-		pipes.errorReader.Close()
+		if err := pipes.inputWriter.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "pipes.inputWriter.Close", "error", err)
+		}
+		if err := pipes.outputReader.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "pipes.outputReader.Close", "error", err)
+		}
+		if err := pipes.errorReader.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "pipes.errorReader.Close", "error", err)
+		}
 		return nil, fmt.Errorf("spawn_or_assign_failed")
 	}
 	child := &Child{command: command, tree: tree, Stdin: pipes.inputWriter, readers: []*os.File{pipes.outputReader, pipes.errorReader},
@@ -127,7 +152,9 @@ func startWithHook(ctx context.Context, config Config, hook startHook) (*Child, 
 	go func() {
 		select {
 		case <-ctx.Done():
-			child.Close()
+			if err := child.Close(); err != nil {
+				slog.Warn("cleanup.failed", "operation", "child.Close", "error", err)
+			}
 		case <-child.closed:
 		}
 	}()
@@ -182,7 +209,9 @@ func (child *Child) Close() error {
 func (child *Child) Terminate(grace time.Duration) (Termination, error) {
 	child.closeOnce.Do(func() {
 		defer close(child.closed)
-		child.Stdin.Close()
+		if err := child.Stdin.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "child.Stdin.Close", "error", err)
+		}
 		mode, killError := child.tree.terminate(grace)
 		child.termination = mode
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -196,7 +225,9 @@ func (child *Child) Terminate(grace time.Duration) (Termination, error) {
 		waitError = errors.Join(waitError, child.waitForDrain(ctx))
 		child.closeError = errors.Join(killError, classifiedError("wait_failed", errors.Join(waitError, treeError)), classifiedError("kill_failed", child.tree.close()))
 		if child.Stdout != nil {
-			child.Stdout.Close()
+			if err := child.Stdout.Close(); err != nil {
+				slog.Warn("cleanup.failed", "operation", "child.Stdout.Close", "error", err)
+			}
 		}
 	})
 	return child.termination, child.closeError
@@ -215,7 +246,9 @@ func (child *Child) waitForDrain(ctx context.Context) error {
 		default:
 		}
 		for _, reader := range child.readers {
-			reader.Close()
+			if err := reader.Close(); err != nil {
+				slog.Warn("cleanup.failed", "operation", "reader.Close", "error", err)
+			}
 		}
 		<-child.drained
 		return ctx.Err()
@@ -237,16 +270,28 @@ func openChildPipes() (*childPipes, error) {
 	}
 	outputReader, outputWriter, err := os.Pipe()
 	if err != nil {
-		inputReader.Close()
-		inputWriter.Close()
+		if err := inputReader.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "inputReader.Close", "error", err)
+		}
+		if err := inputWriter.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "inputWriter.Close", "error", err)
+		}
 		return nil, err
 	}
 	errorReader, errorWriter, err := os.Pipe()
 	if err != nil {
-		inputReader.Close()
-		inputWriter.Close()
-		outputReader.Close()
-		outputWriter.Close()
+		if err := inputReader.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "inputReader.Close", "error", err)
+		}
+		if err := inputWriter.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "inputWriter.Close", "error", err)
+		}
+		if err := outputReader.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "outputReader.Close", "error", err)
+		}
+		if err := outputWriter.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "outputWriter.Close", "error", err)
+		}
 		return nil, err
 	}
 	return &childPipes{inputReader: inputReader, inputWriter: inputWriter, outputReader: outputReader, outputWriter: outputWriter, errorReader: errorReader, errorWriter: errorWriter}, nil
@@ -269,20 +314,38 @@ func configureChildPipes(command *exec.Cmd, config Config, pipes *childPipes) {
 // cleanupFailedStart kills and joins a partially assigned leader before parent endpoint closure.
 func cleanupFailedStart(command *exec.Cmd, tree *nativeTree) {
 	if command.Process != nil {
-		tree.kill()
-		command.Process.Kill()
+		if err := tree.kill(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "tree.kill", "error", err)
+		}
+		if err := command.Process.Kill(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "command.Process.Kill", "error", err)
+		}
 		reaped := make(chan struct{})
-		go func() { command.Wait(); close(reaped) }()
+		go func() {
+			if err := command.Wait(); err != nil {
+				var exitError *exec.ExitError
+				if !errors.As(err, &exitError) {
+					slog.Warn("process.reap.failed", "error", err)
+				}
+			}
+			close(reaped)
+		}()
 		cleanupContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		tree.waitEmpty(cleanupContext)
-		tree.close()
+		if err := tree.waitEmpty(cleanupContext); err != nil {
+			slog.Warn("cleanup.failed", "operation", "tree.waitEmpty", "error", err)
+		}
+		if err := tree.close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "tree.close", "error", err)
+		}
 		select {
 		case <-reaped:
 		case <-cleanupContext.Done():
 		}
 		cancel()
 	} else {
-		tree.close()
+		if err := tree.close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "tree.close", "error", err)
+		}
 	}
 }
 
@@ -298,7 +361,12 @@ func (child *Child) startDraining(config Config) {
 		if index == 1 {
 			destination = &child.diagnostics
 		}
-		draining.Go(func() { _, _ = io.Copy(destination, reader); reader.Close() })
+		draining.Go(func() {
+			_, _ = io.Copy(destination, reader)
+			if err := reader.Close(); err != nil {
+				slog.Warn("cleanup.failed", "operation", "reader.Close", "error", err)
+			}
+		})
 	}
 	go func() { draining.Wait(); close(child.drained) }()
 }

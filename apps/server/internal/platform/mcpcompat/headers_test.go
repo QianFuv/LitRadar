@@ -17,14 +17,20 @@ func TestHostOriginGuardPrecedesMediaAndJson(t *testing.T) {
 	handler := NewWithPolicy(server, func(writer http.ResponseWriter, request *http.Request) (Principal, bool) {
 		if request.Header.Get("Authorization") != "Bearer fixture" {
 			writer.WriteHeader(401)
-			io.WriteString(writer, "unauthorized")
+			if _, err := io.WriteString(writer, "unauthorized"); err != nil {
+				t.Errorf("io.WriteString: %v", err)
+			}
 			return Principal{}, false
 		}
 		return Principal{UserId: 1, ExpiresAt: time.Now().Add(time.Hour)}, true
 	}, policy)
 	listener := httptest.NewServer(handler)
 	defer listener.Close()
-	defer handler.Close()
+	defer func() {
+		if err := handler.Close(); err != nil {
+			t.Errorf("handler.Close: %v", err)
+		}
+	}()
 	for _, scenario := range []struct {
 		name, host, origin string
 		unauthorized       bool
@@ -61,7 +67,9 @@ func TestHostOriginGuardPrecedesMediaAndJson(t *testing.T) {
 				t.Fatal(err)
 			}
 			body, err := io.ReadAll(response.Body)
-			response.Body.Close()
+			if err := response.Body.Close(); err != nil {
+				t.Errorf("response.Body.Close: %v", err)
+			}
 			if err != nil || response.StatusCode != scenario.status || string(body) != scenario.body || response.Header.Get("Content-Type") != scenario.contentType {
 				t.Fatalf("response %d %q %q %v", response.StatusCode, body, response.Header.Get("Content-Type"), err)
 			}

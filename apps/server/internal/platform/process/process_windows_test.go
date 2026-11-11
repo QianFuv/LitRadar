@@ -62,7 +62,11 @@ func TestFailedSuspendedStartActuallyExits(t *testing.T) {
 			if err == nil || handle == 0 {
 				t.Fatal("failure not injected")
 			}
-			defer windows.CloseHandle(handle)
+			defer func() {
+				if err := windows.CloseHandle(handle); err != nil {
+					t.Errorf("windows.CloseHandle: %v", err)
+				}
+			}()
 			state, err := windows.WaitForSingleObject(handle, 0)
 			if err != nil || state != windows.WAIT_OBJECT_0 {
 				t.Fatalf("suspended process leaked: %d %v", state, err)
@@ -77,13 +81,21 @@ func TestDetachedWindowsExitDiagnostics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer child.Close()
+	defer func() {
+		if err := child.Close(); err != nil {
+			t.Errorf("child.Close: %v", err)
+		}
+	}()
 	grandchild := awaitFixture(t, directory, "grandchild")
 	handle, err := windows.OpenProcess(windows.SYNCHRONIZE|windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(grandchild.Pid))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer windows.CloseHandle(handle)
+	defer func() {
+		if err := windows.CloseHandle(handle); err != nil {
+			t.Errorf("windows.CloseHandle: %v", err)
+		}
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := child.Wait(ctx); err != nil {
@@ -94,7 +106,9 @@ func TestDetachedWindowsExitDiagnostics(t *testing.T) {
 	}
 	state, err := windows.WaitForSingleObject(handle, 0)
 	var code uint32
-	windows.GetExitCodeProcess(handle, &code)
+	if err := windows.GetExitCodeProcess(handle, &code); err != nil {
+		t.Fatalf("windows.GetExitCodeProcess: %v", err)
+	}
 	t.Logf("descendant pid=%d handle-state=%d exit=%d error=%v", grandchild.Pid, state, code, err)
 	if state != windows.WAIT_OBJECT_0 || err != nil {
 		t.Fatal("process not terminated at Close return")

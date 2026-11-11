@@ -25,7 +25,7 @@ var (
 // BoundedBytes consumes and closes a transparently decoded HTTP response body.
 // A read failure takes precedence over the observed size, except for an oversized length header.
 func BoundedBytes(response *http.Response, maximum int64) ([]byte, error) {
-	defer response.Body.Close()
+	defer func(closeBody func() error) { _ = closeBody() }(response.Body.Close)
 	if maximum < 0 || response.ContentLength > maximum {
 		return nil, ErrTooLarge
 	}

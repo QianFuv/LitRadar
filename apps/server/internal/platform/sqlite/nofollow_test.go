@@ -57,7 +57,9 @@ func TestNoFollowVfsRejectsLinks(t *testing.T) {
 				location.RawQuery = query.Encode()
 				connection, err := (&native.Driver{}).Open(location.String())
 				if connection != nil {
-					connection.Close()
+					if err := connection.Close(); err != nil {
+						t.Errorf("connection.Close: %v", err)
+					}
 				}
 				var failure *native.Error
 				if !errors.As(err, &failure) || failure.Code()&255 != sqlite3.SQLITE_CANTOPEN {
@@ -77,7 +79,11 @@ func TestNoFollowVfsRejectsLinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reader.Close()
+	defer func() {
+		if err := reader.Close(); err != nil {
+			t.Errorf("reader.Close: %v", err)
+		}
+	}()
 	var value int
 	if err := reader.QueryRow("SELECT value FROM retained").Scan(&value); err != nil || value != 42 {
 		t.Fatalf("ordinary driver or target changed: %d %v", value, err)

@@ -76,13 +76,19 @@ func TestProcessFixture(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	defer listener.Close()
+	defer func() {
+		if err := listener.Close(); err != nil {
+			t.Errorf("listener.Close: %v", err)
+		}
+	}()
 	publishProcessFixture(mode, directory, listener)
 	startFixtureGrandchild(mode, directory)
 	if mode == "late-guard" {
 		stop := awaitLateProcessGuard(directory)
 		defer stop()
-		os.WriteFile(filepath.Join(directory, "work-started"), []byte("unexpected"), 0600)
+		if err := os.WriteFile(filepath.Join(directory, "work-started"), []byte("unexpected"), 0600); err != nil {
+			t.Fatalf("os.WriteFile: %v", err)
+		}
 	}
 	drainProcessFixture(listener)
 }
@@ -96,7 +102,9 @@ func TestInheritedStdoutReachesParentAndIsNotRetained(t *testing.T) {
 	config := fixtureConfig("output", t.TempDir())
 	config.InheritStdout, config.StreamStdout = true, true
 	if child, err := Start(context.Background(), config); err == nil {
-		child.Close()
+		if err := child.Close(); err != nil {
+			t.Fatalf("child.Close: %v", err)
+		}
 		t.Fatal("conflicting stdout ownership accepted")
 	}
 }
@@ -110,7 +118,11 @@ func TestCancellationAfterLeaderExitStillOwnsDescendants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer child.Close()
+	defer func() {
+		if err := child.Close(); err != nil {
+			t.Errorf("child.Close: %v", err)
+		}
+	}()
 	grandchild := awaitFixture(t, directory, "grandchild")
 	waitCtx, stop := context.WithTimeout(context.Background(), 3*time.Second)
 	defer stop()
@@ -135,7 +147,9 @@ func TestCancellationAfterLeaderExitStillOwnsDescendants(t *testing.T) {
 	}
 	connection, err := net.DialTimeout("tcp", grandchild.Address, time.Second)
 	if err == nil {
-		connection.Close()
+		if err := connection.Close(); err != nil {
+			t.Fatalf("connection.Close: %v", err)
+		}
 		t.Fatal("Close returned before descendant stopped")
 	}
 }
@@ -159,7 +173,14 @@ func TestPendingDrainClosesReadersAtDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { reader.Close(); writer.Close() })
+	t.Cleanup(func() {
+		if err := reader.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+			t.Errorf("reader.Close: %v", err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Errorf("writer.Close: %v", err)
+		}
+	})
 	child := &Child{readers: []*os.File{reader}, drained: make(chan struct{})}
 	t.Cleanup(func() {
 		select {
@@ -185,8 +206,8 @@ func TestPendingDrainClosesReadersAtDeadline(t *testing.T) {
 		}
 	}
 	select {
-	case <-result:
-		t.Fatal("cleanup returned before joining output readers")
+	case err := <-result:
+		t.Fatalf("cleanup returned before joining output readers: %v", err)
 	default:
 	}
 	close(child.drained)
@@ -208,7 +229,11 @@ func TestProtocolStdoutIsSeparateAndBidirectional(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer child.Close()
+	defer func() {
+		if err := child.Close(); err != nil {
+			t.Errorf("child.Close: %v", err)
+		}
+	}()
 	assertProcessProtocolExchange(t, child)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -229,7 +254,11 @@ func TestStderrCannotConsumeStdoutCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer child.Close()
+	defer func() {
+		if err := child.Close(); err != nil {
+			t.Errorf("child.Close: %v", err)
+		}
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := child.Wait(ctx); err != nil {
@@ -251,7 +280,11 @@ func TestTreeWaitDoesNotDependOnOutputPipes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer child.Close()
+	defer func() {
+		if err := child.Close(); err != nil {
+			t.Errorf("child.Close: %v", err)
+		}
+	}()
 	grandchild := awaitFixture(t, directory, "grandchild")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -274,7 +307,9 @@ func TestTreeWaitDoesNotDependOnOutputPipes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if connection, err := net.DialTimeout("tcp", grandchild.Address, time.Second); err == nil {
-		connection.Close()
+		if err := connection.Close(); err != nil {
+			t.Fatalf("connection.Close: %v", err)
+		}
 		t.Fatal("cleanup returned with live detached descendant")
 	}
 }
@@ -307,7 +342,9 @@ func TestPartialStartupFailureReapsOwnedTree(t *testing.T) {
 						fixtureError = err
 						return err
 					}
-					connection.Close()
+					if err := connection.Close(); err != nil {
+						t.Errorf("connection.Close: %v", err)
+					}
 				}
 				return errors.New("injected startup failure")
 			})
@@ -343,7 +380,9 @@ func TestStartupReadinessFailureReapsChild(t *testing.T) {
 		return fixtureError
 	})
 	if child != nil {
-		child.Close()
+		if err := child.Close(); err != nil {
+			t.Fatalf("child.Close: %v", err)
+		}
 		t.Fatal("readiness failure returned a live child")
 	}
 	if err == nil || !errors.Is(fixtureError, context.Canceled) || started == nil || started.ProcessState == nil {
@@ -365,7 +404,11 @@ func TestGracefulAndForcedTreeTermination(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer child.Close()
+			defer func() {
+				if err := child.Close(); err != nil {
+					t.Errorf("child.Close: %v", err)
+				}
+			}()
 			grandchild := awaitFixture(t, directory, scenario.descendant)
 			mode, err := child.Terminate(200 * time.Millisecond)
 			if err != nil || mode != scenario.want {
@@ -373,7 +416,9 @@ func TestGracefulAndForcedTreeTermination(t *testing.T) {
 			}
 			connection, err := net.DialTimeout("tcp", grandchild.Address, time.Second)
 			if err == nil {
-				connection.Close()
+				if err := connection.Close(); err != nil {
+					t.Errorf("connection.Close: %v", err)
+				}
 				t.Fatal("termination returned before descendant stopped")
 			}
 		})
@@ -424,7 +469,9 @@ func requireReachable(t *testing.T, info fixtureInfo) {
 	if err != nil {
 		t.Fatalf("fixture not reachable: %v", err)
 	}
-	connection.Close()
+	if err := connection.Close(); err != nil {
+		t.Fatalf("connection.Close: %v", err)
+	}
 }
 
 func requireStopped(t *testing.T, info fixtureInfo) {
@@ -435,7 +482,9 @@ func requireStopped(t *testing.T, info fixtureInfo) {
 		if err != nil {
 			return
 		}
-		connection.Close()
+		if err := connection.Close(); err != nil {
+			t.Fatalf("connection.Close: %v", err)
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("descendant still listening: %+v", info)
@@ -450,7 +499,11 @@ func TestWholeTreeCleanupAfterLeaderExit(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { child.Close() })
+			t.Cleanup(func() {
+				if err := child.Close(); err != nil {
+					t.Errorf("child.Close: %v", err)
+				}
+			})
 			parent := awaitFixture(t, directory, mode)
 			grandchild := awaitFixture(t, directory, "grandchild")
 			requireReachable(t, grandchild)
@@ -482,7 +535,11 @@ func TestOutputLimitStillDrainsAndLeaderWaitPreservesPipe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer child.Close()
+	defer func() {
+		if err := child.Close(); err != nil {
+			t.Errorf("child.Close: %v", err)
+		}
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := child.Wait(ctx); err != nil {
@@ -506,7 +563,11 @@ func TestContextCancellationAndFailedStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer child.Close()
+	defer func() {
+		if err := child.Close(); err != nil {
+			t.Errorf("child.Close: %v", err)
+		}
+	}()
 	grandchild := awaitFixture(t, directory, "grandchild")
 	cancel()
 	requireStopped(t, grandchild)
@@ -527,12 +588,25 @@ func TestOwnerDeathCleansBlockedTree(t *testing.T) {
 	if err := owner.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { owner.Process.Kill(); owner.Wait() })
+	t.Cleanup(func() {
+		if owner.ProcessState != nil {
+			return
+		}
+		if err := owner.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			t.Errorf("owner.Process.Kill: %v", err)
+		}
+		if err := owner.Wait(); err != nil {
+			var exitError *exec.ExitError
+			if !errors.As(err, &exitError) {
+				t.Error(err)
+			}
+		}
+	})
 	parent := awaitFixture(t, directory, "parent")
 	grandchild := awaitFixture(t, directory, "grandchild")
 	requireReachable(t, parent)
 	requireReachable(t, grandchild)
-	if err := owner.Process.Kill(); err != nil {
+	if err := owner.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		t.Fatal(err)
 	}
 	if err := owner.Wait(); err == nil {
@@ -555,7 +629,9 @@ func runImmediateProcessFixture(mode, directory string) bool {
 	case "inherit-stdout":
 		runInheritedProcessFixture(directory)
 	case "stderr-flood":
-		os.Stderr.Write(bytes.Repeat([]byte("e"), 8192))
+		if _, err := os.Stderr.Write(bytes.Repeat([]byte("e"), 8192)); err != nil {
+			return false
+		}
 		fmt.Fprint(os.Stdout, "result")
 		os.Exit(0)
 	case "protocol":
@@ -581,7 +657,9 @@ func runInheritedProcessFixture(directory string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := child.Wait(ctx); err != nil {
-		child.Close()
+		if err := child.Close(); err != nil {
+			os.Exit(99)
+		}
 		os.Exit(11)
 	}
 	if err := child.Close(); err != nil {
@@ -631,8 +709,14 @@ func runOwnerProcessFixture(mode, directory string) {
 	if err != nil {
 		panic(err)
 	}
-	defer child.Close()
-	os.WriteFile(filepath.Join(directory, "owner.ready"), []byte(strconv.Itoa(os.Getpid())), 0600)
+	defer func() {
+		if err := child.Close(); err != nil {
+			os.Exit(99)
+		}
+	}()
+	if err := os.WriteFile(filepath.Join(directory, "owner.ready"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+		os.Exit(99)
+	}
 	select {}
 }
 
@@ -704,7 +788,9 @@ func drainProcessFixture(listener net.Listener) {
 		if err != nil {
 			return
 		}
-		connection.Close()
+		if err := connection.Close(); err != nil {
+			os.Exit(99)
+		}
 	}
 }
 

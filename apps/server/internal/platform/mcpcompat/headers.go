@@ -2,6 +2,7 @@ package mcpcompat
 
 import (
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -103,7 +104,9 @@ func headerError(writer http.ResponseWriter, status int, message string) bool {
 		writer.Header()["Content-Type"] = nil
 	}
 	writer.WriteHeader(status)
-	io.WriteString(writer, message)
+	if _, err := io.WriteString(writer, message); err != nil {
+		slog.Warn("cleanup.failed", "operation", "io.WriteString", "error", err)
+	}
 	return false
 }
 

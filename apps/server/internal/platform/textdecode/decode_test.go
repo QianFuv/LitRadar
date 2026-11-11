@@ -17,14 +17,20 @@ func TestHttpCharsetPrecedenceAndUtf8Dom(t *testing.T) {
 	body, _ := hex.DecodeString("3c6d65746120636861727365743d2767626b273e3c68313ed6d0cec43c2f68313e")
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "text/html")
-		writer.Write(body)
+		if _, err := writer.Write(body); err != nil {
+			t.Errorf("writer.Write: %v", err)
+		}
 	}))
 	defer server.Close()
 	response, err := http.Get(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			t.Errorf("response.Body.Close: %v", err)
+		}
+	}()
 	raw, err := io.ReadAll(response.Body)
 	if err != nil {
 		t.Fatal(err)

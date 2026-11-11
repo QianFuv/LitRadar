@@ -3,6 +3,7 @@ package transport
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -19,7 +20,9 @@ func TestHttpsProxyConnectRetainsTlsVerification(t *testing.T) {
 		if request.Header.Get("Proxy-Authorization") != "" {
 			t.Error("proxy authentication leaked into tunnel")
 		}
-		io.WriteString(writer, "tunneled")
+		if _, err := io.WriteString(writer, "tunneled"); err != nil {
+			t.Errorf("io.WriteString: %v", err)
+		}
 	}))
 	defer origin.Close()
 	var calls atomic.Int32
@@ -40,22 +43,49 @@ func TestHttpsProxyConnectRetainsTlsVerification(t *testing.T) {
 			writer.WriteHeader(502)
 			return
 		}
-		defer upstream.Close()
+		defer func() {
+			if err := upstream.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+				t.Errorf("upstream.Close: %v", err)
+			}
+		}()
 		connection, buffer, err := writer.(http.Hijacker).Hijack()
 		if err != nil {
 			t.Error(err)
 			return
 		}
-		defer connection.Close()
-		connection.SetDeadline(time.Now().Add(5 * time.Second))
-		upstream.SetDeadline(time.Now().Add(5 * time.Second))
-		buffer.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
-		buffer.Flush()
+		defer func() {
+			if err := connection.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+				t.Errorf("connection.Close: %v", err)
+			}
+		}()
+		if err := connection.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			t.Errorf("connection.SetDeadline: %v", err)
+		}
+		if err := upstream.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			t.Errorf("upstream.SetDeadline: %v", err)
+		}
+		if _, err := buffer.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
+			t.Errorf("buffer.WriteString: %v", err)
+		}
+		if err := buffer.Flush(); err != nil {
+			t.Errorf("buffer.Flush: %v", err)
+		}
 		calls.Add(1)
 		var copying sync.WaitGroup
-		copying.Go(func() { io.Copy(upstream, buffer); upstream.Close() })
-		io.Copy(connection, upstream)
-		connection.Close()
+		copying.Go(func() {
+			if _, err := io.Copy(upstream, buffer); err != nil && !errors.Is(err, net.ErrClosed) {
+				t.Errorf("io.Copy: %v", err)
+			}
+			if err := upstream.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+				t.Errorf("upstream.Close: %v", err)
+			}
+		})
+		if _, err := io.Copy(connection, upstream); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("io.Copy: %v", err)
+		}
+		if err := connection.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("connection.Close: %v", err)
+		}
 		copying.Wait()
 	}))
 	defer proxyServer.Close()
@@ -75,7 +105,9 @@ func TestHttpsProxyConnectRetainsTlsVerification(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, err := io.ReadAll(response.Body)
-	response.Body.Close()
+	if err := response.Body.Close(); err != nil {
+		t.Fatalf("response.Body.Close: %v", err)
+	}
 	if err != nil || string(body) != "tunneled" || calls.Load() != 1 {
 		t.Fatalf("CONNECT result %q %v calls=%d", body, err, calls.Load())
 	}
@@ -84,7 +116,9 @@ func TestHttpsProxyConnectRetainsTlsVerification(t *testing.T) {
 	defer untrusted.CloseIdleConnections()
 	untrusted.TLSClientConfig = &tls.Config{RootCAs: x509.NewCertPool(), MinVersion: tls.VersionTLS12}
 	if response, err := (&http.Client{Transport: untrusted, Timeout: 3 * time.Second}).Get(origin.URL); err == nil {
-		response.Body.Close()
+		if err := response.Body.Close(); err != nil {
+			t.Fatalf("response.Body.Close: %v", err)
+		}
 		t.Fatal("untrusted proxy TLS accepted")
 	}
 	if calls.Load() != 1 {

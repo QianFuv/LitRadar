@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"syscall"
 	"time"
@@ -25,7 +26,9 @@ func prepareTree(command *exec.Cmd) (*nativeTree, error) {
 	limits := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
 	limits.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
 	if _, err = windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits))); err != nil {
-		windows.CloseHandle(job)
+		if err := windows.CloseHandle(job); err != nil {
+			slog.Warn("cleanup.failed", "operation", "windows.CloseHandle", "error", err)
+		}
 		return nil, err
 	}
 	command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_SUSPENDED | windows.CREATE_NO_WINDOW, HideWindow: true}
@@ -33,7 +36,7 @@ func prepareTree(command *exec.Cmd) (*nativeTree, error) {
 }
 
 // attach retains native handles through assignment, resume and the final startup hook.
-func (tree *nativeTree) attach(command *exec.Cmd, hook startHook) error {
+func (tree *nativeTree) attach(command *exec.Cmd, hook startHook) (resultError error) {
 	if hook != nil {
 		if err := hook("before_assignment", command); err != nil {
 			return err
@@ -43,7 +46,11 @@ func (tree *nativeTree) attach(command *exec.Cmd, hook startHook) error {
 	if err != nil {
 		return err
 	}
-	defer windows.CloseHandle(process)
+	defer func() {
+		if closeError := windows.CloseHandle(process); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close windows.CloseHandle: %w", closeError))
+		}
+	}()
 	if err = windows.AssignProcessToJobObject(tree.job, process); err != nil {
 		return err
 	}
@@ -56,7 +63,11 @@ func (tree *nativeTree) attach(command *exec.Cmd, hook startHook) error {
 	if err != nil {
 		return err
 	}
-	defer windows.CloseHandle(snapshot)
+	defer func() {
+		if closeError := windows.CloseHandle(snapshot); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close windows.CloseHandle: %w", closeError))
+		}
+	}()
 	if err := resumeProcessThreads(snapshot, command.Process.Pid); err != nil {
 		return err
 	}
@@ -189,7 +200,9 @@ func resumeProcessThread(threadId uint32) (uint32, error) {
 		return 0, openError
 	}
 	previous, resumeError := windows.ResumeThread(thread)
-	windows.CloseHandle(thread)
+	if err := windows.CloseHandle(thread); err != nil {
+		slog.Warn("cleanup.failed", "operation", "windows.CloseHandle", "error", err)
+	}
 	if resumeError != nil {
 		return 0, resumeError
 	}

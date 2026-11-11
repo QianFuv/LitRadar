@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -21,7 +22,11 @@ func TestExistingOnlyModesNeverCreateMissingFile(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer database.Close()
+			defer func() {
+				if err := database.Close(); err != nil {
+					t.Errorf("database.Close: %v", err)
+				}
+			}()
 			if err := database.Ping(); err == nil {
 				t.Fatal("missing existing-only database opened")
 			}
@@ -38,18 +43,26 @@ func TestConcurrentPhysicalInitialization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
-	results, errors := startPhysicalConnections(database)
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
+	results, connectionErrors := startPhysicalConnections(database)
 	connections := []*sql.Conn{}
 	for range 2 {
 		connection := <-results
 		if connection != nil {
 			connections = append(connections, connection)
-			defer connection.Close()
+			defer func() {
+				if err := connection.Close(); err != nil && !errors.Is(err, sql.ErrConnDone) {
+					t.Errorf("connection.Close: %v", err)
+				}
+			}()
 		}
 	}
 	for range 2 {
-		if err := <-errors; err != nil {
+		if err := <-connectionErrors; err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -67,7 +80,11 @@ func checkedConnection(t *testing.T, database *sql.DB) *sql.Conn {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { connection.Close() })
+	t.Cleanup(func() {
+		if err := connection.Close(); err != nil && !errors.Is(err, sql.ErrConnDone) {
+			t.Errorf("connection.Close: %v", err)
+		}
+	})
 	return connection
 }
 
@@ -82,7 +99,11 @@ func TestEveryPhysicalConnectionSearchesAndDisablesExtensionSql(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { database.Close() })
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	})
 	first := checkedConnection(t, database)
 	second := checkedConnection(t, database)
 	ctx := context.Background()
@@ -92,8 +113,12 @@ func TestEveryPhysicalConnectionSearchesAndDisablesExtensionSql(t *testing.T) {
 	for _, connection := range []*sql.Conn{first, second} {
 		assertPhysicalTokenizer(t, ctx, connection)
 	}
-	first.Close()
-	second.Close()
+	if err := first.Close(); err != nil {
+		t.Fatalf("first.Close: %v", err)
+	}
+	if err := second.Close(); err != nil {
+		t.Fatalf("second.Close: %v", err)
+	}
 	database.SetMaxIdleConns(0)
 	third := checkedConnection(t, database)
 	var count int
@@ -112,13 +137,21 @@ func TestTransactionsAndBackupPreserveCommittedState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	seedBackupSource(t, database)
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			t.Errorf("tx.Rollback: %v", err)
+		}
+	}()
 	if _, err := tx.Exec("INSERT INTO atomic_test VALUES(1,'first')"); err != nil {
 		t.Fatal(err)
 	}
@@ -136,10 +169,16 @@ func TestTransactionsAndBackupPreserveCommittedState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer backup.Close()
+	defer func() {
+		if err := backup.Close(); err != nil {
+			t.Errorf("backup.Close: %v", err)
+		}
+	}()
 	source := checkedConnection(t, database)
 	destination := checkedConnection(t, backup)
-	destination.Close()
+	if err := destination.Close(); err != nil {
+		t.Fatalf("destination.Close: %v", err)
+	}
 	err = backupPhysicalConnections(t, source, filepath.Join(root, "backup.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -163,12 +202,18 @@ func TestFileUriPreservesNamesAndReadModes(t *testing.T) {
 	if _, err := database.Exec("CREATE TABLE retained(value); INSERT INTO retained VALUES(42)"); err != nil {
 		t.Fatal(err)
 	}
-	database.Close()
+	if err := database.Close(); err != nil {
+		t.Fatalf("database.Close: %v", err)
+	}
 	readOnly, err := Open(Config{Filename: filename, Mode: "ro", NoFollow: true, MaxConnections: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer readOnly.Close()
+	defer func() {
+		if err := readOnly.Close(); err != nil {
+			t.Errorf("readOnly.Close: %v", err)
+		}
+	}()
 	assertReadOnlyTarget(t, root, filename, readOnly)
 }
 
@@ -240,7 +285,11 @@ func logNativeCapabilities(t *testing.T, ctx context.Context, third *sql.Conn) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			t.Errorf("rows.Close: %v", err)
+		}
+	}()
 	for rows.Next() {
 		var option string
 		if err := rows.Scan(&option); err != nil {

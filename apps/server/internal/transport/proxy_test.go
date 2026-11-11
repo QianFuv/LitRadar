@@ -21,7 +21,9 @@ func TestProxyCredentialDecodingOnHttpWire(t *testing.T) {
 			capture := make(chan string, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				capture <- request.Header.Get("Proxy-Authorization")
-				io.WriteString(writer, "ok")
+				if _, err := io.WriteString(writer, "ok"); err != nil {
+					t.Errorf("io.WriteString: %v", err)
+				}
 			}))
 			defer server.Close()
 			proxy, err := ExplicitProxy(strings.Replace(server.URL, "://", "://"+encoded+":p@", 1))
@@ -38,7 +40,9 @@ func TestProxyCredentialDecodingOnHttpWire(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			response.Body.Close()
+			if err := response.Body.Close(); err != nil {
+				t.Errorf("response.Body.Close: %v", err)
+			}
 			want := "Basic " + base64.StdEncoding.EncodeToString([]byte(decoded+":p"))
 			if actual := <-capture; actual != want {
 				t.Fatalf("%q want %q", actual, want)
@@ -54,7 +58,11 @@ func TestProxyCredentialDecodingOnSocksWire(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer listener.Close()
+			defer func() {
+				if err := listener.Close(); err != nil {
+					t.Errorf("listener.Close: %v", err)
+				}
+			}()
 			capture := make(chan []string, 1)
 			failures := make(chan error, 1)
 			go func() {
@@ -63,8 +71,14 @@ func TestProxyCredentialDecodingOnSocksWire(t *testing.T) {
 					failures <- err
 					return
 				}
-				defer connection.Close()
-				connection.SetDeadline(time.Now().Add(3 * time.Second))
+				defer func() {
+					if err := connection.Close(); err != nil {
+						t.Errorf("connection.Close: %v", err)
+					}
+				}()
+				if err := connection.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+					t.Errorf("connection.SetDeadline: %v", err)
+				}
 				read := func(count int) ([]byte, error) {
 					result := make([]byte, count)
 					_, err := io.ReadFull(connection, result)
@@ -79,7 +93,9 @@ func TestProxyCredentialDecodingOnSocksWire(t *testing.T) {
 					failures <- err
 					return
 				}
-				connection.Write([]byte{5, 2})
+				if _, err := connection.Write([]byte{5, 2}); err != nil {
+					t.Errorf("connection.Write: %v", err)
+				}
 				authentication, err := read(2)
 				if err != nil {
 					failures <- err
@@ -101,7 +117,9 @@ func TestProxyCredentialDecodingOnSocksWire(t *testing.T) {
 					return
 				}
 				capture <- []string{string(username), string(password)}
-				connection.Write([]byte{1, 0})
+				if _, err := connection.Write([]byte{1, 0}); err != nil {
+					t.Errorf("connection.Write: %v", err)
+				}
 				command, err := read(4)
 				if err != nil {
 					failures <- err
@@ -123,13 +141,17 @@ func TestProxyCredentialDecodingOnSocksWire(t *testing.T) {
 					failures <- err
 					return
 				}
-				connection.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, 0, 80})
+				if _, err := connection.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, 0, 80}); err != nil {
+					t.Errorf("connection.Write: %v", err)
+				}
 				request, err := http.ReadRequest(bufio.NewReader(connection))
 				if err != nil {
 					failures <- err
 					return
 				}
-				request.Body.Close()
+				if err := request.Body.Close(); err != nil {
+					t.Errorf("request.Body.Close: %v", err)
+				}
 				_, err = io.WriteString(connection, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
 				failures <- err
 			}()
@@ -147,7 +169,9 @@ func TestProxyCredentialDecodingOnSocksWire(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			response.Body.Close()
+			if err := response.Body.Close(); err != nil {
+				t.Errorf("response.Body.Close: %v", err)
+			}
 			if err := <-failures; err != nil {
 				t.Fatal(err)
 			}

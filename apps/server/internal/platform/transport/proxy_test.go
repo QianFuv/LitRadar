@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -24,7 +25,9 @@ func TestExplicitHttpProxyAndNoDirectFallback(t *testing.T) {
 		if request.Header.Get("Proxy-Authorization") != "" {
 			t.Error("proxy credential reached origin")
 		}
-		io.WriteString(writer, "origin")
+		if _, err := io.WriteString(writer, "origin"); err != nil {
+			t.Errorf("io.WriteString: %v", err)
+		}
 	}))
 	defer origin.Close()
 	var proxyCalls atomic.Int32
@@ -46,8 +49,14 @@ func TestExplicitHttpProxyAndNoDirectFallback(t *testing.T) {
 			writer.WriteHeader(502)
 			return
 		}
-		defer response.Body.Close()
-		io.Copy(writer, response.Body)
+		defer func() {
+			if err := response.Body.Close(); err != nil {
+				t.Errorf("response.Body.Close: %v", err)
+			}
+		}()
+		if _, err := io.Copy(writer, response.Body); err != nil {
+			t.Errorf("io.Copy: %v", err)
+		}
 	}))
 	defer proxyServer.Close()
 	selected, err := New(strings.Replace(proxyServer.URL, "http://", "http://fixture:password@", 1))
@@ -61,13 +70,17 @@ func TestExplicitHttpProxyAndNoDirectFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := io.ReadAll(response.Body)
-	response.Body.Close()
+	if err := response.Body.Close(); err != nil {
+		t.Fatalf("response.Body.Close: %v", err)
+	}
 	if string(data) != "origin" || proxyCalls.Load() != 1 || originCalls.Load() != 1 {
 		t.Fatal("explicit proxy path was not exercised")
 	}
 	proxyServer.Close()
 	if response, err := client.Get(origin.URL); err == nil {
-		response.Body.Close()
+		if err := response.Body.Close(); err != nil {
+			t.Fatalf("response.Body.Close: %v", err)
+		}
 		t.Fatal("failed proxy fell back to direct")
 	}
 	if originCalls.Load() != 1 {
@@ -82,7 +95,11 @@ func TestSocksDnsAndAuthentication(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer listener.Close()
+			defer func() {
+				if err := listener.Close(); err != nil {
+					t.Errorf("listener.Close: %v", err)
+				}
+			}()
 			done := make(chan error, 1)
 			go func() { done <- serveSocksFixture(listener, scheme) }()
 			selected, err := New(scheme + "://fixture:password@" + listener.Addr().String())
@@ -99,7 +116,9 @@ func TestSocksDnsAndAuthentication(t *testing.T) {
 				t.Fatal(err)
 			}
 			body, _ := io.ReadAll(response.Body)
-			response.Body.Close()
+			if err := response.Body.Close(); err != nil {
+				t.Errorf("response.Body.Close: %v", err)
+			}
 			if string(body) != "fixture" {
 				t.Fatalf("SOCKS origin %q", body)
 			}
@@ -111,13 +130,15 @@ func TestSocksDnsAndAuthentication(t *testing.T) {
 }
 
 // serveSocksFixture owns one connection and its deadline throughout the protocol exchange.
-func serveSocksFixture(listener net.Listener, scheme string) error {
+func serveSocksFixture(listener net.Listener, scheme string) (resultError error) {
 	connection, err := listener.Accept()
 	if err != nil {
 		return err
 	}
-	defer connection.Close()
-	connection.SetDeadline(time.Now().Add(3 * time.Second))
+	defer func() { resultError = errors.Join(resultError, connection.Close()) }()
+	if err := connection.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		return err
+	}
 	reader := bufio.NewReader(connection)
 	header := make([]byte, 2)
 	if err := socksFixtureGreeting(reader, connection, header); err != nil {
@@ -133,7 +154,9 @@ func serveSocksFixture(listener net.Listener, scheme string) error {
 	if err != nil {
 		return err
 	}
-	message.Body.Close()
+	if err := message.Body.Close(); err != nil {
+		return err
+	}
 	_, err = io.WriteString(connection, "HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nfixture")
 	return err
 }
@@ -148,13 +171,17 @@ func TestAmbientProxyIsDisabledWithPositiveControl(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		response.Body.Close()
+		if err := response.Body.Close(); err != nil {
+			t.Fatalf("response.Body.Close: %v", err)
+		}
 		selected.CloseIdleConnections()
 		response, err = (&http.Client{Timeout: time.Second}).Get("http://origin.fixture.invalid/")
 		if err != nil {
 			t.Fatal(err)
 		}
-		response.Body.Close()
+		if err := response.Body.Close(); err != nil {
+			t.Fatalf("response.Body.Close: %v", err)
+		}
 		return
 	}
 	var originCalls, proxyCalls atomic.Int32
@@ -180,7 +207,7 @@ func TestAmbientProxyIsDisabledWithPositiveControl(t *testing.T) {
 }
 
 // socksFixtureGreeting consumes the offered methods before checking the protocol version.
-func socksFixtureGreeting(reader *bufio.Reader, connection net.Conn, header []byte) error {
+func socksFixtureGreeting(reader *bufio.Reader, connection net.Conn, header []byte) (resultError error) {
 	if _, err := io.ReadFull(reader, header); err != nil {
 		return err
 	}
@@ -191,12 +218,14 @@ func socksFixtureGreeting(reader *bufio.Reader, connection net.Conn, header []by
 	if header[0] != 5 {
 		return fmt.Errorf("invalid SOCKS version")
 	}
-	connection.Write([]byte{5, 2})
+	if _, err := connection.Write([]byte{5, 2}); err != nil {
+		return err
+	}
 	return nil
 }
 
 // socksFixtureAuthentication verifies the exact synthetic credentials after ordered byte reads.
-func socksFixtureAuthentication(reader *bufio.Reader, connection net.Conn, header []byte) error {
+func socksFixtureAuthentication(reader *bufio.Reader, connection net.Conn, header []byte) (resultError error) {
 	if _, err := io.ReadFull(reader, header); err != nil {
 		return err
 	}
@@ -215,12 +244,14 @@ func socksFixtureAuthentication(reader *bufio.Reader, connection net.Conn, heade
 	if string(user) != "fixture" || string(password) != "password" {
 		return fmt.Errorf("invalid SOCKS credentials")
 	}
-	connection.Write([]byte{1, 0})
+	if _, err := connection.Write([]byte{1, 0}); err != nil {
+		return err
+	}
 	return nil
 }
 
 // socksFixtureDestination validates the DNS address policy after consuming the address and port.
-func socksFixtureDestination(reader *bufio.Reader, connection net.Conn, header []byte, scheme string) error {
+func socksFixtureDestination(reader *bufio.Reader, connection net.Conn, header []byte, scheme string) (resultError error) {
 	request := make([]byte, 4)
 	if _, err := io.ReadFull(reader, request); err != nil {
 		return err
@@ -238,7 +269,9 @@ func socksFixtureDestination(reader *bufio.Reader, connection net.Conn, header [
 	if scheme == "socks5h" && (request[3] != 3 || string(address) != "only-proxy-knows.invalid") {
 		return fmt.Errorf("remote DNS lost domain")
 	}
-	connection.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, 31, 144})
+	if _, err := connection.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, 31, 144}); err != nil {
+		return err
+	}
 	return nil
 }
 

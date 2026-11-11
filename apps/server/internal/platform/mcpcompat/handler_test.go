@@ -45,7 +45,11 @@ func TestLegacyVersionsCurrentIdentityAndTextResults(t *testing.T) {
 	})
 	listener := httptest.NewServer(handler)
 	defer listener.Close()
-	defer handler.Close()
+	defer func() {
+		if err := handler.Close(); err != nil {
+			t.Errorf("handler.Close: %v", err)
+		}
+	}()
 	client := &http.Client{Timeout: 3 * time.Second}
 	post := func(token, session, version, body string) (int, string, string) {
 		request, _ := http.NewRequest("POST", listener.URL, strings.NewReader(body))
@@ -62,7 +66,11 @@ func TestLegacyVersionsCurrentIdentityAndTextResults(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer response.Body.Close()
+		defer func() {
+			if err := response.Body.Close(); err != nil {
+				t.Errorf("response.Body.Close: %v", err)
+			}
+		}()
 		data, err := io.ReadAll(response.Body)
 		if err != nil {
 			t.Fatal(err)
