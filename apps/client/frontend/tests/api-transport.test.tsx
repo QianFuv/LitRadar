@@ -299,6 +299,89 @@ async function preservesProblemDetails(): Promise<void> {
 }
 
 /**
+ * Verify request-validation problems name each invalid field instead of the English detail.
+ */
+async function namesInvalidFields(): Promise<void> {
+  scriptFetch([
+    problemResponse(
+      422,
+      'validation failed',
+      {},
+      {
+        errors: [
+          { location: 'body.ttl', message: 'expected integer', value: 'nope' },
+          { location: 'path.article_id', message: 'expected number >= 1' },
+          { location: 'body', message: '' },
+        ],
+      },
+    ),
+  ]);
+
+  const error = await settle(requestJson(ENDPOINT, { method: 'POST', body: '{}' }));
+
+  expect(error).toBeInstanceOf(ApiError);
+  expect(error).toMatchObject({
+    status: 422,
+    message: '请求参数无效：ttl（expected integer）；article_id（expected number >= 1）；请求体',
+  });
+  expect(error instanceof ApiError && error.findErrorDetail('body.ttl')).toBe('expected integer');
+}
+
+/**
+ * Verify long validation lists keep the first entries and summarize the rest by count.
+ */
+async function truncatesManyInvalidFields(): Promise<void> {
+  const fieldNames = ['alpha', 'beta', 'gamma', 'delta', 'epsilon'];
+  scriptFetch([
+    problemResponse(
+      422,
+      'validation failed',
+      {},
+      {
+        errors: fieldNames.map((name) => ({ location: `query.${name}`, message: 'invalid' })),
+      },
+    ),
+  ]);
+
+  const error = await settle(requestJson(ENDPOINT));
+
+  expect(error).toMatchObject({
+    message: '请求参数无效：alpha（invalid）；beta（invalid）；gamma（invalid）；…（共 5 项）',
+  });
+}
+
+/**
+ * Verify classified business entries and entry-free problems keep the server detail.
+ */
+async function keepsDetailWithoutValidationEntries(): Promise<void> {
+  const businessSpy = scriptFetch([
+    problemResponse(
+      422,
+      '会话已撤销',
+      {},
+      {
+        errors: [
+          { location: 'action', message: 'revoke_session' },
+          { location: 'request_id', message: 'request-7' },
+        ],
+      },
+    ),
+  ]);
+  const businessError = await settle(requestJson(ENDPOINT, { method: 'POST', body: '{}' }));
+  expect(businessError).toMatchObject({ status: 422, message: '会话已撤销' });
+  expect(businessError instanceof ApiError && businessError.findErrorDetail('action')).toBe(
+    'revoke_session',
+  );
+  businessSpy.mockRestore();
+
+  const detailSpy = scriptFetch([problemResponse(422, 'Announcement limit reached')]);
+  await expect(
+    requestJson(ENDPOINT, { method: 'POST', body: '{}' }, '保存失败'),
+  ).rejects.toMatchObject({ status: 422, message: 'Announcement limit reached', errors: [] });
+  detailSpy.mockRestore();
+}
+
+/**
  * Verify only 429 and 503 responses that state Retry-After are classified as retryable.
  */
 async function classifiesRetryableStatuses(): Promise<void> {
@@ -361,6 +444,9 @@ describe('platform API transport', () => {
   test('surfaces the final Retry-After failure', surfacesExhaustedRetryAfter);
   test('skips retries that are unsafe or too slow', skipsUnsafeRetries);
   test('preserves RFC 9457 problem details', preservesProblemDetails);
+  test('names invalid fields of validation problems', namesInvalidFields);
+  test('truncates long validation field lists', truncatesManyInvalidFields);
+  test('keeps the detail without validation entries', keepsDetailWithoutValidationEntries);
   test('classifies retryable statuses by Retry-After', classifiesRetryableStatuses);
   test('tolerates malformed problem bodies', toleratesMalformedProblems);
 });

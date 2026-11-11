@@ -126,6 +126,18 @@ const MAX_RETRY_AFTER_MS = 5_000;
 /** First backoff delay after a network failure; doubles for each later attempt. */
 export const NETWORK_RETRY_BASE_DELAY_MS = 300;
 
+/** Display labels of request-validation location roots, which also identify validation entries. */
+const VALIDATION_LOCATION_LABELS = new Map([
+  ['body', '请求体'],
+  ['path', '路径参数'],
+  ['query', '查询参数'],
+  ['header', '请求头'],
+  ['cookie', 'Cookie'],
+]);
+const VALIDATION_LOCATION_PATTERN = /^([a-z]+)(?:\.(.+)|(\[.+))?$/;
+/** Validation entries listed in one message before the rest are summarized by count. */
+const MAX_LISTED_VALIDATION_ERRORS = 3;
+
 const RETRY_AFTER_STATUSES = new Set([429, 503]);
 const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD']);
 
@@ -231,8 +243,46 @@ function parseRetryAfterSeconds(value: string | null): number | null {
 }
 
 /**
+ * Describe one request-validation entry as its field name and server message.
+ *
+ * @param detail - Problem error entry.
+ * @returns Field description, or null when the location is not a request-validation path.
+ */
+function describeValidationError(detail: ProblemErrorDetail): string | null {
+  const match = VALIDATION_LOCATION_PATTERN.exec(detail.location ?? '');
+  const rootLabel = match ? VALIDATION_LOCATION_LABELS.get(match[1]) : undefined;
+  if (!match || !rootLabel) {
+    return null;
+  }
+  const field = match[2] ?? match[3] ?? rootLabel;
+  const message = detail.message?.trim();
+  return message ? `${field}（${message}）` : field;
+}
+
+/**
+ * Summarize request-validation entries as one Chinese message naming the invalid fields.
+ *
+ * Classified business entries such as `code` or `phase` are ignored, so their problems keep
+ * the server detail.
+ *
+ * @param errors - Problem error entries.
+ * @returns Validation summary, or null when no entry refers to a request location.
+ */
+function formatValidationMessage(errors: readonly ProblemErrorDetail[]): string | null {
+  const fields = errors.flatMap((detail) => describeValidationError(detail) ?? []);
+  if (fields.length === 0) {
+    return null;
+  }
+  const listed = fields.slice(0, MAX_LISTED_VALIDATION_ERRORS).join('；');
+  const overflow =
+    fields.length > MAX_LISTED_VALIDATION_ERRORS ? `；…（共 ${fields.length} 项）` : '';
+  return `请求参数无效：${listed}${overflow}`;
+}
+
+/**
  * Build one typed API error from a failed response and its RFC 9457 problem details.
  *
+ * Request-validation failures name their invalid fields; other problems show their detail.
  * Retrying is worthwhile only for 429 and 503 responses that state a Retry-After delay.
  *
  * @param response - Failed fetch response.
@@ -243,7 +293,8 @@ async function createApiError(response: Response, fallback: string): Promise<Api
   const payload: unknown = await response.json().catch(() => null);
   const problem = PROBLEM_DETAILS_SCHEMA.catch({}).parse(payload);
   const retryAfterSeconds = parseRetryAfterSeconds(response.headers.get('Retry-After'));
-  return new ApiError(problem.detail || fallback, response.status, {
+  const message = formatValidationMessage(problem.errors ?? []) ?? (problem.detail || fallback);
+  return new ApiError(message, response.status, {
     type: problem.type,
     title: problem.title,
     instance: problem.instance,
