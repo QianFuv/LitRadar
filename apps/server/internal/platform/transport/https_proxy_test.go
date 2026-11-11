@@ -44,7 +44,7 @@ func TestHttpsProxyConnectRetainsTlsVerification(t *testing.T) {
 			return
 		}
 		defer func() {
-			if err := upstream.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			if err := upstream.Close(); !isExpectedCloseError(err) {
 				t.Errorf("upstream.Close: %v", err)
 			}
 		}()
@@ -54,7 +54,7 @@ func TestHttpsProxyConnectRetainsTlsVerification(t *testing.T) {
 			return
 		}
 		defer func() {
-			if err := connection.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			if err := connection.Close(); !isExpectedCloseError(err) {
 				t.Errorf("connection.Close: %v", err)
 			}
 		}()
@@ -76,21 +76,21 @@ func TestHttpsProxyConnectRetainsTlsVerification(t *testing.T) {
 			if _, err := io.Copy(upstream, buffer); err != nil && !errors.Is(err, net.ErrClosed) {
 				t.Errorf("io.Copy: %v", err)
 			}
-			if err := upstream.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			if err := upstream.Close(); !isExpectedCloseError(err) {
 				t.Errorf("upstream.Close: %v", err)
 			}
 		})
 		if _, err := io.Copy(connection, upstream); err != nil && !errors.Is(err, net.ErrClosed) {
 			t.Errorf("io.Copy: %v", err)
 		}
-		if err := connection.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		if err := connection.Close(); !isExpectedCloseError(err) {
 			t.Errorf("connection.Close: %v", err)
 		}
 		copying.Wait()
 	}))
 	defer proxyServer.Close()
-	proxyUrl := strings.Replace(proxyServer.URL, "https://", "https://fixture:password@", 1)
-	selected, err := New(proxyUrl)
+	proxyURL := strings.Replace(proxyServer.URL, "https://", "https://fixture:password@", 1)
+	selected, err := New(proxyURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestHttpsProxyConnectRetainsTlsVerification(t *testing.T) {
 		t.Fatalf("CONNECT result %q %v calls=%d", body, err, calls.Load())
 	}
 	selected.CloseIdleConnections()
-	untrusted, _ := New(proxyUrl)
+	untrusted, _ := New(proxyURL)
 	defer untrusted.CloseIdleConnections()
 	untrusted.TLSClientConfig = &tls.Config{RootCAs: x509.NewCertPool(), MinVersion: tls.VersionTLS12}
 	if response, err := (&http.Client{Transport: untrusted, Timeout: 3 * time.Second}).Get(origin.URL); err == nil {
