@@ -331,10 +331,10 @@ func TestLegacyRequestCleanupKeepsUnknownAndCurrentFiles(t *testing.T) {
 		}
 	}
 	removed, err := CleanupLegacyWorkerRequests(directory, now)
-	if err != nil || removed != 2 {
+	if err != nil || removed != 1 {
 		t.Fatalf("removed=%d err=%v", removed, err)
 	}
-	for _, name := range []string{"current-worker-1.json", "duplicate-worker-1.json", "wrong.json", "invalid-worker-1.json"} {
+	for _, name := range []string{"sequence-worker-2.json", "current-worker-1.json", "duplicate-worker-1.json", "wrong.json", "invalid-worker-1.json"} {
 		if _, err := os.Stat(filepath.Join(directory, name)); err != nil {
 			t.Fatal(name, err)
 		}

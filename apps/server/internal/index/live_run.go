@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -109,7 +110,12 @@ func catalogPaths(directory string, file *string) ([]string, error) {
 		}
 		return []string{path}, nil
 	}
-	entries, err := os.ReadDir(directory)
+	opened, err := os.OpenRoot(directory)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = opened.Close() }()
+	entries, err := fs.ReadDir(opened.FS(), ".")
 	if err != nil {
 		return nil, err
 	}

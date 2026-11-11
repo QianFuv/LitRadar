@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"golang.org/x/sync/errgroup"
 	"log/slog"
 	"maps"
 	"os"
@@ -15,8 +14,10 @@ import (
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/cfp"
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/rootfile"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/cfp"
 	whatwg "github.com/nlnwa/whatwg-url/url"
+	"golang.org/x/sync/errgroup"
 )
 
 type FullTextResult struct {
@@ -124,7 +125,12 @@ func (cache *captureCache) resume(path, sourceKey string) error {
 	if err != nil || !metadata.Mode().IsRegular() {
 		return nil
 	}
-	data, err := os.ReadFile(path)
+	root, name, err := rootfile.Parent(path)
+	if err != nil {
+		return &storage.InvalidError{Message: "Could not open saved capture directory"}
+	}
+	defer func() { _ = root.Close() }()
+	data, err := root.ReadFile(name)
 	if err != nil {
 		return &storage.InvalidError{Message: fmt.Sprintf("Could not read the saved capture: %v", err)}
 	}
@@ -390,7 +396,12 @@ func saveFullTextEvidence(capturePath string, result FullTextResult, sources []d
 	if err != nil {
 		return &storage.PayloadError{Cause: err}
 	}
-	if err = os.WriteFile(capturePath, []byte(evidence), 0600); err != nil {
+	root, name, err := rootfile.Parent(capturePath)
+	if err == nil {
+		err = root.WriteFile(name, []byte(evidence), 0600)
+		_ = root.Close()
+	}
+	if err != nil {
 		return &EvidenceError{Result: result, Cause: &storage.InvalidError{Message: fmt.Sprintf("Could not save full-text capture evidence: %v", err)}}
 	}
 	return nil

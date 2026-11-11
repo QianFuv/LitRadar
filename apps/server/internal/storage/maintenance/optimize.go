@@ -153,7 +153,12 @@ func runMarked(ctx context.Context, configuration config.Config, paths RecoveryP
 	if err := removeKnown(paths.Rollback, configuration.ProjectRoot, rollbackName); err != nil {
 		return result, err
 	}
-	if err := os.Remove(paths.Marker); err != nil {
+	root, err := os.OpenRoot(filepath.Dir(paths.Marker))
+	if err != nil {
+		return result, err
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.Remove(filepath.Base(paths.Marker)); err != nil {
 		return result, err
 	}
 	finishOptimizationReport(&result, source.bytes, temporary)
@@ -170,7 +175,12 @@ func prepareOptimizationStaging(ctx context.Context, configuration config.Config
 			return err
 		}
 	}
-	if err := os.Mkdir(paths.Staging, 0777); err != nil {
+	root, err := os.OpenRoot(filepath.Dir(paths.Staging))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.Mkdir(filepath.Base(paths.Staging), 0777); err != nil {
 		return err
 	}
 	if err := buildOptimizationStaging(ctx, paths, source, hook); err != nil {
@@ -180,7 +190,7 @@ func prepareOptimizationStaging(ctx context.Context, configuration config.Config
 	if err != nil {
 		return err
 	}
-	return os.Chmod(paths.Staging, info.Mode())
+	return root.Chmod(filepath.Base(paths.Staging), info.Mode())
 }
 
 // buildOptimizationStaging invokes each copy hook before building its corresponding database.
@@ -227,12 +237,12 @@ func admitOptimizationSwitch(ctx context.Context, configuration config.Config, s
 
 // switchOptimizationDirectories preserves separate compensation for each replacement phase.
 func switchOptimizationDirectories(ctx context.Context, configuration config.Config, paths RecoveryPaths, source directorySnapshot, hook hooks) error {
-	if err := os.Rename(configuration.IndexDir, paths.Rollback); err != nil {
+	if err := renameRecovery(configuration.IndexDir, paths.Rollback); err != nil {
 		return err
 	}
 	err := call(hook.afterRename)
 	if err == nil {
-		err = os.Rename(paths.Staging, configuration.IndexDir)
+		err = renameRecovery(paths.Staging, configuration.IndexDir)
 	}
 	if err != nil {
 		if rollbackError := restoreRename(configuration, paths, hook, err); rollbackError != nil {
@@ -293,7 +303,7 @@ func restoreRename(configuration config.Config, paths RecoveryPaths, hook hooks,
 	if err := call(hook.beforeRollback); err != nil {
 		return rollbackFailure(fmt.Sprintf("%v; rollback hook failed: %v", primary, err), paths)
 	}
-	if err := os.Rename(paths.Rollback, configuration.IndexDir); err != nil {
+	if err := renameRecovery(paths.Rollback, configuration.IndexDir); err != nil {
 		return rollbackFailure(fmt.Sprintf("%v; original directory restore failed: %v", primary, err), paths)
 	}
 	return nil
@@ -302,11 +312,11 @@ func rollbackSwitch(configuration config.Config, paths RecoveryPaths, hook hooks
 	if err := call(hook.beforeRollback); err != nil {
 		return rollbackFailure(fmt.Sprintf("%v; rollback hook failed: %v", primary, err), paths)
 	}
-	if err := os.Rename(configuration.IndexDir, paths.Staging); err != nil {
+	if err := renameRecovery(configuration.IndexDir, paths.Staging); err != nil {
 		return rollbackFailure(fmt.Sprintf("%v; failed candidate retention failed: %v", primary, err), paths)
 	}
-	if err := os.Rename(paths.Rollback, configuration.IndexDir); err != nil {
-		candidateError := os.Rename(paths.Staging, configuration.IndexDir)
+	if err := renameRecovery(paths.Rollback, configuration.IndexDir); err != nil {
+		candidateError := renameRecovery(paths.Staging, configuration.IndexDir)
 		return rollbackFailure(fmt.Sprintf("%v; original directory restore failed: %v; candidate restore result: %v", primary, err, candidateError), paths)
 	}
 	return nil
@@ -328,7 +338,12 @@ func removeKnown(filename, projectRoot, expectedName string) error {
 	if err := admitCleanupDirectory(filename, "target"); err != nil {
 		return err
 	}
-	return os.RemoveAll(filename)
+	root, err := os.OpenRoot(parent)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	return root.RemoveAll(filepath.Base(filename))
 }
 
 // knownCleanupParent requires the exact maintenance basename and absolute project data parent.
@@ -353,4 +368,17 @@ func admitCleanupDirectory(filename, role string) error {
 		return invalid("maintenance cleanup " + role + " must be a regular directory")
 	}
 	return nil
+}
+
+func renameRecovery(source, target string) error {
+	root, err := os.OpenRoot(filepath.Dir(source))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	name, err := filepath.Rel(root.Name(), target)
+	if err != nil {
+		return err
+	}
+	return root.Rename(filepath.Base(source), name)
 }

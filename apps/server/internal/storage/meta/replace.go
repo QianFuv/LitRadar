@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/rootfile"
 )
 
 type replacement struct {
@@ -17,13 +19,18 @@ type replacement struct {
 // replaceFile retains stage cleanup until no-clobber publication and compensation finish.
 func replaceFile(target string, data []byte) (*replacement, error) {
 	parent := filepath.Dir(target)
-	stage, err := os.CreateTemp(parent, ".litradar-meta-stage-")
+	root, err := os.OpenRoot(parent)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	stage, err := rootfile.CreateTemp(root, ".litradar-meta-stage-", 0600)
 	if err != nil {
 		return nil, err
 	}
 	stagePath := stage.Name()
 	defer func() {
-		if err := os.Remove(stagePath); err != nil {
+		if err := root.Remove(filepath.Base(stagePath)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			slog.Warn("cleanup.failed", "operation", "os.Remove", "error", err)
 		}
 	}()
@@ -63,7 +70,12 @@ func writeReplacementStage(stage *os.File, data []byte) error {
 
 // reserveReplacementRollback closes and removes its reservation before inspecting the target.
 func reserveReplacementRollback(parent string) (string, error) {
-	reserved, err := os.CreateTemp(parent, ".litradar-meta-rollback-")
+	root, err := os.OpenRoot(parent)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = root.Close() }()
+	reserved, err := rootfile.CreateTemp(root, ".litradar-meta-rollback-", 0600)
 	if err != nil {
 		return "", err
 	}
@@ -71,7 +83,7 @@ func reserveReplacementRollback(parent string) (string, error) {
 	if err := reserved.Close(); err != nil {
 		return "", err
 	}
-	if err := os.Remove(rollback); err != nil {
+	if err := root.Remove(filepath.Base(rollback)); err != nil {
 		return "", err
 	}
 	return rollback, nil
@@ -89,7 +101,7 @@ func retainReplacementOriginal(target, rollback string) (string, error) {
 	if !info.Mode().IsRegular() {
 		return "", InvalidBundle{"persistent catalog " + target + " must be a regular file"}
 	}
-	if err := os.Rename(target, rollback); err != nil {
+	if err := renameReplacement(target, rollback); err != nil {
 		return "", err
 	}
 	return rollback, nil
@@ -99,7 +111,7 @@ func retainReplacementOriginal(target, rollback string) (string, error) {
 func publishReplacement(stagePath, target, rollback string) error {
 	if err := publishFile(stagePath, target); err != nil {
 		if rollback != "" {
-			if restore := os.Rename(rollback, target); restore != nil {
+			if restore := renameReplacement(rollback, target); restore != nil {
 				return RollbackFailure{fmt.Sprintf("replacement failed (%v); %s could not be restored (%v)", err, target, restore)}
 			}
 		}
@@ -116,7 +128,7 @@ func (change *replacement) rollback() error {
 		return err
 	}
 	if change.rollbackPath != "" {
-		if err := os.Rename(change.rollbackPath, change.target); err != nil {
+		if err := renameReplacement(change.rollbackPath, change.target); err != nil {
 			return err
 		}
 	}
@@ -146,4 +158,17 @@ func rollbackAfter(failure error, changes []*replacement) error {
 		return RollbackFailure{failure.Error() + "; " + strings.Join(failures, "; ")}
 	}
 	return failure
+}
+
+func renameReplacement(source, target string) error {
+	root, name, err := rootfile.Parent(target)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	relative, err := filepath.Rel(root.Name(), source)
+	if err != nil {
+		return err
+	}
+	return root.Rename(relative, name)
 }

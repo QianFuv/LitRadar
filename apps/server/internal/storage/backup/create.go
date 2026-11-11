@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/rootfile"
 	platform "github.com/QianFuv/LitRadar/apps/server/internal/platform/sqlite"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 	native "modernc.org/sqlite"
@@ -172,7 +173,12 @@ func writeManifest(directory string, manifest Manifest) (resultError error) {
 	if err != nil {
 		return err
 	}
-	file, err := os.OpenFile(filepath.Join(directory, "manifest.json"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	file, err := root.OpenFile("manifest.json", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
 	if err != nil {
 		return err
 	}
@@ -226,8 +232,13 @@ func create(ctx context.Context, options CreateOptions, afterMetaCopy func(strin
 	if err != nil {
 		return empty, err
 	}
+	stageParent, err := os.OpenRoot(filepath.Dir(stage))
+	if err != nil {
+		return empty, err
+	}
+	defer func() { _ = stageParent.Close() }()
 	defer func() {
-		if err := os.RemoveAll(stage); err != nil {
+		if err := stageParent.RemoveAll(filepath.Base(stage)); err != nil {
 			slog.Warn("cleanup.failed", "operation", "os.RemoveAll", "error", err)
 		}
 	}()
@@ -310,7 +321,12 @@ func prepareBackupStage(options CreateOptions) (string, error) {
 	if err := validateOutput(options); err != nil {
 		return "", err
 	}
-	stage, err := os.MkdirTemp(parent, ".litradar-backup-")
+	root, err := os.OpenRoot(parent)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = root.Close() }()
+	stage, err := rootfile.MkdirTemp(root, ".litradar-backup-")
 	if err != nil {
 		return "", err
 	}
@@ -342,7 +358,12 @@ func copyInitialBackupComponents(ctx context.Context, options CreateOptions, sta
 
 func copyBackupIndexes(ctx context.Context, options CreateOptions, stage string) ([]Component, error) {
 	components := []Component{}
-	if err := os.MkdirAll(filepath.Join(stage, "index"), 0777); err != nil {
+	root, err := os.OpenRoot(stage)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.MkdirAll("index", 0777); err != nil {
 		return nil, err
 	}
 	files, err := options.Config.ListIndexDatabases()
@@ -384,7 +405,16 @@ func publishBackupStage(ctx context.Context, output, stage string, manifest Mani
 	if err != nil {
 		return Manifest{}, err
 	}
-	if err := os.Rename(stage, output); err != nil {
+	root, name, err := rootfile.Parent(output)
+	if err != nil {
+		return Manifest{}, err
+	}
+	defer func() { _ = root.Close() }()
+	stageName, err := filepath.Rel(root.Name(), stage)
+	if err != nil {
+		return Manifest{}, err
+	}
+	if err := root.Rename(stageName, name); err != nil {
 		return Manifest{}, err
 	}
 	return manifest, nil

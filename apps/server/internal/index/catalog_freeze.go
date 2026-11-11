@@ -10,6 +10,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/rootfile"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/index"
 )
 
@@ -32,7 +33,12 @@ func FreezeCatalog(path, provider string) (storage.CatalogInput, error) {
 	if err := validateFrozenCatalogField(provider, "provider route must be non-empty and bounded"); err != nil {
 		return storage.CatalogInput{}, err
 	}
-	body, err := os.ReadFile(path)
+	root, leafName, err := rootfile.Parent(path)
+	if err != nil {
+		return storage.CatalogInput{}, err
+	}
+	defer func() { _ = root.Close() }()
+	body, err := root.ReadFile(leafName)
 	if err != nil {
 		return storage.CatalogInput{}, err
 	}

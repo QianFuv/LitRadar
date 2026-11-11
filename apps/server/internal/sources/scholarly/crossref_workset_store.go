@@ -12,6 +12,7 @@ import (
 	"os"
 	"reflect"
 
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/rootfile"
 	platform "github.com/QianFuv/LitRadar/apps/server/internal/platform/sqlite"
 	"github.com/QianFuv/LitRadar/apps/server/internal/provider"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/worksetdb"
@@ -299,7 +300,12 @@ func (workset *CrossrefWorkset) Recollect() (CrossrefCheckpoint, error) {
 
 // createWorksetManifest exclusively writes, syncs and closes ownership before database opening.
 func createWorksetManifest(path string, owner worksetOwner) ([]byte, error) {
-	manifest, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0666)
+	root, name, err := rootfile.Parent(path)
+	if err != nil {
+		return nil, worksetStorageError(err)
+	}
+	defer func() { _ = root.Close() }()
+	manifest, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0666)
 	if err != nil {
 		return nil, worksetStorageError(err)
 	}

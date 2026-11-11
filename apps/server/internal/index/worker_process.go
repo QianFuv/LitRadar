@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/process"
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/rootfile"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/index"
 )
 
@@ -109,7 +111,12 @@ func launchOwnedWorker(ctx context.Context, request WorkerRequest, config Worker
 	if err != nil {
 		return ownedWorker{}, err
 	}
-	if err := os.WriteFile(path, body, 0666); err != nil {
+	root, err := os.OpenRoot(config.RequestDirectory)
+	if err != nil {
+		return ownedWorker{}, err
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.WriteFile(request.RunId+"-worker-"+strconv.FormatUint(request.WorkerId, 10)+".json", body, 0666); err != nil {
 		if err := removeWorkerFile(path); err != nil {
 			slog.Warn("cleanup.failed", "operation", "removeWorkerFile", "error", err)
 		}
@@ -196,7 +203,12 @@ func finishWorkerProcess(ctx context.Context, writer *ParentWriter, worker owned
 
 // CleanupLegacyWorkerRequests deletes only old, recognizable pre-v8 ordinary request files.
 func CleanupLegacyWorkerRequests(directory string, now time.Time) (uint64, error) {
-	entries, err := os.ReadDir(directory)
+	opened, err := os.OpenRoot(directory)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = opened.Close() }()
+	entries, err := fs.ReadDir(opened.FS(), ".")
 	if err != nil {
 		return 0, err
 	}
@@ -226,7 +238,12 @@ func removeLegacyWorkerRequest(directory string, entry os.DirEntry, now time.Tim
 		return false, nil
 	}
 	path := filepath.Join(directory, entry.Name())
-	body, err := os.ReadFile(path)
+	root, name, err := rootfile.Parent(path)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = root.Close() }()
+	body, err := root.ReadFile(name)
 	if err != nil {
 		return false, err
 	}
@@ -254,7 +271,12 @@ func RunWorkerRequestFile(ctx context.Context, path string) error {
 		return err
 	}
 	defer stop()
-	body, err := os.ReadFile(path)
+	root, name, err := rootfile.Parent(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	body, err := root.ReadFile(name)
 	if err != nil {
 		return err
 	}

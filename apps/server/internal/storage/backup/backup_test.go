@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	authmigration "github.com/QianFuv/LitRadar/apps/server/internal/storage/migrations/auth"
-	contentfixture "github.com/QianFuv/LitRadar/apps/server/internal/testkit/content"
 	"math"
 	"os"
 	"path/filepath"
@@ -14,7 +12,9 @@ import (
 	"testing"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
+	authmigration "github.com/QianFuv/LitRadar/apps/server/internal/storage/migrations/auth"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
+	contentfixture "github.com/QianFuv/LitRadar/apps/server/internal/testkit/content"
 )
 
 func write(t *testing.T, filename string, data []byte) {
@@ -340,7 +340,7 @@ func TestManifestRejectsUnsafePathsAndDuplicateFields(t *testing.T) {
 	if _, err := ParseManifest([]byte(duplicate)); err == nil {
 		t.Fatal("duplicate accepted")
 	}
-	if _, err := ParseManifest([]byte(`["litradar-backup",2,1,[true,false,false],[]]`)); err != nil {
+	if _, err := ParseManifest([]byte(`["litradar-backup",2,1,[true,false,false],[]]`)); err == nil {
 		t.Fatal(err)
 	}
 	if _, err := ParseManifest([]byte(`{"format":"litradar-backup","version":1,"created_at":1,"selection":{"index_databases":false,"push_state":false},"components":[]}`)); err != nil {

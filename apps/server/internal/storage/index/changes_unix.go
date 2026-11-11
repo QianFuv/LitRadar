@@ -3,17 +3,20 @@
 package index
 
 import (
-	"golang.org/x/sys/unix"
 	"os"
 	"path/filepath"
 )
 
 func syncManifestDirectory(path string) error {
-	directory, err := os.Open(filepath.Dir(path))
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	directory, err := root.Open(".")
 	if err != nil {
 		return err
 	}
 	defer directory.Close()
 	return directory.Sync()
 }
-func removeManifestFile(path string) error { return unix.Unlink(path) }

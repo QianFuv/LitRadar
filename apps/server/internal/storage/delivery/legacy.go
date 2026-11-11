@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/rootfile"
 	storageconfig "github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 )
 
@@ -165,7 +167,12 @@ func readLegacySource(path, name string, workflow Workflow) (legacyInput, error)
 	if metadata.Size() > 16*1024*1024 {
 		return legacyInput{}, &Error{Kind: "legacy_size"}
 	}
-	body, err := os.ReadFile(filename)
+	root, name, err := rootfile.Parent(filename)
+	if err != nil {
+		return legacyInput{}, err
+	}
+	defer func() { _ = root.Close() }()
+	body, err := root.ReadFile(name)
 	if err != nil {
 		return legacyInput{}, &Error{Kind: "io", cause: err}
 	}
@@ -295,7 +302,12 @@ func readLegacyDirectory(path string) ([]os.DirEntry, error) {
 	if metadata.Mode()&os.ModeSymlink != 0 || !metadata.IsDir() {
 		return nil, &Error{Kind: "invalid_legacy"}
 	}
-	entries, err := os.ReadDir(path)
+	opened, err := os.OpenRoot(path)
+	if err != nil {
+		return nil, &Error{Kind: "io", cause: err}
+	}
+	defer func() { _ = opened.Close() }()
+	entries, err := fs.ReadDir(opened.FS(), ".")
 	if err != nil {
 		return nil, &Error{Kind: "io", cause: err}
 	}

@@ -103,26 +103,7 @@ func object(raw []byte, fields ...string) (map[string]json.RawMessage, error) {
 	if !jsonvalue.ValidJson(string(raw)) {
 		return nil, invalid
 	}
-	if bytes.TrimSpace(raw)[0] == '[' {
-		return sequenceObject(raw, fields, invalid)
-	}
 	return namedObject(raw, fields, invalid)
-}
-
-// sequenceObject maps the original positional form only after exact arity and value admission.
-func sequenceObject(raw []byte, fields []string, invalid error) (map[string]json.RawMessage, error) {
-	var elements []json.RawMessage
-	if json.Unmarshal(raw, &elements) != nil || len(elements) != len(fields) {
-		return nil, invalid
-	}
-	values := make(map[string]json.RawMessage, len(fields))
-	for index, field := range fields {
-		if bytes.Equal(bytes.TrimSpace(elements[index]), []byte("null")) {
-			return nil, invalid
-		}
-		values[field] = elements[index]
-	}
-	return values, nil
 }
 
 // namedObject decodes admitted fields in encounter order and requires a complete object.
@@ -212,7 +193,12 @@ func readBundleManifest(directory string) (bundle, []json.RawMessage, error) {
 	if err := regularBundleFile(filename, manifestFilename); err != nil {
 		return bundle{}, nil, err
 	}
-	data, err := os.ReadFile(filename)
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		return bundle{}, nil, err
+	}
+	defer func() { _ = root.Close() }()
+	data, err := root.ReadFile(manifestFilename)
 	if err != nil {
 		return bundle{}, nil, err
 	}
@@ -254,7 +240,12 @@ func validateCatalog(directory string, version int64, entry json.RawMessage, nam
 	if err := regularBundleFile(location, candidate.filename); err != nil {
 		return catalog{}, err
 	}
-	candidate.data, err = os.ReadFile(location)
+	root, openError := os.OpenRoot(directory)
+	if openError != nil {
+		return catalog{}, openError
+	}
+	defer func() { _ = root.Close() }()
+	candidate.data, err = root.ReadFile(candidate.filename)
 	if err != nil {
 		return catalog{}, err
 	}

@@ -3,6 +3,7 @@ package config
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -87,7 +88,12 @@ func (config Config) ListIndexDatabases() ([]string, error) {
 	if _, err := os.Stat(config.IndexDir); err != nil {
 		return []string{}, nil
 	}
-	entries, err := os.ReadDir(config.IndexDir)
+	opened, err := os.OpenRoot(config.IndexDir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = opened.Close() }()
+	entries, err := fs.ReadDir(opened.FS(), ".")
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +133,12 @@ func mergeProviderCatalogSource(source providerCatalogSource, catalogs map[strin
 	if _, err := os.Stat(source.directory); err != nil {
 		return nil
 	}
-	entries, err := os.ReadDir(source.directory)
+	opened, err := os.OpenRoot(source.directory)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = opened.Close() }()
+	entries, err := fs.ReadDir(opened.FS(), ".")
 	if err != nil {
 		return err
 	}

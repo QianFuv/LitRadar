@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
+
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/rootfile"
 )
 
 type snapshotFile struct {
@@ -20,7 +23,16 @@ type snapshotFile struct {
 }
 
 func hashFile(filename string) (resultValue1 string, resultError error) {
-	file, err := os.Open(filename)
+	root, name, err := rootfile.Parent(filename)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = root.Close() }()
+	return hashRootFile(root, name)
+}
+
+func hashRootFile(root *os.Root, name string) (resultValue1 string, resultError error) {
+	file, err := root.Open(name)
 	if err != nil {
 		return "", err
 	}
@@ -47,11 +59,16 @@ func snapshot(root string) ([]snapshotFile, error) {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return nil, failure("integrity", "backup source directory is not a regular directory")
 	}
-	err = filepath.WalkDir(root, func(filename string, entry os.DirEntry, walkError error) error {
+	opened, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = opened.Close() }()
+	err = fs.WalkDir(opened.FS(), ".", func(filename string, entry os.DirEntry, walkError error) error {
 		if walkError != nil {
 			return walkError
 		}
-		if filename == root {
+		if filename == "." {
 			return nil
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
@@ -67,11 +84,8 @@ func snapshot(root string) ([]snapshotFile, error) {
 		if !info.Mode().IsRegular() {
 			return failure("integrity", "special files are not allowed in backups")
 		}
-		relative, err := filepath.Rel(root, filename)
-		if err != nil {
-			return failure("integrity", "backup file escaped its source directory")
-		}
-		digest, err := hashFile(filename)
+		relative := filename
+		digest, err := hashRootFile(opened, filename)
 		if err != nil {
 			return err
 		}
@@ -82,7 +96,24 @@ func snapshot(root string) ([]snapshotFile, error) {
 	return result, err
 }
 func copyFile(source, destination string) (resultError error) {
-	input, err := os.Open(source)
+	sourceRoot, sourceName, err := rootfile.Parent(source)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = sourceRoot.Close() }()
+	if err := os.MkdirAll(filepath.Dir(destination), 0777); err != nil {
+		return err
+	}
+	targetRoot, targetName, err := rootfile.Parent(destination)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = targetRoot.Close() }()
+	return copyRootFile(sourceRoot, sourceName, targetRoot, targetName)
+}
+
+func copyRootFile(sourceRoot *os.Root, source string, targetRoot *os.Root, destination string) (resultError error) {
+	input, err := sourceRoot.Open(source)
 	if err != nil {
 		return err
 	}
@@ -95,10 +126,10 @@ func copyFile(source, destination string) (resultError error) {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(destination), 0777); err != nil {
+	if err := targetRoot.MkdirAll(filepath.Dir(destination), 0777); err != nil {
 		return err
 	}
-	output, err := os.OpenFile(destination, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+	output, err := targetRoot.OpenFile(destination, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
 	if err != nil {
 		return err
 	}
@@ -161,29 +192,43 @@ func removeFile(filename string) error {
 	if !fileExists(filename) {
 		return nil
 	}
-	info, err := os.Lstat(filename)
+	root, name, err := rootfile.Parent(filename)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	info, err := root.Lstat(name)
 	if err != nil {
 		return err
 	}
 	if info.IsDir() {
 		return &os.PathError{Op: "remove", Path: filename, Err: os.ErrInvalid}
 	}
-	return os.Remove(filename)
+	return root.Remove(name)
 }
 
 func copySnapshotFile(source, destination string, file snapshotFile, label string) error {
 	if keyFile(file.Path) {
 		return failure("input", "%s directory contains a forbidden key file", label)
 	}
-	target := filepath.Join(destination, filepath.FromSlash(file.Path))
-	if err := copyFile(filepath.Join(source, filepath.FromSlash(file.Path)), target); err != nil {
-		return err
-	}
-	info, err := os.Stat(target)
+	sourceRoot, err := os.OpenRoot(source)
 	if err != nil {
 		return err
 	}
-	digest, err := hashFile(target)
+	defer func() { _ = sourceRoot.Close() }()
+	targetRoot, err := os.OpenRoot(destination)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = targetRoot.Close() }()
+	if err := copyRootFile(sourceRoot, filepath.FromSlash(file.Path), targetRoot, filepath.FromSlash(file.Path)); err != nil {
+		return err
+	}
+	info, err := targetRoot.Stat(filepath.FromSlash(file.Path))
+	if err != nil {
+		return err
+	}
+	digest, err := hashRootFile(targetRoot, filepath.FromSlash(file.Path))
 	if err != nil {
 		return err
 	}

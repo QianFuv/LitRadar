@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -128,7 +129,12 @@ func readPushStats(root string) ([]pushStats, error) {
 	if _, err := os.Stat(directory); err != nil {
 		return result, nil
 	}
-	entries, err := os.ReadDir(directory)
+	opened, err := os.OpenRoot(directory)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = opened.Close() }()
+	entries, err := fs.ReadDir(opened.FS(), ".")
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +152,12 @@ func readPushStats(root string) ([]pushStats, error) {
 // readPushState retains error status for unreadable or malformed legacy state files.
 func readPushState(directory, name string) pushStats {
 	item := pushStats{DbName: strings.TrimSuffix(name, ".json"), Status: "error"}
-	data, err := os.ReadFile(filepath.Join(directory, name))
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		return item
+	}
+	defer func() { _ = root.Close() }()
+	data, err := root.ReadFile(name)
 	if err != nil {
 		return item
 	}

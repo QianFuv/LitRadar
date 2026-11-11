@@ -19,7 +19,7 @@ import (
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
-func fields(raw []byte, names []string, minimum int) (map[string]json.RawMessage, error) {
+func fields(raw []byte, names []string, _ int) (map[string]json.RawMessage, error) {
 	if !json.Valid(raw) {
 		return nil, ErrManifestJson
 	}
@@ -29,8 +29,6 @@ func fields(raw []byte, names []string, minimum int) (map[string]json.RawMessage
 		return nil, ErrManifestJson
 	}
 	switch opening {
-	case json.Delim('['):
-		return positionalManifestFields(raw, names, minimum)
 	case json.Delim('{'):
 		return objectManifestFields(raw, names, decoder)
 	default:
@@ -45,7 +43,7 @@ func required[T any](values map[string]json.RawMessage, key string, target *T) e
 	return nil
 }
 
-// ParseManifest preserves required fields, duplicate rejection and historical serde positional structs.
+// ParseManifest preserves required fields, duplicate rejection and object representations.
 func ParseManifest(raw []byte) (Manifest, error) {
 	result := Manifest{}
 	values, err := fields(raw, []string{"format", "version", "created_at", "selection", "components"}, 5)
@@ -92,7 +90,7 @@ func componentKind(raw []byte) (string, error) {
 	if json.Unmarshal(raw, &name) == nil {
 		return name, nil
 	}
-	return objectComponentKind(raw)
+	return "", ErrManifestJson
 }
 func extension(value string) string {
 	name := path.Base(filepath.ToSlash(value))
@@ -200,7 +198,12 @@ func Verify(ctx context.Context, directory string) (Manifest, error) {
 	if err != nil || !info.IsDir() {
 		return Manifest{}, failure("input", "backup directory does not exist")
 	}
-	raw, err := os.ReadFile(filepath.Join(directory, "manifest.json"))
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		return Manifest{}, err
+	}
+	defer func() { _ = root.Close() }()
+	raw, err := root.ReadFile("manifest.json")
 	if err != nil {
 		return Manifest{}, err
 	}
@@ -223,18 +226,6 @@ func Verify(ctx context.Context, directory string) (Manifest, error) {
 		return Manifest{}, err
 	}
 	return manifest, nil
-}
-
-func positionalManifestFields(raw []byte, names []string, minimum int) (map[string]json.RawMessage, error) {
-	result := map[string]json.RawMessage{}
-	var values []json.RawMessage
-	if json.Unmarshal(raw, &values) != nil || len(values) < minimum || len(values) > len(names) {
-		return nil, ErrManifestJson
-	}
-	for index, value := range values {
-		result[names[index]] = value
-	}
-	return result, nil
 }
 
 func objectManifestFields(raw []byte, names []string, decoder *json.Decoder) (map[string]json.RawMessage, error) {
@@ -320,27 +311,6 @@ func decodeComponentSchemaVersion(values map[string]json.RawMessage, item *Compo
 		item.SchemaVersion = &version
 	}
 	return nil
-}
-
-func objectComponentKind(raw []byte) (string, error) {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	opening, err := decoder.Token()
-	if err != nil || opening != json.Delim('{') || !decoder.More() {
-		return "", ErrManifestJson
-	}
-	key, err := decoder.Token()
-	if err != nil {
-		return "", ErrManifestJson
-	}
-	var payload json.RawMessage
-	if decoder.Decode(&payload) != nil || !bytes.Equal(bytes.TrimSpace(payload), []byte("null")) || decoder.More() {
-		return "", ErrManifestJson
-	}
-	name, ok := key.(string)
-	if !ok {
-		return "", ErrManifestJson
-	}
-	return name, nil
 }
 
 func hasMetadataVersionMismatch(manifest Manifest) bool {

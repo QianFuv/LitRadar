@@ -8,11 +8,39 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/rootfile"
 )
 
 type replacement struct {
 	target, staged, rollback string
 	hadOriginal, isApplied   bool
+}
+
+func (item *replacement) rename(source, target string) error {
+	root, err := os.OpenRoot(filepath.Dir(item.target))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	oldName, err := filepath.Rel(root.Name(), source)
+	if err != nil {
+		return err
+	}
+	newName, err := filepath.Rel(root.Name(), target)
+	if err != nil {
+		return err
+	}
+	return root.Rename(oldName, newName)
+}
+
+func (item *replacement) removeTarget() error {
+	root, err := os.OpenRoot(filepath.Dir(item.target))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	return root.RemoveAll(filepath.Base(item.target))
 }
 
 func (item *replacement) apply() error {
@@ -24,13 +52,13 @@ func (item *replacement) apply() error {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return failure("input", "restore targets cannot be symbolic links")
 		}
-		if err := os.Rename(item.target, item.rollback); err != nil {
+		if err := item.rename(item.target, item.rollback); err != nil {
 			return err
 		}
 		item.hadOriginal = true
 	}
 	if item.staged != "" {
-		if err := os.Rename(item.staged, item.target); err != nil {
+		if err := item.rename(item.staged, item.target); err != nil {
 			if rollbackError := item.restoreOriginalAfterFailedRename(err); rollbackError != nil {
 				return rollbackError
 			}
@@ -45,12 +73,12 @@ func (item *replacement) compensate() error {
 		return nil
 	}
 	if item.staged != "" && fileExists(item.target) {
-		if err := os.RemoveAll(item.target); err != nil {
+		if err := item.removeTarget(); err != nil {
 			return err
 		}
 	}
 	if item.hadOriginal {
-		if err := os.Rename(item.rollback, item.target); err != nil {
+		if err := item.rename(item.rollback, item.target); err != nil {
 			return err
 		}
 	}
@@ -85,6 +113,16 @@ func selectedGroup(backup string, manifest Manifest, kind, directory, destinatio
 	if err := os.MkdirAll(destination, 0777); err != nil {
 		return err
 	}
+	sourceRoot, err := os.OpenRoot(backup)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = sourceRoot.Close() }()
+	targetRoot, err := os.OpenRoot(destination)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = targetRoot.Close() }()
 	for _, item := range manifest.Components {
 		if item.Kind != kind || !strings.HasPrefix(item.Path, directory+"/") {
 			continue
@@ -93,8 +131,8 @@ func selectedGroup(backup string, manifest Manifest, kind, directory, destinatio
 		if err != nil {
 			return err
 		}
-		target := filepath.Join(destination, filepath.FromSlash(strings.TrimPrefix(item.Path, directory+"/")))
-		if err := copyFile(filepath.Join(backup, relative), target); err != nil {
+		target := filepath.FromSlash(strings.TrimPrefix(item.Path, directory+"/"))
+		if err := copyRootFile(sourceRoot, relative, targetRoot, target); err != nil {
 			return err
 		}
 	}
@@ -154,26 +192,36 @@ func restore(ctx context.Context, options RestoreOptions, now float64, beforeRep
 	if err := os.MkdirAll(data, 0777); err != nil {
 		return report, err
 	}
-	authWorkspace, err := os.MkdirTemp(parent, ".litradar-auth-restore-")
+	authRoot, err := os.OpenRoot(parent)
+	if err != nil {
+		return report, err
+	}
+	defer func() { _ = authRoot.Close() }()
+	authWorkspace, err := rootfile.MkdirTemp(authRoot, ".litradar-auth-restore-")
 	if err != nil {
 		return report, err
 	}
 	defer func() {
 		var failed Failure
 		if !errors.As(returnError, &failed) || failed.Kind != "rollback" {
-			if err := os.RemoveAll(authWorkspace); err != nil {
+			if err := authRoot.RemoveAll(filepath.Base(authWorkspace)); err != nil {
 				slog.Warn("cleanup.failed", "operation", "os.RemoveAll", "error", err)
 			}
 		}
 	}()
-	dataWorkspace, err := os.MkdirTemp(data, ".litradar-data-restore-")
+	dataRoot, err := os.OpenRoot(data)
+	if err != nil {
+		return report, err
+	}
+	defer func() { _ = dataRoot.Close() }()
+	dataWorkspace, err := rootfile.MkdirTemp(dataRoot, ".litradar-data-restore-")
 	if err != nil {
 		return report, err
 	}
 	defer func() {
 		var failed Failure
 		if !errors.As(returnError, &failed) || failed.Kind != "rollback" {
-			if err := os.RemoveAll(dataWorkspace); err != nil {
+			if err := dataRoot.RemoveAll(filepath.Base(dataWorkspace)); err != nil {
 				slog.Warn("cleanup.failed", "operation", "os.RemoveAll", "error", err)
 			}
 		}
@@ -190,7 +238,7 @@ func restore(ctx context.Context, options RestoreOptions, now float64, beforeRep
 
 func (item *replacement) restoreOriginalAfterFailedRename(replaceError error) error {
 	if item.hadOriginal {
-		if rollbackError := os.Rename(item.rollback, item.target); rollbackError != nil {
+		if rollbackError := item.rename(item.rollback, item.target); rollbackError != nil {
 			return failure("rollback", "replacement failed (%v); original could not be restored (%v)", replaceError, rollbackError)
 		}
 		item.hadOriginal = false

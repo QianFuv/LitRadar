@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -82,7 +83,12 @@ func readControlEntries(directory string) ([]os.DirEntry, error) {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return nil, invalid("index control target must be a regular directory")
 	}
-	return os.ReadDir(directory)
+	opened, err := os.OpenRoot(directory)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = opened.Close() }()
+	return fs.ReadDir(opened.FS(), ".")
 }
 
 // checkControlDatabase skips unrelated names before admitting and checking one control file.
@@ -164,7 +170,12 @@ func acquireMarker(paths RecoveryPaths, now int64) (resultError error) {
 	if err := os.MkdirAll(filepath.Dir(paths.Marker), 0777); err != nil {
 		return err
 	}
-	file, err := os.OpenFile(paths.Marker, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0666)
+	root, err := os.OpenRoot(filepath.Dir(paths.Marker))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	file, err := root.OpenFile(filepath.Base(paths.Marker), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0666)
 	if os.IsExist(err) {
 		return interrupted(paths)
 	}
@@ -235,7 +246,12 @@ func readIndexEntries(directory string) ([]os.DirEntry, error) {
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0222 == 0 {
 		return nil, invalid("index target must be writable for directory replacement")
 	}
-	return os.ReadDir(directory)
+	opened, err := os.OpenRoot(directory)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = opened.Close() }()
+	return fs.ReadDir(opened.FS(), ".")
 }
 
 // inspectIndexEntries admits every entry before validating collected sidecar relationships.

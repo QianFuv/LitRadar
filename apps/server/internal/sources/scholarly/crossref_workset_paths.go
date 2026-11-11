@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/rootfile"
 )
 
 type worksetOwner struct {
@@ -150,7 +152,12 @@ func validateWorksetManifest(manifest string, owner worksetOwner) error {
 	if metadata.Size() > 65536 {
 		return invalidWorkset("Crossref ownership record is too large")
 	}
-	body, err := os.ReadFile(manifest)
+	root, name, err := rootfile.Parent(manifest)
+	if err != nil {
+		return worksetStorageError(err)
+	}
+	defer func() { _ = root.Close() }()
+	body, err := root.ReadFile(name)
 	if err != nil {
 		return worksetStorageError(err)
 	}
@@ -165,4 +172,20 @@ func validateWorksetManifest(manifest string, owner worksetOwner) error {
 		return invalidWorkset("Crossref workset ownership or frozen context does not match")
 	}
 	return nil
+}
+
+func unlinkWorksetFile(path string) error {
+	root, name, err := rootfile.Parent(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	info, err := root.Lstat(name)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return invalidWorkset("Crossref workset file became a directory")
+	}
+	return root.Remove(name)
 }

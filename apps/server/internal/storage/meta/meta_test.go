@@ -293,7 +293,7 @@ func TestConcurrentPreparationConvergesWithoutLosingState(t *testing.T) {
 	}
 }
 
-func TestManifestAcceptsOriginalSerdeSequences(t *testing.T) {
+func TestManifestRejectsObsoleteSerdeSequences(t *testing.T) {
 	for _, sequence := range []string{"manifest", "catalog", "both"} {
 		t.Run(sequence, func(t *testing.T) {
 			directory := newBundle(t, 1, catalogFixture{"alpha.csv", "alpha\n", nil})
@@ -311,7 +311,9 @@ func TestManifestAcceptsOriginalSerdeSequences(t *testing.T) {
 				t.Fatal(err)
 			}
 			writeFixture(t, filepath.Join(directory, manifestFilename), data)
-			assertAction(t, newProject(t), directory, "created")
+			if _, err := validateBundle(directory); err == nil {
+				t.Fatal("obsolete tuple manifest admitted")
+			}
 		})
 	}
 }

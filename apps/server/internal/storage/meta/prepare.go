@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/rootfile"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/metadb"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
@@ -196,7 +197,12 @@ func readCatalogDestination(target string) (string, bool, error) {
 	}
 	destination := ""
 	if !isMissing {
-		data, err := os.ReadFile(target)
+		root, name, err := rootfile.Parent(target)
+		if err != nil {
+			return "", false, err
+		}
+		defer func() { _ = root.Close() }()
+		data, err := root.ReadFile(name)
 		if err != nil {
 			return "", false, err
 		}

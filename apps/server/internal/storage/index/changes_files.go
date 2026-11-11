@@ -4,28 +4,22 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/rootfile"
 )
 
-func manifestTempPath(path string) string {
-	return filepath.Join(filepath.Dir(path), fmt.Sprintf(".%s.%d.tmp", filepath.Base(path), os.Getpid()))
-}
-
-func stageManifest(path string, payload []byte) (string, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0777); err != nil {
+func stageManifest(root *os.Root, path string, payload []byte) (string, error) {
+	file, err := rootfile.CreateTemp(root, "."+filepath.Base(path)+"-", 0666)
+	if err != nil {
 		return "", err
 	}
-	temporary := manifestTempPath(path)
-	file, err := os.OpenFile(temporary, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0666)
-	if err != nil {
-		return temporary, err
-	}
+	temporary := filepath.Base(file.Name())
 	_, err = file.Write(payload)
 	if err == nil {
 		err = file.Sync()
@@ -39,27 +33,36 @@ func stageManifest(path string, payload []byte) (string, error) {
 
 // PublishContentChangeManifest replaces the current publication after flushing its exact bytes.
 func PublishContentChangeManifest(path string, payload []byte) error {
-	temporary, err := stageManifest(path, payload)
+	if err := os.MkdirAll(filepath.Dir(path), 0777); err != nil {
+		return err
+	}
+	root, name, err := rootfile.Parent(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+
+	temporary, err := stageManifest(root, name, payload)
 	hasPublished := false
 	if temporary != "" {
 		defer func() {
 			if !hasPublished {
-				_ = removeManifestFile(temporary)
+				_ = root.Remove(temporary)
 			}
 		}()
 	}
 	if err != nil {
 		return err
 	}
-	if err := os.Rename(temporary, path); err != nil {
+	if err := root.Rename(temporary, name); err != nil {
 		return err
 	}
 	hasPublished = true
 	return syncManifestDirectory(path)
 }
 
-func verifyHistory(path string, payload []byte) (bool, error) {
-	existing, err := os.ReadFile(path)
+func verifyHistory(root *os.Root, path string, payload []byte) (bool, error) {
+	existing, err := root.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
@@ -74,26 +77,35 @@ func verifyHistory(path string, payload []byte) (bool, error) {
 
 // PublishContentChangeHistory never replaces different bytes at an immutable history path.
 func PublishContentChangeHistory(path string, payload []byte) error {
-	if exists, err := verifyHistory(path, payload); err != nil || exists {
+	if err := os.MkdirAll(filepath.Dir(path), 0777); err != nil {
 		return err
 	}
-	temporary, err := stageManifest(path, payload)
+	root, name, err := rootfile.Parent(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+
+	if exists, err := verifyHistory(root, name, payload); err != nil || exists {
+		return err
+	}
+	temporary, err := stageManifest(root, name, payload)
 	hasPublished := false
 	if temporary != "" {
 		defer func() {
 			if !hasPublished {
-				_ = removeManifestFile(temporary)
+				_ = root.Remove(temporary)
 			}
 		}()
 	}
 	if err != nil {
 		return err
 	}
-	if err := os.Link(temporary, path); err != nil {
+	if err := root.Link(temporary, name); err != nil {
 		if !errors.Is(err, os.ErrExist) {
 			return err
 		}
-		exists, err := verifyHistory(path, payload)
+		exists, err := verifyHistory(root, name, payload)
 		if err != nil {
 			return err
 		}
@@ -102,7 +114,7 @@ func PublishContentChangeHistory(path string, payload []byte) error {
 		}
 		return nil
 	}
-	if err := removeManifestFile(temporary); err != nil {
+	if err := root.Remove(temporary); err != nil {
 		return err
 	}
 	hasPublished = true
@@ -117,9 +129,17 @@ type manifestFileError struct {
 func (err *manifestFileError) Error() string { return err.message }
 func (err *manifestFileError) Unwrap() error { return err.cause }
 
-// PruneContentChangeHistory removes only managed hash-named files with canonical expired epoch timestamps.
+// PruneContentChangeHistory removes only managed hash-named files with expired RFC3339Nano timestamps.
 func PruneContentChangeHistory(directory string, cutoff int64) (uint64, error) {
-	entries, err := os.ReadDir(directory)
+	root, err := os.OpenRoot(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = root.Close() }()
+	entries, err := fs.ReadDir(root.FS(), ".")
 	if errors.Is(err, os.ErrNotExist) {
 		return 0, nil
 	}
@@ -128,7 +148,7 @@ func PruneContentChangeHistory(directory string, cutoff int64) (uint64, error) {
 	}
 	var removed uint64
 	for _, entry := range entries {
-		wasRemoved, err := pruneHistoryEntry(directory, entry, cutoff)
+		wasRemoved, err := pruneHistoryEntry(root, entry, cutoff)
 		if err != nil {
 			return removed, err
 		}
@@ -162,16 +182,16 @@ func isManagedHistoryName(name string) bool {
 	return true
 }
 
-func pruneHistoryEntry(directory string, entry os.DirEntry, cutoff int64) (bool, error) {
+func pruneHistoryEntry(root *os.Root, entry os.DirEntry, cutoff int64) (bool, error) {
 	if !isManagedHistoryName(entry.Name()) {
 		return false, nil
 	}
-	path := filepath.Join(directory, entry.Name())
-	info, err := os.Stat(path)
+	path := entry.Name()
+	info, err := root.Stat(path)
 	if err != nil || !info.Mode().IsRegular() {
 		return false, nil
 	}
-	body, err := os.ReadFile(path)
+	body, err := root.ReadFile(path)
 	if err != nil {
 		return false, err
 	}
@@ -183,7 +203,7 @@ func pruneHistoryEntry(directory string, entry os.DirEntry, cutoff int64) (bool,
 		return false, nil
 	}
 	if epoch < cutoff {
-		if err := removeManifestFile(path); err != nil {
+		if err := root.Remove(path); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -200,10 +220,9 @@ func historyEpoch(body []byte) (int64, bool) {
 	if json.Unmarshal(document["generated_at"], &generated) != nil {
 		return 0, false
 	}
-	generated = strings.TrimSpace(generated)
-	epoch, err := strconv.ParseInt(generated, 10, 64)
-	if err != nil || strconv.FormatInt(epoch, 10) != generated {
+	stamp, err := time.Parse(time.RFC3339Nano, generated)
+	if err != nil {
 		return 0, false
 	}
-	return epoch, true
+	return stamp.Unix(), true
 }

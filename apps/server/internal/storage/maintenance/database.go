@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/storage"
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/rootfile"
 	platform "github.com/QianFuv/LitRadar/apps/server/internal/platform/sqlite"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/indexschema"
 	migration "github.com/QianFuv/LitRadar/apps/server/internal/storage/migrations/index"
@@ -139,7 +140,12 @@ func buildDatabase(ctx context.Context, source sourceDatabase, destination strin
 	if err := copyCanonical(ctx, source, destination); err != nil {
 		return err
 	}
-	file, err := os.OpenFile(destination, os.O_RDWR, 0)
+	root, name, err := rootfile.Parent(destination)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	file, err := root.OpenFile(name, os.O_RDWR, 0)
 	if err != nil {
 		return err
 	}
@@ -155,7 +161,7 @@ func buildDatabase(ctx context.Context, source sourceDatabase, destination strin
 	if err != nil {
 		return err
 	}
-	return os.Chmod(destination, info.Mode())
+	return root.Chmod(name, info.Mode())
 }
 
 // copyCanonical retains the transaction rollback until copy and post-commit maintenance finish.

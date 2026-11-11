@@ -4,7 +4,6 @@ package index
 import (
 	"errors"
 	"fmt"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/rootfile"
 	"github.com/QianFuv/LitRadar/apps/server/internal/provider"
 )
 
@@ -19,7 +19,12 @@ var catalogColumns = []string{"catalog_id", "catalog_aliases", "title", "issn", 
 
 // ReadCatalogCsv reads a UTF-8 maintained catalog and validates every identity before indexing.
 func ReadCatalogCsv(path string) ([]domain.JournalCatalogEntry, error) {
-	body, err := os.ReadFile(path)
+	root, name, err := rootfile.Parent(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	body, err := root.ReadFile(name)
 	if err != nil {
 		return nil, err
 	}
