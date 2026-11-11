@@ -6,9 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
-	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -18,6 +16,7 @@ import (
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/settings"
+	openid "github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 )
 
@@ -56,13 +55,6 @@ func (configuration oidcConfiguration) binding() string {
 	return HashToken(configuration.issuer + "\x00" + configuration.clientId + "\x00" + configuration.baseUrl)
 }
 
-type oidcDiscovery struct {
-	Issuer                string `json:"issuer"`
-	AuthorizationEndpoint string `json:"authorization_endpoint"`
-	TokenEndpoint         string `json:"token_endpoint"`
-	UserinfoEndpoint      string `json:"userinfo_endpoint"`
-}
-
 // Oidc owns the bounded discovery cache and reuses the ordinary login session service.
 type Oidc struct {
 	service       *Service
@@ -71,7 +63,8 @@ type Oidc struct {
 	isDevelopment bool
 	client        *http.Client
 	mutex         sync.Mutex
-	cached        oidcDiscovery
+	cached        *openid.Provider
+	cachedIssuer  string
 	cacheUntil    time.Time
 	nativeMutex   sync.Mutex
 	nativeCodes   map[string]nativeOIDCGrant
@@ -116,57 +109,56 @@ func (oidc *Oidc) Providers(ctx context.Context) (bool, string, error) {
 	return configuration.enabled(), configuration.displayName, err
 }
 
-func (oidc *Oidc) discovery(ctx context.Context, configuration oidcConfiguration) (oidcDiscovery, error) {
+// oidcTransport bounds provider documents, token responses and JWKS before decoding.
+type oidcTransport struct{ http.RoundTripper }
+
+func (transport oidcTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := transport.RoundTripper.RoundTrip(request)
+	if err == nil {
+		response.Body = http.MaxBytesReader(nil, response.Body, 1<<20)
+	}
+	return response, err
+}
+
+func (oidc *Oidc) providerContext(ctx context.Context) context.Context {
+	client := *oidc.client
+	wire := client.Transport
+	if wire == nil {
+		wire = http.DefaultTransport
+	}
+	client.Transport = oidcTransport{wire}
+	return openid.ClientContext(ctx, &client)
+}
+
+func (oidc *Oidc) discovery(ctx context.Context, configuration oidcConfiguration) (*openid.Provider, error) {
 	oidc.mutex.Lock()
 	defer oidc.mutex.Unlock()
-	if oidc.cached.Issuer == configuration.issuer && time.Now().Before(oidc.cacheUntil) {
+	if oidc.cached != nil && oidc.cachedIssuer == configuration.issuer && time.Now().Before(oidc.cacheUntil) {
 		return oidc.cached, nil
 	}
-	var document oidcDiscovery
-	if err := oidc.getJson(ctx, strings.TrimRight(configuration.issuer, "/")+"/.well-known/openid-configuration", "", &document); err != nil {
-		return document, OidcError("provider")
+	provider, err := openid.NewProvider(oidc.providerContext(ctx), configuration.issuer)
+	if err != nil {
+		return nil, OidcError("provider")
 	}
-	if document.Issuer != configuration.issuer {
-		return document, OidcError("provider")
+	var document struct {
+		JWKSURL string `json:"jwks_uri"`
 	}
-	for _, endpoint := range []string{document.AuthorizationEndpoint, document.TokenEndpoint, document.UserinfoEndpoint} {
+	if provider.Claims(&document) != nil {
+		return nil, OidcError("provider")
+	}
+	for _, endpoint := range []string{provider.Endpoint().AuthURL, provider.Endpoint().TokenURL, provider.UserInfoEndpoint(), document.JWKSURL} {
 		if endpoint == "" || settings.ValidateOidcUrl(endpoint, oidc.isDevelopment) != nil {
-			return document, OidcError("provider")
+			return nil, OidcError("provider")
 		}
 	}
-	oidc.cached, oidc.cacheUntil = document, time.Now().Add(5*time.Minute)
-	return document, nil
+	oidc.cached, oidc.cachedIssuer, oidc.cacheUntil = provider, configuration.issuer, time.Now().Add(5*time.Minute)
+	return provider, nil
 }
 
-func (oidc *Oidc) getJson(ctx context.Context, endpoint, bearer string, result any) error {
-	request, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Accept", "application/json")
-	if bearer != "" {
-		request.Header.Set("Authorization", "Bearer "+bearer)
-	}
-	response, err := oidc.client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer func(closeBody func() error) { _ = closeBody() }(response.Body.Close)
-	if response.StatusCode != http.StatusOK {
-		return OidcError("provider")
-	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
-	if err != nil {
-		return err
-	}
-	if len(data) > 1<<20 {
-		return OidcError("provider")
-	}
-	return json.Unmarshal(data, result)
-}
-
-func oauthConfiguration(configuration oidcConfiguration, discovery oidcDiscovery) oauth2.Config {
-	return oauth2.Config{ClientID: configuration.clientId, ClientSecret: configuration.clientSecret, RedirectURL: strings.TrimRight(configuration.baseUrl, "/") + "/api/auth/oidc/callback", Scopes: []string{"openid", "profile", "email"}, Endpoint: oauth2.Endpoint{AuthURL: discovery.AuthorizationEndpoint, TokenURL: discovery.TokenEndpoint, AuthStyle: oauth2.AuthStyleInHeader}}
+func oauthConfiguration(configuration oidcConfiguration, provider *openid.Provider) oauth2.Config {
+	endpoint := provider.Endpoint()
+	endpoint.AuthStyle = oauth2.AuthStyleInHeader
+	return oauth2.Config{ClientID: configuration.clientId, ClientSecret: configuration.clientSecret, RedirectURL: strings.TrimRight(configuration.baseUrl, "/") + "/api/auth/oidc/callback", Scopes: []string{openid.ScopeOpenID, "profile", "email"}, Endpoint: endpoint}
 }
 
 // SafeOidcNext accepts only an absolute path on the current site, defaulting unsafe values to root.
@@ -199,12 +191,13 @@ func (oidc *Oidc) start(ctx context.Context, next string, link *domain.Authoriza
 		return "", "", err
 	}
 	state := OidcState{Next: SafeOidcNext(next), ExpiresAt: time.Now().Add(10 * time.Minute).Unix(), Configuration: configuration.binding(), Native: native}
-	for _, value := range []*string{&state.State, &state.Nonce, &state.Verifier} {
+	for _, value := range []*string{&state.State, &state.Nonce} {
 		*value, err = randomHex(32)
 		if err != nil {
 			return "", "", err
 		}
 	}
+	state.Verifier = oauth2.GenerateVerifier()
 	if link != nil {
 		if link.User.AuthKind != "local" || link.User.IsOidcLinked {
 			return "", "", domain.ErrAccountConflict
@@ -221,7 +214,7 @@ func (oidc *Oidc) start(ctx context.Context, next string, link *domain.Authoriza
 	}
 	cookie := base64.RawURLEncoding.EncodeToString(data) + "." + base64.RawURLEncoding.EncodeToString(signature)
 	oauth := oauthConfiguration(configuration, discovery)
-	return oauth.AuthCodeURL(state.State, oauth2.S256ChallengeOption(state.Verifier), oauth2.SetAuthURLParam("nonce", state.Nonce)), cookie, nil
+	return oauth.AuthCodeURL(state.State, oauth2.S256ChallengeOption(state.Verifier), openid.Nonce(state.Nonce)), cookie, nil
 }
 
 // ReadState authenticates flow state before exposing the captured linking identity.
@@ -301,7 +294,7 @@ func (oidc *Oidc) finishIdentity(ctx context.Context, state OidcState, code stri
 		return domain.Authorization{}, err
 	}
 	oauth := oauthConfiguration(configuration, discovery)
-	token, err := oauth.Exchange(context.WithValue(ctx, oauth2.HTTPClient, oidc.client), code, oauth2.VerifierOption(state.Verifier))
+	token, err := oauth.Exchange(oidc.providerContext(ctx), code, oauth2.VerifierOption(state.Verifier))
 	if err != nil {
 		return domain.Authorization{}, OidcError("provider")
 	}
@@ -309,7 +302,7 @@ func (oidc *Oidc) finishIdentity(ctx context.Context, state OidcState, code stri
 	if !ok {
 		return domain.Authorization{}, OidcError("provider")
 	}
-	subject, err := validateIdToken(rawIdToken, configuration.issuer, configuration.clientId, state.Nonce, time.Now())
+	subject, err := validateIDToken(oidc.providerContext(ctx), discovery, rawIdToken, configuration.issuer, configuration.clientId, state.Nonce, time.Now())
 	if err != nil {
 		return domain.Authorization{}, err
 	}
@@ -322,7 +315,8 @@ func (oidc *Oidc) finishIdentity(ctx context.Context, state OidcState, code stri
 	if token.AccessToken == "" || !strings.EqualFold(token.Type(), "Bearer") {
 		return domain.Authorization{}, OidcError("provider")
 	}
-	if err := oidc.getJson(ctx, discovery.UserinfoEndpoint, token.AccessToken, &profile); err != nil || profile.Subject != subject {
+	info, err := discovery.UserInfo(oidc.providerContext(ctx), oauth2.StaticTokenSource(token))
+	if err != nil || info.Subject != subject || info.Claims(&profile) != nil || profile.Subject != subject {
 		return domain.Authorization{}, OidcError("provider")
 	}
 	if !profile.EmailVerified {
@@ -358,46 +352,23 @@ func (oidc *Oidc) Unlink(ctx context.Context, authorization domain.Authorization
 	return oidc.service.repository.UnlinkOidc(ctx, authorization, oidc.service.now(), audit)
 }
 
-func validateIdToken(token, issuer, clientId, nonce string, now time.Time) (string, error) {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 || len(token) > 65536 {
+// validateIDToken delegates signatures and standard claims to go-oidc and retains flow-specific checks.
+func validateIDToken(ctx context.Context, provider *openid.Provider, token, issuer, clientID, nonce string, now time.Time) (string, error) {
+	if len(token) > 65536 {
 		return "", OidcError("provider")
 	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	verified, err := provider.Verifier(&openid.Config{ClientID: clientID, Now: func() time.Time { return now }}).Verify(ctx, token)
 	if err != nil {
 		return "", OidcError("provider")
 	}
-	// ponytail: ID tokens arrive only over validated back-channel TLS; add JWKS verification if tokens ever arrive via the browser.
 	var claims struct {
-		Issuer          string          `json:"iss"`
-		Subject         string          `json:"sub"`
-		Audience        json.RawMessage `json:"aud"`
-		AuthorizedParty string          `json:"azp"`
-		ExpiresAt       float64         `json:"exp"`
-		IssuedAt        float64         `json:"iat"`
-		Nonce           string          `json:"nonce"`
+		AuthorizedParty string `json:"azp"`
 	}
-	if json.Unmarshal(payload, &claims) != nil {
+	if verified.Claims(&claims) != nil || verified.Issuer != issuer || verified.Subject == "" || len(verified.Subject) > 255 || (len(verified.Audience) > 1 && claims.AuthorizedParty != clientID) || (claims.AuthorizedParty != "" && claims.AuthorizedParty != clientID) || !verified.Expiry.After(now) || verified.IssuedAt.Unix() <= 0 || verified.IssuedAt.After(now.Add(time.Minute)) || verified.IssuedAt.After(verified.Expiry) {
 		return "", OidcError("provider")
 	}
-	var audiences []string
-	var audience string
-	if json.Unmarshal(claims.Audience, &audience) == nil {
-		audiences = []string{audience}
-	} else if json.Unmarshal(claims.Audience, &audiences) != nil {
-		return "", OidcError("provider")
-	}
-	hasAudience := false
-	for _, audience := range audiences {
-		if audience == clientId {
-			hasAudience = true
-		}
-	}
-	if claims.Issuer != issuer || claims.Subject == "" || len(claims.Subject) > 255 || !hasAudience || (len(audiences) > 1 && claims.AuthorizedParty != clientId) || (claims.AuthorizedParty != "" && claims.AuthorizedParty != clientId) || math.IsNaN(claims.ExpiresAt) || math.IsInf(claims.ExpiresAt, 0) || claims.ExpiresAt <= float64(now.Unix()) || claims.IssuedAt <= 0 || claims.IssuedAt > float64(now.Unix()+60) || claims.IssuedAt > claims.ExpiresAt {
-		return "", OidcError("provider")
-	}
-	if !MatchOidcState(nonce, claims.Nonce) {
+	if !MatchOidcState(nonce, verified.Nonce) {
 		return "", OidcError("state")
 	}
-	return claims.Subject, nil
+	return verified.Subject, nil
 }

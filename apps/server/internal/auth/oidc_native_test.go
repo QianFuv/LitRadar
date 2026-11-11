@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
@@ -23,7 +22,7 @@ func nativeParameters() (NativeOIDCParameters, string) {
 func nativeGrant(t *testing.T, oidc *Oidc, provider *fakeOidcProvider) (string, domain.User, NativeOIDCParameters, string) {
 	t.Helper()
 	parameters, verifier := nativeParameters()
-	target, cookie, err := oidc.StartNative(context.Background(), parameters)
+	target, cookie, err := oidc.StartNative(t.Context(), parameters)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +37,7 @@ func nativeGrant(t *testing.T, oidc *Oidc, provider *fakeOidcProvider) (string, 
 	if err != nil || state.Native == nil || *state.Native != parameters || state.Verifier == verifier {
 		t.Fatal("native parameters or independent server PKCE lost", err)
 	}
-	code, user, err := oidc.FinishNative(context.Background(), *state, "idp-code", domain.AuditEvent{Action: "oidc_login", Outcome: "completed"})
+	code, user, err := oidc.FinishNative(t.Context(), *state, "idp-code", domain.AuditEvent{Action: "oidc_login", Outcome: "completed"})
 	if err != nil || len(code) != 43 {
 		t.Fatal("native callback failed", err)
 	}
@@ -83,7 +82,7 @@ func TestNativeOIDCParameters(t *testing.T) {
 // TestNativeOidcKeepsWebSessionAndIssuesDeviceToken covers the fake IdP, quota, TTL and atomic audit.
 func TestNativeOidcKeepsWebSessionAndIssuesDeviceToken(t *testing.T) {
 	oidc, provider := oidcFixture(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	web, err := finishOidc(t, oidc, beginOidc(t, oidc, provider, nil), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -140,12 +139,12 @@ func TestNativeOidcInvalidGrants(t *testing.T) {
 				now := oidc.service.now()
 				oidc.service.now = func() float64 { return now + 120 }
 			case "generation", "deleted":
-				if err := oidc.service.repository.Immediate(context.Background(), false, func(connection *sql.Conn) error {
+				if err := oidc.service.repository.Immediate(t.Context(), false, func(connection *sql.Conn) error {
 					statement := "UPDATE users SET token_generation=token_generation+1 WHERE id=?"
 					if scenario == "deleted" {
 						statement = "DELETE FROM users WHERE id=?"
 					}
-					_, err := connection.ExecContext(context.Background(), statement, user.Id)
+					_, err := connection.ExecContext(t.Context(), statement, user.Id)
 					return err
 				}); err != nil {
 					t.Fatal(err)
@@ -153,11 +152,11 @@ func TestNativeOidcInvalidGrants(t *testing.T) {
 			case "restart":
 				oidc.nativeCodes = nil
 			}
-			if _, err := oidc.ExchangeNative(context.Background(), code, verifier, redirect, "Android", domain.AuditEvent{}); !errors.Is(err, OidcError("invalid_grant")) {
+			if _, err := oidc.ExchangeNative(t.Context(), code, verifier, redirect, "Android", domain.AuditEvent{}); !errors.Is(err, OidcError("invalid_grant")) {
 				t.Fatal("invalid grant admitted", err)
 			}
 			_, correctVerifier := nativeParameters()
-			if _, err := oidc.ExchangeNative(context.Background(), code, correctVerifier, parameters.RedirectURI, "Android", domain.AuditEvent{}); !errors.Is(err, OidcError("invalid_grant")) {
+			if _, err := oidc.ExchangeNative(t.Context(), code, correctVerifier, parameters.RedirectURI, "Android", domain.AuditEvent{}); !errors.Is(err, OidcError("invalid_grant")) {
 				t.Fatal("failed attempt did not consume code", err)
 			}
 		})
@@ -172,7 +171,7 @@ func TestNativeOidcConcurrentExchange(t *testing.T) {
 	results := make(chan error, 8)
 	for range 8 {
 		workers.Go(func() {
-			_, err := oidc.ExchangeNative(context.Background(), code, verifier, parameters.RedirectURI, "Android", domain.AuditEvent{Outcome: "completed"})
+			_, err := oidc.ExchangeNative(t.Context(), code, verifier, parameters.RedirectURI, "Android", domain.AuditEvent{Outcome: "completed"})
 			results <- err
 		})
 	}
@@ -204,19 +203,19 @@ func TestNativeOidcSharesIdentityPolicy(t *testing.T) {
 			case "email_unverified":
 				provider.isVerified = false
 			case "email_conflict":
-				user, err := oidc.service.Bootstrap(context.Background(), "local_user", "LocalPassword!2026", nil)
+				user, err := oidc.service.Bootstrap(t.Context(), "local_user", "LocalPassword!2026", nil)
 				if err != nil {
 					t.Fatal(err)
 				}
 				email := provider.email
-				if _, err := oidc.service.UpdateEmail(context.Background(), user.Id, &email, nil); err != nil {
+				if _, err := oidc.service.UpdateEmail(t.Context(), user.Id, &email, nil); err != nil {
 					t.Fatal(err)
 				}
 			case "nonce":
 				provider.hasWrongNonce = true
 				expected = "state"
 			}
-			if _, _, err := oidc.FinishNative(context.Background(), *state, "code", domain.AuditEvent{Outcome: "completed"}); !errors.Is(err, OidcError(expected)) {
+			if _, _, err := oidc.FinishNative(t.Context(), *state, "code", domain.AuditEvent{Outcome: "completed"}); !errors.Is(err, OidcError(expected)) {
 				t.Fatal("native identity policy differed from web", err)
 			}
 		})
@@ -226,7 +225,7 @@ func TestNativeOidcSharesIdentityPolicy(t *testing.T) {
 // TestNativeOidcDeviceValidationAndQuota reuses the password flow's label and personal-token limits.
 func TestNativeOidcDeviceValidationAndQuota(t *testing.T) {
 	oidc, provider := oidcFixture(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	for _, name := range []string{"", "  ", "Android\nphone", strings.Repeat("界", 94)} {
 		code, _, parameters, verifier := nativeGrant(t, oidc, provider)
 		if _, err := oidc.ExchangeNative(ctx, code, verifier, parameters.RedirectURI, name, domain.AuditEvent{}); !errors.Is(err, domain.ErrDeviceName) {

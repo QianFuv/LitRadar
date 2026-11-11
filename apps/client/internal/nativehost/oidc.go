@@ -2,15 +2,14 @@ package nativehost
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
 	"regexp"
 	"time"
+
+	"golang.org/x/oauth2"
 )
 
 const (
@@ -24,9 +23,6 @@ const (
 
 	// oidcExchangeTimeout bounds the code exchange after the browser step.
 	oidcExchangeTimeout = 60 * time.Second
-	// oidcRandomBytes is the entropy of the PKCE verifier and the state; it
-	// encodes to 43 base64url characters.
-	oidcRandomBytes = 32
 )
 
 // oidcSignInTimeout bounds the browser step of one native sign-in; tests shorten it.
@@ -70,20 +66,12 @@ type oidcProof struct {
 
 // newOidcProof generates a fresh verifier, challenge, and state.
 func newOidcProof() oidcProof {
-	verifier := randomURLSafeText()
-	digest := sha256.Sum256([]byte(verifier))
+	verifier := oauth2.GenerateVerifier()
 	return oidcProof{
 		verifier:  verifier,
-		challenge: base64.RawURLEncoding.EncodeToString(digest[:]),
-		state:     randomURLSafeText(),
+		challenge: oauth2.S256ChallengeFromVerifier(verifier),
+		state:     oauth2.GenerateVerifier(),
 	}
-}
-
-// randomURLSafeText returns oidcRandomBytes of cryptographic randomness as unpadded base64url.
-func randomURLSafeText() string {
-	buffer := make([]byte, oidcRandomBytes)
-	_, _ = rand.Read(buffer)
-	return base64.RawURLEncoding.EncodeToString(buffer)
 }
 
 // readOidcCallback returns the one-time code of a callback query, or the

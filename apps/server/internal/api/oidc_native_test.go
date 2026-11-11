@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -15,9 +14,11 @@ import (
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/settings"
+	"github.com/QianFuv/LitRadar/apps/server/internal/testkit/oidctest"
 )
 
 type nativeTestProvider struct {
+	key                      *oidctest.Key
 	mutex                    sync.Mutex
 	issuer, nonce, challenge string
 }
@@ -29,7 +30,9 @@ func (provider *nativeTestProvider) serve(writer http.ResponseWriter, request *h
 	var body any
 	switch request.URL.Path {
 	case "/.well-known/openid-configuration":
-		body = map[string]string{"issuer": provider.issuer, "authorization_endpoint": provider.issuer + "/authorize", "token_endpoint": provider.issuer + "/token", "userinfo_endpoint": provider.issuer + "/userinfo"}
+		body = map[string]string{"issuer": provider.issuer, "authorization_endpoint": provider.issuer + "/authorize", "token_endpoint": provider.issuer + "/token", "userinfo_endpoint": provider.issuer + "/userinfo", "jwks_uri": provider.issuer + "/jwks"}
+	case "/jwks":
+		body = provider.key.JWKS()
 	case "/token":
 		if err := request.ParseForm(); err != nil {
 			writer.WriteHeader(400)
@@ -41,8 +44,12 @@ func (provider *nativeTestProvider) serve(writer http.ResponseWriter, request *h
 			writer.WriteHeader(400)
 			return
 		}
-		claims, _ := json.Marshal(map[string]any{"iss": provider.issuer, "sub": "native-subject", "aud": "client", "nonce": provider.nonce, "iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix()})
-		body = map[string]string{"access_token": "access", "token_type": "Bearer", "id_token": "header." + base64.RawURLEncoding.EncodeToString(claims) + ".signature"}
+		claims, err := provider.key.Sign(map[string]any{"iss": provider.issuer, "sub": "native-subject", "aud": "client", "nonce": provider.nonce, "iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix()})
+		if err != nil {
+			writer.WriteHeader(500)
+			return
+		}
+		body = map[string]string{"access_token": "access", "token_type": "Bearer", "id_token": claims}
 	case "/userinfo":
 		if request.Header.Get("Authorization") != "Bearer access" {
 			writer.WriteHeader(401)
@@ -61,7 +68,7 @@ func (provider *nativeTestProvider) serve(writer http.ResponseWriter, request *h
 func nativeApiFixture(t *testing.T) (*authHandlers, *http.ServeMux, *nativeTestProvider) {
 	t.Helper()
 	handlers, router, _, codec := apiOidcFixture(t)
-	provider := &nativeTestProvider{}
+	provider := &nativeTestProvider{key: oidctest.NewKey(t)}
 	server := httptest.NewServer(http.HandlerFunc(provider.serve))
 	t.Cleanup(server.Close)
 	provider.issuer = server.URL
@@ -70,7 +77,7 @@ func nativeApiFixture(t *testing.T) (*authHandlers, *http.ServeMux, *nativeTestP
 	for field, value := range map[string]string{"oidc_issuer_url": server.URL, "oidc_client_id": "client", "oidc_client_secret": "secret", "public_base_url": "https://paper.example"} {
 		values[field] = &value
 	}
-	if _, err := repository.Update(context.Background(), nil, values, nil, nil); err != nil {
+	if _, err := repository.Update(t.Context(), nil, values, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	handlers.oidc = auth.NewOidc(handlers.service, repository, codec, true)
@@ -222,7 +229,7 @@ func TestNativeOidcStartProviderFailure(t *testing.T) {
 	for field, value := range map[string]string{"oidc_issuer_url": server.URL, "oidc_client_id": "client", "oidc_client_secret": "secret", "public_base_url": "https://paper.example"} {
 		values[field] = &value
 	}
-	if _, err := repository.Update(context.Background(), nil, values, nil, nil); err != nil {
+	if _, err := repository.Update(t.Context(), nil, values, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	handlers.oidc = auth.NewOidc(handlers.service, repository, codec, true)

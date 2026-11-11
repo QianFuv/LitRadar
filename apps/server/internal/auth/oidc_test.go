@@ -22,9 +22,12 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/cryptography"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/secrets"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/settings"
+	"github.com/QianFuv/LitRadar/apps/server/internal/testkit/oidctest"
 )
 
 type fakeOidcProvider struct {
+	key                                        *oidctest.Key
+	hasInvalidSignature                        bool
 	mutex                                      sync.Mutex
 	issuer, nonce, challenge                   string
 	subject, email, preferredUsername          string
@@ -41,7 +44,7 @@ func oidcFixture(t *testing.T) (*Oidc, *fakeOidcProvider) {
 		t.Fatal(err)
 	}
 	t.Cleanup(codec.Close)
-	provider := &fakeOidcProvider{subject: "provider-user-uuid", email: "Verified@Example.com", isVerified: true}
+	provider := &fakeOidcProvider{key: oidctest.NewKey(t), subject: "provider-user-uuid", email: "Verified@Example.com", isVerified: true}
 	server := httptest.NewTLSServer(http.HandlerFunc(provider.serve))
 	t.Cleanup(server.Close)
 	provider.issuer = server.URL
@@ -50,7 +53,7 @@ func oidcFixture(t *testing.T) (*Oidc, *fakeOidcProvider) {
 	for field, value := range map[string]string{"oidc_issuer_url": server.URL, "oidc_client_id": "client", "oidc_client_secret": "secret", "public_base_url": "https://paper.example"} {
 		values[field] = &value
 	}
-	if _, err := repository.Update(context.Background(), nil, values, nil, nil); err != nil {
+	if _, err := repository.Update(t.Context(), nil, values, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	oidc := NewOidc(service, repository, codec, false)
@@ -68,7 +71,9 @@ func (provider *fakeOidcProvider) serve(writer http.ResponseWriter, request *htt
 	switch request.URL.Path {
 	case "/.well-known/openid-configuration":
 		provider.discoveries++
-		payload = map[string]any{"issuer": provider.issuer, "authorization_endpoint": provider.issuer + "/authorize", "token_endpoint": provider.issuer + "/token", "userinfo_endpoint": provider.issuer + "/userinfo"}
+		payload = map[string]any{"issuer": provider.issuer, "authorization_endpoint": provider.issuer + "/authorize", "token_endpoint": provider.issuer + "/token", "userinfo_endpoint": provider.issuer + "/userinfo", "jwks_uri": provider.issuer + "/jwks"}
+	case "/jwks":
+		payload = provider.key.JWKS()
 	case "/token":
 		provider.tokenRequests++
 		if err := request.ParseForm(); err != nil {
@@ -89,12 +94,17 @@ func (provider *fakeOidcProvider) serve(writer http.ResponseWriter, request *htt
 		for field, value := range provider.claims {
 			claims[field] = value
 		}
-		encoded, err := json.Marshal(claims)
+		encoded, err := provider.key.Sign(claims)
 		if err != nil {
 			writer.WriteHeader(500)
 			return
 		}
-		payload = map[string]any{"access_token": "fake-access-token", "token_type": "Bearer", "id_token": "eyJhbGciOiJSUzI1NiJ9." + base64.RawURLEncoding.EncodeToString(encoded) + ".c2lnbmF0dXJl"}
+		if provider.hasInvalidSignature {
+			parts := strings.Split(encoded, ".")
+			parts[2] = base64.RawURLEncoding.EncodeToString(make([]byte, 256))
+			encoded = strings.Join(parts, ".")
+		}
+		payload = map[string]any{"access_token": "fake-access-token", "token_type": "Bearer", "id_token": encoded}
 	case "/userinfo":
 		if request.Header.Get("Authorization") != "Bearer fake-access-token" {
 			writer.WriteHeader(401)
@@ -120,7 +130,7 @@ func (provider *fakeOidcProvider) serve(writer http.ResponseWriter, request *htt
 
 func beginOidc(t *testing.T, oidc *Oidc, provider *fakeOidcProvider, link *domain.Authorization) *OidcState {
 	t.Helper()
-	target, cookie, err := oidc.Start(context.Background(), "/account?tab=security", link)
+	target, cookie, err := oidc.Start(t.Context(), "/account?tab=security", link)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +154,7 @@ func beginOidc(t *testing.T, oidc *Oidc, provider *fakeOidcProvider, link *domai
 
 func finishOidc(t *testing.T, oidc *Oidc, state *OidcState, link *domain.Authorization) (domain.LoginSession, error) {
 	t.Helper()
-	return oidc.Finish(context.Background(), *state, "fake-code", link, domain.AuditEvent{Action: "oidc_login", Outcome: "completed", OccurredAt: oidc.service.now()})
+	return oidc.Finish(t.Context(), *state, "fake-code", link, domain.AuditEvent{Action: "oidc_login", Outcome: "completed", OccurredAt: oidc.service.now()})
 }
 
 // TestOidcProvisionReturningLoginAndPasswordRefusals covers trusted TLS exchange and OIDC-only credentials.
@@ -158,25 +168,25 @@ func TestOidcProvisionReturningLoginAndPasswordRefusals(t *testing.T) {
 	if first.User.AuthKind != "oidc" || first.User.IsAdmin || !first.User.IsOidcLinked || first.User.Email == nil || *first.User.Email != "verified@example.com" || first.Token == "" {
 		t.Fatal("invalid provisioned projection")
 	}
-	credentials, err := oidc.service.repository.CredentialsById(context.Background(), first.User.Id)
+	credentials, err := oidc.service.repository.CredentialsById(t.Context(), first.User.Id)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if credentials.PasswordHash != domain.UnusablePasswordHash || cryptography.VerifyPassword("anything", "", credentials.PasswordHash) != cryptography.Invalid {
 		t.Fatal("OIDC password is usable")
 	}
-	if _, err := oidc.service.Login(context.Background(), *first.User.Email, "anything", nil); !errors.Is(err, domain.ErrCredentials) {
+	if _, err := oidc.service.Login(t.Context(), *first.User.Email, "anything", nil); !errors.Is(err, domain.ErrCredentials) {
 		t.Fatal(err)
 	}
-	if _, err := oidc.service.ChangePassword(context.Background(), first.User.Id, "anything", "Replacement!2026", nil); !errors.Is(err, domain.ErrOidcPassword) {
+	if _, err := oidc.service.ChangePassword(t.Context(), first.User.Id, "anything", "Replacement!2026", nil); !errors.Is(err, domain.ErrOidcPassword) {
 		t.Fatal(err)
 	}
 	for _, actor := range []*identity.Id{nil, &first.User.Id} {
-		if _, err := oidc.service.ResetPassword(context.Background(), actor, first.User.Id, "Replacement!2026", nil); !errors.Is(err, domain.ErrOidcPassword) {
+		if _, err := oidc.service.ResetPassword(t.Context(), actor, first.User.Id, "Replacement!2026", nil); !errors.Is(err, domain.ErrOidcPassword) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := oidc.service.UpdateEmail(context.Background(), first.User.Id, nil, nil); !errors.Is(err, domain.ErrManagedEmail) {
+	if _, err := oidc.service.UpdateEmail(t.Context(), first.User.Id, nil, nil); !errors.Is(err, domain.ErrManagedEmail) {
 		t.Fatal(err)
 	}
 	provider.mutex.Lock()
@@ -189,7 +199,7 @@ func TestOidcProvisionReturningLoginAndPasswordRefusals(t *testing.T) {
 	if second.User.Id != first.User.Id || *second.User.Email != "new@example.com" {
 		t.Fatal("returning identity changed or email did not sync")
 	}
-	if old, err := oidc.service.VerifyToken(context.Background(), first.Token); err != nil || old != nil {
+	if old, err := oidc.service.VerifyToken(t.Context(), first.Token); err != nil || old != nil {
 		t.Fatal("old login session survived replacement", err)
 	}
 	provider.mutex.Lock()
@@ -202,7 +212,7 @@ func TestOidcProvisionReturningLoginAndPasswordRefusals(t *testing.T) {
 // TestOidcProvisionUsesPreferredUsername keeps a valid free authentik username and falls back otherwise.
 func TestOidcProvisionUsesPreferredUsername(t *testing.T) {
 	oidc, provider := oidcFixture(t)
-	if _, err := oidc.service.Bootstrap(context.Background(), "taken_name", "LocalPassword!2026", nil); err != nil {
+	if _, err := oidc.service.Bootstrap(t.Context(), "taken_name", "LocalPassword!2026", nil); err != nil {
 		t.Fatal(err)
 	}
 	cases := []struct{ subject, email, preferred, expected string }{
@@ -233,6 +243,10 @@ func TestOidcClaimAndProfileRejections(t *testing.T) {
 		name, code string
 		configure  func(*fakeOidcProvider)
 	}{
+		{"signature", "provider", func(provider *fakeOidcProvider) { provider.hasInvalidSignature = true }},
+		{"not_before", "provider", func(provider *fakeOidcProvider) {
+			provider.claims = map[string]any{"nbf": time.Now().Add(time.Hour).Unix()}
+		}},
 		{"nonce", "state", func(provider *fakeOidcProvider) { provider.hasWrongNonce = true }},
 		{"email_unverified", "email_unverified", func(provider *fakeOidcProvider) { provider.isVerified = false }},
 		{"userinfo_subject", "provider", func(provider *fakeOidcProvider) { provider.hasWrongSubject = true }},
@@ -258,7 +272,7 @@ func TestOidcClaimAndProfileRejections(t *testing.T) {
 			if err == nil || err.Error() != test.code {
 				t.Fatalf("got %v, want %s", err, test.code)
 			}
-			required, err := oidc.service.BootstrapRequired(context.Background())
+			required, err := oidc.service.BootstrapRequired(t.Context())
 			if err != nil || !required {
 				t.Fatal("rejected identity persisted", err)
 			}
@@ -269,7 +283,7 @@ func TestOidcClaimAndProfileRejections(t *testing.T) {
 // TestOidcEmailConflictAndExplicitLinking never links an existing local account by email.
 func TestOidcEmailConflictAndExplicitLinking(t *testing.T) {
 	oidc, provider := oidcFixture(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	local, err := oidc.service.Bootstrap(ctx, "local_user", "LocalPassword!2026", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -316,7 +330,7 @@ func TestOidcEmailConflictAndExplicitLinking(t *testing.T) {
 // TestOidcLinkConflictAndRevokedSession refuses identity reuse and generation changes during consent.
 func TestOidcLinkConflictAndRevokedSession(t *testing.T) {
 	oidc, provider := oidcFixture(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	if _, err := finishOidc(t, oidc, beginOidc(t, oidc, provider, nil), nil); err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +371,7 @@ func TestOidcLinkConflictAndRevokedSession(t *testing.T) {
 // TestOidcStateAndRedirectSafety rejects tampering, expiration and off-site redirect targets.
 func TestOidcStateAndRedirectSafety(t *testing.T) {
 	oidc, provider := oidcFixture(t)
-	_, cookie, err := oidc.Start(context.Background(), "/safe", nil)
+	_, cookie, err := oidc.Start(t.Context(), "/safe", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +385,7 @@ func TestOidcStateAndRedirectSafety(t *testing.T) {
 		t.Fatal("state mismatch accepted")
 	}
 	for _, next := range []string{"https://evil.example", "//evil.example", "/%2f/evil.example", "/\\evil.example", "/%5cevil.example", "/ok\r\nLocation: x"} {
-		target, cookie, err := oidc.Start(context.Background(), next, nil)
+		target, cookie, err := oidc.Start(t.Context(), next, nil)
 		if err != nil || target == "" {
 			t.Fatal(err)
 		}
@@ -398,14 +412,14 @@ func TestOidcPasswordUsesDummyAdmission(t *testing.T) {
 	entered, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(finished)
-		_, err := admission.Run(context.Background(), gate, func() (bool, error) { close(entered); <-release; return true, nil })
+		_, err := admission.Run(t.Context(), gate, func() (bool, error) { close(entered); <-release; return true, nil })
 		if err != nil {
 			return
 		}
 	}()
 	<-entered
 	defer func() { close(release); <-finished }()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	result := make(chan error, 1)
 	go func() { _, err := oidc.service.Login(ctx, session.User.Username, "password", nil); result <- err }()
@@ -438,7 +452,7 @@ func TestOidcDiscoveryCacheExpires(t *testing.T) {
 // TestOidcProvisionAuditFailureRollsBackIdentity keeps failed security mutations atomic.
 func TestOidcProvisionAuditFailureRollsBackIdentity(t *testing.T) {
 	oidc, provider := oidcFixture(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := oidc.service.repository.WithConnection(ctx, func(connection *sql.Conn) error {
 		_, err := connection.ExecContext(ctx, "CREATE TRIGGER reject_oidc_audit BEFORE INSERT ON security_audit_events WHEN NEW.action='oidc_provision' BEGIN SELECT RAISE(ABORT,'blocked'); END")
 		return err
@@ -463,5 +477,20 @@ func TestOidcProvisionAuditFailureRollsBackIdentity(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestOidcSigningKeyRotation verifies that a new kid refreshes the cached provider's JWKS.
+func TestOidcSigningKeyRotation(t *testing.T) {
+	oidc, provider := oidcFixture(t)
+	if _, err := finishOidc(t, oidc, beginOidc(t, oidc, provider, nil), nil); err != nil {
+		t.Fatal(err)
+	}
+	key := oidctest.NewKey(t)
+	provider.mutex.Lock()
+	provider.key = key
+	provider.mutex.Unlock()
+	if _, err := finishOidc(t, oidc, beginOidc(t, oidc, provider, nil), nil); err != nil {
+		t.Fatal("rotated key rejected", err)
 	}
 }
