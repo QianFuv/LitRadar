@@ -21,7 +21,7 @@
 ## 指南
 
 - [客户端与登录](guides/clients.md)：Web、Windows x64、Android arm64-v8a、服务端 URL 与设备令牌。
-- [开发指南](guides/development.md)：本地环境、开发流程、OpenAPI 类型生成、测试和质量检查
+- [开发指南](guides/development.md)：本地环境、开发流程、OpenAPI 类型生成、sqlc 与 golangci-lint、测试和质量检查
 - [测试系统](guides/testing.md)：五层测试模型、功能所有权、共享场景、统一命令、报告和 flaky/覆盖率策略
 - [通知与追踪](guides/notifications.md)：候选来源、AI 选择、PushPlus、追踪文件夹、状态和排障
 
@@ -34,6 +34,8 @@
 - [安全说明](operations/security.md)：部署密钥、凭据加密、管理员初始化、密码、限流和网络暴露
 - [备份与恢复](operations/backup.md)：创建、验证、离线恢复、回滚和失败处理
 - [版本发布](operations/releases.md)：版本规则、发布流水线、二进制包安装和失败重试（英文，随发行包分发）
+- [CI 执行与耗时](operations/ci.md)：工作流阶段、质量 job、缓存与产物归属和耗时基线（英文）
+- [authentik 单点登录](operations/authentik.md)：authentik 提供程序、LitRadar 运行设置、账号建立与绑定、回调日志
 
 运维文档面向部署和维护人员。安全敏感操作以相应运维文档为准，其他文档只给出入口链接。
 
@@ -46,9 +48,9 @@
 - [索引与 Provider 契约](reference/index-provider-contract.md)：规范期刊/文章模型、稳定身份、可选在线能力和 Provider 更换流程
 - [Scholarly 数据源](reference/sources/scholarly.md)：Crossref、OpenAlex、Semantic Scholar
 - [CNKI 数据源](reference/sources/cnki.md)：CNKI 国内接口、验证码、旧 Provider 迁移和浙江图书馆全文边界
-- [前端设计系统](reference/design-system.md)：字体、主题 token、组件 variants、响应式与无障碍约定
+- [前端设计系统](reference/design-system.md)：字体、StyleX 主题 token、基础组件变体、响应式与无障碍约定
 
-参考文档回答“系统当前是什么”。请求/响应 schema 以运行时生成的 OpenAPI 为准，Markdown 只补充跨接口和业务语义。
+参考文档回答“系统当前是什么”。请求/响应 schema 以由 Go 类型生成的 OpenAPI 为准，Markdown 只补充跨接口和业务语义。
 
 ## 架构专题
 
@@ -56,7 +58,9 @@
 
 ## 包级文档
 
-- [前端包说明](../apps/client/frontend/README.md)：`apps/client/frontend/` 的启动、目录、API 契约和测试
+- [前端包说明](../apps/client/frontend/README.md)：`apps/client/frontend/` 的工具链、启动、目录、API 契约和质量检查
+- [客户端包说明](../apps/client/README.md)：`apps/client/` 的 Wails 构建任务、版本派生、原生宿主与冒烟测试（英文）
+- [sqlc 生成查询](../apps/server/internal/storage/sqlc/README.md)：schema 快照、查询生成与检查命令（英文）
 - [go-sdk 补丁](../third_party/go-sdk-patches/README.md)：vendored 依赖的本地补丁说明
 
 `docs/third-party/` 保存随镜像和发行包分发的第三方许可证与固定发行记录，不是阅读文档。
@@ -77,14 +81,14 @@
 | 进程与服务生命周期 | `apps/server/internal/runtime/`                                                                                                             | [系统架构](architecture/README.md)                                  |
 | CLI 参数和默认值   | `apps/server/internal/cli/arguments.go`、`apps/server/internal/cli/`                                          | [CLI 参考](reference/cli.md)                                 |
 | 全局运行配置       | `apps/server/internal/storage/settings/`                                                                         | [运行配置](reference/configuration.md)                       |
-| REST schema        | `apps/client/frontend/lib/generated/openapi.json`                                                                                                   | OpenAPI；[API 参考](reference/api.md)补充语义                |
-| SQLite schema      | `apps/server/internal/storage/migrations/`、`apps/server/internal/storage/indexschema/`、`apps/server/internal/storage/index/control.go` | [数据库参考](reference/database.md)                          |
+| REST schema        | `apps/server/internal/api/` 的 huma 操作类型、`apps/server/internal/openapi/`；生成基线 `apps/client/frontend/lib/generated/openapi.json` | OpenAPI；[API 参考](reference/api.md)补充语义                |
+| SQLite schema      | `apps/server/internal/storage/migrations/`、`apps/server/internal/storage/indexschema/`、`apps/server/internal/storage/index/control.go`；sqlc 输入 `apps/server/sqlc.yaml`、`apps/server/internal/storage/sqlc/` | [数据库参考](reference/database.md)                          |
 | Provider 内容契约  | `apps/server/internal/domain/sources/`、`apps/server/internal/provider/`                                                    | [索引与 Provider 契约](reference/index-provider-contract.md) |
 | Docker 行为        | `apps/server/Dockerfile`、`docker-compose.yml`                                                                                                 | [Docker 部署](operations/docker.md)                          |
 | 结构化日志         | `apps/server/internal/runtime/observability/`、各组件结构化事件、`apps/client/frontend/lib/client-logger.tsx`                                           | [日志运维](operations/logging.md)                            |
-| 前端结构           | `apps/client/frontend/package.json`、`apps/client/frontend/src/`、`apps/client/frontend/lib/`、`apps/client/frontend/components/`                                                                      | [前端包说明](../apps/client/frontend/README.md)                               |
-| 测试分层与诊断     | `tests/test.mjs`、测试配置、`.github/workflows/`                                                                                   | [测试系统](guides/testing.md)                                       |
-| UI token 与组件    | `apps/client/frontend/src/globals.css`、`apps/client/frontend/components/ui/`                                                                                        | [前端设计系统](reference/design-system.md)                   |
+| 前端结构           | `apps/client/frontend/package.json`、`apps/client/frontend/vite.config.ts`、`apps/client/frontend/src/`、`apps/client/frontend/lib/`、`apps/client/frontend/components/`                                                                      | [前端包说明](../apps/client/frontend/README.md)                               |
+| 测试分层与诊断     | `tests/test.mjs`、`apps/client/frontend/vite.config.ts` 的 `test` 块、Playwright 配置、`.github/workflows/`                                                                                   | [测试系统](guides/testing.md)                                       |
+| UI token 与组件    | `apps/client/frontend/lib/theme.stylex.tsx`、`apps/client/frontend/src/globals.css`、`apps/client/frontend/components/ui/`                                                                                        | [前端设计系统](reference/design-system.md)                   |
 
 ## 维护原则
 

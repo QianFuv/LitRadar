@@ -32,10 +32,10 @@
 
 ## OpenAPI、共享场景与 MSW
 
-Go 的 `apps/server/internal/openapi/` 声明与真实路由绑定共同约束 HTTP schema：
+HTTP schema 由 Go 类型生成：`apps/server/internal/api/` 用 huma 注册各操作的请求/响应类型，`apps/server/internal/openapi/` 提供操作 ID 与共享 schema 注册：
 
 ```text
-Go OpenAPI definitions + operations + route bindings
+Go huma operations + request/response types
   -> apps/client/frontend/lib/generated/openapi.json
   -> apps/client/frontend/lib/generated/api-schema.tsx
   -> typed scenario imports and MSW handlers
@@ -46,7 +46,7 @@ Go OpenAPI definitions + operations + route bindings
 1. Go 路由测试构造真实临时存储，通过原版迁移观测语料和响应断言验证兼容性；前端消费这里的共享 JSON。当前 Go 测试不直接加载这些前端共享场景，不能将两条证据链混为一谈。
 2. TypeScript 通过生成的 `components['schemas']` 类型约束 JSON；认证、秘密设置等敏感响应还必须经过 `apps/client/frontend/lib/api-contract.tsx` 的现有运行时解析器。
 3. 共享 JSON 不得包含 token、Cookie、密码、凭据、绝对路径、随机 ID 或运行时生成时间，也不得成为第二套 schema。
-4. 修改路由、DTO 或 OpenAPI 声明后，在 `apps/client/frontend/` 运行 `pnpm generate:api:check`；不要手工编辑 `lib/generated/`。
+4. 修改路由或请求/响应类型后，在 `apps/client/frontend/` 运行 `pnpm generate:api:check`；不要手工编辑 `lib/generated/`。
 5. 不增加跨 Go/TypeScript 的共享 helper、Pact 或另一套 schema 生成器来替代该链路。
 
 MSW 的全局 server 不安装登录态或业务默认值，并以 `onUnhandledRequest: 'error'` 拒绝未声明请求。测试从 `apps/client/frontend/tests/mocks/handlers/` 显式安装 auth、discovery/index、favorites、tracking 或 admin 场景 bundle；单个失败场景只覆盖必要 handler，测试结束后由公共 setup 重置。这样每个请求依赖在套件中可见，不会由其他测试留下的状态暗中满足。
@@ -92,7 +92,7 @@ Playwright 有两个独立角色：
 
 ```bash
 npm install --global pnpm@12.16.1
-pnpm --dir app install --frozen-lockfile
+pnpm install --frozen-lockfile
 node tests/test.mjs all
 node apps/server/scripts/check-go.mjs
 ```
@@ -108,7 +108,7 @@ node apps/server/scripts/check-go.mjs
 | `node tests/test.mjs diagnostics` | Go 与前端分别生成无阈值覆盖率报告                                                                                                                 |
 | `node apps/server/scripts/check-go.mjs`       | Windows/Linux 后端发布检查：工具链、race 所需 C 编译器、格式、模块/补丁完整性、vet、无缓存 regular/race，以及 SDK 自身模块和根模块的 regular/race |
 
-`all` 不包含 race 或替换依赖包测试；后两者由 `check-go.mjs` 提供。`--ci` 设置 CI 环境与前端 JUnit 路径，不生成 Go JUnit。安装浏览器依赖使用 `pnpm --dir app exec playwright install --with-deps chromium`。
+`all` 不包含 race 或替换依赖包测试；后两者由 `check-go.mjs` 提供。`--ci` 设置 CI 环境与前端 JUnit 路径，不生成 Go JUnit。安装浏览器依赖使用 `pnpm --dir apps/client/frontend exec playwright install --with-deps chromium`。`all` 也不包含 golangci-lint、sqlc 生成检查和 Knip，它们由 CI 单独执行，本地命令见[开发指南](development.md#后端开发工具)与[前端包说明](../../apps/client/frontend/README.md#质量检查)。
 
 聚焦 Go 检查使用 `go test -count=1 -mod=readonly ./相关包`；涉及并发时增加 `-race`（需 `CGO_ENABLED=1` 与 C 编译器）。前端可在 `apps/client/frontend/` 单独运行 `pnpm check`、`pnpm knip`、`pnpm generate:api:check`、`pnpm test:unit`、`pnpm test:browser-components`、`pnpm test:e2e:fixtures` 或 `pnpm test:e2e:full-stack`。
 
@@ -119,9 +119,9 @@ docker build -f apps/server/Dockerfile --provenance=false --tag litradar:test .
 node apps/server/tests/container-smoke.mjs litradar:test
 ```
 
-探针先用隔离数据库写入 `secure_cookies=true`，再以 `--require-secure-cookies` 重启同一镜像。它要求 readiness、Docker health、根页、OpenAPI 和 auth Header 成功，镜像 ID 不变，UID/GID 为 `10001:10001`，根文件系统只读，drop 全部 capability，启用 no-new-privileges，只发布 loopback，`/tmp` 含 `noexec,nosuid,nodev`，只有数据卷持久可写，密钥卷只读。成功或失败后都要删除容器、卷和监听端口。
+探针先用隔离数据库写入 `secure_cookies=true`，再以 `--require-secure-cookies` 重启同一镜像。它要求 readiness、Docker health、`/docs` 文档页、OpenAPI 3.1 文档和 auth Header 成功，根路径与页面路径返回 404，镜像 ID 不变，UID/GID 为 `10001:10001`，根文件系统只读，drop 全部 capability，启用 no-new-privileges，只发布 loopback，`/tmp` 含 `noexec,nosuid,nodev`，只有数据卷持久可写，密钥卷只读。成功或失败后都要删除容器、卷和监听端口。
 
-Compose 配置的静态边界也必须单独验证：解析结果只有 `litradar` 服务，使用 `latest` 镜像，只向宿主机 loopback 发布 8000 端口，并保留只读根文件系统等安全选项：
+Compose 配置的静态边界也必须单独验证：解析结果包含 `server`、`client-web` 和 `gateway` 三个服务，`server` 与 `client-web` 使用 `latest` 镜像，只有 `gateway` 向宿主机 loopback 发布 8000 端口，并保留只读根文件系统等安全选项：
 
 ```bash
 docker compose \

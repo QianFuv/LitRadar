@@ -50,10 +50,16 @@ tests, source-bound frontend verification or platform smoke acceptance.
   because Go's race detector requires cgo, and records compiler identity. Both
   record diagnostics. Integration/SQLite/process tests remain in the full Go suites;
   neither lane uses `-short`.
+- The regular lane also runs `golangci-lint run . ./apps/server/...` with the root
+  `.golangci.yml` (which owns the enabled linters), checks the migration-derived
+  sqlc schema snapshot with `go run ./apps/server/cmd/sqlc-schema -check`, and runs
+  `sqlc diff -f apps/server/sqlc.yaml`. Each writes a log under `test-results/go/`.
+  The race lane does not install these tools.
 - The two existing `Backend / Go checks (<os>)` names remain aggregate gates. Each
   requires the entire four-job matrix to succeed; failure, cancellation or skip
   cannot become a passing release prerequisite.
-- Frontend contract generation, lint, formatting, types, jsdom, browser components,
+- Frontend contract generation, `pnpm check` (Vite+ `vp check`: Oxfmt formatting,
+  Oxlint and TypeScript 7 type checking), Knip, jsdom, browser components,
   fixture flows and production full-stack flows all remain required. Their serial
   job is much shorter than the measured backend critical path.
 - Only ordinary quality runs share a PR/ref concurrency group. Release-bearing
@@ -74,6 +80,9 @@ Go toolchain, lane and race-lane compiler identity; the final key includes
 the source commit. Compatible prefix restores accelerate a new commit, which then
 saves its own completed cache instead of freezing the first build under an
 unchanged dependency key. Go still validates source inputs internally.
+The regular lane caches the golangci-lint and sqlc binaries under a key made of OS,
+architecture, Go toolchain and both pinned tool versions
+(`GOLANGCI_LINT_VERSION` and `SQLC_VERSION` in `backend.yaml`).
 
 Tests retain `-count=1`. Only root regular tests disable implicit vet, after the
 same-config explicit `go vet` succeeds; race-selected files and dependency module

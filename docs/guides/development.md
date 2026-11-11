@@ -11,6 +11,7 @@ CI 和容器使用以下主版本：
 | Go      | 1.27.3，CGO_ENABLED=0，无需 C 编译器           |
 | Node.js | 26.11.1                                        |
 | pnpm    | 12.16.1                                        |
+| Vite+   | 1.5.1（`vp`），前端工具链见[前端包说明](../../apps/client/frontend/README.md#工具链) |
 | Docker  | 当前 Docker Engine / Docker Desktop 与 Compose |
 
 Go 依赖由 `go.mod` / `go.sum` 与 `third_party/` 的固定补丁锁定，前端依赖由根目录 `pnpm-lock.yaml` 锁定。不要在普通开发任务中绕过 lockfile。
@@ -41,14 +42,14 @@ sqlc version
 从仓库根目录执行：
 
 ```bash
-golangci-lint run ./...
+golangci-lint run . ./apps/server/...
 go run ./apps/server/cmd/sqlc-schema -check -output apps/server/internal/storage/sqlc/schema
 sqlc diff -f apps/server/sqlc.yaml
 ```
 
-`sqlc-schema -check` 验证快照与真实 migration 一致，`sqlc diff` 验证 Go 产物与 schema、查询及生成配置一致，两者都不会改写生成文件。完整流程为「改 migration → 更新 schema 快照 → 写查询 → 生成」，具体命令和手写 SQL 边界见[数据库参考](../reference/database.md#sqlc-查询生成)。全模块 Go 检查也会读取客户端的 `frontend/dist` 嵌入资源，需要先按下文的客户端构建流程准备这些产物。
+`sqlc-schema -check` 验证快照与真实 migration 一致，`sqlc diff` 验证 Go 产物与 schema、查询及生成配置一致，两者都不会改写生成文件。完整流程为「改 migration → 更新 schema 快照 → 写查询 → 生成」，具体命令和手写 SQL 边界见[数据库参考](../reference/database.md#sqlc-查询生成)。启用的 linter 及其设置以 `.golangci.yml` 为准。上面的 lint 范围与 CI 一致，只覆盖根包和 `apps/server/...`；对全模块运行（如 `./...`）会同时编译 `apps/client`，它读取客户端的 `frontend/dist` 嵌入资源，需要先按下文的客户端构建流程准备这些产物。
 
-Backend CI 在现有 regular lane 中运行服务端 lint 和上述两项生成检查；工具二进制缓存按操作系统、架构、Go 版本及工具版本隔离，沿用既有模块缓存和按 lane/source 隔离的编译缓存。race lane 保留原有检查，不重复安装这些工具。
+Backend CI 只在 regular lane 中运行服务端 lint 和上述两项生成检查，race lane 不安装这些工具；工具二进制缓存按操作系统、架构、Go 版本及工具版本隔离。
 
 ## 初始准备
 
@@ -106,13 +107,13 @@ go run -mod=readonly ./apps/server serve \
 
 - Web：`http://localhost:8000/`
 - REST API：`http://localhost:8000/api`
-- Swagger UI：`http://localhost:8000/docs/`
+- API 文档：`http://localhost:8000/docs`（huma 内置文档页，页面脚本从公共 CDN 加载）
 - OpenAPI：`http://localhost:8000/openapi.json`
 - MCP：`http://localhost:8000/mcp`
 
 服务端始终只托管 API、认证、健康检查、接口文档、MCP 与内嵌任务；直接访问页面路径返回 404。`--development` 只允许 loopback，且不能与 `--require-secure-cookies` 组合；不传该参数也不需要 UI 构建。
 
-服务端默认把 JSON Lines 写入 stderr；请求终态使用匹配 route、status、outcome、duration 和服务器生成的 request ID，不记录 query。成功健康检查和静态流量被抑制。日志格式和 filter 是管理员“运行配置”中的持久设置，不接受进程环境覆盖：首次按默认 JSON 启动，登录管理页把 `log_format` 改为 `compact`，按需把 `log_filter` 改为例如 `warn,litradar=debug,litradar_api=debug`，再重启进程。配置、实际终端样式和隐私边界见[日志运维](../operations/logging.md)。
+服务端默认把 JSON Lines 写入 stderr；请求终态使用匹配 route、status、outcome、duration 和服务器生成的 request ID，不记录 query。成功健康检查的终态事件被抑制。日志格式和 filter 是管理员“运行配置”中的持久设置，不接受进程环境覆盖：首次按默认 JSON 启动，登录管理页把 `log_format` 改为 `compact`，按需把 `log_filter` 改为例如 `warn,litradar=debug,litradar_api=debug`，再重启进程。配置、实际终端样式和隐私边界见[日志运维](../operations/logging.md)。
 
 ### 首个管理员
 
@@ -172,6 +173,7 @@ Scholarly 索引需要先在管理后台配置 Crossref 联系邮箱、OpenAlex 
 | -------------------- | -------------------------------------------------------------------- |
 | 进程入口与生命周期   | `apps/server/`、`apps/server/internal/cli/`、`apps/server/internal/runtime/`                |
 | REST 路由或 OpenAPI  | `apps/server/internal/api/`、`apps/server/internal/openapi/`                                 |
+| 普通 CRUD 查询（sqlc） | `apps/server/internal/storage/sqlc/queries/`、`apps/server/sqlc.yaml`                    |
 | 认证                 | `apps/server/internal/domain/auth/`、`apps/server/internal/storage/auth/`                    |
 | 业务存储             | `apps/server/internal/storage/`                                                  |
 | 数据库迁移与内容定义 | `apps/server/internal/storage/migrations/auth/`、`apps/server/internal/storage/indexschema/` |
@@ -179,12 +181,14 @@ Scholarly 索引需要先在管理后台配置 Crossref 联系邮箱、OpenAlex 
 | 上游数据源           | `apps/server/internal/sources/`                                                  |
 | 推荐、通知和调度     | `apps/server/internal/delivery/`、`apps/server/internal/scheduler/`                          |
 | 前端 API facade      | `apps/client/frontend/lib/api/`、`apps/client/frontend/lib/api.tsx`                                    |
+| 前端路由与 URL 状态  | `apps/client/frontend/src/router.tsx`、`apps/client/frontend/lib/search-params.tsx`             |
 | 前端页面和组件       | `apps/client/frontend/src/routes/`、`apps/client/frontend/components/`                                        |
+| 前端样式 token       | `apps/client/frontend/lib/theme.stylex.tsx`                                                    |
 | 前端测试             | `apps/client/frontend/tests/`                                                         |
 
 ## OpenAPI 与前端类型
 
-`apps/server/internal/openapi/` 中的声明及 `apps/server/internal/api/` 的真实路由绑定是控制面 API schema 的来源；它不拥有可执行入口或 OS 信号。修改路由、DTO 或响应 schema 后，在 `apps/client/frontend/` 运行：
+OpenAPI 3.1 文档由 Go 类型生成：`apps/server/internal/api/` 用 huma（经 `humago` 接入 `net/http` 的 `ServeMux`）注册每个操作及其请求/响应类型，`apps/server/internal/openapi/` 提供操作 ID 表、共享 schema 注册和文档配置，它不拥有可执行入口或 OS 信号。仓库中没有手写的 OpenAPI JSON；错误响应使用 huma 的 RFC 9457 错误模型，见 [API 参考](../reference/api.md#错误)。修改路由、请求/响应类型或错误响应后，在 `apps/client/frontend/` 运行：
 
 ```bash
 pnpm generate:api
@@ -192,10 +196,10 @@ pnpm generate:api
 
 该命令：
 
-1. 运行 Go `litradar openapi` 子命令
+1. 构建服务端并运行 `litradar openapi` 子命令
 2. 更新 `lib/generated/openapi.json`
 3. 用 `openapi-typescript` 更新 `lib/generated/api-schema.tsx`
-4. 格式化两个生成文件
+4. 用 Oxfmt（`vp fmt`）格式化两个生成文件
 
 CI 使用：
 
@@ -209,7 +213,7 @@ pnpm generate:api:check
 
 认证库和内容库分别使用 `PRAGMA user_version`，但迁移事务的组织方式不同。认证库在 `apps/server/internal/storage/migrations/auth/` 按有序版本逐个执行，每个版本独立提交，并在同一事务末尾更新版本号；内容库由 `apps/server/internal/storage/indexschema/` 统一定义 DDL、版本和校验规则，迁移可在一个事务中完成多步转换，最后更新到目标版本。
 
-修改前先确定数据库类型，再更新相应定义与迁移路径。测试应覆盖空库、代表性旧库、当前版本幂等、失败回滚和未来版本拒绝；不要在查询函数或连接辅助函数中隐式执行迁移。
+修改前先确定数据库类型，再更新相应定义与迁移路径；schema 变化后还要更新 sqlc schema 快照并重新生成查询代码，见[数据库参考](../reference/database.md#sqlc-查询生成)。测试应覆盖空库、代表性旧库、当前版本幂等、失败回滚和未来版本拒绝；不要在查询函数或连接辅助函数中隐式执行迁移。
 
 `apps/server/internal/index` 使用共享内容定义初始化和写入新库，storage 负责既有库的迁移与预检。兼容版本、显式离线优化和控制库边界见[数据库参考](../reference/database.md)。
 
@@ -253,6 +257,7 @@ node tests/test.mjs diagnostics
 cd apps/client/frontend
 pnpm generate:api:check
 pnpm check
+pnpm knip
 pnpm test:unit
 pnpm exec playwright install --with-deps chromium
 pnpm test:browser-components
@@ -261,7 +266,7 @@ pnpm test:e2e:full-stack
 pnpm build
 ```
 
-`pnpm check` 即 `vp check`，一次完成 Oxfmt 格式检查、Oxlint 检查与 TypeScript 7 类型检查；`pnpm check:fix` 自动格式化并应用可修复的 lint 建议。Vitest/jsdom 使用显式 MSW 场景；Browser Mode 验证焦点、Clipboard、IntersectionObserver 和动效等原生语义。Playwright fixture 项目负责拦截式 UI 冒烟测试；full-stack 项目构建前端，通过真实 Go 监听器、HttpOnly Cookie 和临时 SQLite 验证关键旅程。具体覆盖以[测试系统](testing.md)和当前测试文件为准。CI 最多重试 Playwright 一次以取得 trace/video，但重试后通过仍按不稳定测试判定失败。
+`pnpm check` 即 `vp check`，一次完成 Oxfmt 格式检查、Oxlint 检查与 TypeScript 7 类型检查；`pnpm check:fix` 自动格式化并应用可修复的 lint 建议；`pnpm knip` 检查未使用的文件、依赖与导出，CI 要求结果为空。Vitest/jsdom 使用显式 MSW 场景；Browser Mode 验证焦点、Clipboard、IntersectionObserver 和动效等原生语义。Playwright fixture 项目负责拦截式 UI 冒烟测试；full-stack 项目构建前端，通过真实 Go 监听器、HttpOnly Cookie 和临时 SQLite 验证关键旅程。具体覆盖以[测试系统](testing.md)和当前测试文件为准。CI 最多重试 Playwright 一次以取得 trace/video，但重试后通过仍按不稳定测试判定失败。
 
 ## 部署检查
 

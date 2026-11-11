@@ -11,7 +11,7 @@ browser
 Caddy gateway -> client-web (Wails Server Build + Vite SPA)
    |
    +-- server: litradar serve (apps/server)
-   |-- HTTP component: REST / Swagger / OpenAPI / MCP
+   |-- HTTP component: REST (huma) / OpenAPI docs / MCP
    |-- embedded scheduler: persistent cursor, claims and heartbeats
    |       |
    |       +-- current executable -> litradar index  (transient child)
@@ -48,7 +48,7 @@ Caddy gateway -> client-web (Wails Server Build + Vite SPA)
 | `litradar push`      | 按需或调度 | AI 选择后写入用户追踪文件夹                                 |
 | `litradar scheduler` | 按需       | 校验任务或立即执行一个已保存的类型化任务                    |
 | `litradar admin`     | 按需、本机 | 初始化管理员、维护密文、备份和离线恢复                      |
-| `litradar openapi`   | 按需       | 把当前 REST schema 输出到 stdout 或文件                     |
+| `litradar openapi`   | 按需       | 把由 Go 类型生成的 OpenAPI 3.1 输出到 stdout 或文件         |
 
 Docker Compose 运行 `server`、`client-web` 和 `gateway`。只有 `server` 挂载数据与密钥；`client-web` 只连接内部前端网络。Caddy 把 `/api`、`/api/*`、`/mcp`、`/mcp/*`、`/docs`、`/docs/*`、`/openapi.json`、`/health/*` 转发到 `server`，其他页面交给客户端；`/wails` 与 `/wails/*` 直接返回 404，因为 Wails Server Build 的运行时端点没有认证，Web host 不注册任何服务。MCP 使用 `flush_interval -1`。服务端子任务仍通过同一 `litradar` 可执行文件运行，辅助程序仍为 Obscura 和 `pdftotext`。
 
@@ -73,7 +73,7 @@ application stderr (JSON Lines by default)
 browser boundary -> allowlisted console.error object -> local DevTools only
 ```
 
-HTTP 外层先移除不受信的 `X-Request-Id`，再生成并返回服务器 UUID；请求内的异步和 blocking 工作重新进入同一 span。成功健康检查、静态资源与前端文档不产生逐请求终态事件。调度 span 使用 `run_id` 关联任务；父进程把该值作为经过校验的隐藏内部参数交给规范子进程，应用在公共命令解析前移除参数并记录 `parent_run_id`。它不出现在 help 中，也不是运维配置。子进程 `stderr` 直接继承到同一容器 sink，`stdout` 仍保留给结构化业务结果。
+HTTP 外层先移除不受信的 `X-Request-Id`，再生成并返回服务器 UUID；请求内的异步和 blocking 工作重新进入同一 span。成功健康检查不产生逐请求终态事件。调度 span 使用 `run_id` 关联任务；父进程把该值作为经过校验的隐藏内部参数交给规范子进程，应用在公共命令解析前移除参数并记录 `parent_run_id`。它不出现在 help 中，也不是运维配置。子进程 `stderr` 直接继承到同一容器 sink，`stdout` 仍保留给结构化业务结果。
 
 队列饱和时业务线程不等待；正常关闭最多等待 1 秒排空队列，并直接报告精确丢失行数。浏览器静态客户端没有日志采集端点，只在本地控制台记录不含错误消息和内容的白名单对象。完整字段、配置、保留、隐私和事故流程以[日志运维](../operations/logging.md)为准。
 
@@ -88,15 +88,15 @@ HTTP 外层先移除不受信的 `X-Request-Id`，再生成并返回服务器 UU
 | `apps/server` | 应用可执行文件与公开命令分发 |
 | `apps/server/internal/runtime` | 服务组装、信号、调度和进程监督 |
 | `apps/client` | 共用根 Go 模块的 Wails 客户端；原生端与 Web host 共享 Vite UI |
-| `apps/server/internal/api`、`apps/server/internal/mcp`、`apps/server/internal/openapi` | HTTP/MCP 契约、认证边界和 schema |
+| `apps/server/internal/api`、`apps/server/internal/mcp`、`apps/server/internal/openapi` | HTTP/MCP 契约、认证边界和 schema；REST 操作经 huma（`humago`）注册到标准库 `ServeMux`，OpenAPI 由 Go 类型生成 |
 | `apps/server/internal/auth`、`apps/server/internal/cli` | 身份服务与命令编排 |
 | `apps/server/internal/domain`、`apps/server/internal/provider` | 领域值、Provider 接口和能力注册表 |
 | `apps/server/internal/index`、`apps/server/internal/sources`、`apps/server/internal/transport` | 索引执行、上游适配器和出站 HTTP |
 | `apps/server/internal/recommend`、`apps/server/internal/delivery`、`apps/server/internal/scheduler` | 推荐、持久投递和定时任务 |
 | `apps/server/internal/cfp`、`apps/server/internal/citation` | 征稿采集与引用导出 |
-| `apps/server/internal/storage`、`apps/server/internal/platform` | 持久化与平台设施 |
+| `apps/server/internal/storage`、`apps/server/internal/platform` | 持久化与平台设施；普通 CRUD 查询由 sqlc 生成到 `apps/server/internal/storage/sqlc/`，FTS 与动态 SQL 手写 |
 
-应用只有一个公开可执行文件。测试夹具命令单独位于 `apps/server/cmd/litradar-fixture`。原生辅助程序仍是显式的运行时依赖。
+应用只有一个公开可执行文件。测试夹具命令单独位于 `apps/server/cmd/litradar-fixture`，sqlc schema 快照生成器位于 `apps/server/cmd/sqlc-schema`，两者都不随发行包分发。原生辅助程序仍是显式的运行时依赖。
 
 ## 持久化边界
 
@@ -276,7 +276,7 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 - CLI 参数：`litradar` 子命令的路径、端口、并发和一次运行覆盖
 - `runtime_settings`：外部元数据 key 池、按 CSV 的索引/在线 Provider 路由、CORS、MCP、Cookie 和日志策略
 - `notification_settings`：每个用户的 AI、PushPlus 和追踪偏好
-- 固定前端网络边界：浏览器同源，`next dev` 固定代理到 `127.0.0.1:8001`，发布构建静态导出
+- 固定前端网络边界：浏览器同源，开发服务器（`vp dev`）固定代理到 `127.0.0.1:8001`，发布构建输出由 Web host 嵌入的静态 `dist/`
 - 部署密钥文件：只用于认证和解密数据库中的秘密值
 
 部署后的应用不把 LitRadar 自定义环境变量作为通用配置中心。固定镜像路径和隐藏父子进程关联参数都是不可配置的内部协议；CLI 路径/监听/并发参数、部署密钥文件和测试工具输入仍保留各自边界。数据库 token 为空时，`LITRADAR_CNKI_CAPTCHA_TOKEN` 是国内 CNKI 单次索引探测的唯一来源凭据例外，并在父进程解析后从 child 环境移除。
