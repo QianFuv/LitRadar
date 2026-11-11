@@ -19,8 +19,8 @@ vi.mock('@/lib/use-in-view', () => ({
 }));
 
 const SOURCE: Article = {
-  article_id: '2001',
-  journal_id: '301',
+  article_id: '9223361829786302001',
+  journal_id: '9223361829786300301',
   title: 'Graph Neural Networks for Traffic Forecasting',
   abstract: 'Spatiotemporal traffic prediction.',
   authors: ['Ada Lovelace'],
@@ -38,7 +38,7 @@ const SOURCE: Article = {
 function relatedArticle(id: string, title: string): Article {
   return {
     article_id: id,
-    journal_id: 'journal-2',
+    journal_id: '9223361829786300302',
     title,
     abstract: '',
     authors: ['Someone Else'],
@@ -74,10 +74,13 @@ async function opensRelatedArticleInPlace(): Promise<void> {
     http.get('http://localhost/api/articles/:articleId/related', ({ request, params }) => {
       relatedRequests.push(new URL(request.url));
       return HttpResponse.json(
-        params.articleId === '2001'
+        params.articleId === '9223361829786302001'
           ? [
-              relatedArticle('2011', 'Traffic forecasting with graph neural networks'),
-              relatedArticle('2012', 'Protein folding dynamics'),
+              relatedArticle(
+                '9223361829786302011',
+                'Traffic forecasting with graph neural networks',
+              ),
+              relatedArticle('9223361829786302012', 'Protein folding dynamics'),
             ]
           : [],
       );

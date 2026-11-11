@@ -184,7 +184,7 @@
           "doi": { "type": ["string", "null"] },
           "end_page": { "type": ["string", "null"] },
           "in_press": { "type": ["boolean", "null"] },
-          "issue_id": { "format": "int64", "type": ["integer", "null"] },
+          "issue_id": { "pattern": "^[1-9][0-9]*$", "type": ["string", "null"] },
           "journal_id": { "type": "string" },
           "journal_title": { "type": "string" },
           "number": { "type": ["string", "null"] },
@@ -646,7 +646,7 @@
           "id": { "format": "int64", "type": "integer" },
           "in_press": { "type": ["boolean", "null"] },
           "issn": { "type": ["string", "null"] },
-          "issue_id": { "format": "int64", "type": ["integer", "null"] },
+          "issue_id": { "pattern": "^[1-9][0-9]*$", "type": ["string", "null"] },
           "journal_id": { "type": ["string", "null"] },
           "journal_title": { "type": ["string", "null"] },
           "metadata_status": { "enum": ["available", "missing", "unavailable"], "type": "string" },
@@ -793,7 +793,7 @@
           "graph": { "additionalProperties": {}, "type": "object" },
           "id": { "format": "int64", "type": "integer" },
           "node_count": { "format": "int64", "type": "integer" },
-          "root_article_id": { "format": "int64", "type": "integer" },
+          "root_article_id": { "pattern": "^[1-9][0-9]*$", "type": "string" },
           "title": { "type": "string" },
           "updated_at": { "format": "double", "type": "number" }
         },
@@ -828,7 +828,7 @@
           "db_name": { "type": "string" },
           "id": { "format": "int64", "type": "integer" },
           "node_count": { "format": "int64", "type": "integer" },
-          "root_article_id": { "format": "int64", "type": "integer" },
+          "root_article_id": { "pattern": "^[1-9][0-9]*$", "type": "string" },
           "title": { "type": "string" },
           "updated_at": { "format": "double", "type": "number" }
         },
@@ -1126,7 +1126,7 @@
         "properties": {
           "date": { "type": ["string", "null"] },
           "date_precision": { "enum": ["year", "month", "day"], "type": ["string", "null"] },
-          "issue_id": { "format": "int64", "type": "integer" },
+          "issue_id": { "pattern": "^[1-9][0-9]*$", "type": "string" },
           "journal_id": { "type": "string" },
           "number": { "type": ["string", "null"] },
           "publication_year": { "format": "int64", "type": ["integer", "null"] },
@@ -1620,7 +1620,7 @@
             "type": "object"
           },
           "node_count": { "format": "int64", "maximum": 500, "minimum": 1, "type": "integer" },
-          "root_article_id": { "format": "int64", "minimum": 1, "type": "integer" },
+          "root_article_id": { "pattern": "^[1-9][0-9]*$", "type": "string" },
           "title": {
             "description": "Trimmed graph title.",
             "maxLength": 200,
@@ -2145,7 +2145,7 @@
           "date_precision": { "enum": ["year", "month", "day"], "type": ["string", "null"] },
           "doi": { "type": ["string", "null"] },
           "in_press": { "type": ["boolean", "null"] },
-          "issue_id": { "format": "int64", "type": ["integer", "null"] },
+          "issue_id": { "pattern": "^[1-9][0-9]*$", "type": ["string", "null"] },
           "journal_id": { "type": "string" },
           "journal_title": { "type": "string" },
           "number": { "type": ["string", "null"] },
@@ -5397,7 +5397,7 @@
             "name": "journal_id",
             "schema": {
               "description": "Repeated journal identifier filters.",
-              "items": { "format": "int64", "type": "integer" },
+              "items": { "pattern": "^[1-9][0-9]*$", "type": "string" },
               "maxItems": 500,
               "type": "array"
             }
@@ -5469,8 +5469,8 @@
             "name": "issue_id",
             "schema": {
               "description": "Issue identifier filter.",
-              "format": "int64",
-              "type": "integer"
+              "pattern": "^[1-9][0-9]*$",
+              "type": "string"
             }
           },
           {
@@ -5726,7 +5726,11 @@
             "in": "path",
             "name": "article_id",
             "required": true,
-            "schema": { "description": "Article identifier.", "format": "int64", "type": "integer" }
+            "schema": {
+              "description": "Article identifier.",
+              "pattern": "^[1-9][0-9]*$",
+              "type": "string"
+            }
           },
           {
             "description": "Database name or filename under 'data/index'.",
@@ -5878,7 +5882,11 @@
             "in": "path",
             "name": "article_id",
             "required": true,
-            "schema": { "description": "Article identifier.", "format": "int64", "type": "integer" }
+            "schema": {
+              "description": "Article identifier.",
+              "pattern": "^[1-9][0-9]*$",
+              "type": "string"
+            }
           },
           {
             "description": "Database name or filename under 'data/index'.",
@@ -6033,7 +6041,11 @@
             "in": "path",
             "name": "article_id",
             "required": true,
-            "schema": { "description": "Article identifier.", "format": "int64", "type": "integer" }
+            "schema": {
+              "description": "Article identifier.",
+              "pattern": "^[1-9][0-9]*$",
+              "type": "string"
+            }
           },
           {
             "description": "Database name or filename under 'data/index'.",
@@ -6185,7 +6197,11 @@
             "in": "path",
             "name": "article_id",
             "required": true,
-            "schema": { "description": "Article identifier.", "format": "int64", "type": "integer" }
+            "schema": {
+              "description": "Article identifier.",
+              "pattern": "^[1-9][0-9]*$",
+              "type": "string"
+            }
           },
           {
             "description": "Database name or filename under 'data/index'.",
@@ -6353,8 +6369,8 @@
             "required": true,
             "schema": {
               "description": "Source article identifier.",
-              "format": "int64",
-              "type": "integer"
+              "pattern": "^[1-9][0-9]*$",
+              "type": "string"
             }
           },
           {
@@ -10622,9 +10638,8 @@
             "required": true,
             "schema": {
               "description": "Article identifier.",
-              "format": "int64",
-              "minimum": 1,
-              "type": "integer"
+              "pattern": "^[1-9][0-9]*$",
+              "type": "string"
             }
           },
           {
@@ -12463,9 +12478,8 @@
             "required": true,
             "schema": {
               "description": "Article identifier.",
-              "format": "int64",
-              "minimum": 1,
-              "type": "integer"
+              "pattern": "^[1-9][0-9]*$",
+              "type": "string"
             }
           },
           {
@@ -13943,8 +13957,8 @@
             "name": "journal_id",
             "schema": {
               "description": "Journal identifier filter.",
-              "format": "int64",
-              "type": "integer"
+              "pattern": "^[1-9][0-9]*$",
+              "type": "string"
             }
           },
           {
@@ -14119,7 +14133,11 @@
             "in": "path",
             "name": "issue_id",
             "required": true,
-            "schema": { "description": "Issue identifier.", "format": "int64", "type": "integer" }
+            "schema": {
+              "description": "Issue identifier.",
+              "pattern": "^[1-9][0-9]*$",
+              "type": "string"
+            }
           },
           {
             "description": "Database name or filename under 'data/index'.",
@@ -14510,7 +14528,11 @@
             "in": "path",
             "name": "journal_id",
             "required": true,
-            "schema": { "description": "Journal identifier.", "format": "int64", "type": "integer" }
+            "schema": {
+              "description": "Journal identifier.",
+              "pattern": "^[1-9][0-9]*$",
+              "type": "string"
+            }
           },
           {
             "description": "Database name or filename under 'data/index'.",
@@ -16634,9 +16656,8 @@
             "required": true,
             "schema": {
               "description": "Positive journal identifier.",
-              "format": "int64",
-              "minimum": 1,
-              "type": "integer"
+              "pattern": "^[1-9][0-9]*$",
+              "type": "string"
             }
           },
           {

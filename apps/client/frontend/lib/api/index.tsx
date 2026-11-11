@@ -105,7 +105,7 @@ async function getWeeklyUpdateArticles(
       params: {
         query: {
           db: request.dbName,
-          journal_id: Number(request.journalId),
+          journal_id: request.journalId,
           window_end: request.windowEnd,
           limit: request.limit ?? 50,
           ...(request.query ? { q: request.query } : {}),
@@ -203,7 +203,7 @@ export function journalRatingsQuery(dbName: string) {
 export function journalQuery(journalId: JournalId, dbName: string) {
   return apiQuery(
     $api.queryOptions('get', '/api/journals/{journal_id}', {
-      params: { path: { journal_id: Number(journalId) }, query: { db: dbName } },
+      params: { path: { journal_id: journalId }, query: { db: dbName } },
     }),
   );
 }
@@ -218,7 +218,7 @@ export function journalQuery(journalId: JournalId, dbName: string) {
 export function articleQuery(articleId: ArticleId, dbName: string) {
   return apiQuery(
     $api.queryOptions('get', '/api/articles/{article_id}', {
-      params: { path: { article_id: Number(articleId) }, query: { db: dbName } },
+      params: { path: { article_id: articleId }, query: { db: dbName } },
     }),
   );
 }
@@ -234,7 +234,7 @@ export function articleQuery(articleId: ArticleId, dbName: string) {
 export function relatedArticlesQuery(articleId: ArticleId, dbName: string, limit: number) {
   return apiQuery(
     $api.queryOptions('get', '/api/articles/{article_id}/related', {
-      params: { path: { article_id: Number(articleId) }, query: { db: dbName, limit } },
+      params: { path: { article_id: articleId }, query: { db: dbName, limit } },
     }),
   );
 }
@@ -249,7 +249,7 @@ export function relatedArticlesQuery(articleId: ArticleId, dbName: string, limit
 export function articleAccessQuery(articleId: ArticleId, dbName: string) {
   return apiQuery(
     $api.queryOptions('get', '/api/articles/{article_id}/access', {
-      params: { path: { article_id: Number(articleId) }, query: { db: dbName } },
+      params: { path: { article_id: articleId }, query: { db: dbName } },
     }),
   );
 }
@@ -277,7 +277,7 @@ export function weeklyUpdateArticlesQuery(request: WeeklyArticlePageRequest) {
     params: {
       query: {
         db: request.dbName,
-        journal_id: Number(request.journalId),
+        journal_id: request.journalId,
         window_end: request.windowEnd,
         limit: request.limit ?? 50,
         ...(request.query ? { q: request.query } : {}),

@@ -20,25 +20,25 @@ import (
 )
 
 type fixtureArticle struct {
-	ArticleID       identity.ID `json:"article_id"`
-	JournalID       identity.ID `json:"journal_id"`
-	IssueID         *int64      `json:"issue_id"`
-	Title           string      `json:"title"`
-	PublicationYear *int64      `json:"publication_year"`
-	Date            *string     `json:"date"`
-	DatePrecision   *string     `json:"date_precision"`
-	Authors         []string    `json:"authors"`
-	StartPage       *string     `json:"start_page"`
-	EndPage         *string     `json:"end_page"`
-	Abstract        *string     `json:"abstract"`
-	Doi             *string     `json:"doi"`
-	Pmid            *string     `json:"pmid"`
-	InPress         *bool       `json:"in_press"`
-	OpenAccess      *bool       `json:"open_access"`
-	RetractionDois  []string    `json:"retraction_dois"`
-	JournalTitle    string      `json:"journal_title"`
-	Volume          *string     `json:"volume"`
-	Number          *string     `json:"number"`
+	ArticleID       identity.ID  `json:"article_id"`
+	JournalID       identity.ID  `json:"journal_id"`
+	IssueID         *identity.ID `json:"issue_id"`
+	Title           string       `json:"title"`
+	PublicationYear *int64       `json:"publication_year"`
+	Date            *string      `json:"date"`
+	DatePrecision   *string      `json:"date_precision"`
+	Authors         []string     `json:"authors"`
+	StartPage       *string      `json:"start_page"`
+	EndPage         *string      `json:"end_page"`
+	Abstract        *string      `json:"abstract"`
+	Doi             *string      `json:"doi"`
+	Pmid            *string      `json:"pmid"`
+	InPress         *bool        `json:"in_press"`
+	OpenAccess      *bool        `json:"open_access"`
+	RetractionDois  []string     `json:"retraction_dois"`
+	JournalTitle    string       `json:"journal_title"`
+	Volume          *string      `json:"volume"`
+	Number          *string      `json:"number"`
 }
 
 type streamingAsset struct {
@@ -162,7 +162,7 @@ func TestRestListenerWireContract(t *testing.T) {
 		_ = JSON(writer, 200, page)
 	})
 	mux.HandleFunc("GET /api/announcements", func(writer http.ResponseWriter, request *http.Request) { _ = JSON(writer, 200, []any{}) })
-	mux.HandleFunc("GET /api/articles/9001/abstract", func(writer http.ResponseWriter, request *http.Request) {
+	mux.HandleFunc("GET /api/articles/9223361829786370983/abstract", func(writer http.ResponseWriter, request *http.Request) {
 		Redirect(writer, "https://doi.org/10.1234/fixture")
 	})
 	mux.HandleFunc("GET /_next/static/chunks/app-abc123.js", func(writer http.ResponseWriter, request *http.Request) {
@@ -183,7 +183,7 @@ func TestRestListenerWireContract(t *testing.T) {
 		{"query-error", "/api/articles?limit=abc", "GET", "Bearer synthetic-fixture", "", 400, `{"title":"Bad Request","status":400,"detail":"Invalid integer for limit"}`, true},
 		{"page", "/api/articles?db=scenario.sqlite&limit=10&offset=0&include_total=true", "GET", "Bearer synthetic-fixture", "", 200, string(expected), true},
 		{"empty-array", "/api/announcements", "GET", "", "", 200, `[]`, false},
-		{"redirect", "/api/articles/9001/abstract?db=fixture", "GET", "", "", 307, "", false},
+		{"redirect", "/api/articles/9223361829786370983/abstract?db=fixture", "GET", "", "", 307, "", false},
 		{"asset", "/_next/static/chunks/app-abc123.js", "GET", "", "", 200, "console.log('asset');", false},
 		{"range", "/_next/static/chunks/app-abc123.js", "GET", "", "bytes=0-6", 206, "console", false},
 		{"head", "/_next/static/chunks/app-abc123.js", "HEAD", "", "", 200, "", false},

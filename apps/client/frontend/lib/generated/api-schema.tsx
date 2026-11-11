@@ -2005,8 +2005,7 @@ export interface components {
       doi?: string | null;
       end_page?: string | null;
       in_press?: boolean | null;
-      /** Format: int64 */
-      issue_id?: number | null;
+      issue_id?: string | null;
       journal_id: string;
       journal_title: string;
       number?: string | null;
@@ -2311,8 +2310,7 @@ export interface components {
       id: number;
       in_press?: boolean | null;
       issn?: string | null;
-      /** Format: int64 */
-      issue_id?: number | null;
+      issue_id?: string | null;
       journal_id?: string | null;
       journal_title?: string | null;
       /** @enum {string} */
@@ -2390,8 +2388,7 @@ export interface components {
       id: number;
       /** Format: int64 */
       node_count: number;
-      /** Format: int64 */
-      root_article_id: number;
+      root_article_id: string;
       title: string;
       /** Format: double */
       updated_at: number;
@@ -2408,8 +2405,7 @@ export interface components {
       id: number;
       /** Format: int64 */
       node_count: number;
-      /** Format: int64 */
-      root_article_id: number;
+      root_article_id: string;
       title: string;
       /** Format: double */
       updated_at: number;
@@ -2539,8 +2535,7 @@ export interface components {
       date?: string | null;
       /** @enum {string|null} */
       date_precision?: 'year' | 'month' | 'day' | null;
-      /** Format: int64 */
-      issue_id: number;
+      issue_id: string;
       journal_id: string;
       number?: string | null;
       /** Format: int64 */
@@ -2824,8 +2819,7 @@ export interface components {
       };
       /** Format: int64 */
       node_count: number;
-      /** Format: int64 */
-      root_article_id: number;
+      root_article_id: string;
       /** @description Trimmed graph title. */
       title: string;
     };
@@ -3134,8 +3128,7 @@ export interface components {
       date_precision?: 'year' | 'month' | 'day' | null;
       doi?: string | null;
       in_press?: boolean | null;
-      /** Format: int64 */
-      issue_id?: number | null;
+      issue_id?: string | null;
       journal_id: string;
       journal_title: string;
       number?: string | null;
@@ -6399,9 +6392,9 @@ export interface operations {
         /** @description Whether to include the full filtered row count; defaults to true without a cursor and false with a cursor. */
         include_total?: boolean;
         /** @description Issue identifier filter. */
-        issue_id?: number;
+        issue_id?: string;
         /** @description Repeated journal identifier filters. */
-        journal_id?: number[];
+        journal_id?: string[];
         /** @description Page size. */
         limit?: number;
         /** @description Offset row count. */
@@ -6568,7 +6561,7 @@ export interface operations {
       header?: never;
       path: {
         /** @description Article identifier. */
-        article_id: number;
+        article_id: string;
       };
       cookie?: never;
     };
@@ -6715,7 +6708,7 @@ export interface operations {
       header?: never;
       path: {
         /** @description Article identifier. */
-        article_id: number;
+        article_id: string;
       };
       cookie?: never;
     };
@@ -6864,7 +6857,7 @@ export interface operations {
       header?: never;
       path: {
         /** @description Article identifier. */
-        article_id: number;
+        article_id: string;
       };
       cookie?: never;
     };
@@ -7011,7 +7004,7 @@ export interface operations {
       header?: never;
       path: {
         /** @description Article identifier. */
-        article_id: number;
+        article_id: string;
       };
       cookie?: never;
     };
@@ -7171,7 +7164,7 @@ export interface operations {
       header?: never;
       path: {
         /** @description Source article identifier. */
-        article_id: number;
+        article_id: string;
       };
       cookie?: never;
     };
@@ -11489,7 +11482,7 @@ export interface operations {
     parameters: {
       query: {
         /** @description Article identifier. */
-        article_id: number;
+        article_id: string;
         /** @description Source database name. */
         db_name?: string;
       };
@@ -12660,7 +12653,7 @@ export interface operations {
       header?: never;
       path: {
         /** @description Article identifier. */
-        article_id: number;
+        article_id: string;
         /** @description Folder row identifier. */
         folder_id: number;
       };
@@ -14703,7 +14696,7 @@ export interface operations {
         /** @description Database name or filename under 'data/index'. */
         db?: string;
         /** @description Journal identifier filter. */
-        journal_id?: number;
+        journal_id?: string;
         /** @description Page size. */
         limit?: number;
         /** @description Offset row count. */
@@ -14860,7 +14853,7 @@ export interface operations {
       header?: never;
       path: {
         /** @description Issue identifier. */
-        issue_id: number;
+        issue_id: string;
       };
       cookie?: never;
     };
@@ -15171,7 +15164,7 @@ export interface operations {
       header?: never;
       path: {
         /** @description Journal identifier. */
-        journal_id: number;
+        journal_id: string;
       };
       cookie?: never;
     };
@@ -17313,7 +17306,7 @@ export interface operations {
         /** @description Database name or filename under data/index. */
         db: string;
         /** @description Positive journal identifier. */
-        journal_id: number;
+        journal_id: string;
         /** @description Page size from 1 through 200. */
         limit?: number;
         /** @description Optional simple full-text phrase. */

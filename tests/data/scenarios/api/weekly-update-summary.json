@@ -10,7 +10,7 @@
       "new_article_count": 1,
       "journals": [
         {
-          "journal_id": "101",
+          "journal_id": "9223372036854775783",
           "journal_title": "Fixture Journal",
           "new_article_count": 1
         }

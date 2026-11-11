@@ -132,12 +132,12 @@ export function buildRelationSearch(article: Pick<Article, 'article_id'>, dbName
 export function buildSavedRelationSearch(favorite: {
   db_name: string;
   id: number;
-  root_article_id: number;
+  root_article_id: string;
 }) {
   return {
     view: 'relations',
     db: favorite.db_name,
-    article: String(favorite.root_article_id),
+    article: favorite.root_article_id,
     saved: favorite.id,
   } satisfies WorkspaceSearch;
 }

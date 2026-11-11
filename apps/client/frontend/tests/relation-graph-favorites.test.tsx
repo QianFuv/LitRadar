@@ -13,20 +13,27 @@ import { RelationGraphFavoritesContent } from '@/components/favorites/relation-g
 import { RelationGraphFavoriteControls } from '@/components/relations/relation-graph-favorite-controls';
 import type { Article, RelationGraphFavorite, RelationGraphFavoriteSummary } from '@/lib/api';
 import { createRelationGraph, expandRelationNode, type RelationGraph } from '@/lib/relation-graph';
+import { hashedId } from '@/tests/mocks/ids';
 import { server } from '@/tests/mocks/server';
 import { readRouterUrl, renderWithQuery } from '@/tests/render';
 
 const GRAPHS_URL = 'http://localhost/api/favorites/graphs';
-const RELATION_URL = '/?view=relations&db=fixture.sqlite&article=1&saved=5';
+const RELATION_URL = `/?view=relations&db=fixture.sqlite&article=${hashedId(1)}&saved=5`;
 
 /**
  * Build a minimal article.
  *
- * @param id - Numeric article identifier.
+ * @param seed - Fixture number of the hashed article id, also shown in the title.
  * @returns Article.
  */
-function article(id: string): Article {
-  return { article_id: id, journal_id: 'j', title: `Article ${id}`, abstract: '', authors: [] };
+function article(seed: number): Article {
+  return {
+    article_id: hashedId(seed),
+    journal_id: hashedId(9),
+    title: `Article ${seed}`,
+    abstract: '',
+    authors: [],
+  };
 }
 
 /**
@@ -35,7 +42,7 @@ function article(id: string): Article {
  * @returns Relation graph of three nodes.
  */
 function threeNodeGraph(): RelationGraph {
-  return expandRelationNode(createRelationGraph(article('1')), '1', [article('2'), article('3')]);
+  return expandRelationNode(createRelationGraph(article(1)), hashedId(1), [article(2), article(3)]);
 }
 
 /**
@@ -50,7 +57,7 @@ function savedGraph(id: number, graph: RelationGraph): RelationGraphFavorite {
     id,
     title: '以「Article 1」为中心的关系图',
     db_name: 'fixture.sqlite',
-    root_article_id: 1,
+    root_article_id: hashedId(1),
     node_count: Object.keys(graph.nodes).length,
     created_at: 1_700_000_000,
     updated_at: 1_700_000_000,
@@ -97,9 +104,9 @@ async function savesNewGraph(): Promise<void> {
   expect(body).toMatchObject({
     title: '以「Article 1」为中心的关系图',
     db_name: 'fixture.sqlite',
-    root_article_id: 1,
+    root_article_id: hashedId(1),
     node_count: 3,
-    graph: { rootId: '1', expandedIds: ['1'] },
+    graph: { rootId: hashedId(1), expandedIds: [hashedId(1)] },
   });
   expect(screen.getByTestId('relation-graph-favorite-status')).toHaveTextContent('已收藏关系图。');
 }
@@ -107,7 +114,7 @@ async function savesNewGraph(): Promise<void> {
 /** A changed linked graph is flagged, resets to the saved state, and saves from the chip. */
 async function flagsUpdatesAndResetsChangedGraph(): Promise<void> {
   const saved = threeNodeGraph();
-  const current = expandRelationNode(saved, '2', [article('4')]);
+  const current = expandRelationNode(saved, hashedId(2), [article(4)]);
   let updateBody: Record<string, unknown> | null = null;
   server.use(
     http.get(`${GRAPHS_URL}/5`, () => HttpResponse.json(savedGraph(5, saved))),
@@ -132,7 +139,11 @@ async function flagsUpdatesAndResetsChangedGraph(): Promise<void> {
   await user.click(trigger);
   await user.click(await screen.findByRole('menuitem', { name: '重置为收藏时的状态' }));
   expect(callbacks.onReset).toHaveBeenCalledOnce();
-  expect(Object.keys(callbacks.onReset.mock.calls[0][0].nodes).sort()).toEqual(['1', '2', '3']);
+  expect(Object.keys(callbacks.onReset.mock.calls[0][0].nodes).sort()).toEqual([
+    hashedId(1),
+    hashedId(2),
+    hashedId(3),
+  ]);
 
   await user.click(trigger);
   await user.click(await screen.findByRole('menuitem', { name: '保存改动到收藏' }));
@@ -178,7 +189,7 @@ async function ignoresLayoutDrift(): Promise<void> {
  */
 async function renderChangedGraphWithLink() {
   const saved = threeNodeGraph();
-  const current = expandRelationNode(saved, '2', [article('4')]);
+  const current = expandRelationNode(saved, hashedId(2), [article(4)]);
   const updates: unknown[] = [];
   server.use(
     http.get(`${GRAPHS_URL}/5`, () => HttpResponse.json(savedGraph(5, saved))),
@@ -274,7 +285,7 @@ function summary(id: number, title: string): RelationGraphFavoriteSummary {
     id,
     title,
     db_name: 'fixture.sqlite',
-    root_article_id: 40 + id,
+    root_article_id: hashedId(40 + id),
     node_count: 3,
     created_at: 1_700_000_000,
     updated_at: 1_700_000_000,
@@ -304,7 +315,7 @@ async function managesSavedGraphs(): Promise<void> {
   const list = await screen.findByRole('list', { name: '收藏的关系图' });
   expect(within(list).getByRole('link', { name: 'First graph' })).toHaveAttribute(
     'href',
-    '/?view=relations&db=fixture.sqlite&article=41&saved=1',
+    `/?view=relations&db=fixture.sqlite&article=${hashedId(41)}&saved=1`,
   );
   expect(screen.getByRole('radio', { name: '关系图' })).toHaveAttribute('aria-checked', 'true');
 

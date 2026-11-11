@@ -17,6 +17,7 @@ import { checkFavorite, checkFavoritesBatch, type ArticleId, type FavoriteCheck 
 import { createTestQueryClient } from '@/tests/render';
 import { FAVORITE_CHECK_BATCH_QUERY_PREFIX, favoriteCheckQuery } from '@/lib/api';
 import { server } from '@/tests/mocks/server';
+import { hashedId } from '@/tests/mocks/ids';
 import { isRecord, isString } from '@/lib/type-guards';
 
 type BatchRequest = {
@@ -91,33 +92,41 @@ async function requestsOnlyMissingIds(): Promise<void> {
   batchRequests.length = 0;
   server.use(http.post('http://localhost/api/favorites/check/batch', favoriteBatchResponse));
   const queryClient = createTestQueryClient();
-  queryClient.setQueryData<FavoriteCheck[]>(favoriteCheckQuery('1001', 'fixture.sqlite').queryKey, [
-    { folder_id: 9, folder_name: 'Cached' },
-  ]);
+  queryClient.setQueryData<FavoriteCheck[]>(
+    favoriteCheckQuery('9223361829786301001', 'fixture.sqlite').queryKey,
+    [{ folder_id: 9, folder_name: 'Cached' }],
+  );
 
   const { result, rerender } = renderHook(useFavoriteChecksHarness, {
     initialProps: {
-      articleIds: ['1003', '1001', '1002', '1002'],
+      articleIds: [
+        '9223361829786301003',
+        '9223361829786301001',
+        '9223361829786301002',
+        '9223361829786301002',
+      ],
       dbName: 'fixture.sqlite',
       userId: 21,
     },
     wrapper: createQueryWrapper(queryClient),
   });
 
-  await waitFor(() => expect(result.current.favoriteChecksByArticle['1003']).toHaveLength(1));
+  await waitFor(() =>
+    expect(result.current.favoriteChecksByArticle['9223361829786301003']).toHaveLength(1),
+  );
   expect(batchRequests).toEqual([
     {
-      article_ids: ['1002', '1003'],
+      article_ids: ['9223361829786301002', '9223361829786301003'],
       db_name: 'fixture.sqlite',
     },
   ]);
-  expect(result.current.favoriteChecksByArticle['1001']).toEqual([
+  expect(result.current.favoriteChecksByArticle['9223361829786301001']).toEqual([
     { folder_id: 9, folder_name: 'Cached' },
   ]);
   expect(result.current.isFavoriteStatePending).toBe(false);
 
   rerender({
-    articleIds: ['1002', '1003', '1001'],
+    articleIds: ['9223361829786301002', '9223361829786301003', '9223361829786301001'],
     dbName: 'fixture.sqlite',
     userId: 21,
   });
@@ -132,7 +141,7 @@ async function isolatesUserAndDatabaseScopes(): Promise<void> {
   batchRequests.length = 0;
   server.use(http.post('http://localhost/api/favorites/check/batch', favoriteBatchResponse));
   const queryClient = createTestQueryClient();
-  const articleIds = ['1900'];
+  const articleIds = ['9223361829786301900'];
   const { result, rerender } = renderHook(useFavoriteChecksHarness, {
     initialProps: {
       articleIds,
@@ -143,8 +152,8 @@ async function isolatesUserAndDatabaseScopes(): Promise<void> {
   });
 
   await waitFor(() =>
-    expect(result.current.favoriteChecksByArticle['1900']?.[0]?.folder_name).toBe(
-      'first.sqlite:1900',
+    expect(result.current.favoriteChecksByArticle['9223361829786301900']?.[0]?.folder_name).toBe(
+      'first.sqlite:9223361829786301900',
     ),
   );
 
@@ -154,13 +163,13 @@ async function isolatesUserAndDatabaseScopes(): Promise<void> {
     userId: 22,
   });
   await waitFor(() =>
-    expect(result.current.favoriteChecksByArticle['1900']?.[0]?.folder_name).toBe(
-      'second.sqlite:1900',
+    expect(result.current.favoriteChecksByArticle['9223361829786301900']?.[0]?.folder_name).toBe(
+      'second.sqlite:9223361829786301900',
     ),
   );
   expect(batchRequests).toEqual([
-    { article_ids: ['1900'], db_name: 'first.sqlite' },
-    { article_ids: ['1900'], db_name: 'second.sqlite' },
+    { article_ids: ['9223361829786301900'], db_name: 'first.sqlite' },
+    { article_ids: ['9223361829786301900'], db_name: 'second.sqlite' },
   ]);
 }
 
@@ -173,7 +182,7 @@ function disablesInvalidScopes(): void {
   const queryClient = createTestQueryClient();
   const { result, rerender } = renderHook(useFavoriteChecksHarness, {
     initialProps: {
-      articleIds: ['1001'],
+      articleIds: ['9223361829786301001'],
       dbName: 'fixture.sqlite',
       userId: null,
     } as FavoriteChecksHarnessProps,
@@ -187,7 +196,7 @@ function disablesInvalidScopes(): void {
     retryFavoriteChecks: expect.any(Function),
   });
 
-  rerender({ articleIds: ['1001'], dbName: '', userId: 21 });
+  rerender({ articleIds: ['9223361829786301001'], dbName: '', userId: 21 });
   expect(result.current).toEqual({
     favoriteChecksByArticle: {},
     isFavoriteStatePending: false,
@@ -212,7 +221,9 @@ async function propagatesFavoriteLookupFailure(): Promise<void> {
       HttpResponse.json({ detail: 'Favorite lookup unavailable' }, { status: 503 }),
     ),
   );
-  await expect(checkFavorite('101', 'fixture.sqlite')).rejects.toMatchObject({ status: 503 });
+  await expect(checkFavorite('9223361829786300101', 'fixture.sqlite')).rejects.toMatchObject({
+    status: 503,
+  });
 }
 
 /** Verify failed batch lookups cannot poison the cache with an empty successful record. */
@@ -222,7 +233,9 @@ async function propagatesFavoriteBatchFailure(): Promise<void> {
       HttpResponse.json({ detail: 'Favorite lookup unavailable' }, { status: 503 }),
     ),
   );
-  await expect(checkFavoritesBatch(['101'], 'fixture.sqlite')).rejects.toMatchObject({
+  await expect(
+    checkFavoritesBatch(['9223361829786300101'], 'fixture.sqlite'),
+  ).rejects.toMatchObject({
     status: 503,
   });
 }
@@ -234,18 +247,23 @@ async function retriesUnavailableBatchMembership(): Promise<void> {
     http.post('http://localhost/api/favorites/check/batch', () =>
       shouldFail
         ? HttpResponse.json({ detail: 'Favorite lookup unavailable' }, { status: 503 })
-        : HttpResponse.json([{ article_id: '101', folders: [] }]),
+        : HttpResponse.json([{ article_id: '9223361829786300101', folders: [] }]),
     ),
   );
   const queryClient = createTestQueryClient();
-  const { result } = renderHook(() => useFavoriteChecks(['101'], 'fixture.sqlite', 21), {
-    wrapper: createQueryWrapper(queryClient),
-  });
+  const { result } = renderHook(
+    () => useFavoriteChecks(['9223361829786300101'], 'fixture.sqlite', 21),
+    {
+      wrapper: createQueryWrapper(queryClient),
+    },
+  );
   await waitFor(() => expect(result.current.favoriteStateError).toMatchObject({ status: 503 }));
-  expect(result.current.favoriteChecksByArticle['101']).toBeUndefined();
+  expect(result.current.favoriteChecksByArticle['9223361829786300101']).toBeUndefined();
   shouldFail = false;
   act(() => result.current.retryFavoriteChecks());
-  await waitFor(() => expect(result.current.favoriteChecksByArticle['101']).toEqual([]));
+  await waitFor(() =>
+    expect(result.current.favoriteChecksByArticle['9223361829786300101']).toEqual([]),
+  );
   expect(result.current.favoriteStateError).toBeNull();
 }
 
@@ -256,22 +274,29 @@ async function refreshesResolvedMembershipAfterInvalidation(): Promise<void> {
     http.post('http://localhost/api/favorites/check/batch', () =>
       HttpResponse.json([
         {
-          article_id: '101',
+          article_id: '9223361829786300101',
           folders: isFavorited ? [{ folder_id: 3, folder_name: 'Reading' }] : [],
         },
       ]),
     ),
   );
   const queryClient = createTestQueryClient();
-  const { result } = renderHook(() => useFavoriteChecks(['101'], 'fixture.sqlite', 21), {
-    wrapper: createQueryWrapper(queryClient),
-  });
-  await waitFor(() => expect(result.current.favoriteChecksByArticle['101']).toHaveLength(1));
+  const { result } = renderHook(
+    () => useFavoriteChecks(['9223361829786300101'], 'fixture.sqlite', 21),
+    {
+      wrapper: createQueryWrapper(queryClient),
+    },
+  );
+  await waitFor(() =>
+    expect(result.current.favoriteChecksByArticle['9223361829786300101']).toHaveLength(1),
+  );
   isFavorited = false;
   await act(async () => {
     await queryClient.invalidateQueries({ queryKey: FAVORITE_CHECK_BATCH_QUERY_PREFIX });
   });
-  await waitFor(() => expect(result.current.favoriteChecksByArticle['101']).toEqual([]));
+  await waitFor(() =>
+    expect(result.current.favoriteChecksByArticle['9223361829786300101']).toEqual([]),
+  );
 }
 
 /** Verify invalidating a long visible list respects the server's five-hundred-item bound. */
@@ -288,7 +313,7 @@ async function boundsLargeMembershipRefreshes(): Promise<void> {
     }),
   );
   const queryClient = createTestQueryClient();
-  const articleIds = Array.from({ length: 600 }, (_, index) => String(index + 1));
+  const articleIds = Array.from({ length: 600 }, (_, index) => hashedId(index + 1));
   const { result } = renderHook(() => useFavoriteChecks(articleIds, 'fixture.sqlite', 21), {
     wrapper: createQueryWrapper(queryClient),
   });
@@ -319,7 +344,7 @@ async function retriesOnlyFailedMembershipBatch(): Promise<void> {
     }),
   );
   const queryClient = createTestQueryClient();
-  const articleIds = Array.from({ length: 600 }, (_, index) => String(index + 1));
+  const articleIds = Array.from({ length: 600 }, (_, index) => hashedId(index + 1));
   const { result } = renderHook(() => useFavoriteChecks(articleIds, 'fixture.sqlite', 21), {
     wrapper: createQueryWrapper(queryClient),
   });
@@ -375,7 +400,7 @@ async function retainsLinearMembershipStorage(): Promise<void> {
   });
 
   for (let page = 1; page <= 20; page += 1) {
-    const articleIds = Array.from(Array<number>(page * 50).keys(), (index) => String(index + 1));
+    const articleIds = Array.from(Array<number>(page * 50).keys(), (index) => hashedId(index + 1));
     rerender({ articleIds, dbName: 'fixture.sqlite', userId: 21 });
     await waitFor(() =>
       expect(Object.keys(result.current.favoriteChecksByArticle)).toHaveLength(articleIds.length),
@@ -413,20 +438,35 @@ async function preservesIndividualFreshness(): Promise<void> {
   const queryClient = createTestQueryClient();
   const currentTime = Date.now();
   const originalUpdatedAt = currentTime - 4 * 60 * 1000;
-  const firstArticleKey = favoriteCheckQuery('101', 'fixture.sqlite').queryKey;
+  const firstArticleKey = favoriteCheckQuery('9223361829786300101', 'fixture.sqlite').queryKey;
   queryClient.setQueryData(firstArticleKey, [], { updatedAt: originalUpdatedAt });
   const { result, rerender } = renderHook(useFavoriteChecksHarness, {
-    initialProps: { articleIds: ['101', '102'], dbName: 'fixture.sqlite', userId: 21 },
+    initialProps: {
+      articleIds: ['9223361829786300101', '9223361829786300102'],
+      dbName: 'fixture.sqlite',
+      userId: 21,
+    },
     wrapper: createQueryWrapper(queryClient),
   });
-  await waitFor(() => expect(result.current.favoriteChecksByArticle['102']).toEqual([]));
-  expect(requestedIds).toEqual([['102']]);
+  await waitFor(() =>
+    expect(result.current.favoriteChecksByArticle['9223361829786300102']).toEqual([]),
+  );
+  expect(requestedIds).toEqual([['9223361829786300102']]);
   expect(queryClient.getQueryState(firstArticleKey)?.dataUpdatedAt).toBe(originalUpdatedAt);
 
   vi.spyOn(Date, 'now').mockReturnValue(currentTime + 2 * 60 * 1000);
-  rerender({ articleIds: ['101', '102', '103'], dbName: 'fixture.sqlite', userId: 21 });
-  await waitFor(() => expect(result.current.favoriteChecksByArticle['103']).toEqual([]));
-  expect(requestedIds).toEqual([['102'], ['101', '103']]);
+  rerender({
+    articleIds: ['9223361829786300101', '9223361829786300102', '9223361829786300103'],
+    dbName: 'fixture.sqlite',
+    userId: 21,
+  });
+  await waitFor(() =>
+    expect(result.current.favoriteChecksByArticle['9223361829786300103']).toEqual([]),
+  );
+  expect(requestedIds).toEqual([
+    ['9223361829786300102'],
+    ['9223361829786300101', '9223361829786300103'],
+  ]);
 }
 
 /** Verify overlapping consumers share mutations and survive user-wide invalidation. */
@@ -443,32 +483,49 @@ async function synchronizesOverlappingConsumers(): Promise<void> {
   );
   const queryClient = createTestQueryClient();
   const wrapper = createQueryWrapper(queryClient);
-  const first = renderHook(() => useFavoriteChecks(['101', '102'], 'fixture.sqlite', 21), {
-    wrapper,
-  });
-  await waitFor(() => expect(first.result.current.favoriteChecksByArticle['102']).toEqual([]));
-  const second = renderHook(() => useFavoriteChecks(['102', '103'], 'fixture.sqlite', 21), {
-    wrapper,
-  });
-  await waitFor(() => expect(second.result.current.favoriteChecksByArticle['103']).toEqual([]));
-  expect(requestedIds).toEqual([['101', '102'], ['103']]);
+  const first = renderHook(
+    () => useFavoriteChecks(['9223361829786300101', '9223361829786300102'], 'fixture.sqlite', 21),
+    {
+      wrapper,
+    },
+  );
+  await waitFor(() =>
+    expect(first.result.current.favoriteChecksByArticle['9223361829786300102']).toEqual([]),
+  );
+  const second = renderHook(
+    () => useFavoriteChecks(['9223361829786300102', '9223361829786300103'], 'fixture.sqlite', 21),
+    {
+      wrapper,
+    },
+  );
+  await waitFor(() =>
+    expect(second.result.current.favoriteChecksByArticle['9223361829786300103']).toEqual([]),
+  );
+  expect(requestedIds).toEqual([
+    ['9223361829786300101', '9223361829786300102'],
+    ['9223361829786300103'],
+  ]);
 
   const changedMembership = [{ folder_id: 9, folder_name: 'Reading' }];
   await act(() =>
     queryClient.setQueryData(
-      favoriteCheckQuery('102', 'fixture.sqlite').queryKey,
+      favoriteCheckQuery('9223361829786300102', 'fixture.sqlite').queryKey,
       changedMembership,
     ),
   );
   await waitFor(() => {
-    expect(first.result.current.favoriteChecksByArticle['102']).toEqual(changedMembership);
-    expect(second.result.current.favoriteChecksByArticle['102']).toEqual(changedMembership);
+    expect(first.result.current.favoriteChecksByArticle['9223361829786300102']).toEqual(
+      changedMembership,
+    );
+    expect(second.result.current.favoriteChecksByArticle['9223361829786300102']).toEqual(
+      changedMembership,
+    );
   });
 
   await act(async () => invalidateFavoriteMemberships(queryClient));
   await waitFor(() => {
-    expect(first.result.current.favoriteChecksByArticle['102']).toEqual([]);
-    expect(second.result.current.favoriteChecksByArticle['102']).toEqual([]);
+    expect(first.result.current.favoriteChecksByArticle['9223361829786300102']).toEqual([]);
+    expect(second.result.current.favoriteChecksByArticle['9223361829786300102']).toEqual([]);
   });
 }
 
@@ -488,19 +545,22 @@ async function preventsCancelledMembershipWrites(): Promise<void> {
       requestSignal = request.signal;
       await responseGate;
       completeResponse();
-      return HttpResponse.json([{ article_id: '101', folders: [] }]);
+      return HttpResponse.json([{ article_id: '9223361829786300101', folders: [] }]);
     }),
   );
   const queryClient = createTestQueryClient();
-  const { result } = renderHook(() => useFavoriteChecks(['101'], 'fixture.sqlite', 21), {
-    wrapper: createQueryWrapper(queryClient),
-  });
+  const { result } = renderHook(
+    () => useFavoriteChecks(['9223361829786300101'], 'fixture.sqlite', 21),
+    {
+      wrapper: createQueryWrapper(queryClient),
+    },
+  );
   await waitFor(() => expect(requestSignal).toBeDefined());
   const changedMembership = [{ folder_id: 9, folder_name: 'Reading' }];
   await act(async () => {
     await queryClient.cancelQueries({ queryKey: FAVORITE_CHECK_BATCH_QUERY_PREFIX });
     queryClient.setQueryData(
-      favoriteCheckQuery('101', 'fixture.sqlite').queryKey,
+      favoriteCheckQuery('9223361829786300101', 'fixture.sqlite').queryKey,
       changedMembership,
     );
     releaseResponse();
@@ -508,11 +568,13 @@ async function preventsCancelledMembershipWrites(): Promise<void> {
   });
   expect(requestSignal?.aborted).toBe(true);
   await waitFor(() =>
-    expect(result.current.favoriteChecksByArticle['101']).toEqual(changedMembership),
+    expect(result.current.favoriteChecksByArticle['9223361829786300101']).toEqual(
+      changedMembership,
+    ),
   );
-  expect(queryClient.getQueryData(favoriteCheckQuery('101', 'fixture.sqlite').queryKey)).toEqual(
-    changedMembership,
-  );
+  expect(
+    queryClient.getQueryData(favoriteCheckQuery('9223361829786300101', 'fixture.sqlite').queryKey),
+  ).toEqual(changedMembership);
 }
 
 /** Verify large cached lists keep subscription tracking linear and observe membership changes. */

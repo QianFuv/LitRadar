@@ -434,9 +434,13 @@ function buildsWorkspaceHref(): void {
 function buildsSavedGraphHref(): void {
   expect(
     stringifySearchObject(
-      buildSavedRelationSearch({ db_name: 'chinese_journals.sqlite', id: 7, root_article_id: 42 }),
+      buildSavedRelationSearch({
+        db_name: 'chinese_journals.sqlite',
+        id: 7,
+        root_article_id: '9223361829786370983',
+      }),
     ),
-  ).toBe('?view=relations&db=chinese_journals.sqlite&article=42&saved=7');
+  ).toBe('?view=relations&db=chinese_journals.sqlite&article=9223361829786370983&saved=7');
 }
 
 /** Saved snapshots are untrusted: unusable ones are rejected and missing fields are filled. */

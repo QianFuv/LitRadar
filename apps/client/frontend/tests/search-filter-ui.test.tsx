@@ -26,6 +26,7 @@ import { useUpdateWorkspaceSearch } from '@/lib/search-params';
 import { setSelectedDatabase } from '@/lib/selected-database';
 import { createAuthUserScenario } from '@/tests/mocks/scenarios';
 import { server } from '@/tests/mocks/server';
+import { hashedId } from '@/tests/mocks/ids';
 import { renderWithQuery, SearchParamProbe } from '@/tests/render';
 
 vi.mock('next-themes', () => ({
@@ -334,7 +335,7 @@ async function summarizesAndClearsAppliedFilters(): Promise<void> {
       HttpResponse.json([{ value: 'Information Systems', count: 3 }]),
     ),
     http.get('http://localhost/api/meta/journals', () =>
-      HttpResponse.json([{ journal_id: 'journal-1', title: 'Journal One' }]),
+      HttpResponse.json([{ journal_id: '9223361829786300501', title: 'Journal One' }]),
     ),
     http.get('http://localhost/api/years', yearsResponse),
     http.get('http://localhost/api/meta/ratings', () =>
@@ -358,7 +359,7 @@ async function summarizesAndClearsAppliedFilters(): Promise<void> {
       </AuthProvider>
     </ThemeProvider>,
     {
-      url: '/?q=systems&area=Information%20Systems&journal_id=journal-1&month_range=2024-01..2024-12&abs_rating=4,4*&fms_rating=A',
+      url: '/?q=systems&area=Information%20Systems&journal_id=9223361829786300501&month_range=2024-01..2024-12&abs_rating=4,4*&fms_rating=A',
     },
   );
 
@@ -408,7 +409,7 @@ async function rendersUnavailableYearState(): Promise<void> {
       </AuthProvider>
     </ThemeProvider>,
     {
-      url: '/?q=systems&area=Information%20Systems&journal_id=journal-1&month_range=2024-01..2024-12',
+      url: '/?q=systems&area=Information%20Systems&journal_id=9223361829786300501&month_range=2024-01..2024-12',
     },
   );
 
@@ -479,7 +480,7 @@ async function selectsRatingsAndClearsThemWhenChangingDatabase(): Promise<void> 
       HttpResponse.json([{ value: 'Medicine', count: 2 }]),
     ),
     http.get('http://localhost/api/meta/journals', () =>
-      HttpResponse.json([{ journal_id: '101', title: 'Journal One' }]),
+      HttpResponse.json([{ journal_id: '9223361829786300101', title: 'Journal One' }]),
     ),
     http.get('http://localhost/api/years', () => HttpResponse.json([])),
     http.get('http://localhost/api/meta/ratings', ({ request }) => {
@@ -506,7 +507,7 @@ async function selectsRatingsAndClearsThemWhenChangingDatabase(): Promise<void> 
         <SearchParamProbe parameter="q" testId="retained-query" />
       </AuthProvider>
     </ThemeProvider>,
-    { url: '/?q=retained&area=Medicine&journal_id=101' },
+    { url: '/?q=retained&area=Medicine&journal_id=9223361829786300101' },
   );
   let ratingPanel = await openFilterPanel(user, /^期刊评级/);
   await user.click(await within(ratingPanel).findByRole('option', { name: 'ABS 4' }));
@@ -593,7 +594,7 @@ async function defersClosedJournalOptions(): Promise<void> {
     http.get('http://localhost/api/meta/journals', () =>
       HttpResponse.json(
         Array.from({ length: 100 }, (_, index) => ({
-          journal_id: String(index),
+          journal_id: hashedId(index),
           title: `Journal ${index}`,
         })),
       ),
@@ -651,7 +652,7 @@ async function defersClosedJournalOptions(): Promise<void> {
 async function indexesSelectedJournalMembership(): Promise<void> {
   stubJournalListViewport();
   setSelectedDatabase('fixture.sqlite');
-  const selected = Array.from({ length: 100 }, (_, index) => String(index * 2 + 1));
+  const selected = Array.from({ length: 100 }, (_, index) => hashedId(index * 2 + 1));
   const selectedAreas = Array.from({ length: 40 }, (_, index) => `PerfArea${index * 2 + 1}`);
   const searchParams = `?journal_id=${selected.join(',')}&area=${selectedAreas.join(',')}`;
   server.use(
@@ -666,7 +667,7 @@ async function indexesSelectedJournalMembership(): Promise<void> {
     http.get('http://localhost/api/meta/journals', () =>
       HttpResponse.json(
         Array.from({ length: 200 }, (_, index) => ({
-          journal_id: String(index),
+          journal_id: hashedId(index),
           title: `Journal ${index}`,
         })),
       ),

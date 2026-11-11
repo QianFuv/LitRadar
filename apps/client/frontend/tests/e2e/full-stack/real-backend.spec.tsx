@@ -2,7 +2,14 @@
  * Serial browser journeys through the real Go listener and disposable SQLite state.
  */
 
-import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test';
+import {
+  expect,
+  test,
+  type Locator,
+  type Page,
+  type Response,
+  type TestInfo,
+} from '@playwright/test';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -201,12 +208,32 @@ async function ensureMemberIsNotAdministrator(page: Page): Promise<void> {
 }
 
 /**
+ * Read the seeded article's id exactly as the server sent it, without parsing it as a number.
+ *
+ * @param response - Article search response.
+ * @returns Decimal article id of the first result.
+ */
+async function readSeededArticleId(response: Response): Promise<string> {
+  const match = /"article_id"\s*:\s*"(\d+)"/.exec(await response.text());
+  if (!match) {
+    throw new Error('seeded article id is missing or not a decimal string');
+  }
+  return match[1];
+}
+
+/**
  * Exercise search, article detail, and persisted favorites as the seeded member.
  *
  * @param fixtures - Playwright fixtures.
  * @returns Promise resolved after the journey.
  */
 async function searchAndFavoriteJourney({ page }: { page: Page }): Promise<void> {
+  const articleResponses: Response[] = [];
+  page.on('response', (response) => {
+    if (/^\/api\/articles\/[^/]+\/(access|related)$/.test(new URL(response.url()).pathname)) {
+      articleResponses.push(response);
+    }
+  });
   await login(page, MEMBER_USERNAME, MEMBER_PASSWORD);
   await expectHttpOnlySession(page);
   await emptyReadingFolder(page);
@@ -216,10 +243,15 @@ async function searchAndFavoriteJourney({ page }: { page: Page }): Promise<void>
   ).toBeVisible();
 
   const searchInput = page.getByRole('combobox', { name: '搜索文章' });
+  const searchResponse = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === '/api/articles' && response.ok(),
+  );
   await searchInput.fill(ARTICLE_TITLE);
   await searchInput.press('Enter');
   await expect(page).toHaveURL(/\?q=Evidence(?:%20|\+)Graphs/);
   await expect(page.getByText(ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
+  const articleId = await readSeededArticleId(await searchResponse);
+  expect(BigInt(articleId) > BigInt(Number.MAX_SAFE_INTEGER)).toBe(true);
 
   await page
     .getByRole('button', { name: /^查看文章详情：/ })
@@ -228,6 +260,23 @@ async function searchAndFavoriteJourney({ page }: { page: Page }): Promise<void>
   const readingDesk = page.getByRole('region', { name: '阅读台' });
   let articleReader = readingDesk.getByRole('article', { name: `文献详情：${ARTICLE_TITLE}` });
   await expect(articleReader).toBeVisible();
+  await expect(
+    articleReader.getByRole('region', { name: '相关文章' }).getByRole('button'),
+  ).not.toHaveCount(0);
+  await expect
+    .poll(() =>
+      articleResponses
+        .filter((response) => response.ok())
+        .map((response) => new URL(response.url()).pathname),
+    )
+    .toEqual(
+      expect.arrayContaining([
+        `/api/articles/${articleId}/access`,
+        `/api/articles/${articleId}/related`,
+      ]),
+    );
+  expect(articleResponses.filter((response) => !response.ok())).toEqual([]);
+  await expect(articleReader).not.toContainText('访问状态失败');
   await articleReader.getByRole('button', { name: '收藏', exact: true }).click();
   const favoriteResponse = page.waitForResponse(
     (response) =>

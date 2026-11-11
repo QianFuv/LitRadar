@@ -7,6 +7,7 @@ import { expect, test, type Browser, type Locator, type Page, type Route } from 
 
 import { CFP_FIXTURE_PAGES, findCfpFixturePage } from '../fixtures/cfp-pages';
 import type { CfpJournalSummary } from '../../lib/api';
+import { hashedId } from '../mocks/ids';
 
 /**
  * Read the horizontal scale an element currently renders with from its computed transform.
@@ -245,7 +246,7 @@ async function serveTrackingArticles(
           new_article_count: 2,
           journals: [
             {
-              journal_id: 'fixture-journal',
+              journal_id: '9223361829786300001',
               journal_title: 'Journal of Reproducible Literature',
               new_article_count: 2,
             },
@@ -259,8 +260,8 @@ async function serveTrackingArticles(
     await fulfillJson(route, {
       items: [
         {
-          article_id: '7001',
-          journal_id: 'fixture-journal',
+          article_id: '9223361829786307001',
+          journal_id: '9223361829786300001',
           journal_title: 'Journal of Reproducible Literature',
           title: 'Reliable Evidence Synthesis for Living Reviews',
           authors: ['Lin Chen', 'Maya Patel'],
@@ -269,8 +270,8 @@ async function serveTrackingArticles(
             'A fixture article demonstrating the shared weekly workspace and article detail surface.',
         },
         {
-          article_id: '7002',
-          journal_id: 'fixture-journal',
+          article_id: '9223361829786307002',
+          journal_id: '9223361829786300001',
           journal_title: 'Journal of Reproducible Literature',
           title: 'Transparent Search Strategies in Rapid Reviews',
           authors: ['Noah Williams', 'Rui Zhang'],
@@ -292,8 +293,8 @@ async function serveTrackingArticles(
   if (pathname === '/api/articles') {
     const items = requestUrl.searchParams.has('q')
       ? Array.from({ length: 30 }, (_, index) => ({
-          article_id: String(8000 + index + 1),
-          journal_id: 'fixture-journal',
+          article_id: hashedId(8000 + index + 1),
+          journal_id: '9223361829786300001',
           journal_title: 'Journal of Reproducible Literature',
           title: `Graph evidence fixture ${index + 1}`,
           authors: ['Browser Fixture'],
@@ -325,11 +326,11 @@ async function serveTrackingArticles(
         {
           id: 1,
           folder_id: 4,
-          article_id: '7101',
+          article_id: '9223361829786307101',
           db_name: 'fixture.sqlite',
           note: '',
           created_at: 1,
-          journal_id: 'fixture-journal',
+          journal_id: '9223361829786300001',
           journal_title: 'Journal of Reproducible Literature',
           title: 'A Unified Workspace for Literature Monitoring',
           authors: ['Jia Liu', 'Alex Morgan'],
@@ -344,8 +345,8 @@ async function serveTrackingArticles(
   }
   if (pathname === '/api/favorites/check/batch' && request.method() === 'POST') {
     await fulfillJson(route, [
-      { article_id: '7001', folders: [{ folder_id: 4, folder_name: 'Tracking' }] },
-      { article_id: '7002', folders: [] },
+      { article_id: '9223361829786307001', folders: [{ folder_id: 4, folder_name: 'Tracking' }] },
+      { article_id: '9223361829786307002', folders: [] },
     ]);
     return true;
   }
@@ -1549,7 +1550,7 @@ async function serveInterfacePolishApi(route: Route): Promise<void> {
     await fulfillJson(route, {
       items: [
         {
-          article_id: '6001',
+          article_id: '9223361829786306001',
           title:
             'Graph Evidence Synthesis for Transparent and Reproducible Living Literature Reviews',
           journal_title: 'Journal of Reproducible Literature',
@@ -1569,7 +1570,7 @@ async function serveInterfacePolishApi(route: Route): Promise<void> {
     await fulfillJson(route, []);
     return;
   }
-  if (pathname === '/api/articles/6001/access') {
+  if (pathname === '/api/articles/9223361829786306001/access') {
     await fulfillJson(route, {
       abstract_page: { available: true, label: '查看摘要页', requires_login: false, message: null },
       fulltext: { available: true, label: '获取全文', requires_login: false, message: null },
@@ -1580,7 +1581,7 @@ async function serveInterfacePolishApi(route: Route): Promise<void> {
     await fulfillJson(route, {
       id: 2,
       folder_id: 4,
-      article_id: '6001',
+      article_id: '9223361829786306001',
       db_name: 'fixture.sqlite',
       note: '',
       created_at: 2,
@@ -1628,7 +1629,7 @@ async function articleTitleWrappingTest(page: Page, titleText: string): Promise<
       await fulfillJson(route, {
         items: [
           {
-            article_id: '6001',
+            article_id: '9223361829786306001',
             title: titleText,
             journal_title: 'Statistica Sinica',
             date: '2027',
@@ -2087,7 +2088,7 @@ async function serveLongSidebarApi(route: Route): Promise<void> {
           generated_at: '2026-07-17T09:00:00Z',
           new_article_count: 48,
           journals: Array.from({ length: 24 }, (_, index) => ({
-            journal_id: index === 0 ? 'fixture-journal' : `fixture-journal-${index + 1}`,
+            journal_id: hashedId(index + 1),
             journal_title: `Journal ${index + 1}`,
             new_article_count: 2,
           })),
@@ -2240,8 +2241,18 @@ async function serveJournalRatingApi(route: Route): Promise<void> {
     const grades = url.searchParams.getAll('abs_rating');
     const fms = url.searchParams.getAll('fms_rating');
     const items = [
-      { article_id: '7201', title: 'Rating combination article A', grade: '4*', fms: 'A' },
-      { article_id: '7202', title: 'Rating combination article B', grade: '4', fms: 'B' },
+      {
+        article_id: '9223361829786307201',
+        title: 'Rating combination article A',
+        grade: '4*',
+        fms: 'A',
+      },
+      {
+        article_id: '9223361829786307202',
+        title: 'Rating combination article B',
+        grade: '4',
+        fms: 'B',
+      },
     ].filter(
       (article) =>
         (!grades.length || grades.includes(article.grade)) &&
@@ -2318,7 +2329,7 @@ async function databaseSwitchArticleClickTest({ page }: { page: Page }): Promise
       const database = url.searchParams.get('db') ?? 'fixture.sqlite';
       await fulfillJson(route, {
         items: Array.from({ length: 30 }, (_, index) => ({
-          article_id: index === 0 ? 'shared-id' : `article-${index}`,
+          article_id: hashedId(2400 + index),
           title: index === 0 ? `Article from ${database}` : `Article ${index} from ${database}`,
           abstract: 'Scrollable database-switch regression article.',
         })),
@@ -2366,7 +2377,7 @@ async function databaseSwitchArticleClickTest({ page }: { page: Page }): Promise
     await expect(reader).toBeVisible();
     await expect(reader.getByRole('link', { name: '查看摘要页' })).toHaveAttribute(
       'href',
-      new URL(`/api/articles/shared-id/abstract?db=${database}.sqlite`, page.url()).href,
+      new URL(`/api/articles/${hashedId(2400)}/abstract?db=${database}.sqlite`, page.url()).href,
     );
     await expect(card).toHaveAttribute('aria-current', 'true');
     await expect(card).toBeFocused();
@@ -2740,8 +2751,8 @@ async function relatedArticleToolbarTest({ page }: { page: Page }): Promise<void
   await page.route('**/api/articles/*/related**', (route) =>
     fulfillJson(route, [
       {
-        article_id: '7301',
-        journal_id: '1',
+        article_id: '9223361829786307301',
+        journal_id: hashedId(1),
         title: '债务结构、信贷摩擦与跨境融资——来自中国企业的证据',
         abstract: '跨境融资研究。',
         authors: ['张三'],
@@ -2809,7 +2820,7 @@ test(
 function relatedRelationArticles(parentId: string) {
   const parentLabel = RELATION_LABELS.get(parentId) ?? parentId;
   return ['1', '2', '3'].map((suffix) => {
-    const id = `${parentId}${suffix}`;
+    const id = relationChildId(parentId, suffix);
     RELATION_LABELS.set(id, `${parentLabel}.${suffix}`);
     return relationArticle(id);
   });
@@ -2817,6 +2828,27 @@ function relatedRelationArticles(parentId: string) {
 
 /** Hierarchical display labels of relation-graph fixture articles, keyed by decimal id. */
 const RELATION_LABELS = new Map<string, string>();
+
+/** Hashed-size ids of relation-graph children, keyed by parent id and branch suffix. */
+const RELATION_CHILD_IDS = new Map<string, string>();
+
+/**
+ * Give one related article a stable id of real magnitude, so expanded branches stay 63-bit sized.
+ *
+ * @param parentId - Decimal id of the source article.
+ * @param suffix - Branch number under that article.
+ * @returns Decimal child article id.
+ */
+function relationChildId(parentId: string, suffix: string): string {
+  const key = `${parentId}/${suffix}`;
+  const existing = RELATION_CHILD_IDS.get(key);
+  if (existing) {
+    return existing;
+  }
+  const id = hashedId(5000 + RELATION_CHILD_IDS.size);
+  RELATION_CHILD_IDS.set(key, id);
+  return id;
+}
 
 /**
  * Build a related-article record for the relation-graph test.
@@ -2828,7 +2860,7 @@ function relationArticle(id: string) {
   const label = RELATION_LABELS.get(id) ?? id;
   return {
     article_id: id,
-    journal_id: '1',
+    journal_id: hashedId(1),
     title: `关系文章 ${label}`,
     abstract: `${label} 的摘要。`,
     authors: ['张三'],
@@ -3051,8 +3083,8 @@ test.describe('mobile relation graph', () => {
 
   test('expands branches by touch and opens the mobile article sheet', async ({ page }) => {
     await serveRelationGraphApi(page);
-    RELATION_LABELS.set('7', 'mobile');
-    await page.goto('/?view=relations&article=7&db=fixture');
+    RELATION_LABELS.set(hashedId(7), 'mobile');
+    await page.goto(`/?view=relations&article=${hashedId(7)}&db=fixture`);
     await expect(page.getByRole('button', { name: /^相关文章：/ })).toHaveCount(3);
 
     for (const control of [
@@ -3136,7 +3168,9 @@ test.describe('mobile settings navigation', () => {
   }) => {
     await context.route('**/api/**', async (route) => {
       const url = new URL(route.request().url());
-      const action = /^\/api\/articles\/6001\/(abstract|fulltext)$/.exec(url.pathname);
+      const action = /^\/api\/articles\/9223361829786306001\/(abstract|fulltext)$/.exec(
+        url.pathname,
+      );
       if (action) {
         expect(url.searchParams.get('db')).toBe('fixture.sqlite');
         await route.fulfill({
@@ -3161,7 +3195,7 @@ test.describe('mobile settings navigation', () => {
       await article.getByRole('link', { name: label }).tap();
       const popup = await popupPromise;
       await expect(popup).toHaveURL(
-        new RegExp(`/api/articles/6001/${action}\\?db=fixture\\.sqlite$`),
+        new RegExp(`/api/articles/9223361829786306001/${action}\\?db=fixture\\.sqlite$`),
       );
       await expect(popup.getByRole('heading', { name: 'Article destination' })).toBeVisible();
       await popup.close();

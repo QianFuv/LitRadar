@@ -139,7 +139,7 @@ export async function removeFavorite(
 ): Promise<void> {
   await apiClient.DELETE('/api/favorites/folders/{folder_id}/articles/{article_id}', {
     params: {
-      path: { folder_id: folderId, article_id: Number(articleId) },
+      path: { folder_id: folderId, article_id: articleId },
       query: { db_name: dbName },
     },
   });
@@ -222,7 +222,7 @@ export async function checkFavorite(
 ): Promise<FavoriteCheck[]> {
   return readData(
     await apiClient.GET('/api/favorites/check', {
-      params: { query: { article_id: Number(articleId), db_name: dbName } },
+      params: { query: { article_id: articleId, db_name: dbName } },
     }),
   );
 }
@@ -367,7 +367,7 @@ export const FOLDER_ARTICLES_QUERY_PREFIX = apiPathKey(
 export function favoriteCheckQuery(articleId: ArticleId, dbName: string) {
   return apiQuery(
     $api.queryOptions('get', '/api/favorites/check', {
-      params: { query: { article_id: Number(articleId), db_name: dbName } },
+      params: { query: { article_id: articleId, db_name: dbName } },
     }),
   );
 }

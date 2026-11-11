@@ -127,7 +127,7 @@ export function RelationsWorkspaceView() {
   const savedFavorite =
     savedQuery.data &&
     savedQuery.data.db_name === dbName &&
-    String(savedQuery.data.root_article_id) === articleId
+    savedQuery.data.root_article_id === articleId
       ? savedQuery.data
       : null;
   return (

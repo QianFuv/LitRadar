@@ -10,14 +10,14 @@
       "new_article_count": 1,
       "journals": [
         {
-          "journal_id": "101",
+          "journal_id": "9223372036854775783",
           "journal_title": "Fixture Journal",
           "new_article_count": 1,
           "articles": [
             {
-              "article_id": "9001",
-              "journal_id": "101",
-              "issue_id": 202401,
+              "article_id": "9223361829786370983",
+              "journal_id": "9223372036854775783",
+              "issue_id": "9007199254740993",
               "title": "Fixture Article",
               "publication_year": 2024,
               "date": "2024-01-16",

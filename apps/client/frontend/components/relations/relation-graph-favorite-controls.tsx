@@ -137,7 +137,7 @@ function useRelationGraphFavorite({
       createRelationGraphFavorite({
         title: buildDefaultTitle(rootTitle),
         db_name: dbName,
-        root_article_id: Number(graph.rootId),
+        root_article_id: graph.rootId,
         ...snapshot,
       }),
     onSuccess: (favorite) => {

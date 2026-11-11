@@ -13,11 +13,12 @@ import { SearchFilters } from '@/components/feature/search-filters';
 import { AuthProvider } from '@/lib/auth-context';
 import { setSelectedDatabase } from '@/lib/selected-database';
 import { createAuthUserScenario } from '@/tests/mocks/scenarios';
+import { hashedId } from '@/tests/mocks/ids';
 import { renderWithQuery } from '@/tests/render';
 
 const TOPICS = ['Information Systems', 'Operations Research', 'Sustainable Development'];
 const JOURNALS = Array.from({ length: 600 }, (_, index) => ({
-  journal_id: String(index + 1),
+  journal_id: hashedId(index + 1),
   title: `Journal of ${TOPICS[index % TOPICS.length]} ${index + 1}`,
 }));
 const API_FIXTURES = new Map(

@@ -387,7 +387,7 @@ function getResultsArticleQuery(
   return {
     ...(q ? { q } : {}),
     ...(areas && areas.length > 0 ? { area: areas } : {}),
-    ...(journalIds && journalIds.length > 0 ? { journal_id: journalIds.map(Number) } : {}),
+    ...(journalIds && journalIds.length > 0 ? { journal_id: journalIds } : {}),
     ...ratingFilters,
     ...(dateBounds ? { date_from: dateBounds.dateFrom, date_to: dateBounds.dateTo } : {}),
   };

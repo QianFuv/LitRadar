@@ -75,12 +75,12 @@ const WEEKLY_SUMMARY_FIXTURE: WeeklyUpdatesSummaryResponse = {
       new_article_count: 4,
       journals: [
         {
-          journal_id: '101',
+          journal_id: '9223361829786300101',
           journal_title: 'Fixture Journal',
           new_article_count: 3,
         },
         {
-          journal_id: '102',
+          journal_id: '9223361829786300102',
           journal_title: 'Second Fixture Journal',
           new_article_count: 1,
         },
@@ -92,7 +92,7 @@ const WEEKLY_SUMMARY_FIXTURE: WeeklyUpdatesSummaryResponse = {
       new_article_count: 1,
       journals: [
         {
-          journal_id: '201',
+          journal_id: '9223361829786300201',
           journal_title: 'Other Journal',
           new_article_count: 1,
         },
@@ -170,26 +170,54 @@ function installDefaultWeeklyHandlers(): void {
     const query = url.searchParams.get('q');
     if (query === 'needle') {
       return HttpResponse.json(
-        weeklyPage([{ article_id: 'search-1', journal_id: '101', title: 'Needle result' }]),
+        weeklyPage([
+          {
+            article_id: '9223361829786304005',
+            journal_id: '9223361829786300101',
+            title: 'Needle result',
+          },
+        ]),
       );
     }
     if (dbName === 'other.sqlite') {
       return HttpResponse.json(
-        weeklyPage([{ article_id: 'other-1', journal_id: '201', title: 'Other weekly article' }]),
+        weeklyPage([
+          {
+            article_id: '9223361829786304006',
+            journal_id: '9223361829786300201',
+            title: 'Other weekly article',
+          },
+        ]),
       );
     }
-    if (journalId === '102') {
+    if (journalId === '9223361829786300102') {
       return HttpResponse.json(
         weeklyPage([
-          { article_id: 'journal-2', journal_id: '102', title: 'Second journal article' },
+          {
+            article_id: '9223361829786304007',
+            journal_id: '9223361829786300102',
+            title: 'Second journal article',
+          },
         ]),
       );
     }
     return HttpResponse.json(
       weeklyPage([
-        { article_id: 'weekly-1', journal_id: '101', title: 'Weekly first' },
-        { article_id: 'weekly-2', journal_id: '101', title: 'Weekly second' },
-        { article_id: 'weekly-3', journal_id: '101', title: 'Weekly third' },
+        {
+          article_id: '9223361829786304001',
+          journal_id: '9223361829786300101',
+          title: 'Weekly first',
+        },
+        {
+          article_id: '9223361829786304002',
+          journal_id: '9223361829786300101',
+          title: 'Weekly second',
+        },
+        {
+          article_id: '9223361829786304003',
+          journal_id: '9223361829786300101',
+          title: 'Weekly third',
+        },
       ]),
     );
   });
@@ -227,7 +255,7 @@ function renderedArticleIds(): string[] {
  */
 async function loadsOneInitialBoundedPage(): Promise<void> {
   installDefaultWeeklyHandlers();
-  await renderWeeklyPage('?q=homepage-only&db=fixture.sqlite&journal=101');
+  await renderWeeklyPage('?q=homepage-only&db=fixture.sqlite&journal=9223361829786300101');
 
   expect(await screen.findByText('Weekly first')).toBeInTheDocument();
   expect(weeklySummaryRequestCount).toBe(1);
@@ -235,7 +263,7 @@ async function loadsOneInitialBoundedPage(): Promise<void> {
   expect(generalArticleRequestCount).toBe(0);
   const request = weeklyArticleRequestUrls[0];
   expect(request.searchParams.get('db')).toBe('fixture.sqlite');
-  expect(request.searchParams.get('journal_id')).toBe('101');
+  expect(request.searchParams.get('journal_id')).toBe('9223361829786300101');
   expect(request.searchParams.get('window_end')).toBe(WEEKLY_SUMMARY_FIXTURE.window_end);
   expect(request.searchParams.get('limit')).toBe('50');
   expect(request.searchParams.get('q')).toBeNull();
@@ -245,7 +273,7 @@ async function loadsOneInitialBoundedPage(): Promise<void> {
   expect(screen.getByRole('combobox', { name: '期刊：Fixture Journal' })).toBeInTheDocument();
   expect(document.getElementById('results-scroll-container')).toBeInTheDocument();
   expect(document.querySelector('[data-weekly-state="ready"]')).not.toBeNull();
-  expect(document.querySelector('[data-weekly-journal="101"]')).not.toBeNull();
+  expect(document.querySelector('[data-weekly-journal="9223361829786300101"]')).not.toBeNull();
   const articleState = document.querySelector('[data-weekly-article-state="results"]');
   expect(articleState).not.toBeNull();
   expect(screen.getByTestId('weekly-state-announcement')).toHaveAttribute('role', 'status');
@@ -269,7 +297,7 @@ async function resetsForDatabaseSelection(): Promise<void> {
   window.localStorage.setItem(SELECTED_DATABASE_KEY, 'homepage.sqlite');
   installDefaultWeeklyHandlers();
   const user = userEvent.setup();
-  await renderWeeklyPage('?db=fixture.sqlite&journal=101');
+  await renderWeeklyPage('?db=fixture.sqlite&journal=9223361829786300101');
 
   expect(await screen.findByText('Weekly first')).toBeInTheDocument();
   const databaseSelect = screen
@@ -283,11 +311,11 @@ async function resetsForDatabaseSelection(): Promise<void> {
 
   await waitFor(() => expect(screen.getByTestId('weekly-db')).toHaveTextContent('other.sqlite'));
   expect(await screen.findByText('Other weekly article')).toBeInTheDocument();
-  expect(document.querySelector('[data-weekly-journal="201"]')).not.toBeNull();
+  expect(document.querySelector('[data-weekly-journal="9223361829786300201"]')).not.toBeNull();
   expect(weeklyArticleRequestUrls).toHaveLength(2);
   const request = weeklyArticleRequestUrls[1];
   expect(request.searchParams.get('db')).toBe('other.sqlite');
-  expect(request.searchParams.get('journal_id')).toBe('201');
+  expect(request.searchParams.get('journal_id')).toBe('9223361829786300201');
   expect(request.searchParams.get('cursor')).toBeNull();
   expect(readSelectedDatabase()).toBe('homepage.sqlite');
 }
@@ -298,7 +326,7 @@ async function resetsForDatabaseSelection(): Promise<void> {
 async function resetsForJournalSelection(): Promise<void> {
   installDefaultWeeklyHandlers();
   const user = userEvent.setup();
-  await renderWeeklyPage('?db=fixture.sqlite&journal=101');
+  await renderWeeklyPage('?db=fixture.sqlite&journal=9223361829786300101');
 
   expect(await screen.findByText('Weekly first')).toBeInTheDocument();
   screen.getByRole('combobox', { name: /^期刊：/ }).focus();
@@ -307,10 +335,10 @@ async function resetsForJournalSelection(): Promise<void> {
   await user.keyboard('{ArrowDown}{Enter}');
 
   expect(await screen.findByText('Second journal article')).toBeInTheDocument();
-  expect(document.querySelector('[data-weekly-journal="102"]')).not.toBeNull();
+  expect(document.querySelector('[data-weekly-journal="9223361829786300102"]')).not.toBeNull();
   expect(weeklyArticleRequestUrls).toHaveLength(2);
   const request = weeklyArticleRequestUrls[1];
-  expect(request.searchParams.get('journal_id')).toBe('102');
+  expect(request.searchParams.get('journal_id')).toBe('9223361829786300102');
   expect(request.searchParams.get('cursor')).toBeNull();
   expect(screen.queryByText('Weekly first')).not.toBeInTheDocument();
 }
@@ -321,7 +349,7 @@ async function resetsForJournalSelection(): Promise<void> {
 async function resetsForSearchQuery(): Promise<void> {
   installDefaultWeeklyHandlers();
   const user = userEvent.setup();
-  await renderWeeklyPage('?db=fixture.sqlite&journal=101');
+  await renderWeeklyPage('?db=fixture.sqlite&journal=9223361829786300101');
 
   expect(await screen.findByText('Weekly first')).toBeInTheDocument();
   const input = screen.getByRole('combobox', { name: '搜索文章' });
@@ -349,8 +377,16 @@ async function loadsCursorPagesWithoutDuplicates(): Promise<void> {
       return HttpResponse.json(
         weeklyPage(
           [
-            { article_id: 'weekly-2', journal_id: '101', title: 'Weekly second duplicate' },
-            { article_id: 'weekly-3', journal_id: '101', title: 'Weekly third' },
+            {
+              article_id: '9223361829786304002',
+              journal_id: '9223361829786300101',
+              title: 'Weekly second duplicate',
+            },
+            {
+              article_id: '9223361829786304003',
+              journal_id: '9223361829786300101',
+              title: 'Weekly third',
+            },
           ],
           null,
           false,
@@ -360,22 +396,36 @@ async function loadsCursorPagesWithoutDuplicates(): Promise<void> {
     return HttpResponse.json(
       weeklyPage(
         [
-          { article_id: 'weekly-1', journal_id: '101', title: 'Weekly first' },
-          { article_id: 'weekly-2', journal_id: '101', title: 'Weekly second' },
+          {
+            article_id: '9223361829786304001',
+            journal_id: '9223361829786300101',
+            title: 'Weekly first',
+          },
+          {
+            article_id: '9223361829786304002',
+            journal_id: '9223361829786300101',
+            title: 'Weekly second',
+          },
         ],
         'page-two',
         true,
       ),
     );
   });
-  await renderWeeklyPage('?db=fixture.sqlite&journal=101');
+  await renderWeeklyPage('?db=fixture.sqlite&journal=9223361829786300101');
 
   expect(await screen.findByText('Weekly first')).toBeInTheDocument();
   await waitFor(() => expect(weeklyViewMocks.onFetchNextPage).not.toBeNull());
   act(() => weeklyViewMocks.onFetchNextPage?.());
 
   await waitFor(() => expect(weeklyArticleRequestUrls).toHaveLength(2));
-  await waitFor(() => expect(renderedArticleIds()).toEqual(['weekly-1', 'weekly-2', 'weekly-3']));
+  await waitFor(() =>
+    expect(renderedArticleIds()).toEqual([
+      '9223361829786304001',
+      '9223361829786304002',
+      '9223361829786304003',
+    ]),
+  );
   expect(weeklyArticleRequestUrls[0].searchParams.get('cursor')).toBeNull();
   expect(weeklyArticleRequestUrls[1].searchParams.get('cursor')).toBe('page-two');
 
@@ -393,14 +443,14 @@ async function resetsForSummaryWindow(): Promise<void> {
     return HttpResponse.json(
       weeklyPage([
         {
-          article_id: isUpdatedWindow ? 'updated-window' : 'initial-window',
-          journal_id: '101',
+          article_id: isUpdatedWindow ? '9223361829786304008' : '9223361829786304009',
+          journal_id: '9223361829786300101',
           title: isUpdatedWindow ? 'Updated window article' : 'Initial window article',
         },
       ]),
     );
   });
-  const { queryClient } = await renderWeeklyPage('?db=fixture.sqlite&journal=101');
+  const { queryClient } = await renderWeeklyPage('?db=fixture.sqlite&journal=9223361829786300101');
 
   expect(await screen.findByText('Initial window article')).toBeInTheDocument();
   act(() => {
@@ -439,7 +489,7 @@ async function rendersWeeklyFailures(): Promise<void> {
   installWeeklyHandlers(() =>
     HttpResponse.json({ detail: 'weekly page unavailable' }, { status: 503 }),
   );
-  await renderWeeklyPage('?db=fixture.sqlite&journal=101');
+  await renderWeeklyPage('?db=fixture.sqlite&journal=9223361829786300101');
 
   expect(await screen.findByRole('alert')).toHaveTextContent('weekly page unavailable');
   await waitFor(() =>
@@ -500,7 +550,7 @@ async function abortsObsoleteWeeklyRequests(): Promise<void> {
     return HttpResponse.json(weeklyPage([]));
   });
   const user = userEvent.setup();
-  const view = await renderWeeklyPage('?db=fixture.sqlite&journal=101');
+  const view = await renderWeeklyPage('?db=fixture.sqlite&journal=9223361829786300101');
   try {
     await waitFor(() => expect(signals).toHaveLength(1));
     (await screen.findByRole('combobox', { name: /^期刊：/ })).focus();
@@ -532,11 +582,11 @@ async function abortsObsoleteWeeklyRequests(): Promise<void> {
 /** Reuse favorite-check identities on unrelated renders and replace them when cached articles change. */
 async function reusesWeeklyFavoriteIds(): Promise<void> {
   installDefaultWeeklyHandlers();
-  const searchParams = '?db=fixture.sqlite&journal=101';
+  const searchParams = '?db=fixture.sqlite&journal=9223361829786300101';
   const view = await renderWeeklyPage(searchParams);
   await screen.findByText('Weekly first');
   const articleIds = weeklyViewMocks.favoriteArticleIds;
-  expect(articleIds).toEqual(['weekly-1', 'weekly-2', 'weekly-3']);
+  expect(articleIds).toEqual(['9223361829786304001', '9223361829786304002', '9223361829786304003']);
   view.rerender(
     <>
       <WeeklyUpdatesView />
@@ -548,7 +598,7 @@ async function reusesWeeklyFavoriteIds(): Promise<void> {
     view.queryClient.setQueryData<InfiniteData<WeeklyArticlePage>>(
       weeklyUpdateArticlesQuery({
         dbName: 'fixture.sqlite',
-        journalId: '101',
+        journalId: '9223361829786300101',
         windowEnd: WEEKLY_SUMMARY_FIXTURE.window_end,
         limit: 50,
       }).queryKey,
@@ -559,7 +609,7 @@ async function reusesWeeklyFavoriteIds(): Promise<void> {
             ...page,
             items: page.items.map((article, index) =>
               index === 0
-                ? { ...article, article_id: 'weekly-updated', title: 'Updated weekly article' }
+                ? { ...article, article_id: '9223361829786304004', title: 'Updated weekly article' }
                 : article,
             ),
           })),
@@ -567,7 +617,11 @@ async function reusesWeeklyFavoriteIds(): Promise<void> {
     );
   });
   expect(await screen.findByText('Updated weekly article')).toBeInTheDocument();
-  expect(weeklyViewMocks.favoriteArticleIds).toEqual(['weekly-updated', 'weekly-2', 'weekly-3']);
+  expect(weeklyViewMocks.favoriteArticleIds).toEqual([
+    '9223361829786304004',
+    '9223361829786304002',
+    '9223361829786304003',
+  ]);
 }
 
 describe('weekly updates bounded pagination', () => {

@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 const resultsListMocks = vi.hoisted(() => ({
   favoriteChecksByArticle: Object.fromEntries([
-    ['9001', [{ folder_id: 7, folder_name: 'Reading' }]],
+    ['9223361829786370983', [{ folder_id: 7, folder_name: 'Reading' }]],
   ]),
   isFavoriteStatePending: true,
   onFetchNextPage: null as (() => void) | null,
@@ -163,11 +163,15 @@ async function retainsRatingsAcrossPagesAndResetsTheirCache(): Promise<void> {
       requests.push(url);
       if (url.searchParams.get('abs_rating') === '4') {
         return HttpResponse.json(
-          createArticlePage([{ ...SHARED_ARTICLE, article_id: 'rated-new', title: 'New grade' }]),
+          createArticlePage([
+            { ...SHARED_ARTICLE, article_id: '9223361829786309004', title: 'New grade' },
+          ]),
         );
       }
       return url.searchParams.has('cursor')
-        ? HttpResponse.json(createArticlePage([{ ...SHARED_ARTICLE, article_id: 'rated-next' }]))
+        ? HttpResponse.json(
+            createArticlePage([{ ...SHARED_ARTICLE, article_id: '9223361829786309005' }]),
+          )
         : HttpResponse.json(
             createArticlePage([SHARED_ARTICLE], { hasMore: true, nextCursor: 'rating-page-two' }),
           );
@@ -181,11 +185,11 @@ async function retainsRatingsAcrossPagesAndResetsTheirCache(): Promise<void> {
     </>,
     { url: '/?abs_rating=4*&fms_rating=A&area=Medicine&q=Fixture' },
   );
-  await waitFor(() => expect(screen.getByTestId('result-9001')).toBeVisible());
+  await waitFor(() => expect(screen.getByTestId('result-9223361829786370983')).toBeVisible());
   await act(async () => {
     resultsListMocks.onFetchNextPage?.();
   });
-  await waitFor(() => expect(screen.getByTestId('result-rated-next')).toBeVisible());
+  await waitFor(() => expect(screen.getByTestId('result-9223361829786309005')).toBeVisible());
   for (const url of requests) {
     expect(url.searchParams.getAll('abs_rating')).toEqual(['4*']);
     expect(url.searchParams.getAll('fms_rating')).toEqual(['A']);
@@ -193,9 +197,9 @@ async function retainsRatingsAcrossPagesAndResetsTheirCache(): Promise<void> {
   }
   expect(requests[1].searchParams.get('cursor')).toBe('rating-page-two');
   await user.click(screen.getByRole('button', { name: 'Change rating' }));
-  await waitFor(() => expect(screen.getByTestId('result-rated-new')).toBeVisible());
-  expect(screen.queryByTestId('result-9001')).not.toBeInTheDocument();
-  expect(screen.queryByTestId('result-rated-next')).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByTestId('result-9223361829786309004')).toBeVisible());
+  expect(screen.queryByTestId('result-9223361829786370983')).not.toBeInTheDocument();
+  expect(screen.queryByTestId('result-9223361829786309005')).not.toBeInTheDocument();
   expect(requests.at(-1)?.searchParams.has('cursor')).toBe(false);
   expect(requests.at(-1)?.searchParams.getAll('fms_rating')).toEqual(['A']);
   expect(requests.at(-1)?.searchParams.get('q')).toBe('Fixture');
@@ -235,7 +239,7 @@ function createArticlePage(
  * @returns Render result and query client.
  */
 function renderResultsList(
-  searchParams = '?q=Fixture&area=Medicine&journal_id=101&month_range=2024-01..2024-02',
+  searchParams = '?q=Fixture&area=Medicine&journal_id=9223361829786300101&month_range=2024-01..2024-02',
 ) {
   return renderWithQuery(<ResultsList />, { url: `/${searchParams}` });
 }
@@ -263,7 +267,7 @@ async function rendersTypedResultContent(): Promise<void> {
   expect(within(screen.getByTestId('results-state-loading')).queryByRole('status')).toBeNull();
   resolveRequest?.();
 
-  const article = await screen.findByTestId('result-9001');
+  const article = await screen.findByTestId('result-9223361829786370983');
   expect(screen.getByTestId('results-state-results')).toBeInTheDocument();
   expect(screen.getByRole('status', { name: '已加载 1 篇文章' })).toBeInTheDocument();
   expect(screen.getAllByRole('status')).toHaveLength(1);
@@ -277,7 +281,7 @@ async function rendersTypedResultContent(): Promise<void> {
   expect(requestUrl?.searchParams.get('db')).toBe('scenario.sqlite');
   expect(requestUrl?.searchParams.get('q')).toBe('Fixture');
   expect(requestUrl?.searchParams.getAll('area')).toEqual(['Medicine']);
-  expect(requestUrl?.searchParams.getAll('journal_id')).toEqual(['101']);
+  expect(requestUrl?.searchParams.getAll('journal_id')).toEqual(['9223361829786300101']);
   expect(requestUrl?.searchParams.get('date_from')).toBe('2024-01-01');
   expect(requestUrl?.searchParams.get('date_to')).toBe('2024-02-29');
   expect(requestUrl?.searchParams.get('include_total')).toBe('false');
@@ -321,7 +325,7 @@ async function omitsEmptyFilterSummarySlot(): Promise<void> {
   );
   await renderResultsList('');
 
-  expect(await screen.findByTestId('result-9001')).toBeInTheDocument();
+  expect(await screen.findByTestId('result-9223361829786370983')).toBeInTheDocument();
   expect(screen.queryByTestId('filter-summary-slot')).not.toBeInTheDocument();
 }
 
@@ -332,13 +336,13 @@ async function appendsPagesAndClearsStaleDatabaseResults(): Promise<void> {
   const requestUrls: URL[] = [];
   const secondArticle: Article = {
     ...SHARED_ARTICLE,
-    article_id: '9002',
+    article_id: '9223361829786309002',
     title: 'Second page article',
     abstract: 'Second page abstract',
   };
   const otherDatabaseArticle: Article = {
     ...SHARED_ARTICLE,
-    article_id: 'other-1',
+    article_id: '9223361829786309003',
     title: 'Other database article',
     abstract: 'Other database abstract',
   };
@@ -363,11 +367,11 @@ async function appendsPagesAndClearsStaleDatabaseResults(): Promise<void> {
   );
   await renderResultsList('');
 
-  expect(await screen.findByTestId('result-9001')).toBeInTheDocument();
+  expect(await screen.findByTestId('result-9223361829786370983')).toBeInTheDocument();
   await act(async () => {
     resultsListMocks.onFetchNextPage?.();
   });
-  expect(await screen.findByTestId('result-9002')).toBeInTheDocument();
+  expect(await screen.findByTestId('result-9223361829786309002')).toBeInTheDocument();
   expect(requestUrls).toHaveLength(2);
   expect(requestUrls[0].searchParams.get('include_total')).toBe('false');
   expect(requestUrls[1].searchParams.get('cursor')).toBe('page-two');
@@ -375,9 +379,11 @@ async function appendsPagesAndClearsStaleDatabaseResults(): Promise<void> {
   expect(screen.queryByText(/共找到 .* 条结果/)).not.toBeInTheDocument();
 
   act(() => setSelectedDatabase('other.sqlite'));
-  expect(await screen.findByTestId('result-other-1')).toBeInTheDocument();
-  await waitFor(() => expect(screen.queryByTestId('result-9001')).not.toBeInTheDocument());
-  expect(screen.queryByTestId('result-9002')).not.toBeInTheDocument();
+  expect(await screen.findByTestId('result-9223361829786309003')).toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.queryByTestId('result-9223361829786370983')).not.toBeInTheDocument(),
+  );
+  expect(screen.queryByTestId('result-9223361829786309002')).not.toBeInTheDocument();
   expect(requestUrls[2].searchParams.get('include_total')).toBe('false');
 }
 
@@ -401,13 +407,15 @@ async function rejectsLaterPageFailure(): Promise<void> {
   );
   await renderResultsList('');
 
-  expect(await screen.findByTestId('result-9001')).toBeInTheDocument();
+  expect(await screen.findByTestId('result-9223361829786370983')).toBeInTheDocument();
   await act(async () => {
     resultsListMocks.onFetchNextPage?.();
   });
 
   expect(await screen.findByRole('alert')).toHaveTextContent('second page unavailable');
-  await waitFor(() => expect(screen.queryByTestId('result-9001')).not.toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.queryByTestId('result-9223361829786370983')).not.toBeInTheDocument(),
+  );
 }
 
 /**
@@ -417,7 +425,7 @@ async function rejectsRepeatedCursor(): Promise<void> {
   let requestCount = 0;
   const secondArticle: Article = {
     ...SHARED_ARTICLE,
-    article_id: '9002',
+    article_id: '9223361829786309002',
     title: 'Repeated cursor article',
   };
   server.use(
@@ -435,21 +443,23 @@ async function rejectsRepeatedCursor(): Promise<void> {
   );
   await renderResultsList('');
 
-  expect(await screen.findByTestId('result-9001')).toBeInTheDocument();
+  expect(await screen.findByTestId('result-9223361829786370983')).toBeInTheDocument();
   await act(async () => {
     resultsListMocks.onFetchNextPage?.();
   });
   await waitFor(() => expect(requestCount).toBe(2));
 
   expect(await screen.findByRole('alert')).toHaveTextContent('分页游标重复');
-  await waitFor(() => expect(screen.queryByTestId('result-9001')).not.toBeInTheDocument());
-  expect(screen.queryByTestId('result-9002')).not.toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.queryByTestId('result-9223361829786370983')).not.toBeInTheDocument(),
+  );
+  expect(screen.queryByTestId('result-9223361829786309002')).not.toBeInTheDocument();
 }
 
 beforeEach(() => {
   setSelectedDatabase('scenario.sqlite');
   resultsListMocks.favoriteChecksByArticle = {
-    '9001': [{ folder_id: 7, folder_name: 'Reading' }],
+    '9223361829786370983': [{ folder_id: 7, folder_name: 'Reading' }],
   };
   resultsListMocks.isFavoriteStatePending = true;
   resultsListMocks.onFetchNextPage = null;
@@ -464,13 +474,16 @@ async function reusesHighlightsForFavoriteChanges(): Promise<void> {
     ),
   );
   const view = await renderResultsList('?q=Fixture');
-  await screen.findByTestId('result-9001');
+  await screen.findByTestId('result-9223361829786370983');
   const split = vi.spyOn(String.prototype, 'split');
-  resultsListMocks.favoriteChecksByArticle = { '9001': [] };
+  resultsListMocks.favoriteChecksByArticle = { '9223361829786370983': [] };
   resultsListMocks.isFavoriteStatePending = false;
   view.rerender(<ResultsList />);
-  expect(screen.getByTestId('result-9001')).toHaveAttribute('data-folder-ids', '');
-  expect(screen.getByTestId('result-9001')).toHaveAttribute('data-favorite-pending', 'false');
+  expect(screen.getByTestId('result-9223361829786370983')).toHaveAttribute('data-folder-ids', '');
+  expect(screen.getByTestId('result-9223361829786370983')).toHaveAttribute(
+    'data-favorite-pending',
+    'false',
+  );
   expect(
     split.mock.calls.filter(
       ([pattern]) => pattern instanceof RegExp && pattern.source.includes('Fixture'),
@@ -502,7 +515,7 @@ async function reusesHighlightsAcrossPages(): Promise<void> {
   };
   const secondArticle = {
     ...SHARED_ARTICLE,
-    article_id: '9002',
+    article_id: '9223361829786309002',
     title: 'Second Fixture title',
     abstract: 'Second Fixture abstract',
   };
@@ -516,12 +529,12 @@ async function reusesHighlightsAcrossPages(): Promise<void> {
     ),
   );
   await renderResultsList('?q=Fixture');
-  await screen.findByTestId('result-9001');
+  await screen.findByTestId('result-9223361829786370983');
   const split = vi.spyOn(String.prototype, 'split');
   await act(async () => {
     resultsListMocks.onFetchNextPage?.();
   });
-  const secondResult = await screen.findByTestId('result-9002');
+  const secondResult = await screen.findByTestId('result-9223361829786309002');
   expect(within(secondResult).getAllByText('Fixture')).toHaveLength(2);
   const highlightedTexts = split.mock.calls.flatMap(([pattern], index) =>
     pattern instanceof RegExp && pattern.source.includes('Fixture')
@@ -553,7 +566,7 @@ async function refreshesHighlightsForQueryChanges(): Promise<void> {
     </>,
     { url: '/?q=Fixture' },
   );
-  const result = await screen.findByTestId('result-9001');
+  const result = await screen.findByTestId('result-9223361829786370983');
   expect(Array.from(result.querySelectorAll('span'), (span) => span.textContent)).toEqual([
     'Fixture',
     'Fixture',
@@ -569,7 +582,7 @@ async function refreshesHighlightsForQueryChanges(): Promise<void> {
       'Updated',
     ]),
   );
-  expect(screen.getByTestId('result-9001')).toBe(result);
+  expect(screen.getByTestId('result-9223361829786370983')).toBe(result);
 }
 
 describe('results list', () => {

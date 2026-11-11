@@ -41,12 +41,12 @@ function paginatedArticleResponse(context: { request: Request }): Response {
   const cursor = new URL(context.request.url).searchParams.get('cursor');
   if (cursor === 'page-two') {
     return HttpResponse.json({
-      items: [{ article_id: 'article-2', title: 'Second page' }],
+      items: [{ article_id: '9223361829786303002', title: 'Second page' }],
       page: { total: null, limit: 20, offset: 0, next_cursor: null, has_more: false },
     });
   }
   return HttpResponse.json({
-    items: [{ article_id: 'article-1', title: 'First page' }],
+    items: [{ article_id: '9223361829786303001', title: 'First page' }],
     page: { total: 2, limit: 20, offset: 0, next_cursor: 'page-two', has_more: true },
   });
 }
@@ -60,7 +60,7 @@ function partialDateArticleResponse(): Response {
   return HttpResponse.json({
     items: [
       {
-        article_id: 'article-year-only',
+        article_id: '9223361829786303003',
         title: 'Year-only metadata',
         date: '2026',
         date_precision: 'year',
