@@ -346,7 +346,7 @@ func assertPersistedProcessLogging(t *testing.T, root string, invoke processInvo
 		t.Fatalf("database.Close: %v", err)
 	}
 	_, stderr := invoke(t, "", 0, "admin", "--help", "--project-root", root)
-	if !strings.Contains(stderr, `process:cli.command: litradar_cli:`) || strings.Contains(stderr, `process{`) {
+	if !strings.Contains(stderr, `time=`) || !strings.Contains(stderr, `level=INFO`) || !strings.Contains(stderr, `msg=cli.command.started`) || !strings.Contains(stderr, `target=litradar_cli`) {
 		t.Fatal("persisted compact logging ignored", stderr)
 	}
 	database, err = sqlite.Open(filename, false, 1)

@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-
 	"strings"
 	"sync"
 	"testing"
@@ -110,7 +109,8 @@ func TestLossyQueueKeepsBoundAndReportsExactDropsAfterDrain(t *testing.T) {
 	if len(lines) != 4098 {
 		t.Fatal("buffer did not drain or report duplicated", len(lines))
 	}
-	if string(lines[len(lines)-1]) != "{\"component\":\"logging\",\"dropped_count\":17,\"event\":\"logging.events_dropped\",\"level\":\"WARN\",\"target\":\"litradar\"}" {
+	var warning map[string]any
+	if json.Unmarshal(lines[len(lines)-1], &warning) != nil || warning["event"] != "logging.events_dropped" || warning["dropped_count"] != float64(17) || warning["level"] != "WARN" {
 		t.Fatal(string(lines[len(lines)-1]))
 	}
 }

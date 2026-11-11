@@ -27,7 +27,7 @@ type DebugValue string
 type valueMatch struct {
 	kind       byte
 	value      any
-	expression *fieldRegex
+	expression *regexp.Regexp
 }
 type directive struct {
 	target, span *string
@@ -248,7 +248,7 @@ func parseValue(value string) (*valueMatch, error) {
 	if pattern := parseFloatValue(value); pattern != nil {
 		return pattern, nil
 	}
-	expression, err := compileFieldRegex(value)
+	expression, err := regexp.Compile(value)
 	return &valueMatch{kind: 'r', value: value, expression: expression}, err
 }
 
@@ -317,7 +317,7 @@ func (pattern *valueMatch) matchesFloat(actual float64) bool {
 
 // matchesText uses the ordered field regex for strings and debug representations.
 func (pattern *valueMatch) matchesText(actual string) bool {
-	return pattern.kind == 'r' && pattern.expression.matches(actual)
+	return pattern.kind == 'r' && pattern.expression.MatchString(actual)
 }
 
 func (rule directive) cares(target, name string, values map[string]any, isSpan bool) bool {

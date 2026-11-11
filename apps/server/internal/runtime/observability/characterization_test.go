@@ -5,79 +5,60 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
 
-// countedLogValue detects resolution of overwritten values and ignored empty keys.
-type countedLogValue struct{ calls *int }
-
-func (value countedLogValue) LogValue() slog.Value {
-	*value.calls++
-	return slog.IntValue(*value.calls)
+func TestStandardHandlersKeepGroupsAndHideRoutingAttribute(t *testing.T) {
+	for _, format := range []string{"json", "compact"} {
+		t.Run(format, func(t *testing.T) {
+			var output bytes.Buffer
+			guard, logger, err := New("trace", format, &output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			logger.WithGroup("request").Info("accepted", "id", 42, "log_target", "internal")
+			guard.Shutdown()
+			text := output.String()
+			if strings.Contains(text, "log_target") {
+				t.Fatal(text)
+			}
+			if format == "json" {
+				var record struct {
+					Time       time.Time
+					Level, Msg string
+					Request    struct {
+						ID int `json:"id"`
+					}
+				}
+				if json.Unmarshal(output.Bytes(), &record) != nil || record.Request.ID != 42 || record.Msg != "accepted" || record.Time.IsZero() {
+					t.Fatal(text)
+				}
+			} else if !strings.Contains(text, "request.id=42") || !strings.Contains(text, "msg=accepted") {
+				t.Fatal(text)
+			}
+		})
+	}
 }
 
-// TestHandlerPreservesResolutionAndCompactAttributeOrder covers duplicate and reserved-field collisions.
-func TestHandlerPreservesResolutionAndCompactAttributeOrder(t *testing.T) {
+func TestStandardJsonHandlerEncodesUnsupportedValuesWithoutLosingRecord(t *testing.T) {
 	var output bytes.Buffer
-	guard, logger, err := New("trace", "compact", &output)
+	guard, logger, err := New("trace", "json", &output)
 	if err != nil {
 		t.Fatal(err)
 	}
-	calls := 0
-	current := logger.Handler().WithAttrs([]slog.Attr{slog.Any("", countedLogValue{&calls}), slog.Any("first", countedLogValue{&calls}), slog.String("event", "explicit")}).WithGroup("ignored")
-	record := slog.NewRecord(time.Unix(0, 0), slog.LevelInfo, "fallback", 0)
-	record.AddAttrs(slog.Any("first", countedLogValue{&calls}), slog.String("log_target", ""), slog.String("timestamp", "caller"), slog.String("target", "caller"))
-	if err := current.Handle(context.Background(), record); err != nil {
+	record := slog.NewRecord(time.Unix(0, 0), slog.Level(-8), "event", 0)
+	record.Add("invalid", make(chan int))
+	if err := logger.Handler().Handle(context.Background(), record); err != nil {
 		t.Fatal(err)
 	}
 	guard.Shutdown()
-	expected := "1970-01-01T00:00:00.000000Z  INFO : first=2 event=\"explicit\" timestamp=\"caller\" target=\"caller\"\n"
-	if calls != 2 || output.String() != expected {
-		t.Fatalf("calls=%d output=%q", calls, output.String())
-	}
-}
-
-// TestHandlerPreservesJsonMetadataAndFilteredEncodingFailures checks admission before serialization.
-func TestHandlerPreservesJsonMetadataAndFilteredEncodingFailures(t *testing.T) {
-	for _, filter := range []string{"off", "trace"} {
-		var output bytes.Buffer
-		guard, logger, err := New(filter, "json", &output)
-		if err != nil {
-			t.Fatal(err)
-		}
-		record := slog.NewRecord(time.Unix(0, 0), slog.LevelInfo, "fallback", 0)
-		record.AddAttrs(slog.Any("event", nil), slog.String("log_target", ""), slog.String("timestamp", "caller"), slog.String("level", "caller"), slog.String("target", "caller"))
-		if err := logger.Handler().Handle(context.Background(), record); err != nil {
-			t.Fatal(err)
-		}
-		invalid := slog.NewRecord(time.Unix(0, 0), slog.LevelInfo, "invalid", 0)
-		invalid.AddAttrs(slog.Any("invalid", make(chan int)))
-		err = logger.Handler().Handle(context.Background(), invalid)
-		guard.Shutdown()
-		assertJsonAdmission(t, filter, err, output.Bytes())
-	}
-}
-
-// assertJsonAdmission verifies exact metadata replacement and no partial output after an encoding error.
-func assertJsonAdmission(t *testing.T, filter string, err error, output []byte) {
-	t.Helper()
-	if filter == "off" {
-		if err != nil || len(output) != 0 {
-			t.Fatal(err, string(output))
-		}
-		return
-	}
-	if err == nil || err.Error() != "json: unsupported type: chan int" {
-		t.Fatal(err)
-	}
 	var actual map[string]any
-	if err := json.Unmarshal(output, &actual); err != nil {
+	if err := json.Unmarshal(output.Bytes(), &actual); err != nil {
 		t.Fatal(err)
 	}
-	expected := map[string]any{"event": nil, "timestamp": "1970-01-01T00:00:00.000000Z", "level": "INFO", "target": ""}
-	if !reflect.DeepEqual(actual, expected) {
+	if actual["level"] != "TRACE" || !strings.HasPrefix(actual["invalid"].(string), "!ERROR:") {
 		t.Fatal(actual)
 	}
 }

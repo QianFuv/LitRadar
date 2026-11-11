@@ -44,7 +44,7 @@ $LATENCY_DELTA_LIMIT_MILLISECONDS = 2.0
 $LATENCY_DELTA_LIMIT_PERCENT = 15.0
 $MEMORY_DELTA_LIMIT_MIB = 8.0
 $PROFILE_PATH = "/api/logging-profile-missing"
-$REQUIRED_EVENT_FIELDS = @("timestamp", "level", "target", "event", "component")
+$REQUIRED_EVENT_FIELDS = @("time", "msg", "level", "target", "event", "component")
 
 function Invoke-DockerCommand {
     param(

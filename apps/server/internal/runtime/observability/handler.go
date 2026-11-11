@@ -16,8 +16,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
-	apidomain "github.com/QianFuv/LitRadar/apps/server/internal/domain/api"
 	"github.com/QianFuv/LitRadar/apps/server/internal/runtime/logfilter"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/settings"
 )
@@ -39,7 +37,7 @@ type Guard struct {
 type handler struct {
 	guard      *Guard
 	attributes []slog.Attr
-	groups     []string
+	delegate   slog.Handler
 }
 
 // Initialize reads only startup logging settings and returns an independently owned logger.
@@ -71,7 +69,7 @@ func New(filterText, format string, writer io.Writer) (*Guard, *slog.Logger, err
 			_ = flusher.Flush()
 		}
 	}()
-	return guard, slog.New(&handler{guard: guard}), nil
+	return guard, slog.New(&handler{guard: guard, delegate: standardHandler(queueWriter{guard}, format)}), nil
 }
 
 func (guard *Guard) enqueue(line []byte) {
@@ -110,14 +108,40 @@ func (guard *Guard) Shutdown() {
 	}
 }
 
+type queueWriter struct{ guard *Guard }
+
+func (writer queueWriter) Write(data []byte) (int, error) {
+	writer.guard.enqueue(slices.Clone(data))
+	return len(data), nil
+}
+
+func standardHandler(writer io.Writer, format string) slog.Handler {
+	options := &slog.HandlerOptions{Level: slog.Level(-8), ReplaceAttr: func(_ []string, attribute slog.Attr) slog.Attr {
+		switch attribute.Key {
+		case "log_target":
+			return slog.Attr{}
+		case slog.TimeKey:
+			if attribute.Value.Kind() == slog.KindTime {
+				return slog.Time(attribute.Key, attribute.Value.Time().UTC())
+			}
+		case slog.LevelKey:
+			if level, ok := attribute.Value.Any().(slog.Level); ok && level < slog.LevelDebug {
+				return slog.String(attribute.Key, "TRACE")
+			}
+		}
+		return attribute
+	}}
+	if format == "json" {
+		return slog.NewJSONHandler(writer, options)
+	}
+	return slog.NewTextHandler(writer, options)
+}
+
 func (guard *Guard) reportDropped() {
 	if dropped := guard.dropped.Load(); dropped > 0 {
-		if guard.format == "compact" {
-			_, _ = fmt.Fprintf(guard.writer, "WARN litradar logging.events_dropped component=logging dropped_count=%d\n", dropped)
-		} else {
-			encoded, _ := jsonvalue.EncodeJson(map[string]any{"level": "WARN", "target": "litradar", "event": "logging.events_dropped", "component": "logging", "dropped_count": dropped})
-			_, _ = io.WriteString(guard.writer, encoded+"\n")
-		}
+		record := slog.NewRecord(time.Now(), slog.LevelWarn, "logging.events_dropped", 0)
+		record.Add("target", "litradar", "event", "logging.events_dropped", "component", "logging", "dropped_count", dropped)
+		_ = standardHandler(guard.writer, guard.format).Handle(context.Background(), record)
 	}
 }
 
@@ -228,50 +252,59 @@ func RecordSpan(ctx context.Context, name string, value any) {
 func (output *handler) Enabled(context.Context, slog.Level) bool { return true }
 func (output *handler) WithAttrs(attributes []slog.Attr) slog.Handler {
 	clone := *output
+	attributes = slices.Clone(attributes)
+	for index := range attributes {
+		attributes[index].Value = attributes[index].Value.Resolve()
+	}
 	clone.attributes = append(slices.Clone(output.attributes), attributes...)
+	clone.delegate = output.delegate.WithAttrs(attributes)
 	return &clone
 }
 func (output *handler) WithGroup(name string) slog.Handler {
 	clone := *output
-	if name != "" {
-		clone.groups = append(slices.Clone(output.groups), name)
-	}
+	clone.delegate = output.delegate.WithGroup(name)
 	return &clone
 }
 
 func (output *handler) Handle(ctx context.Context, record slog.Record) error {
-	fields, order := recordFields(record, output.attributes)
-
+	resolved := slog.NewRecord(record.Time, record.Level, record.Message, record.PC)
+	record.Attrs(func(attribute slog.Attr) bool {
+		attribute.Value = attribute.Value.Resolve()
+		resolved.AddAttrs(attribute)
+		return true
+	})
+	record = resolved
+	fields := recordFields(record, output.attributes)
+	_, hasEvent := fields["event"]
+	if !hasEvent && record.Message != "" {
+		fields["event"] = record.Message
+	}
 	target := originalTarget(record, fields)
-	delete(fields, "log_target")
 	scope := scopeFrom(ctx)
 	if !output.guard.filter.Enabled(target, levelNumber(record.Level), fields, scope) {
 		return nil
 	}
-	level := []string{"", "ERROR", "WARN", "INFO", "DEBUG", "TRACE"}[levelNumber(record.Level)]
-	if output.guard.format == "compact" {
-		output.guard.enqueue([]byte(compact(record.Time, level, target, fields, order, scope)))
-		return nil
+	record = record.Clone()
+	if !hasEvent && record.Message != "" {
+		record.Add("event", record.Message)
 	}
-	payload := recordJsonPayload(record, level, target, fields, scope)
-
-	encoded, err := jsonvalue.EncodeJson(payload)
-	if err != nil {
-		return err
+	record.Add("target", target)
+	spans := make([]map[string]any, 0, len(scope))
+	for _, entry := range scope {
+		if entry.Span != nil {
+			spans = append(spans, entry.Span.Fields())
+		}
 	}
-	output.guard.enqueue([]byte(encoded + "\n"))
-	return nil
+	if len(spans) > 0 {
+		record.Add("span", spans[len(spans)-1], "spans", spans)
+	}
+	return output.delegate.Handle(ctx, record)
 }
 
-// recordFields resolves retained attributes in encounter order while retaining first-key display order.
-func recordFields(record slog.Record, attributes []slog.Attr) (map[string]any, []string) {
+func recordFields(record slog.Record, attributes []slog.Attr) map[string]any {
 	fields := map[string]any{}
-	order := []string{}
 	add := func(attribute slog.Attr) {
 		if attribute.Key != "" {
-			if _, exists := fields[attribute.Key]; !exists {
-				order = append(order, attribute.Key)
-			}
 			fields[attribute.Key] = attribute.Value.Resolve().Any()
 		}
 	}
@@ -279,109 +312,7 @@ func recordFields(record slog.Record, attributes []slog.Attr) (map[string]any, [
 		add(attribute)
 	}
 	record.Attrs(func(attribute slog.Attr) bool { add(attribute); return true })
-	if _, exists := fields["event"]; !exists && record.Message != "" {
-		fields["event"] = record.Message
-		order = append(order, "event")
-	}
-	return fields, order
-}
-
-// recordJsonPayload applies JSON metadata and captures nonnil span snapshots in scope order.
-func recordJsonPayload(record slog.Record, level, target string, fields map[string]any, scope []logfilter.Entry) map[string]any {
-	payload := maps.Clone(fields)
-	payload["timestamp"] = record.Time.UTC().Format("2006-01-02T15:04:05.000000Z")
-	payload["level"] = level
-	payload["target"] = target
-	if len(scope) > 0 {
-		spans := make([]map[string]any, 0, len(scope))
-		for _, entry := range scope {
-			if entry.Span != nil {
-				spans = append(spans, entry.Span.Fields())
-			}
-		}
-		if len(spans) > 0 {
-			payload["span"] = spans[len(spans)-1]
-			payload["spans"] = spans
-		}
-	}
-	return payload
-}
-
-func compact(timestamp time.Time, level, target string, fields map[string]any, order []string, scope []logfilter.Entry) string {
-	var text strings.Builder
-	fmt.Fprintf(&text, "%s %5s ", timestamp.UTC().Format("2006-01-02T15:04:05.000000Z"), level)
-	hasSpan := false
-	for _, entry := range scope {
-		if entry.Span != nil {
-			fmt.Fprintf(&text, "%s:", entry.Span.Fields()["name"])
-			hasSpan = true
-		}
-	}
-	if hasSpan {
-		text.WriteByte(' ')
-	}
-	fmt.Fprintf(&text, "%s: ", target)
-	writeFields(&text, fields, order)
-	for _, entry := range scope {
-		if entry.Span == nil {
-			continue
-		}
-		values := entry.Span.Fields()
-		name := values["name"].(string)
-		delete(values, "name")
-		if len(values) > 0 {
-			text.WriteByte(' ')
-			writeFields(&text, values, spanOrder(name, values))
-		}
-	}
-	text.WriteByte('\n')
-	return text.String()
-}
-
-func spanOrder(name string, fields map[string]any) []string {
-	orders := map[string]string{
-		"process":        "component command version process_id parent_run_id",
-		"cli.command":    "component command",
-		"http.request":   "component request_id method route",
-		"scheduler.loop": "component worker_id", "scheduler.tick": "component worker_id",
-		"scheduler.claim": "component worker_id task_id run_id job_id",
-		"scheduler.run":   "component worker_id task_id run_id job_id job_kind",
-		"scheduler.child": "component worker_id task_id run_id job_id command process_number",
-		"delivery.manual": "component workflow mode user_id", "delivery.workflow": "component workflow mode user_id",
-		"pushplus.delivery": "component provider endpoint", "ai.completion": "component provider endpoint operation",
-	}
-	order := strings.Fields(orders[name])
-	for _, key := range slices.Sorted(maps.Keys(fields)) {
-		if !slices.Contains(order, key) {
-			order = append(order, key)
-		}
-	}
-	return order
-}
-
-func writeFields(output *strings.Builder, fields map[string]any, order []string) {
-	hasField := false
-	for _, key := range order {
-		value, exists := fields[key]
-		if !exists || value == nil {
-			continue
-		}
-		if hasField {
-			output.WriteByte(' ')
-		}
-		hasField = true
-		if key == "message" {
-			fmt.Fprint(output, value)
-			continue
-		}
-		output.WriteString(key)
-		output.WriteByte('=')
-		if text, isString := value.(string); isString {
-			output.WriteString(apidomain.DebugString(text))
-		} else {
-			fmt.Fprint(output, value)
-		}
-	}
+	return fields
 }
 
 func originalTarget(record slog.Record, fields map[string]any) string {
