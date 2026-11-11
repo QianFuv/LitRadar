@@ -298,3 +298,12 @@ sql:
             go_type:
               import: github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/types
               type: SecretText
+  - engine: sqlite
+    schema: internal/storage/sqlc/schema/workset.sql
+    queries: internal/storage/sqlc/queries/workset.sql
+    gen:
+      go:
+        <<: *strict
+        package: worksetdb
+        out: internal/storage/sqlc/worksetdb
+        query_parameter_limit: 0

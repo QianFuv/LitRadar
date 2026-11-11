@@ -47,7 +47,7 @@ go run ./apps/server/cmd/sqlc-schema -check -output apps/server/internal/storage
 sqlc diff -f apps/server/sqlc.yaml
 ```
 
-`sqlc-schema -check` 验证快照与真实 migration 一致，`sqlc diff` 验证 Go 产物与 schema、查询及生成配置一致，两者都不会改写生成文件。完整流程为「改 migration → 更新 schema 快照 → 写查询 → 生成」，具体命令和手写 SQL 边界见[数据库参考](../reference/database.md#sqlc-查询生成)。启用的 linter 及其设置以 `.golangci.yml` 为准。上面的 lint 范围与 backend CI 一致，只覆盖根包和 `apps/server/...`；client CI 在构建出 `frontend/dist` 后，分别以 web 的 `server,production`、Windows 的 `production`/`production,smoke` 和 Android 的 `android,production` 标签检查 `apps/client/...`。Android 使用同构建的 NDK、arm64 目标和 cgo。对全模块运行（如 `./apps/...`）也需要先准备客户端的 `frontend/dist` 嵌入资源。
+`sqlc-schema -check` 验证六类数据库快照与真实 migration 或 Crossref 工作集初始化定义一致，`sqlc diff` 验证 Go 产物与 schema、查询及生成配置一致，两者都不会改写生成文件。完整流程为「改 migration／工作集初始化定义 → 更新 schema 快照 → 写查询 → 生成」，具体命令和手写 SQL 边界见[数据库参考](../reference/database.md#sqlc-查询生成)。启用的 linter 及其设置以 `.golangci.yml` 为准。上面的 lint 范围与 backend CI 一致，只覆盖根包和 `apps/server/...`；client CI 在构建出 `frontend/dist` 后，分别以 web 的 `server,production`、Windows 的 `production`/`production,smoke` 和 Android 的 `android,production` 标签检查 `apps/client/...`。Android 使用同构建的 NDK、arm64 目标和 cgo。对全模块运行（如 `./apps/...`）也需要先准备客户端的 `frontend/dist` 嵌入资源。
 
 Backend CI 只在 regular lane 中运行服务端 lint 和上述两项生成检查，race lane 不安装这些工具；工具二进制缓存按操作系统、架构、Go 版本及工具版本隔离。
 

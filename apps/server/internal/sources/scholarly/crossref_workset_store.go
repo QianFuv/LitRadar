@@ -14,6 +14,7 @@ import (
 
 	platform "github.com/QianFuv/LitRadar/apps/server/internal/platform/sqlite"
 	"github.com/QianFuv/LitRadar/apps/server/internal/provider"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/worksetdb"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 	native "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
@@ -40,6 +41,14 @@ CREATE TABLE groups (fingerprint TEXT PRIMARY KEY, anchor TEXT, date TEXT NOT NU
 year INTEGER NOT NULL, volume TEXT NOT NULL, issue TEXT NOT NULL, rank INTEGER);
 CREATE INDEX groups_order ON groups(date DESC,year DESC,volume DESC,issue DESC,fingerprint);
 CREATE UNIQUE INDEX groups_rank ON groups(rank);`
+
+// InitCrossrefWorkset creates the same schema used by live worksets and sqlc snapshots.
+func InitCrossrefWorkset(ctx context.Context, connection *sql.Conn) error {
+	_, err := connection.ExecContext(ctx, worksetSchema)
+	return worksetStorageError(err)
+}
+
+var worksetQueries worksetdb.Queries
 
 type worksetConnector struct {
 	instance *native.Driver
@@ -164,7 +173,7 @@ func (workset *CrossrefWorkset) initializeRoot() error {
 	if workset.state.CreatedFrom == nil {
 		return nil
 	}
-	return workset.exec("INSERT INTO partitions(id,parent,first_second,last_second,depth,status) VALUES(1,NULL,?1,?2,0,'probe')", *workset.state.CreatedFrom, workset.state.FrozenAt)
+	return worksetStorageError(worksetQueries.InsertRoot(context.Background(), workset.connection, worksetdb.InsertRootParams{FirstSecond: storage.Integer(*workset.state.CreatedFrom), LastSecond: storage.Integer(workset.state.FrozenAt)}))
 }
 
 func renewedWorksetState(checkpoint CrossrefCheckpoint) (CrossrefCheckpoint, error) {
@@ -315,14 +324,14 @@ func createWorksetManifest(path string, owner worksetOwner) ([]byte, error) {
 func (workset *CrossrefWorkset) initializeWorksetDatabase(state CrossrefCheckpoint, encodedOwner []byte) error {
 	var err error
 	if err = workset.exec(worksetConfiguration); err == nil {
-		err = workset.exec(worksetSchema)
+		err = InitCrossrefWorkset(context.Background(), workset.connection)
 	}
 	encodedState, encodeErr := state.MarshalJSON()
 	if err == nil && encodeErr != nil {
 		err = worksetStorageError(encodeErr)
 	}
 	if err == nil {
-		err = workset.exec("INSERT INTO metadata VALUES(1, ?1, ?2, NULL)", string(encodedOwner), string(encodedState))
+		err = worksetStorageError(worksetQueries.InsertMetadata(context.Background(), workset.connection, worksetdb.InsertMetadataParams{Owner: storage.Text(encodedOwner), State: storage.Text(encodedState)}))
 	}
 	if err == nil {
 		err = workset.initializeRoot()
@@ -364,23 +373,22 @@ func (workset *CrossrefWorkset) validateWorksetSchema() error {
 
 // readWorksetMetadata validates owner identity before decoding the stored checkpoint and previous bytes.
 func (workset *CrossrefWorkset) readWorksetMetadata(owner worksetOwner) (CrossrefCheckpoint, storage.OptionalText, error) {
-	var ownerText, stateText storage.Text
-	var previous storage.OptionalText
-	if err := workset.row("SELECT owner,state,previous FROM metadata WHERE id=1").Scan(&ownerText, &stateText, &previous); err != nil {
+	row, err := worksetQueries.Metadata(context.Background(), workset.connection)
+	if err != nil {
 		return CrossrefCheckpoint{}, storage.OptionalText{}, worksetStorageError(err)
 	}
 	var actualOwner worksetOwner
-	if decodeWorksetStruct([]byte(ownerText), &actualOwner) != nil {
+	if decodeWorksetStruct([]byte(row.Owner), &actualOwner) != nil {
 		return CrossrefCheckpoint{}, storage.OptionalText{}, invalidWorkset("invalid Crossref workset metadata")
 	}
 	if !reflect.DeepEqual(owner, actualOwner) {
 		return CrossrefCheckpoint{}, storage.OptionalText{}, invalidWorkset("Crossref workset database context does not match")
 	}
 	var stored CrossrefCheckpoint
-	if json.Unmarshal([]byte(stateText), &stored) != nil || stored.Validate() != nil {
+	if json.Unmarshal([]byte(row.State), &stored) != nil || stored.Validate() != nil {
 		return CrossrefCheckpoint{}, storage.OptionalText{}, invalidWorkset("Crossref workset database is damaged")
 	}
-	return stored, previous, nil
+	return stored, storage.OptionalText{Value: (*string)(row.Previous)}, nil
 }
 
 // isCompatibleWorksetEmission admits a core-owned cursor extending the immutable sealed selection.

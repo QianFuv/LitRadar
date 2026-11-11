@@ -8,8 +8,8 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
 
 修改数据库时按以下顺序操作；命令均从仓库根目录执行：
 
-1. 修改相应的生产 migration。认证库、内容库、Provider 控制库、batch ledger 和遥测库仍由各自现有的迁移入口管理，不能直接修改快照来代替迁移。
-2. 运行快照生成器。它在临时数据库中执行真实迁移，再导出关系表定义；不会读取或迁移仓库的业务数据，FTS 虚拟表及其 shadow tables 不进入 sqlc 输入。
+1. 修改相应的生产 migration。认证库、内容库、Provider 控制库、batch ledger 和遥测库仍由各自现有的迁移入口管理；Crossref 私有工作集通过 `scholarly.InitCrossrefWorkset` 执行运行时建表定义。不能直接修改快照来代替迁移或初始化定义。
+2. 运行快照生成器。它在临时数据库中执行真实迁移或工作集初始化，再导出六类数据库的关系表定义；不会读取或迁移仓库的业务数据，FTS 虚拟表及其 shadow tables 不进入 sqlc 输入。
 
    ```bash
    go run ./apps/server/cmd/sqlc-schema -output apps/server/internal/storage/sqlc/schema
@@ -22,7 +22,7 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
    sqlc generate -f apps/server/sqlc.yaml
    ```
 
-同一个改动应提交 migration、`sqlc/schema/` 快照、`sqlc/queries/` 输入及受影响的生成 Go 文件。不要手工修改生成文件；迁移实现始终是 schema 的权威来源。
+同一个改动应提交 migration、`sqlc/schema/` 快照、`sqlc/queries/` 输入及受影响的生成 Go 文件。不要手工修改生成文件；生产迁移与工作集初始化实现始终是 schema 的权威来源。
 
 提交前检查输入与输出是否一致：
 
@@ -30,6 +30,8 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
 go run ./apps/server/cmd/sqlc-schema -check -output apps/server/internal/storage/sqlc/schema
 sqlc diff -f apps/server/sqlc.yaml
 ```
+
+管理统计的认证库计数由一个 sqlc 查询在同一读取快照中计算；内容库计数和文章定位的普通关系查询也由 sqlc 生成。Crossref 工作集的普通 CRUD 与排序查询集中在 `queries/workset.sql`，生成至 `worksetdb`；重复插入、payload lookup 和流式分组／输出路径复用导出的 SQL 常量及调用者的预编译语句，避免为调用生成的切片方法而提前读取整组或超出输出预算的 payload。工作集 schema 快照来自现有初始化定义，私有格式版本仍为 v1。
 
 FTS、动态 SQL、临时成员表、schema 检查及迁移 SQL 继续手写。`index/content_sql.go` 中保留原子身份认领的 `AS MATERIALIZED` 查询，因为 sqlc 1.31.1 的 SQLite 解析器不支持该语法；不能通过删除关键字来改变其写入前所有者快照语义。严格 SQLite 类型、UTF-8、NULL 和空 BLOB 的校验，以及通知配置错误的原有优先级也需要保留。工具安装方式见[开发指南](../guides/development.md#后端开发工具)。
 

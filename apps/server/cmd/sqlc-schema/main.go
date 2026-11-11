@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/QianFuv/LitRadar/apps/server/internal/sources/scholarly"
 	indexstorage "github.com/QianFuv/LitRadar/apps/server/internal/storage/index"
 	authmigration "github.com/QianFuv/LitRadar/apps/server/internal/storage/migrations/auth"
 	indexmigration "github.com/QianFuv/LitRadar/apps/server/internal/storage/migrations/index"
@@ -34,7 +35,7 @@ func run(ctx context.Context, output string, isCheck bool) (failure error) {
 		return err
 	}
 	defer func() { failure = errors.Join(failure, os.RemoveAll(directory)) }()
-	for _, name := range []string{"auth", "index", "control", "batch", "telemetry"} {
+	for _, name := range []string{"auth", "index", "control", "batch", "telemetry", "workset"} {
 		filename := filepath.Join(directory, name+".sqlite")
 		if err := migrate(ctx, name, filename); err != nil {
 			return fmt.Errorf("migrate %s schema: %w", name, err)
@@ -85,6 +86,9 @@ func migrate(ctx context.Context, name, filename string) (failure error) {
 			return err
 		}
 		defer func() { failure = errors.Join(failure, connection.Close()) }()
+		if name == "workset" {
+			return scholarly.InitCrossrefWorkset(ctx, connection)
+		}
 		if name == "batch" {
 			return indexstorage.InitBatch(ctx, connection)
 		}

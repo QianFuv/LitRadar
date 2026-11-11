@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/worksetdb"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 	"github.com/QianFuv/LitRadar/apps/server/internal/transport"
 )
@@ -52,7 +53,8 @@ func (workset *CrossrefWorkset) SealSelection(upper string, lower *string, candi
 
 // FirstGroup selects the newest safe issue in the complete locally sorted result.
 func (workset *CrossrefWorkset) FirstGroup() (*IssueGroup, error) {
-	return workset.readGroup("SELECT anchor,date FROM groups WHERE anchor IS NOT NULL ORDER BY rank LIMIT 1")
+	row, err := worksetQueries.FirstGroup(context.Background(), workset.connection)
+	return decodeWorksetGroup(row.Anchor, row.Date, err)
 }
 
 // Group resolves identity independently of the supplied anchor's synchronization date.
@@ -61,20 +63,23 @@ func (workset *CrossrefWorkset) Group(anchor Anchor) (*IssueGroup, error) {
 	if err != nil {
 		return nil, worksetStorageError(err)
 	}
-	return workset.readGroup("SELECT anchor,date FROM groups WHERE fingerprint=?1", string(key))
+	row, err := worksetQueries.GroupByFingerprint(context.Background(), workset.connection, worksetdb.GroupByFingerprintParams{Fingerprint: storage.Text(key)})
+	return decodeWorksetGroup(row.Anchor, row.Date, err)
 }
 
-func (workset *CrossrefWorkset) readGroup(query string, values ...any) (*IssueGroup, error) {
-	var encoded, date storage.Text
-	err := workset.row(query, values...).Scan(&encoded, &date)
+// decodeWorksetGroup validates a generated projection before decoding its anchor.
+func decodeWorksetGroup(encoded *storage.Text, date storage.Text, err error) (*IssueGroup, error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, worksetStorageError(err)
 	}
+	if encoded == nil {
+		return nil, invalidWorkset("invalid Crossref workset metadata")
+	}
 	var anchor Anchor
-	if json.Unmarshal([]byte(encoded), &anchor) != nil {
+	if json.Unmarshal([]byte(*encoded), &anchor) != nil {
 		return nil, invalidWorkset("invalid Crossref workset metadata")
 	}
 	return &IssueGroup{anchor, string(date)}, nil
@@ -82,9 +87,8 @@ func (workset *CrossrefWorkset) readGroup(query string, values ...any) (*IssueGr
 
 // HasUnknownGroups detects records without a safe issue identity before window selection.
 func (workset *CrossrefWorkset) HasUnknownGroups() (bool, error) {
-	var result storage.Integer
-	err := workset.row("SELECT EXISTS(SELECT 1 FROM groups WHERE anchor IS NULL)").Scan(&result)
-	return result != 0, worksetStorageError(err)
+	result, err := worksetQueries.HasUnknownGroups(context.Background(), workset.connection)
+	return result, worksetStorageError(err)
 }
 
 // Emit reads at most 225 works and 16 MiB, selecting whole issue groups by their maximum date.
@@ -94,9 +98,7 @@ func (workset *CrossrefWorkset) Emit(upper string, lower *string, after *Emissio
 	if err != nil {
 		return page, err
 	}
-	rows, err := workset.connection.QueryContext(context.Background(), `SELECT w.rowid,w.group_rank,w.date,w.key,length(CAST(w.payload AS BLOB)) FROM works w INDEXED BY works_emit JOIN groups g ON g.rank=w.group_rank
-WHERE (w.group_rank,w.sort_date,w.key)>(?3,?4,?5) AND g.date<=?1 AND (?2 IS NULL OR g.date>=?2)
-ORDER BY w.group_rank,w.sort_date,w.key LIMIT 226`, upper, lower, rank, sortDate, key)
+	rows, err := workset.connection.QueryContext(context.Background(), worksetdb.EmissionRows, upper, lower, rank, sortDate, key)
 	if err != nil {
 		return page, worksetStorageError(err)
 	}
@@ -115,9 +117,9 @@ ORDER BY w.group_rank,w.sort_date,w.key LIMIT 226`, upper, lower, rank, sortDate
 	}()
 	bytes := 0
 	for rows.Next() {
-		var rowId, rankValue, dateValue, keyValue any
+		var rankValue, dateValue, keyValue any
 		var size storage.Integer
-		if err := rows.Scan(&rowId, &rankValue, &dateValue, &keyValue, &size); err != nil {
+		if err := rows.Scan(&rankValue, &dateValue, &keyValue, &size); err != nil {
 			return page, worksetStorageError(err)
 		}
 		shouldStop, err := checkEmissionBudget(size, bytes, len(page.Works))
@@ -129,12 +131,12 @@ ORDER BY w.group_rank,w.sort_date,w.key LIMIT 226`, upper, lower, rank, sortDate
 			break
 		}
 		if lookup == nil && len(page.Works) > 0 {
-			lookup, err = workset.connection.PrepareContext(context.Background(), "SELECT payload FROM works WHERE rowid=?1")
+			lookup, err = workset.connection.PrepareContext(context.Background(), worksetdb.WorkPayload)
 			if err != nil {
 				return page, worksetStorageError(err)
 			}
 		}
-		decoded, position, payloadBytes, err := workset.readEmissionWork(lookup, rowId, rankValue, dateValue, keyValue)
+		decoded, position, payloadBytes, err := workset.readEmissionWork(lookup, rankValue, dateValue, keyValue)
 		if err != nil {
 			return page, err
 		}
@@ -153,11 +155,11 @@ func (workset *CrossrefWorkset) emissionStart(after *EmissionKey) (int64, int64,
 	var rank, sortDate int64
 	key := ""
 	if after != nil {
-		var exists storage.Integer
-		if err := workset.row("SELECT EXISTS(SELECT 1 FROM works WHERE key=?1 AND group_rank=?2 AND date=?3)", after.Key, after.Rank, after.Date).Scan(&exists); err != nil {
+		exists, err := worksetQueries.HasEmissionKey(context.Background(), workset.connection, worksetdb.HasEmissionKeyParams{Key: storage.Text(after.Key), GroupRank: storage.Integer(after.Rank), Date: storage.Text(after.Date)})
+		if err != nil {
 			return 0, 0, "", worksetStorageError(err)
 		}
-		if exists == 0 {
+		if !exists {
 			return 0, 0, "", invalidWorkset("Crossref emission key is not present in its verified workset")
 		}
 		rank, key = after.Rank, after.Key
@@ -183,14 +185,14 @@ func checkEmissionBudget(size storage.Integer, usedBytes, count int) (bool, erro
 }
 
 // readEmissionWork loads and decodes an admitted payload before validating its cursor field types.
-func (workset *CrossrefWorkset) readEmissionWork(lookup *sql.Stmt, rowId, rankValue, dateValue, keyValue any) (any, *EmissionKey, int, error) {
+func (workset *CrossrefWorkset) readEmissionWork(lookup *sql.Stmt, rankValue, dateValue, keyValue any) (any, *EmissionKey, int, error) {
 	var payload, date, key storage.Text
 	var rank storage.Integer
 	var row *sql.Row
 	if lookup == nil {
-		row = workset.row("SELECT payload FROM works WHERE rowid=?1", rowId)
+		row = workset.row(worksetdb.WorkPayload, keyValue)
 	} else {
-		row = lookup.QueryRowContext(context.Background(), rowId)
+		row = lookup.QueryRowContext(context.Background(), keyValue)
 	}
 	if err := row.Scan(&payload); err != nil {
 		return nil, nil, 0, worksetStorageError(err)

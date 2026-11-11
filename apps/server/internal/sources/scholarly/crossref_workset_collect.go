@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/worksetdb"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 	native "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
@@ -24,7 +25,7 @@ func (workset *CrossrefWorkset) saveState(next, previous CrossrefCheckpoint) err
 	if err != nil {
 		return worksetStorageError(err)
 	}
-	return workset.exec("UPDATE metadata SET state=?1,previous=?2 WHERE id=1", string(encodedNext), string(encodedPrevious))
+	return worksetStorageError(worksetQueries.UpdateMetadata(context.Background(), workset.connection, worksetdb.UpdateMetadataParams{State: storage.Text(encodedNext), Previous: new(storage.Text(encodedPrevious))}))
 }
 
 // Accept atomically commits one response with its counters and replayable previous checkpoint.
@@ -114,10 +115,10 @@ func (workset *CrossrefWorkset) retryLeaf(partition int64, retry uint8, reason s
 	if retry >= 1 {
 		return invalidWorkset("Crossref partition drift persisted after one retry: " + reason)
 	}
-	if err := workset.exec("DELETE FROM works WHERE leaf=?1", partition); err != nil {
+	if err := worksetStorageError(worksetQueries.DeletePartitionWorks(context.Background(), workset.connection, worksetdb.DeletePartitionWorksParams{Leaf: storage.Integer(partition)})); err != nil {
 		return err
 	}
-	if err := workset.exec("UPDATE partitions SET retry=retry+1,received=0,cursor=CASE WHEN status='cursor' THEN '*' ELSE NULL END WHERE id=?1", partition); err != nil {
+	if err := worksetStorageError(worksetQueries.RetryPartition(context.Background(), workset.connection, worksetdb.RetryPartitionParams{ID: storage.Integer(partition)})); err != nil {
 		return err
 	}
 	slog.Warn("source.crossref.partition_retried", "reason", reason, "generation", workset.state.Generation)
@@ -128,8 +129,10 @@ func (workset *CrossrefWorkset) restartGeneration(reason string) error {
 	if workset.state.Generation >= 1 {
 		return invalidWorkset("Crossref journal count drift persisted after one retry: " + reason)
 	}
-	if err := workset.exec("DELETE FROM works; DELETE FROM partitions; DELETE FROM groups;"); err != nil {
-		return err
+	for _, clearRows := range []func(context.Context, worksetdb.DBTX) error{worksetQueries.ClearWorks, worksetQueries.ClearPartitions, worksetQueries.ClearGroups} {
+		if err := clearRows(context.Background(), workset.connection); err != nil {
+			return worksetStorageError(err)
+		}
 	}
 	workset.state.Generation++
 	workset.state.RootTotal = nil
@@ -142,21 +145,19 @@ func (workset *CrossrefWorkset) restartGeneration(reason string) error {
 }
 
 func (workset *CrossrefWorkset) nextPartition() error {
-	var partition, first, last, received, retry storage.Integer
-	var cursor storage.OptionalText
-	var expected storage.OptionalInteger
-	err := workset.row("SELECT id,first_second,last_second,cursor,received,expected,retry FROM partitions WHERE status IN ('probe','cursor') ORDER BY first_second,id LIMIT 1").Scan(&partition, &first, &last, &cursor, &received, &expected, &retry)
+	row, err := worksetQueries.NextPartition(context.Background(), workset.connection)
 	if err == nil {
-		return workset.resumeCollectionPartition(partition, first, last, received, retry, cursor, expected)
+		return workset.resumeCollectionPartition(row.ID, row.FirstSecond, row.LastSecond, row.Received, row.Retry, storage.OptionalText{Value: (*string)(row.Cursor)}, storage.OptionalInteger{Value: (*int64)(row.Expected)})
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return worksetStorageError(err)
 	}
-	var invalidParents, unique storage.Integer
-	if err := workset.row("SELECT count(*) FROM partitions p WHERE p.status='split' AND p.expected != (SELECT sum(c.expected) FROM partitions c WHERE c.parent=p.id)").Scan(&invalidParents); err != nil {
+	invalidParents, err := worksetQueries.InvalidParentCount(context.Background(), workset.connection)
+	if err != nil {
 		return worksetStorageError(err)
 	}
-	if err := workset.row("SELECT count(*) FROM works").Scan(&unique); err != nil {
+	unique, err := worksetQueries.WorkCount(context.Background(), workset.connection)
+	if err != nil {
 		return worksetStorageError(err)
 	}
 	if invalidParents != 0 || workset.state.RootTotal == nil || uint64(unique) != *workset.state.RootTotal {
@@ -209,8 +210,8 @@ func (workset *CrossrefWorkset) acceptCollectionCounts(page CrossrefPage, phase 
 
 // splitCollectionPartition validates depth and safe midpoint before inserting both child bounds.
 func (workset *CrossrefWorkset) splitCollectionPartition(phase CrossrefPhase) error {
-	var depth storage.Integer
-	if err := workset.row("SELECT depth FROM partitions WHERE id=?1", phase.Partition).Scan(&depth); err != nil {
+	depth, err := worksetQueries.PartitionDepth(context.Background(), workset.connection, worksetdb.PartitionDepthParams{ID: storage.Integer(phase.Partition)})
+	if err != nil {
 		return worksetStorageError(err)
 	}
 	if depth < 0 || depth > math.MaxUint32 {
@@ -223,11 +224,11 @@ func (workset *CrossrefWorkset) splitCollectionPartition(phase CrossrefPhase) er
 	if err != nil {
 		return err
 	}
-	if err := workset.exec("UPDATE partitions SET status='split' WHERE id=?1", phase.Partition); err != nil {
+	if err := worksetStorageError(worksetQueries.SplitPartition(context.Background(), workset.connection, worksetdb.SplitPartitionParams{ID: storage.Integer(phase.Partition)})); err != nil {
 		return err
 	}
 	for _, bounds := range [][2]int64{{phase.From, middle}, {middle + 1, phase.Until}} {
-		if err := workset.exec("INSERT INTO partitions(parent,first_second,last_second,depth,status) VALUES(?1,?2,?3,?4,'probe')", phase.Partition, bounds[0], bounds[1], int64(depth)+1); err != nil {
+		if err := worksetStorageError(worksetQueries.InsertPartition(context.Background(), workset.connection, worksetdb.InsertPartitionParams{Parent: new(storage.Integer(phase.Partition)), FirstSecond: storage.Integer(bounds[0]), LastSecond: storage.Integer(bounds[1]), Depth: depth + 1})); err != nil {
 			return err
 		}
 	}
@@ -237,7 +238,7 @@ func (workset *CrossrefWorkset) splitCollectionPartition(phase CrossrefPhase) er
 // prepareCollectionProbe updates expected counts before probe truncation and split or cursor advancement.
 func (workset *CrossrefWorkset) prepareCollectionProbe(page CrossrefPage, phase CrossrefPhase) (bool, error) {
 	if phase.Cursor == nil {
-		if err := workset.exec("UPDATE partitions SET expected=?1 WHERE id=?2", page.TotalResults, phase.Partition); err != nil {
+		if err := worksetStorageError(worksetQueries.SetPartitionExpected(context.Background(), workset.connection, worksetdb.SetPartitionExpectedParams{Expected: new(storage.Integer(page.TotalResults)), ID: storage.Integer(phase.Partition)})); err != nil {
 			return false, err
 		}
 		if uint64(len(page.Items)) != min(page.TotalResults, 225) {
@@ -279,7 +280,7 @@ func (workset *CrossrefWorkset) prepareCollectionWork(work any, phase CrossrefPh
 	}
 	keys[key] = true
 	if *lookup == nil {
-		*lookup, err = workset.connection.PrepareContext(context.Background(), "SELECT leaf FROM works WHERE key=?1")
+		*lookup, err = workset.connection.PrepareContext(context.Background(), worksetdb.WorkLeaf)
 		if err != nil {
 			return preparedWork{}, false, worksetStorageError(err)
 		}
@@ -336,7 +337,7 @@ func (workset *CrossrefWorkset) insertCollectionWorks(prepared []preparedWork, p
 			return err
 		}
 		if insert == nil {
-			insert, err = workset.connection.PrepareContext(context.Background(), "INSERT INTO works(key,payload,leaf,date,fingerprint,anchor,year,volume,issue) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)")
+			insert, err = workset.connection.PrepareContext(context.Background(), worksetdb.InsertWork)
 			if err != nil {
 				return worksetStorageError(err)
 			}
@@ -360,7 +361,7 @@ func (workset *CrossrefWorkset) finishCollectionPage(page CrossrefPage, phase Cr
 		cursor = page.NextCursor
 		status = "cursor"
 	}
-	if err := workset.exec("UPDATE partitions SET expected=?1,received=?2,cursor=?3,status=?4 WHERE id=?5", page.TotalResults, totalReceived, cursor, status, phase.Partition); err != nil {
+	if err := worksetStorageError(worksetQueries.FinishPartitionPage(context.Background(), workset.connection, worksetdb.FinishPartitionPageParams{Expected: new(storage.Integer(page.TotalResults)), Received: storage.Integer(totalReceived), Cursor: (*storage.Text)(cursor), Status: storage.Text(status), ID: storage.Integer(phase.Partition)})); err != nil {
 		return err
 	}
 	return workset.nextPartition()
@@ -381,10 +382,10 @@ func (workset *CrossrefWorkset) resumeCollectionPartition(partition, first, last
 
 // buildCollectionGroups constructs deterministic group ranks before publishing the ready phase.
 func (workset *CrossrefWorkset) buildCollectionGroups() (resultError error) {
-	if err := workset.exec("INSERT INTO groups(fingerprint,anchor,date,year,volume,issue) SELECT fingerprint,min(anchor),max(date),max(year),max(volume),max(issue) FROM works INDEXED BY works_order GROUP BY fingerprint;"); err != nil {
+	if err := worksetStorageError(worksetQueries.BuildGroups(context.Background(), workset.connection)); err != nil {
 		return err
 	}
-	rows, err := workset.connection.QueryContext(context.Background(), "SELECT fingerprint FROM groups INDEXED BY groups_order ORDER BY date DESC,year DESC,volume DESC,issue DESC,fingerprint")
+	rows, err := workset.connection.QueryContext(context.Background(), worksetdb.OrderedGroups)
 	if err != nil {
 		return worksetStorageError(err)
 	}
@@ -400,7 +401,7 @@ func (workset *CrossrefWorkset) buildCollectionGroups() (resultError error) {
 		if err := rows.Scan(&fingerprint); err != nil {
 			return worksetStorageError(err)
 		}
-		if err := workset.exec("UPDATE groups SET rank=?1 WHERE fingerprint=?2", rank, string(fingerprint)); err != nil {
+		if err := worksetStorageError(worksetQueries.SetGroupRank(context.Background(), workset.connection, worksetdb.SetGroupRankParams{Rank: new(storage.Integer(rank)), Fingerprint: fingerprint})); err != nil {
 			return err
 		}
 	}
@@ -410,7 +411,7 @@ func (workset *CrossrefWorkset) buildCollectionGroups() (resultError error) {
 	if err := rows.Close(); err != nil {
 		return worksetStorageError(err)
 	}
-	if err := workset.exec("UPDATE works SET group_rank=(SELECT rank FROM groups WHERE groups.fingerprint=works.fingerprint)"); err != nil {
+	if err := worksetStorageError(worksetQueries.SetWorkGroupRanks(context.Background(), workset.connection)); err != nil {
 		return err
 	}
 	workset.state.Phase = CrossrefPhase{Kind: "ready"}
@@ -435,7 +436,7 @@ func (workset *CrossrefWorkset) advanceLargeCollectionProbe(phase CrossrefPhase)
 		if err := workset.splitCollectionPartition(phase); err != nil {
 			return err
 		}
-	} else if err := workset.exec("UPDATE partitions SET status='cursor',cursor='*' WHERE id=?1", phase.Partition); err != nil {
+	} else if err := worksetStorageError(worksetQueries.StartPartitionCursor(context.Background(), workset.connection, worksetdb.StartPartitionCursorParams{ID: storage.Integer(phase.Partition)})); err != nil {
 		return err
 	}
 	return workset.nextPartition()

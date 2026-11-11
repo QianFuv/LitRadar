@@ -32,6 +32,15 @@ func TestGenerationIsRepeatableAndDetectsDrift(t *testing.T) {
 	if !strings.Contains(string(index), "CREATE TABLE articles") || strings.Contains(string(index), "article_search") {
 		t.Fatal("schema input must include relational content and exclude virtual FTS tables and their shadow tables")
 	}
+	workset, err := os.ReadFile(filepath.Join(directory, "workset.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, definition := range []string{"CREATE TABLE metadata", "CREATE TABLE partitions", "CREATE TABLE works", "CREATE TABLE groups", "GENERATED ALWAYS AS"} {
+		if !strings.Contains(string(workset), definition) {
+			t.Fatalf("workset schema input is missing %s", definition)
+		}
+	}
 	if err := os.WriteFile(filepath.Join(directory, "auth.sql"), []byte("-- stale schema\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
