@@ -53,10 +53,4 @@ function Megaphone(props: MegaphoneProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  Megaphone,
-  Megaphone as MegaphoneIcon,
-  type MegaphoneProps,
-  type MegaphoneProps as MegaphoneIconProps,
-};
+export { Megaphone };

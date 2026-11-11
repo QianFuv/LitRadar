@@ -90,10 +90,12 @@ const HIT_BASIS_LABELS: Readonly<Record<HitCountBasis, string>> = {
   total: '总命中数',
 };
 
-const MODE_LABELS: Readonly<Record<string, string>> = {
-  advanced: '高级检索',
-  simple: '简单检索',
-};
+const MODE_LABELS = new Map(
+  Object.entries({
+    advanced: '高级检索',
+    simple: '简单检索',
+  }),
+);
 
 /**
  * Format a search-shape value for display without hiding unknown server values.
@@ -107,7 +109,7 @@ function formatShapeValue(feature: SearchShapeFeature, value: string): string {
     return value === 'true' ? '是' : value === 'false' ? '否' : value;
   }
   if (feature === 'mode') {
-    return MODE_LABELS[value] ?? value;
+    return MODE_LABELS.get(value) ?? value;
   }
   if (feature === 'hit_count_basis') {
     return HIT_BASIS_LABELS[value as HitCountBasis] ?? value;
@@ -154,7 +156,7 @@ function describeSeriesDimensions(series: TelemetrySeries): string[] {
     return [outcome];
   }
   return [
-    series.mode ? (MODE_LABELS[series.mode] ?? series.mode) : null,
+    series.mode ? (MODE_LABELS.get(series.mode) ?? series.mode) : null,
     series.database ?? null,
     series.term_count ? `${series.term_count} 个词` : null,
     series.uses_prefix ? '前缀通配' : null,
@@ -172,7 +174,7 @@ function describeSeriesDimensions(series: TelemetrySeries): string[] {
  * @param error - Query error.
  * @returns State message title and description.
  */
-function describeTelemetryError(error: Error): { description: string; title: string } {
+function describeTelemetryError(error: Error) {
   const status = error instanceof ApiError ? error.status : null;
   if (status === 401) {
     return { description: '登录状态已失效，请重新登录后再查看负载统计。', title: '需要登录' };
@@ -213,26 +215,14 @@ export function LoadTelemetryCard({ isEnabled }: { isEnabled: boolean }) {
         <div
           {...stylex.props(styles.loadTelemetryCardCardContentItem, styles.loadTelemetryCardDiv)}
         >
-          <ToggleGroup
-            aria-label="统计时段"
-            value={period}
-            onValueChange={(value) => {
-              if (value) setPeriod(value as TelemetryPeriod);
-            }}
-          >
+          <ToggleGroup aria-label="统计时段" value={period} onValueChange={setPeriod}>
             {PERIOD_OPTIONS.map((option) => (
               <ToggleGroupItem key={option.value} value={option.value}>
                 {option.label}
               </ToggleGroupItem>
             ))}
           </ToggleGroup>
-          <ToggleGroup
-            aria-label="调用类型"
-            value={kindFilter}
-            onValueChange={(value) => {
-              if (value) setKindFilter(value as KindFilter);
-            }}
-          >
+          <ToggleGroup aria-label="调用类型" value={kindFilter} onValueChange={setKindFilter}>
             {KIND_OPTIONS.map((option) => (
               <ToggleGroupItem key={option.value} value={option.value}>
                 {option.label}
@@ -245,9 +235,9 @@ export function LoadTelemetryCard({ isEnabled }: { isEnabled: boolean }) {
           isReady={!isLoading}
           xstyle={styles.loadTelemetryCardCardContentItem}
           placeholder={
-            <p role="status" {...stylex.props(styles.loadTelemetryCardP)}>
+            <output {...stylex.props(styles.statusOutput, styles.loadTelemetryCardP)}>
               <LoadingText text="加载中…" />
-            </p>
+            </output>
           }
         >
           {error instanceof Error ? (
@@ -471,7 +461,7 @@ function KindTrendChart({ trend }: { trend: KindTrend }) {
   const summary = `共 ${NUMBER_FORMATTER.format(trend.totalCalls)} 次调用 · ${NUMBER_FORMATTER.format(trend.totalErrors)} 次错误 · 峰值 ${NUMBER_FORMATTER.format(maxCalls)} 次/小时`;
 
   return (
-    <figure data-telemetry-trend={trend.kind}>
+    <figure data-telemetry-trend={trend.kind} aria-label={`${label}每小时调用趋势：${summary}`}>
       <figcaption
         {...stylex.props(styles.kindTrendChartFigureItem, styles.kindTrendChartFigcaption)}
       >
@@ -479,8 +469,7 @@ function KindTrendChart({ trend }: { trend: KindTrend }) {
         <span {...stylex.props(styles.kindTrendChartSpan2)}>{summary}</span>
       </figcaption>
       <svg
-        role="img"
-        aria-label={`${label}每小时调用趋势：${summary}`}
+        aria-hidden="true"
         viewBox={`0 0 ${Math.max(hours.length, 1)} 100`}
         preserveAspectRatio="none"
         {...stylex.props(styles.kindTrendChartFigureItem, styles.kindTrendChartSvg)}
@@ -655,6 +644,9 @@ function DistributionList({
 }
 
 const styles = stylex.create({
+  statusOutput: {
+    display: 'block',
+  },
   loadTelemetryCardCardContentItem: {
     marginBottom: {
       default: null,

@@ -78,8 +78,8 @@ export function AdminUsersCard({
     mutationFn: ({ userId, isAdmin }: { userId: number; isAdmin: boolean }) =>
       adminSetAdmin(userId, isAdmin),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
     },
   });
   const resetPwMut = useMutation({
@@ -93,8 +93,8 @@ export function AdminUsersCard({
   const deleteUserMut = useMutation({
     mutationFn: (userId: number) => adminDeleteUser(userId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
       setDeleteDialogOpen(false);
       setDeleteUserId(null);
     },
@@ -133,9 +133,9 @@ export function AdminUsersCard({
             isReady={!isUsersLoading}
             xstyle={[styles.adminUsersCardCardContentItem, styles.adminUsersCardRevealItem]}
             placeholder={
-              <p role="status" {...stylex.props(styles.adminUsersCardP2)}>
+              <output {...stylex.props(styles.statusOutput, styles.adminUsersCardP2)}>
                 <LoadingText text="加载中…" />
-              </p>
+              </output>
             }
           >
             {users && (
@@ -361,6 +361,9 @@ export function AdminUsersCard({
 }
 
 const styles = stylex.create({
+  statusOutput: {
+    display: 'block',
+  },
   adminUsersCardCardTitle: {
     display: 'flex',
     alignItems: 'center',

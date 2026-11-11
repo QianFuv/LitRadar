@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useInView } from 'react-intersection-observer';
+import { useInView } from '@/lib/use-in-view';
 
 type UseVisiblePageListOptions = {
   listKey: string;
@@ -77,13 +77,9 @@ export function useVisiblePageList({
     [hasNextPage, isFetchingNextPage, listKey, loadedPages, onFetchNextPage, visiblePages],
   );
 
-  const { ref: prefetchRef } = useInView({
-    threshold: 0,
-    onChange: handlePrefetchChange,
-  });
+  const { ref: prefetchRef } = useInView({ onChange: handlePrefetchChange });
 
-  const { ref: loadMoreRef, inView: isLoadMoreInView } = useInView({
-    threshold: 0,
+  const { ref: loadMoreRef, isInView: isLoadMoreInView } = useInView({
     onChange: handleLoadMoreChange,
   });
 

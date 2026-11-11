@@ -18,7 +18,7 @@ export const WORKSPACE_ROUTE_ID = '/_workspace';
 export const LOGIN_ROUTE_ID = '/login';
 
 /** Favorite kinds shown on the favorites page. */
-export const FAVORITE_KINDS = ['articles', 'graphs'] as const;
+const FAVORITE_KINDS = ['articles', 'graphs'] as const;
 
 /** One favorite kind shown on the favorites page. */
 export type FavoriteKind = (typeof FAVORITE_KINDS)[number];

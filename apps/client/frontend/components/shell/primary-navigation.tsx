@@ -33,6 +33,17 @@ type PrimaryNavigationItem = {
   view: WorkspaceView;
 };
 
+/**
+ * Name a navigation link so that its accessible name contains the visible short label, as voice
+ * control expects, while keeping the full destination name.
+ *
+ * @param item - Navigation item.
+ * @returns Accessible name of the link.
+ */
+function getNavigationAccessibleName(item: PrimaryNavigationItem): string {
+  return item.label.includes(item.shortLabel) ? item.label : `${item.shortLabel} ${item.label}`;
+}
+
 /** Root workspaces in navigation order. */
 const PRIMARY_NAVIGATION_ITEMS: readonly PrimaryNavigationItem[] = [
   { view: 'search', icon: Search, label: '文献检索', shortLabel: '检索' },
@@ -131,7 +142,7 @@ export function RailNavigation() {
               <NavigationItemLink
                 key={item.view}
                 view={item.view}
-                aria-label={item.label}
+                aria-label={getNavigationAccessibleName(item)}
                 isCurrent={isCurrent}
                 onIntent={() => preloadWorkspaceView(item.view)}
                 title={item.label}
@@ -183,7 +194,7 @@ export function TabNavigation() {
               <NavigationItemLink
                 key={item.view}
                 view={item.view}
-                aria-label={item.label}
+                aria-label={getNavigationAccessibleName(item)}
                 isCurrent={isCurrent}
                 onIntent={() => preloadWorkspaceView(item.view)}
                 {...stylex.props(

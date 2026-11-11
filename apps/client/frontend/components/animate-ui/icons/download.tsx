@@ -82,10 +82,4 @@ function Download(props: DownloadProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  Download,
-  Download as DownloadIcon,
-  type DownloadProps,
-  type DownloadProps as DownloadIconProps,
-};
+export { Download };

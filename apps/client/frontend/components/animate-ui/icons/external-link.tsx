@@ -86,10 +86,4 @@ function ExternalLink(props: ExternalLinkProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  ExternalLink,
-  ExternalLink as ExternalLinkIcon,
-  type ExternalLinkProps,
-  type ExternalLinkProps as ExternalLinkIconProps,
-};
+export { ExternalLink };

@@ -64,10 +64,4 @@ function ShieldCheck(props: ShieldCheckProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  ShieldCheck,
-  ShieldCheck as ShieldCheckIcon,
-  type ShieldCheckProps,
-  type ShieldCheckProps as ShieldCheckIconProps,
-};
+export { ShieldCheck };

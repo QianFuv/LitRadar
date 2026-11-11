@@ -1,6 +1,7 @@
 /** Layers and journal navigation over original notices evaluated by the backend. */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useDebouncer } from '@tanstack/react-pacer';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearch } from '@tanstack/react-router';
 import { Layers, Megaphone, Search } from '@/components/ui/animated-icons';
@@ -36,11 +37,13 @@ import { useUpdateWorkspaceSearch, WORKSPACE_ROUTE_ID } from '@/lib/search-param
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
 
-const DATABASE_LABELS: Readonly<Record<string, string>> = {
-  'ccf_computer_journals.sqlite': 'CCF 计算机期刊',
-  'chinese_journals.sqlite': '中文期刊',
-  'english_journals.sqlite': '英文期刊',
-};
+const DATABASE_LABELS = new Map(
+  Object.entries({
+    'ccf_computer_journals.sqlite': 'CCF 计算机期刊',
+    'chinese_journals.sqlite': '中文期刊',
+    'english_journals.sqlite': '英文期刊',
+  }),
+);
 /**
  * Format a CFP database file name for display.
  *
@@ -48,7 +51,7 @@ const DATABASE_LABELS: Readonly<Record<string, string>> = {
  * @returns Human-readable database label.
  */
 function formatCfpDatabase(name: string): string {
-  return DATABASE_LABELS[name] ?? name.replace(/\.sqlite$/, '');
+  return DATABASE_LABELS.get(name) ?? name.replace(/\.sqlite$/, '');
 }
 
 /** Keep CFP catalog and notice responses fresh long enough to make revisits instant. */
@@ -73,7 +76,7 @@ export function CfpTrackingView() {
               isReady={!state.isLoading}
               xstyle={[styles.cfpTrackingViewDivItem, styles.cfpTrackingViewRevealItem]}
               placeholder={
-                <div role="status">
+                <output {...stylex.props(styles.statusOutput)}>
                   <span
                     {...stylex.props(styles.cfpTrackingViewDivItem2, styles.cfpTrackingViewSpan)}
                   >
@@ -85,7 +88,7 @@ export function CfpTrackingView() {
                   <Skeleton
                     xstyle={[styles.cfpTrackingViewDivItem2, styles.cfpTrackingViewSkeleton2]}
                   />
-                </div>
+                </output>
               }
             >
               {renderCfpWorkspace(state)}
@@ -175,19 +178,9 @@ function useCfpViewState() {
     retry: false,
     staleTime: CFP_STALE_TIME_MS,
   });
-  const prefetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(
-    () => () => {
-      if (prefetchTimer.current) clearTimeout(prefetchTimer.current);
-    },
-    [],
-  );
-
-  /** Prefetch the first notice page of a journal the user is about to open. */
-  function handleJournalIntent(catalogId: string): void {
-    if (prefetchTimer.current) clearTimeout(prefetchTimer.current);
-    if (!user || !database) return;
-    prefetchTimer.current = setTimeout(() => {
+  const journalPrefetcher = useDebouncer(
+    (catalogId: string) => {
+      if (!database) return;
       void queryClient.prefetchInfiniteQuery({
         queryKey: ['cfp', 'notices', database, catalogId, shouldShowClosed] as const,
         queryFn: ({ pageParam, signal }) =>
@@ -199,7 +192,17 @@ function useCfpViewState() {
         initialPageParam: null as string | null,
         staleTime: CFP_STALE_TIME_MS,
       });
-    }, CFP_PREFETCH_INTENT_DELAY_MS);
+    },
+    { wait: CFP_PREFETCH_INTENT_DELAY_MS },
+  );
+
+  /** Prefetch the first notice page of a journal the user is about to open. */
+  function handleJournalIntent(catalogId: string): void {
+    if (!user || !database) {
+      journalPrefetcher.cancel();
+      return;
+    }
+    journalPrefetcher.maybeExecute(catalogId);
   }
   const cursorRecoveryKey = JSON.stringify(noticeQueryKey);
   useEffect(() => {
@@ -343,10 +346,10 @@ function renderCfpNotices(
         isReady={!noticesQuery.isLoading}
         xstyle={[styles.renderCfpNoticesSectionItem, styles.renderCfpNoticesRevealItem]}
         placeholder={
-          <div role="status">
+          <output {...stylex.props(styles.statusOutput)}>
             <span {...stylex.props(styles.cfpTrackingViewSpan)}>正在加载征稿需求</span>
             <Skeleton xstyle={styles.renderCfpNoticesSkeleton} />
-          </div>
+          </output>
         }
       >
         {renderCfpNoticeContent(state, selected)}
@@ -362,12 +365,15 @@ function renderCfpNotices(
         </Button>
       )}
       {selected.refreshStatus === 'failed' && (
-        <p
-          role="status"
-          {...stylex.props(styles.renderCfpNoticesSectionItem, styles.renderCfpNoticesP)}
+        <output
+          {...stylex.props(
+            styles.statusOutput,
+            styles.renderCfpNoticesSectionItem,
+            styles.renderCfpNoticesP,
+          )}
         >
           最近一次更新未成功，当前显示上次核验的内容。
-        </p>
+        </output>
       )}
     </section>
   );
@@ -600,6 +606,9 @@ function getSelectedCfpJournal(
 }
 
 const styles = stylex.create({
+  statusOutput: {
+    display: 'block',
+  },
   cfpTrackingViewDivItem: {
     marginBottom: {
       default: null,

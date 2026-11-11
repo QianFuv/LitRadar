@@ -136,4 +136,4 @@ function Bot(props: BotProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export { animations, Bot, Bot as BotIcon, type BotProps, type BotProps as BotIconProps };
+export { Bot };

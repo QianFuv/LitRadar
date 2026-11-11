@@ -42,6 +42,7 @@ import {
   type PointerEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { useDebouncer } from '@tanstack/react-pacer';
 
 import { MotionDiv, MotionPresence, POPOVER_VARIANTS } from '@/components/ui/motion';
 import type { Article } from '@/lib/api';
@@ -211,9 +212,9 @@ function NodeToggle({ data, dotCenter }: { data: ArticleNodeData; dotCenter: num
       {data.isLoading ? (
         <Loader2 xstyle={styles.nodeToggleLoader2} aria-hidden="true" />
       ) : data.isExpanded ? (
-        <Minus xstyle={styles.nodeToggleMinus} aria-hidden="true" />
+        <Minus xstyle={styles.compactGlyph} aria-hidden="true" />
       ) : (
-        <Plus xstyle={styles.nodeToggleMinus} aria-hidden="true" />
+        <Plus xstyle={styles.compactGlyph} aria-hidden="true" />
       )}
     </button>
   );
@@ -279,7 +280,7 @@ const ArticleNode = memo(
               aria-hidden="true"
               {...stylex.props(
                 styles.articleNodeSpan2,
-                data.isRoot ? styles.articleNodeSpanRoot : styles.nodeToggleMinus,
+                data.isRoot ? styles.articleNodeSpanRoot : styles.compactGlyph,
                 data.isSelected
                   ? styles.articleNodeSpanSelected
                   : data.isRoot || data.isExpanded
@@ -294,7 +295,7 @@ const ArticleNode = memo(
               data.isRoot ? styles.articleNodeSpanRoot2 : styles.articleNodeSpanNotRoot,
               data.isSelected
                 ? styles.articleNodeSpanSelected2
-                : !data.isRoot && styles.articleNodeSpanNotSelectedRoot,
+                : !data.isRoot && styles.articleNodeSpanNotSelectedNotRoot,
             )}
           >
             {data.title}
@@ -631,7 +632,6 @@ export function RelationCanvas({
 }: RelationCanvasProps) {
   const [preview, setPreview] = useState<HoverPreview | null>(null);
   const [positions, setPositions] = useState<Record<string, RelationPoint>>(graph.positions);
-  const previewTimerRef = useRef<number | null>(null);
   const isClickSuppressedRef = useRef(false);
   const isDraggingRef = useRef(false);
   const isPanningRef = useRef(false);
@@ -640,13 +640,16 @@ export function RelationCanvas({
   const layoutRevisionRef = useRef<number | null>(null);
   const simulatedGraphRef = useRef<RelationGraph | null>(null);
 
-  const readSimulationPositions = useCallback((): Record<string, RelationPoint> => {
-    const snapshot: Record<string, RelationPoint> = {};
-    for (const [id, node] of simulationNodesRef.current) {
-      snapshot[id] = { x: node.x ?? 0, y: node.y ?? 0 };
-    }
-    return snapshot;
-  }, []);
+  const readSimulationPositions = useCallback(
+    () =>
+      Object.fromEntries(
+        Array.from(simulationNodesRef.current, ([id, node]) => [
+          id,
+          { x: node.x ?? 0, y: node.y ?? 0 },
+        ]),
+      ),
+    [],
+  );
 
   const reportSettled = useEffectEvent(() => onPositionsSettle(readSimulationPositions()));
 
@@ -714,36 +717,35 @@ export function RelationCanvas({
 
   useEffect(() => () => void simulationRef.current?.stop(), []);
 
-  const clearPreviewTimer = useCallback(() => {
-    if (previewTimerRef.current !== null) {
-      window.clearTimeout(previewTimerRef.current);
-      previewTimerRef.current = null;
-    }
-  }, []);
-
-  const hidePreview = useCallback(() => {
-    clearPreviewTimer();
-    setPreview(null);
-  }, [clearPreviewTimer]);
-
-  const showPreview = useCallback(
-    (nodeGraph: RelationGraph, nodeId: string, anchor: HTMLElement, isImmediate: boolean) => {
-      clearPreviewTimer();
-      const show = () => {
-        if (!isDraggingRef.current && !isPanningRef.current) {
-          setPreview({ nodeId, graph: nodeGraph, anchor: anchor.getBoundingClientRect() });
-        }
-      };
-      if (isImmediate) {
-        show();
-      } else {
-        previewTimerRef.current = window.setTimeout(show, HOVER_CARD_DELAY_MS);
+  const previewDelay = useDebouncer(
+    (nodeGraph: RelationGraph, nodeId: string, anchor: HTMLElement) => {
+      if (!isDraggingRef.current && !isPanningRef.current) {
+        setPreview({ nodeId, graph: nodeGraph, anchor: anchor.getBoundingClientRect() });
       }
     },
-    [clearPreviewTimer],
+    { wait: HOVER_CARD_DELAY_MS },
   );
 
-  useEffect(() => clearPreviewTimer, [clearPreviewTimer]);
+  const hidePreview = useCallback(() => {
+    previewDelay.cancel();
+    setPreview(null);
+  }, [previewDelay]);
+
+  /**
+   * Show a node's hover card at once or after the hover delay, replacing any pending card.
+   *
+   * @param nodeGraph - Graph the node belongs to.
+   * @param nodeId - Hovered or focused node.
+   * @param anchor - Element the card is placed next to.
+   * @param isImmediate - Whether to skip the hover delay, as keyboard focus does.
+   */
+  const showPreview = useCallback(
+    (nodeGraph: RelationGraph, nodeId: string, anchor: HTMLElement, isImmediate: boolean) => {
+      previewDelay.maybeExecute(nodeGraph, nodeId, anchor);
+      if (isImmediate) previewDelay.flush();
+    },
+    [previewDelay],
+  );
 
   /**
    * Hold a dragged node at the pointer while the simulation tows its neighbours.
@@ -1021,7 +1023,7 @@ const styles = stylex.create({
     animationTimingFunction: 'linear',
     animationIterationCount: 'infinite',
   },
-  nodeToggleMinus: {
+  compactGlyph: {
     width: {
       default: '0.75rem',
       '@media (pointer: coarse)': '1rem',
@@ -1140,7 +1142,7 @@ const styles = stylex.create({
       },
     },
   },
-  articleNodeSpanNotSelectedRoot: {
+  articleNodeSpanNotSelectedNotRoot: {
     color: {
       default: `color-mix(in oklab, ${colors.foreground} 80%, transparent)`,
       '@media (hover: hover)': {

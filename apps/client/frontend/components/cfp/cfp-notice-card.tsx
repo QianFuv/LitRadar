@@ -121,9 +121,9 @@ function CfpTimeline({ notice }: { notice: CfpNoticeView }) {
 /** Show every supplied paragraph inside a fixed-height, keyboard-scrollable reading region. */
 function CfpOriginalText({ label, text }: { label: string; text: string }) {
   return (
-    <div role="region" aria-label={label} tabIndex={0} {...stylex.props(styles.cfpOriginalTextDiv)}>
+    <section aria-label={label} tabIndex={0} {...stylex.props(styles.cfpOriginalTextDiv)}>
       <p {...stylex.props(styles.cfpOriginalTextP)}>{text}</p>
-    </div>
+    </section>
   );
 }
 

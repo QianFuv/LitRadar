@@ -59,10 +59,7 @@ const REGEX_SPECIAL_CHARACTER_PATTERN = /[.*+?^${}()|[\]\\]/g;
  * @param startIndex - Offset of the opening quote.
  * @returns Phrase token and the offset immediately after its consumed text.
  */
-function readQuotedPhrase(
-  query: string,
-  startIndex: number,
-): { token: FtsQueryToken; nextIndex: number } {
+function readQuotedPhrase(query: string, startIndex: number) {
   let cursor = startIndex + 1;
   let value = '';
 
@@ -80,13 +77,13 @@ function readQuotedPhrase(
     }
 
     return {
-      token: { kind: 'phrase', value },
+      token: { kind: 'phrase', value } satisfies FtsQueryToken,
       nextIndex: cursor + 1,
     };
   }
 
   return {
-    token: { kind: 'phrase', value },
+    token: { kind: 'phrase', value } satisfies FtsQueryToken,
     nextIndex: cursor,
   };
 }

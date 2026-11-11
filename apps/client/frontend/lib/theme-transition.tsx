@@ -62,7 +62,7 @@ function startRevealTransition(update: () => void): ViewTransition {
  * @param origin - Viewport point the circle grows from.
  */
 export function revealThemeChange(applyTheme: () => void, origin: ScreenPoint): void {
-  if (typeof document.startViewTransition !== 'function') {
+  if (!('startViewTransition' in document)) {
     applyTheme();
     return;
   }

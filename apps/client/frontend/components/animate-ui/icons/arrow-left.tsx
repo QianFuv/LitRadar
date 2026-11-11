@@ -138,10 +138,4 @@ function ArrowLeft(props: ArrowLeftProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  ArrowLeft,
-  ArrowLeft as ArrowLeftIcon,
-  type ArrowLeftProps,
-  type ArrowLeftProps as ArrowLeftIconProps,
-};
+export { ArrowLeft };

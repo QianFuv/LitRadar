@@ -3,11 +3,11 @@
  */
 
 import type { components } from '@/lib/generated/api-schema';
+import { isBoolean, isRecord, isString } from '@/lib/type-guards';
 
 type ApiSchemas = components['schemas'];
 
 export type AuthUser = ApiSchemas['UserResponse'];
-export type AuthKind = AuthUser['auth_kind'];
 export type LoginResponse = ApiSchemas['LoginResponse'];
 export type AuthProviders = ApiSchemas['AuthProvidersResponse'];
 export type OidcLinkStart = ApiSchemas['OidcLinkResponse'];
@@ -24,8 +24,6 @@ export type TrackingStatus = ApiSchemas['TrackingStatusResponse'];
 export type ManualPushStatus = ApiSchemas['ManualWeeklyPushStatus'];
 export type ManualPushState = ApiSchemas['ManualPushState'];
 export type SchedulerRunState = ApiSchemas['SchedulerRunState'];
-export type DatePrecision = ApiSchemas['DatePrecision'];
-export type PushStatsState = ApiSchemas['PushStatsState'];
 export type NotificationSettings = ApiSchemas['NotificationSettingsResponse'];
 type GeneratedNotificationSettingsUpdate = ApiSchemas['NotificationSettingsUpdate'];
 type NotificationSecretField = 'ai_api_key' | 'ai_backup_api_key' | 'pushplus_token';
@@ -33,11 +31,11 @@ export type NotificationSettingsUpdate = Required<
   Omit<GeneratedNotificationSettingsUpdate, NotificationSecretField>
 > &
   Pick<GeneratedNotificationSettingsUpdate, NotificationSecretField>;
-export type RuntimeSecretItemInfo = ApiSchemas['RuntimeSecretItemInfo'];
-export type RuntimeSecretPoolUpdate = Required<ApiSchemas['RuntimeSecretPoolUpdate']>;
+type RuntimeSecretItemInfo = ApiSchemas['RuntimeSecretItemInfo'];
+type RuntimeSecretPoolUpdate = Required<ApiSchemas['RuntimeSecretPoolUpdate']>;
 export type RuntimeSettingApplyMode = ApiSchemas['RuntimeSettingApplyMode'];
 export type RuntimeSettingGroup = ApiSchemas['RuntimeSettingGroup'];
-export type RuntimeSettingControl = string;
+type RuntimeSettingControl = string;
 export type RuntimeSettingInfo = Omit<
   ApiSchemas['RuntimeSettingInfo'],
   'control' | 'input_type' | 'secret_items' | 'source' | 'updated_at'
@@ -78,7 +76,7 @@ export type ScheduledTaskInfo = Omit<
 };
 export type ScheduledTaskCreate = Required<ApiSchemas['ScheduledTaskCreate']>;
 export type ScheduledTaskUpdate = ApiSchemas['ScheduledTaskUpdate'];
-export type ScheduledTaskRunInfo = Omit<
+type ScheduledTaskRunInfo = Omit<
   ApiSchemas['ScheduledTaskRunInfo'],
   'claimed_at' | 'finished_at' | 'started_at' | 'worker_id'
 > & {
@@ -87,7 +85,7 @@ export type ScheduledTaskRunInfo = Omit<
   started_at: number | null;
   worker_id: string | null;
 };
-export type SchedulerWorkerInfo = ApiSchemas['SchedulerWorkerInfo'];
+type SchedulerWorkerInfo = ApiSchemas['SchedulerWorkerInfo'];
 export type SchedulerStatus = Omit<
   ApiSchemas['SchedulerStatusResponse'],
   'last_checked_at' | 'recent_runs' | 'workers'
@@ -119,23 +117,13 @@ export class ApiContractError extends Error {
 }
 
 /**
- * Return whether an unknown value is a non-null object record.
- *
- * @param value - Value to inspect.
- * @returns Whether the value is a record.
- */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
-}
-
-/**
  * Return whether a value is a string or null.
  *
  * @param value - Value to inspect.
  * @returns Whether the value is nullable text.
  */
 function isNullableString(value: unknown): value is string | null {
-  return value === null || typeof value === 'string';
+  return value === null || isString(value);
 }
 
 /**
@@ -165,7 +153,7 @@ function isNumber(value: unknown): value is number {
  * @returns Whether every item is text.
  */
 function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+  return Array.isArray(value) && value.every(isString);
 }
 
 /**
@@ -192,7 +180,7 @@ function hasExactKeys(value: Record<string, unknown>, expectedKeys: string[]): b
  */
 function isSafeRuntimeName(value: unknown): value is string {
   return (
-    typeof value === 'string' &&
+    isString(value) &&
     value.length >= 2 &&
     value.length <= 128 &&
     /^[a-z0-9][a-z0-9._-]*$/.test(value)
@@ -219,7 +207,7 @@ function isSafeUniqueRuntimeNameArray(value: unknown): value is string[] {
  */
 function isRuntimeSettingGroup(value: unknown): value is RuntimeSettingGroup {
   return (
-    typeof value === 'string' &&
+    isString(value) &&
     [
       'source_access',
       'provider_routing',
@@ -237,10 +225,7 @@ function isRuntimeSettingGroup(value: unknown): value is RuntimeSettingGroup {
  * @returns Whether the apply mode is supported by this frontend.
  */
 function isRuntimeSettingApplyMode(value: unknown): value is RuntimeSettingApplyMode {
-  return (
-    typeof value === 'string' &&
-    ['next_request', 'next_command', 'restart_required'].includes(value)
-  );
+  return isString(value) && ['next_request', 'next_command', 'restart_required'].includes(value);
 }
 
 /**
@@ -287,7 +272,7 @@ function isProviderProxyPolicy(value: unknown): value is ProviderProxyPolicy {
   return (
     isRecord(value) &&
     Object.entries(value).every(
-      ([provider, isEnabled]) => isSafeRuntimeName(provider) && typeof isEnabled === 'boolean',
+      ([provider, isEnabled]) => isSafeRuntimeName(provider) && isBoolean(isEnabled),
     )
   );
 }
@@ -347,11 +332,11 @@ function isAuthUser(value: unknown): value is AuthUser {
   return (
     isRecord(value) &&
     isNumber(value.id) &&
-    typeof value.username === 'string' &&
-    typeof value.is_admin === 'boolean' &&
+    isString(value.username) &&
+    isBoolean(value.is_admin) &&
     isNullableString(value.email) &&
     (value.auth_kind === 'local' || value.auth_kind === 'oidc') &&
-    typeof value.is_oidc_linked === 'boolean'
+    isBoolean(value.is_oidc_linked)
   );
 }
 
@@ -362,11 +347,7 @@ function isAuthUser(value: unknown): value is AuthUser {
  * @returns Whether the value matches the generated providers contract.
  */
 function isAuthProviders(value: unknown): value is AuthProviders {
-  return (
-    isRecord(value) &&
-    typeof value.oidc_enabled === 'boolean' &&
-    typeof value.oidc_display_name === 'string'
-  );
+  return isRecord(value) && isBoolean(value.oidc_enabled) && isString(value.oidc_display_name);
 }
 
 /**
@@ -376,11 +357,7 @@ function isAuthProviders(value: unknown): value is AuthProviders {
  * @returns Whether the value carries a non-empty authorization URL.
  */
 function isOidcLinkStart(value: unknown): value is OidcLinkStart {
-  return (
-    isRecord(value) &&
-    typeof value.authorization_url === 'string' &&
-    value.authorization_url.length > 0
-  );
+  return isRecord(value) && isString(value.authorization_url) && value.authorization_url.length > 0;
 }
 
 /**
@@ -400,11 +377,7 @@ function isLoginResponse(value: unknown): value is LoginResponse {
  * @returns Whether the value matches the generated invite contract.
  */
 function isInviteRequirement(value: unknown): value is InviteRequirement {
-  return (
-    isRecord(value) &&
-    typeof value.required === 'boolean' &&
-    typeof value.bootstrap_required === 'boolean'
-  );
+  return isRecord(value) && isBoolean(value.required) && isBoolean(value.bootstrap_required);
 }
 
 /**
@@ -414,7 +387,7 @@ function isInviteRequirement(value: unknown): value is InviteRequirement {
  * @returns Whether the value contains a numeric id and text name.
  */
 function isTrackingFolder(value: unknown): value is { id: number; name: string } {
-  return isRecord(value) && isNumber(value.id) && typeof value.name === 'string';
+  return isRecord(value) && isNumber(value.id) && isString(value.name);
 }
 
 /**
@@ -429,7 +402,7 @@ function isTrackingStatus(value: unknown): value is TrackingStatus {
     (value.tracking_folder === null || isTrackingFolder(value.tracking_folder)) &&
     isNumber(value.total_folders) &&
     isNumber(value.weekly_articles_available) &&
-    typeof value.notification_configured === 'boolean'
+    isBoolean(value.notification_configured)
   );
 }
 
@@ -438,9 +411,7 @@ function isTrackingStatus(value: unknown): value is TrackingStatus {
  */
 function hasManualPushIdentity(value: Record<string, unknown>): boolean {
   return (
-    isNullableString(value.job_id) &&
-    isManualPushState(value.status) &&
-    typeof value.message === 'string'
+    isNullableString(value.job_id) && isManualPushState(value.status) && isString(value.message)
   );
 }
 
@@ -452,9 +423,9 @@ function hasManualPushLifecycle(value: Record<string, unknown>): boolean {
     isNullableNumber(value.started_at) &&
     isNullableNumber(value.finished_at) &&
     isNullableNumber(value.deadline_at) &&
-    typeof value.cancellation_requested === 'boolean' &&
-    typeof value.can_cancel === 'boolean' &&
-    typeof value.can_retry === 'boolean'
+    isBoolean(value.cancellation_requested) &&
+    isBoolean(value.can_cancel) &&
+    isBoolean(value.can_retry)
   );
 }
 
@@ -466,7 +437,7 @@ function hasManualPushDelivery(value: Record<string, unknown>): boolean {
     isNumber(value.pushed) &&
     isNumber(value.selected) &&
     isNullableNumber(value.total_candidates) &&
-    typeof value.summary === 'string' &&
+    isString(value.summary) &&
     isNullableNumber(value.folder_id) &&
     isNullableString(value.folder_name)
   );
@@ -495,7 +466,7 @@ function isManualPushStatus(value: unknown): value is ManualPushStatus {
  */
 function isManualPushState(value: unknown): value is ManualPushState {
   return (
-    typeof value === 'string' &&
+    isString(value) &&
     [
       'idle',
       'pending',
@@ -546,7 +517,7 @@ function hasRedactedNotificationFields(value: Record<string, unknown>): boolean 
     !('pushplus_token' in value) &&
     !('ai_api_key' in value) &&
     !('ai_backup_api_key' in value) &&
-    NOTIFICATION_STRING_FIELDS.every((field) => typeof value[field] === 'string')
+    NOTIFICATION_STRING_FIELDS.every((field) => isString(value[field]))
   );
 }
 
@@ -555,12 +526,12 @@ function hasRedactedNotificationFields(value: Record<string, unknown>): boolean 
  */
 function hasNotificationLifecycle(value: Record<string, unknown>): boolean {
   return (
-    typeof value.has_pushplus_token === 'boolean' &&
-    typeof value.has_ai_api_key === 'boolean' &&
-    typeof value.has_ai_backup_api_key === 'boolean' &&
-    typeof value.sync_to_tracking_folder === 'boolean' &&
+    isBoolean(value.has_pushplus_token) &&
+    isBoolean(value.has_ai_api_key) &&
+    isBoolean(value.has_ai_backup_api_key) &&
+    isBoolean(value.sync_to_tracking_folder) &&
     isNumber(value.ai_retry_attempts) &&
-    typeof value.enabled === 'boolean' &&
+    isBoolean(value.enabled) &&
     isNumber(value.created_at) &&
     isNumber(value.updated_at)
   );
@@ -590,9 +561,9 @@ function isNotificationSettings(value: unknown): value is NotificationSettings {
 function isRuntimeSecretItemInfo(value: unknown): value is RuntimeSecretItemInfo {
   return (
     isRecord(value) &&
-    typeof value.reference === 'string' &&
+    isString(value.reference) &&
     value.reference.length > 0 &&
-    typeof value.masked_value === 'string'
+    isString(value.masked_value)
   );
 }
 
@@ -777,9 +748,9 @@ function isConsistentRuntimeMetadata(value: Record<string, unknown>): boolean {
 function hasRuntimeSettingIdentity(value: Record<string, unknown>): boolean {
   return (
     isSafeRuntimeName(value.field) &&
-    typeof value.label === 'string' &&
+    isString(value.label) &&
     value.label.length > 0 &&
-    typeof value.description === 'string' &&
+    isString(value.description) &&
     value.description.length > 0 &&
     isRuntimeSettingGroup(value.group)
   );
@@ -794,7 +765,7 @@ function hasRuntimeSettingControls(value: Record<string, unknown>): boolean {
     isRuntimeSettingApplyMode(value.apply_mode) &&
     isStringArray(value.allowed_values) &&
     new Set(value.allowed_values).size === value.allowed_values.length &&
-    typeof value.input_type === 'string' &&
+    isString(value.input_type) &&
     ['text', 'password', 'email', 'boolean', 'number', 'url'].includes(value.input_type)
   );
 }
@@ -804,12 +775,12 @@ function hasRuntimeSettingControls(value: Record<string, unknown>): boolean {
  */
 function hasRuntimeSettingStorage(value: Record<string, unknown>): boolean {
   return (
-    typeof value.is_secret === 'boolean' &&
-    typeof value.value === 'string' &&
-    typeof value.has_value === 'boolean' &&
-    typeof value.masked_value === 'string' &&
+    isBoolean(value.is_secret) &&
+    isString(value.value) &&
+    isBoolean(value.has_value) &&
+    isString(value.masked_value) &&
     isArrayOf(value.secret_items, isRuntimeSecretItemInfo) &&
-    typeof value.source === 'string' &&
+    isString(value.source) &&
     ['database', 'default'].includes(value.source) &&
     isNullableNumber(value.updated_at)
   );
@@ -852,9 +823,9 @@ function isProviderCapabilityInfo(value: unknown): value is ProviderCapabilityIn
     isRecord(value) &&
     hasExactKeys(value, ['name', 'index_content', 'article_abstract', 'article_full_text']) &&
     isSafeRuntimeName(value.name) &&
-    typeof value.index_content === 'boolean' &&
-    typeof value.article_abstract === 'boolean' &&
-    typeof value.article_full_text === 'boolean' &&
+    isBoolean(value.index_content) &&
+    isBoolean(value.article_abstract) &&
+    isBoolean(value.article_full_text) &&
     (value.index_content || value.article_abstract || value.article_full_text)
   );
 }
@@ -882,6 +853,7 @@ function isProviderCatalogInfo(value: unknown): value is ProviderCatalogInfo {
     return false;
   }
   return (
+    isString(value.stem) &&
     (value.csv_filename !== null || value.database_filename !== null) &&
     (value.csv_filename === null || value.csv_filename === `${value.stem}.csv`) &&
     (value.database_filename === null || value.database_filename === `${value.stem}.sqlite`)
@@ -914,8 +886,8 @@ function isProviderCatalogResponse(value: unknown): value is ProviderCatalogResp
  */
 function hasScheduledTaskTiming(value: Record<string, unknown>): boolean {
   return (
-    typeof value.cron === 'string' &&
-    typeof value.timezone === 'string' &&
+    isString(value.cron) &&
+    isString(value.timezone) &&
     Number.isInteger(value.timeout_seconds) &&
     Number(value.timeout_seconds) >= 1 &&
     Number(value.timeout_seconds) <= 86_400
@@ -927,8 +899,8 @@ function hasScheduledTaskTiming(value: Record<string, unknown>): boolean {
  */
 function hasScheduledTaskLifecycle(value: Record<string, unknown>): boolean {
   return (
-    typeof value.coalesce === 'boolean' &&
-    typeof value.enabled === 'boolean' &&
+    isBoolean(value.coalesce) &&
+    isBoolean(value.enabled) &&
     isNullableNumber(value.last_run_at) &&
     isSchedulerRunState(value.last_status) &&
     isNumber(value.created_at) &&
@@ -947,10 +919,10 @@ function isScheduledTaskInfo(value: unknown): value is ScheduledTaskInfo {
     return false;
   }
   const hasTypedJob = isScheduledJobSpec(value.job) && value.legacy_command === null;
-  const hasLegacyCommand = value.job === null && typeof value.legacy_command === 'string';
+  const hasLegacyCommand = value.job === null && isString(value.legacy_command);
   return (
     isNumber(value.id) &&
-    typeof value.name === 'string' &&
+    isString(value.name) &&
     (hasTypedJob || hasLegacyCommand) &&
     hasScheduledTaskTiming(value) &&
     hasScheduledTaskLifecycle(value)
@@ -968,7 +940,7 @@ function isScheduledTaskRunInfo(value: unknown): value is ScheduledTaskRunInfo {
     isRecord(value) &&
     isNumber(value.id) &&
     isNumber(value.task_id) &&
-    typeof value.task_name === 'string' &&
+    isString(value.task_name) &&
     isNumber(value.scheduled_for) &&
     isSchedulerRunState(value.status) &&
     isNullableString(value.worker_id) &&
@@ -986,7 +958,7 @@ function isScheduledTaskRunInfo(value: unknown): value is ScheduledTaskRunInfo {
  */
 function isSchedulerRunState(value: unknown): value is SchedulerRunState {
   return (
-    typeof value === 'string' &&
+    isString(value) &&
     [
       'idle',
       'pending',
@@ -1011,10 +983,10 @@ function isSchedulerRunState(value: unknown): value is SchedulerRunState {
 function isSchedulerWorkerInfo(value: unknown): value is SchedulerWorkerInfo {
   return (
     isRecord(value) &&
-    typeof value.worker_id === 'string' &&
+    isString(value.worker_id) &&
     isNumber(value.started_at) &&
     isNumber(value.heartbeat_at) &&
-    typeof value.is_healthy === 'boolean'
+    isBoolean(value.is_healthy)
   );
 }
 
@@ -1039,8 +1011,8 @@ function isSchedulerStatus(value: unknown): value is SchedulerStatus {
 function hasIndexJobFields(value: Record<string, unknown>): boolean {
   return (
     (!('metadata_file' in value) || isNullableString(value.metadata_file)) &&
-    (!('notify' in value) || typeof value.notify === 'boolean') &&
-    (!('push' in value) || typeof value.push === 'boolean')
+    (!('notify' in value) || isBoolean(value.notify)) &&
+    (!('push' in value) || isBoolean(value.push))
   );
 }
 
@@ -1061,7 +1033,7 @@ function hasDeliveryJobFields(value: Record<string, unknown>): boolean {
  * @returns Whether the value matches a generated scheduler job variant.
  */
 function isScheduledJobSpec(value: unknown): value is ScheduledJobSpec {
-  if (!isRecord(value) || typeof value.kind !== 'string') {
+  if (!isRecord(value) || !isString(value.kind)) {
     return false;
   }
   if (value.kind === 'index') {

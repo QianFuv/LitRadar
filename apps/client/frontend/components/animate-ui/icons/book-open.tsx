@@ -159,10 +159,4 @@ function BookOpen(props: BookOpenProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  BookOpen,
-  BookOpen as BookOpenIcon,
-  type BookOpenProps,
-  type BookOpenProps as BookOpenIconProps,
-};
+export { BookOpen };

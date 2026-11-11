@@ -10,10 +10,10 @@ import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
 
 /** Document title rendered by the not-found route. */
-export const NOT_FOUND_PAGE_TITLE = '页面未找到 | LitRadar';
+const NOT_FOUND_PAGE_TITLE = '页面未找到 | LitRadar';
 
 /** Document description rendered by the not-found route. */
-export const NOT_FOUND_PAGE_DESCRIPTION = '所请求的 LitRadar 页面不存在。';
+const NOT_FOUND_PAGE_DESCRIPTION = '所请求的 LitRadar 页面不存在。';
 
 /**
  * Render the custom application not-found page.

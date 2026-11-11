@@ -403,9 +403,9 @@ function renderLoginPage(state: LoginViewState) {
         <div {...stylex.props(styles.renderLoginPageDiv)}>
           <div {...stylex.props(styles.renderLoginPageDiv2)}>
             <AuthBrand />
-            <div role="status" {...stylex.props(styles.renderLoginPageDiv3)}>
+            <output {...stylex.props(styles.statusOutput, styles.renderLoginPageDiv3)}>
               <LoadingText text="正在检查登录状态…" />
-            </div>
+            </output>
           </div>
         </div>
       </main>
@@ -662,12 +662,15 @@ function renderLoginNativeOidc(
       </div>
       {isNativeOidcPending ? (
         <div {...stylex.props(styles.renderLoginOidcDivItem)}>
-          <div
-            role="status"
-            {...stylex.props(styles.renderLoginNativeOidcDivItem, styles.renderLoginNativeOidcDiv)}
+          <output
+            {...stylex.props(
+              styles.statusOutput,
+              styles.renderLoginNativeOidcDivItem,
+              styles.renderLoginNativeOidcDiv,
+            )}
           >
             <LoadingText text={`已在浏览器中打开 ${displayName}，完成登录后将自动返回…`} />
-          </div>
+          </output>
           <Button
             type="button"
             variant="outline"
@@ -730,7 +733,6 @@ function renderLoginBootstrap(
     bootstrapRequired && (
       <MotionDiv
         key="bootstrap-required"
-        role="status"
         data-auth-feedback="bootstrap-required"
         {...stylex.props(styles.renderLoginBootstrapMotionDiv)}
         variants={REVEAL_VARIANTS}
@@ -738,9 +740,11 @@ function renderLoginBootstrap(
         animate="visible"
         exit="exit"
       >
-        系统管理员尚未完成本机初始化。请先在服务器上运行{' '}
-        <code>admin bootstrap --username NAME --password-stdin</code>
-        ，再使用管理员生成的邀请码注册。
+        <output>
+          系统管理员尚未完成本机初始化。请先在服务器上运行{' '}
+          <code>admin bootstrap --username NAME --password-stdin</code>
+          ，再使用管理员生成的邀请码注册。
+        </output>
       </MotionDiv>
     )
   );
@@ -951,12 +955,15 @@ function renderLoginCardContent(state: LoginViewState) {
             animate="visible"
             exit="exit"
           >
-            <div
-              role="status"
-              {...stylex.props(styles.renderLoginOidcDivItem, styles.renderLoginCardContentDiv)}
+            <output
+              {...stylex.props(
+                styles.statusOutput,
+                styles.renderLoginOidcDivItem,
+                styles.renderLoginCardContentDiv,
+              )}
             >
               全部会话和个人访问令牌已撤销。现在可以重新登录。
-            </div>
+            </output>
             <Button asChild xstyle={[styles.renderLoginOidcDivItem, styles.renderLoginOidcButton]}>
               <Link to="/login">返回登录</Link>
             </Button>
@@ -1009,6 +1016,9 @@ function getLoginSubmitLabel(
 }
 
 const styles = stylex.create({
+  statusOutput: {
+    display: 'block',
+  },
   authBrandDiv: {
     marginBottom: '2rem',
     display: {

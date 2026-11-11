@@ -109,9 +109,9 @@ export function GeneralSettingsSection() {
         <RevealItem
           isReady={isMounted}
           placeholder={
-            <p role="status" {...stylex.props(styles.generalSettingsSectionP)}>
+            <output {...stylex.props(styles.statusOutput, styles.generalSettingsSectionP)}>
               <LoadingText text="正在读取主题偏好…" />
-            </p>
+            </output>
           }
         >
           <RadioGroup
@@ -210,9 +210,9 @@ function ThemeMiniature({ scheme }: { scheme: 'light' | 'dark' }) {
               <i
                 {...stylex.props(
                   styles.themeMiniatureI4,
-                  index === 0 ? styles.themeMiniatureIIndex : styles.themeMiniatureINotIndex,
+                  index === 0 ? styles.themeMiniatureIFirst : styles.themeMiniatureIRest,
                   index !== 0 &&
-                    (isDark ? styles.themeMiniatureIIndexDark : styles.themeMiniatureIIndexNotDark),
+                    (isDark ? styles.themeMiniatureIRestDark : styles.themeMiniatureIRestLight),
                 )}
               />
               <i
@@ -270,6 +270,9 @@ function ThemeThumbnail({ preference }: { preference: ThemePreference }) {
 }
 
 const styles = stylex.create({
+  statusOutput: {
+    display: 'block',
+  },
   generalSettingsSectionP: {
     fontSize: '0.875rem',
     lineHeight: lineHeights.textSm,
@@ -439,17 +442,17 @@ const styles = stylex.create({
     height: '0.25rem',
     borderRadius: 'calc(infinity * 1px)',
   },
-  themeMiniatureIIndex: {
+  themeMiniatureIFirst: {
     width: 'calc(4 / 5 * 100%)',
     backgroundColor: '#346bf1',
   },
-  themeMiniatureINotIndex: {
+  themeMiniatureIRest: {
     width: 'calc(3 / 4 * 100%)',
   },
-  themeMiniatureIIndexDark: {
+  themeMiniatureIRestDark: {
     backgroundColor: 'color-mix(in oklab, #fff 50%, transparent)',
   },
-  themeMiniatureIIndexNotDark: {
+  themeMiniatureIRestLight: {
     backgroundColor: 'color-mix(in oklab, #000 45%, transparent)',
   },
   themeMiniatureI5: {

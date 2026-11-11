@@ -65,10 +65,4 @@ function BookmarkCheck(props: BookmarkCheckProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  BookmarkCheck,
-  BookmarkCheck as BookmarkCheckIcon,
-  type BookmarkCheckProps,
-  type BookmarkCheckProps as BookmarkCheckIconProps,
-};
+export { BookmarkCheck };

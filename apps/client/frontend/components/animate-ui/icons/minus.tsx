@@ -68,10 +68,4 @@ function Minus(props: MinusProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  Minus,
-  Minus as MinusIcon,
-  type MinusProps,
-  type MinusProps as MinusIconProps,
-};
+export { Minus };

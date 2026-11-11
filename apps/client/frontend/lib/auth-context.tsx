@@ -177,7 +177,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [clearPrivateState]);
 
   useEffect(() => {
-    let didCancel = false;
+    const effectLifetime = new AbortController();
 
     /** Verify the shared cookie without trusting a stored identity or a stale response. */
     const restoreSession = async (shouldClearPrivateState = true) => {
@@ -189,7 +189,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLogoutWarning(readStoredLogoutWarning());
       try {
         const currentUser = await getCurrentUser();
-        if (didCancel || generation !== sessionGeneration.current) {
+        if (effectLifetime.signal.aborted || generation !== sessionGeneration.current) {
           return;
         }
         const previousUser = verifiedUser.current;
@@ -206,7 +206,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         writeStoredUser(currentUser);
         setUser(currentUser);
       } catch (error) {
-        if (didCancel || generation !== sessionGeneration.current) {
+        if (effectLifetime.signal.aborted || generation !== sessionGeneration.current) {
           return;
         }
         if (error instanceof ApiError && error.status === 401) {
@@ -215,7 +215,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         clearStoredSession();
         clearPrivateState();
       } finally {
-        if (!didCancel && generation === sessionGeneration.current) {
+        if (!effectLifetime.signal.aborted && generation === sessionGeneration.current) {
           setLoading(false);
         }
       }
@@ -244,7 +244,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void restoreSession();
 
     return () => {
-      didCancel = true;
+      effectLifetime.abort();
       sessionGeneration.current += 1;
       window.removeEventListener('storage', handleSessionStorage);
       document.removeEventListener('visibilitychange', handleSessionVisibility);

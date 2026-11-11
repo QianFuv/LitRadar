@@ -94,16 +94,15 @@ export function CfpJournalList({
               <ChevronDown
                 xstyle={[
                   styles.cfpJournalListChevronDown,
-                  !isExpanded && styles.cfpJournalListChevronDownExpanded,
+                  !isExpanded && styles.cfpJournalListChevronDownCollapsed,
                 ]}
                 aria-hidden="true"
               />
               <span {...stylex.props(styles.cfpJournalListSpan)}>{group.label}</span>
               <span {...stylex.props(styles.cfpJournalListSpan2)}>{group.journals.length}</span>
             </button>
-            <div
+            <section
               id={panelId}
-              role="region"
               aria-label={`${group.label}期刊`}
               hidden={!isExpanded}
               data-slot="cfp-journal-list"
@@ -172,7 +171,7 @@ export function CfpJournalList({
                     })}
                   </ul>
                 ))}
-            </div>
+            </section>
           </section>
         );
       })}
@@ -259,7 +258,7 @@ const styles = stylex.create({
     transitionTimingFunction: 'cubic-bezier(0.215, 0.61, 0.355, 1)',
     transitionDuration: '350ms',
   },
-  cfpJournalListChevronDownExpanded: {
+  cfpJournalListChevronDownCollapsed: {
     rotate: 'calc(90deg * -1)',
   },
   cfpJournalListSpan: {

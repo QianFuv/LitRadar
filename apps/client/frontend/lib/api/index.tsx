@@ -178,7 +178,7 @@ export function getArticles(
   signal?: AbortSignal,
 ): Promise<ArticlePage> {
   const nextParams = new URLSearchParams(params);
-  if (typeof pageParam === 'string' && pageParam.length > 0) {
+  if (pageParam) {
     nextParams.set('cursor', pageParam);
     nextParams.delete('offset');
   }

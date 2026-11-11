@@ -169,7 +169,7 @@ export function useFavoritesPage(userId: number) {
   const createMut = useMutation({
     mutationFn: (name: string) => createFolder(name),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['folders'] });
+      void queryClient.invalidateQueries({ queryKey: ['folders'] });
       setNewFolderName('');
       setDialogOpen(false);
     },
@@ -183,7 +183,7 @@ export function useFavoritesPage(userId: number) {
       setMoveTargetFolderId('');
       setBatchFeedback(null);
       setExportFeedback(null);
-      queryClient.invalidateQueries({ queryKey: ['folders'] });
+      void queryClient.invalidateQueries({ queryKey: ['folders'] });
       if (selectedFolderId === deletedFolderId) {
         setSelectedFolderId(null);
       }
@@ -194,7 +194,7 @@ export function useFavoritesPage(userId: number) {
     mutationFn: ({ id, name }: { id: number; name: string }) => renameFolder(id, name),
     onSuccess: async () => {
       await invalidateFavoriteMemberships(queryClient, userId);
-      queryClient.invalidateQueries({ queryKey: ['folders'] });
+      void queryClient.invalidateQueries({ queryKey: ['folders'] });
       setEditingId(null);
     },
   });
@@ -234,8 +234,8 @@ export function useFavoritesPage(userId: number) {
         tone: 'success',
         message: `已从当前收藏夹移除 ${count} 篇文章。`,
       });
-      queryClient.invalidateQueries({ queryKey: ['folder-articles'] });
-      queryClient.invalidateQueries({ queryKey: ['folders'] });
+      void queryClient.invalidateQueries({ queryKey: ['folder-articles'] });
+      void queryClient.invalidateQueries({ queryKey: ['folders'] });
     },
     onError: (error) => {
       setBatchFeedback({
@@ -266,8 +266,8 @@ export function useFavoritesPage(userId: number) {
           ? `已将 ${count} 篇文章移动到“${targetFolderName}”。`
           : `已移动 ${count} 篇文章。`,
       });
-      queryClient.invalidateQueries({ queryKey: ['folder-articles'] });
-      queryClient.invalidateQueries({ queryKey: ['folders'] });
+      void queryClient.invalidateQueries({ queryKey: ['folder-articles'] });
+      void queryClient.invalidateQueries({ queryKey: ['folders'] });
     },
     onError: (error) => {
       setBatchFeedback({

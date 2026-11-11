@@ -7,6 +7,7 @@ import { type ReactNode } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import * as stylex from '@stylexjs/stylex';
 import { colors } from '@/lib/theme.stylex';
+import { isString } from '@/lib/type-guards';
 
 type ArticleListCardProps = {
   title: ReactNode;
@@ -41,7 +42,7 @@ function hasPreviewContent(preview: ReactNode): boolean {
   if (preview === null || preview === undefined || preview === false) {
     return false;
   }
-  if (typeof preview === 'string') {
+  if (isString(preview)) {
     return preview.trim().length > 0;
   }
   return true;
@@ -207,7 +208,7 @@ const styles = stylex.create({
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
-    color: `color-mix(in oklab, ${colors.foreground} 65%, transparent)`,
+    color: `color-mix(in oklab, ${colors.foreground} 70%, transparent)`,
   },
   articleListCardP2: {
     display: 'flex',
@@ -266,7 +267,7 @@ const styles = stylex.create({
     fontSize: '12.5px',
     lineHeight: 1.75,
     textWrap: 'pretty',
-    color: `color-mix(in oklab, ${colors.mutedForeground} 85%, transparent)`,
+    color: colors.mutedForeground,
   },
   articleListSkeletonDivItem: {
     marginBottom: {

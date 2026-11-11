@@ -9,6 +9,7 @@
 import { Call, type CancellablePromise } from '@wailsio/runtime';
 
 import { PlatformBridgeError } from '@/lib/platform/errors';
+import { isRecord, isString } from '@/lib/type-guards';
 import type { ClientPlatform, NativeSession, ServerConnection } from '@/lib/platform/types';
 
 /** Fully qualified Wails name of the Go bridge service. */
@@ -88,9 +89,9 @@ function invokeBridge<T>(
  * @returns Field value, or null when absent.
  */
 function readBridgeErrorField(error: unknown, field: 'code' | 'reason'): string | null {
-  if (error instanceof Error && error.cause && typeof error.cause === 'object') {
-    const value = (error.cause as Record<string, unknown>)[field];
-    if (typeof value === 'string' && value) {
+  if (error instanceof Error && isRecord(error.cause)) {
+    const value = error.cause[field];
+    if (isString(value) && value) {
       return value;
     }
   }
@@ -213,7 +214,7 @@ function toResponse(result: BridgeResponse): Response {
  */
 async function sendNativeRequest(url: string, init: RequestInit): Promise<Response> {
   const body = init.body;
-  if (body !== undefined && body !== null && typeof body !== 'string') {
+  if (body !== undefined && body !== null && !isString(body)) {
     throw new TypeError('The native transport sends only text request bodies');
   }
   const headers: Record<string, string> = {};
@@ -242,7 +243,7 @@ async function saveNativeDownload(blob: Blob, filename: string): Promise<boolean
     const result: unknown = JSON.parse(
       androidDownloads.save(filename, blob.type || 'application/octet-stream', data),
     );
-    if (!result || typeof result !== 'object' || (result as { ok?: unknown }).ok !== true) {
+    if (!isRecord(result) || result.ok !== true) {
       throw new Error('保存到“下载”失败');
     }
     return true;

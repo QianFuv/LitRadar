@@ -122,7 +122,7 @@ export const REQUEST_TIMEOUT_MS = 60_000;
 /** Additional attempts allowed for idempotent requests. */
 export const MAX_IDEMPOTENT_RETRIES = 2;
 /** Longest server-requested Retry-After delay the client waits for before giving up. */
-export const MAX_RETRY_AFTER_MS = 5_000;
+const MAX_RETRY_AFTER_MS = 5_000;
 /** First backoff delay after a network failure; doubles for each later attempt. */
 export const NETWORK_RETRY_BASE_DELAY_MS = 300;
 
@@ -261,11 +261,10 @@ async function createApiError(response: Response, fallback: string): Promise<Api
  * @returns Request options passed to the platform transport.
  */
 function buildRequestInit(init?: RequestInit): RequestInit {
-  const hasBody = typeof init?.body !== 'undefined';
-  const headers: Record<string, string> = {
-    ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
-    ...(init?.headers as Record<string, string> | undefined),
-  };
+  const headers = new Headers(init?.headers);
+  if (init?.body !== undefined && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
   return { ...init, headers };
 }
 

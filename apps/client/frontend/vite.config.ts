@@ -39,17 +39,19 @@ const BROWSERSLIST_QUERY = `since ${new Date().getFullYear() - 1}-01-01`;
  *
  * Browsers without an engine name (such as Samsung Internet) share an engine already listed.
  */
-const BUILD_TARGET_ENGINES: Readonly<Record<string, string>> = {
-  and_chr: 'chrome',
-  and_ff: 'firefox',
-  android: 'chrome',
-  chrome: 'chrome',
-  edge: 'edge',
-  firefox: 'firefox',
-  ios_saf: 'ios',
-  opera: 'opera',
-  safari: 'safari',
-};
+const BUILD_TARGET_ENGINES = new Map(
+  Object.entries({
+    and_chr: 'chrome',
+    and_ff: 'firefox',
+    android: 'chrome',
+    chrome: 'chrome',
+    edge: 'edge',
+    firefox: 'firefox',
+    ios_saf: 'ios',
+    opera: 'opera',
+    safari: 'safari',
+  }),
+);
 
 /**
  * Convert a browserslist query into the oldest version of each engine for `build.target`.
@@ -61,7 +63,7 @@ function resolveBuildTargets(query: string): string[] {
   const oldestVersions = new Map<string, number>();
   for (const entry of browserslist(query)) {
     const [browser, versionRange] = entry.split(' ');
-    const engine = BUILD_TARGET_ENGINES[browser];
+    const engine = BUILD_TARGET_ENGINES.get(browser);
     const version = Number.parseFloat(versionRange.split('-')[0]);
     if (!engine || Number.isNaN(version)) {
       continue;
@@ -82,7 +84,7 @@ const BUILD_TARGETS = resolveBuildTargets(BROWSERSLIST_QUERY);
  * @param target - Backend origin that receives proxied requests.
  * @returns Proxy rules keyed by anchored path patterns.
  */
-function createBackendProxy(target: string): Record<string, ProxyOptions> {
+function createBackendProxy(target: string) {
   const backend: ProxyOptions = { target, changeOrigin: false };
   return {
     '^/api(?:/|$)': backend,
@@ -136,12 +138,13 @@ function findUiEntryPoints(): string[] {
 }
 
 /**
- * Many-file ESM UI dependencies bundled into a few cached modules for jsdom tests.
+ * Many-file ESM UI dependencies bundled into a few cached modules for jsdom and browser tests.
  *
  * Every test file runs in a fresh worker, and loading these packages natively resolves and reads
  * thousands of files each time; that file-system work stretched lazy route loads and setup past
  * test timeouts. `motion/react` must stay in this list so setup and the Animate UI bundles share
- * the instance whose `MotionGlobalConfig.skipAnimations` is enabled.
+ * the instance whose `MotionGlobalConfig.skipAnimations` is enabled. Browser tests pre-bundle the
+ * same list so a cold dependency cache does not make Vite reload a running test file.
  */
 const PREBUNDLED_UI_DEPENDENCIES = [
   'motion/react',
@@ -228,7 +231,7 @@ export default defineConfig(({ mode }) => ({
       'react/rules-of-hooks': 'error',
       'react/exhaustive-deps': 'error',
       'jsx-a11y/no-autofocus': 'off',
-      'jsx-a11y/no-noninteractive-tabindex': ['error', { roles: ['region'] }],
+      'jsx-a11y/no-noninteractive-tabindex': ['error', { tags: ['section'], roles: ['region'] }],
       'jsx-a11y/label-has-associated-control': ['error', { controlComponents: ['Checkbox'] }],
       'stylex/valid-styles': 'error',
       'stylex/valid-shorthands': 'error',
@@ -242,6 +245,8 @@ export default defineConfig(({ mode }) => ({
       'anti-slop/no-unsafe-dictionary-values': 'error',
       'anti-slop/no-narrowing-after-widening': 'error',
       'anti-slop/no-reduce-accumulator-copy': 'error',
+      'anti-slop/no-unnecessary-type-widening': 'error',
+      'anti-slop/no-typeof-outside-guards': 'error',
     },
     overrides: [
       {
@@ -318,6 +323,9 @@ export default defineConfig(({ mode }) => ({
       },
       {
         extends: true,
+        optimizeDeps: {
+          include: PREBUNDLED_UI_DEPENDENCIES,
+        },
         test: {
           name: 'component-browser',
           globals: true,

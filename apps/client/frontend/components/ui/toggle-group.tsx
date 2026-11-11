@@ -1,64 +1,92 @@
 /**
- * Project-styled Base UI toggle group whose selected surface slides between items (Animate UI).
+ * Project-styled single-choice segmented control: a Base UI radio group whose selected surface
+ * slides between segments (Animate UI Highlight).
  */
 
 import * as React from 'react';
-import { ToggleGroup as ToggleGroupPrimitive } from '@animate-ui/react/primitives/base-ui/toggle-group';
-import { Toggle } from '@animate-ui/react/primitives/base-ui/toggle';
+import { RadioGroup as RadioGroupPrimitive } from '@base-ui/react/radio-group';
+import { Radio } from '@animate-ui/react/primitives/base-ui/radio';
+import { Highlight, HighlightItem } from '@animate-ui/react/primitives/effects/highlight';
 
 import { PresenceBoundary } from '@/components/ui/motion';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
 
-type ToggleGroupProps = Omit<
-  React.ComponentProps<typeof ToggleGroupPrimitive>,
-  'className' | 'value' | 'defaultValue' | 'onValueChange' | 'multiple'
+/** Spring that moves the selected surface between segments. */
+const SELECTION_SPRING = { type: 'spring', stiffness: 300, damping: 30 } as const;
+
+type ToggleGroupProps<Value extends string> = Omit<
+  React.ComponentProps<typeof RadioGroupPrimitive<Value>>,
+  'className' | 'value' | 'defaultValue' | 'onValueChange'
 > & {
-  /** Value of the pressed segment. */
-  value: string;
-  /** Called with the newly pressed segment, or an empty string when the pressed one is released. */
-  onValueChange: (value: string) => void;
+  /** Value of the selected segment. */
+  value: Value;
+  /** Called with the newly selected segment. */
+  onValueChange: (value: Value) => void;
   xstyle?: stylex.StyleXStyles;
 };
 
 /**
- * Render a segmented control where exactly one segment is pressed at a time.
+ * Render a segmented control where exactly one segment is selected. It is a `radiogroup` of
+ * `radio` segments: arrow keys move the selection, and Space or a click selects.
  *
- * @param props - Pressed value, change handler, Base UI toggle group properties, and style
+ * @param props - Selected value, change handler, Base UI radio group properties, and style
  * overrides.
  * @returns Segmented control root.
  */
-function ToggleGroup({ xstyle, value, onValueChange, ...props }: ToggleGroupProps) {
+function ToggleGroup<Value extends string>({
+  xstyle,
+  value,
+  onValueChange,
+  children,
+  ...props
+}: ToggleGroupProps<Value>) {
   return (
-    <ToggleGroupPrimitive
+    <RadioGroupPrimitive<Value>
       data-slot="toggle-group"
-      value={[value]}
-      onValueChange={(values) => onValueChange(values[0] ?? '')}
+      value={value}
+      onValueChange={onValueChange}
       {...stylex.props(styles.toggleGroup, xstyle)}
       {...props}
-    />
+    >
+      <Highlight
+        controlledItems
+        value={value}
+        click={false}
+        transition={SELECTION_SPRING}
+        {...stylex.props(styles.selectedSurface)}
+      >
+        {children}
+      </Highlight>
+    </RadioGroupPrimitive>
   );
 }
 
 /**
- * Render one segment; the selected segment's background becomes the sliding surface.
+ * Render one segment as a `radio` button; the selected segment sits on the sliding surface.
  *
- * @param props - Base UI toggle properties and style overrides.
+ * @param props - Segment value, Base UI radio properties, and style overrides.
  * @returns Segment button.
  */
 function ToggleGroupItem({
+  value,
   xstyle,
   ...props
-}: Omit<React.ComponentProps<typeof Toggle>, 'className'> & {
+}: Omit<React.ComponentProps<typeof Radio.Root>, 'className' | 'value' | 'nativeButton'> & {
+  value: string;
   xstyle?: stylex.StyleXStyles;
 }) {
   return (
     <PresenceBoundary>
-      <Toggle
-        data-slot="toggle-group-item"
-        {...stylex.props(styles.toggleGroupItem, xstyle)}
-        {...props}
-      />
+      <HighlightItem value={value}>
+        <Radio.Root
+          nativeButton
+          data-slot="toggle-group-item"
+          value={value}
+          {...stylex.props(styles.toggleGroupItem, xstyle)}
+          {...props}
+        />
+      </HighlightItem>
     </PresenceBoundary>
   );
 }
@@ -74,6 +102,11 @@ const styles = stylex.create({
     borderStyle: 'solid',
     borderWidth: '1px',
     padding: '0.125rem',
+  },
+  selectedSurface: {
+    inset: 0,
+    borderRadius: '6px',
+    backgroundColor: colors.foreground,
   },
   toggleGroupItem: {
     display: 'flex',
@@ -92,13 +125,13 @@ const styles = stylex.create({
     lineHeight: lineHeights.textXs,
     color: {
       default: colors.mutedForeground,
-      ':is([data-pressed])': colors.background,
+      ':is([data-checked])': colors.background,
       ':hover': {
         default: null,
-        ':is([data-pressed])': null,
+        ':is([data-checked])': null,
         '@media (hover: hover)': {
           default: colors.foreground,
-          ':is([data-pressed])': colors.background,
+          ':is([data-checked])': colors.background,
         },
       },
     },
@@ -110,10 +143,6 @@ const styles = stylex.create({
     boxShadow: {
       default: null,
       ':focus-visible': `0 0 0 2px ${colors.ring}`,
-    },
-    backgroundColor: {
-      default: null,
-      ':is([data-pressed])': colors.foreground,
     },
   },
 });

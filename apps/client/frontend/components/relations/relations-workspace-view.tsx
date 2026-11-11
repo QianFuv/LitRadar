@@ -156,7 +156,7 @@ function resolveInitialRelationGraph(
   dbName: string,
   articleId: string,
   savedFavorite: RelationGraphFavorite | null,
-): { graph: RelationGraph | null; savedId: number | null } {
+) {
   const stored = readStoredRelationGraph();
   const storedMatches = stored && stored.dbName === dbName && stored.graph.rootId === articleId;
   if (savedFavorite) {
@@ -221,22 +221,24 @@ function RelationPicker({ onPick }: { onPick: (article: Article, dbName: string)
       }}
     >
       <div {...stylex.props(styles.relationPickerDiv)}>
-        <form role="search" {...stylex.props(styles.relationPickerForm)} onSubmit={handleSubmit}>
-          <Input
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder="输入标题、作者或关键词"
-            aria-label="检索中心文章"
-          />
-          <Button type="submit" xstyle={styles.relationPickerButton}>
-            <Search xstyle={styles.relationPickerSearch} aria-hidden="true" />
-            检索
-          </Button>
-        </form>
+        <search>
+          <form {...stylex.props(styles.relationPickerForm)} onSubmit={handleSubmit}>
+            <Input
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              placeholder="输入标题、作者或关键词"
+              aria-label="检索中心文章"
+            />
+            <Button type="submit" xstyle={styles.relationPickerButton}>
+              <Search xstyle={styles.relationPickerSearch} aria-hidden="true" />
+              检索
+            </Button>
+          </form>
+        </search>
         {resultsQuery.isFetching && (
-          <p role="status" {...stylex.props(styles.relationPickerP)}>
+          <output {...stylex.props(styles.statusOutput, styles.relationPickerP)}>
             <LoadingText text="正在检索…" />
-          </p>
+          </output>
         )}
         {resultsQuery.isError && (
           <p role="alert" {...stylex.props(styles.relationPickerP2)}>
@@ -480,9 +482,7 @@ function RelationExplorer({
           aria-label="显示方式"
           xstyle={styles.headerToggleGroup}
           value={viewMode}
-          onValueChange={(mode) => {
-            if (mode) setViewMode(mode as typeof viewMode);
-          }}
+          onValueChange={setViewMode}
         >
           {(
             [
@@ -613,10 +613,10 @@ function RelationExplorer({
           isReady={currentGraph !== null || initialQuery.isError}
           xstyle={styles.relationExplorerRevealItem}
           placeholder={
-            <p role="status" {...stylex.props(styles.relationExplorerP2)}>
+            <output {...stylex.props(styles.statusOutput, styles.relationExplorerP2)}>
               <Loader2 xstyle={styles.relationExplorerLoader2} aria-hidden="true" />
               <LoadingText text="正在构建关系图…" />
-            </p>
+            </output>
           }
         >
           {body}
@@ -694,7 +694,7 @@ function RelationList({
               <span
                 {...stylex.props(
                   styles.relationListSpan,
-                  node.depth === 0 ? styles.relationListSpanDepth : styles.relationListSpanNotDepth,
+                  node.depth === 0 ? styles.relationListSpanRoot : styles.relationListSpanChild,
                 )}
               >
                 {title}
@@ -713,6 +713,9 @@ function RelationList({
 const spinKeyframes = stylex.keyframes({ to: { transform: 'rotate(360deg)' } });
 
 const styles = stylex.create({
+  statusOutput: {
+    display: 'block',
+  },
   indent: (paddingLeft: string) => ({
     paddingLeft,
   }),
@@ -1019,10 +1022,10 @@ const styles = stylex.create({
     fontSize: '13px',
     lineHeight: 1.5,
   },
-  relationListSpanDepth: {
+  relationListSpanRoot: {
     fontWeight: 700,
   },
-  relationListSpanNotDepth: {
+  relationListSpanChild: {
     fontWeight: 500,
   },
   relationListSpan2: {

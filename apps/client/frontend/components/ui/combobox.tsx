@@ -15,8 +15,6 @@ import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
 const Combobox = ComboboxPrimitive.Root;
 const ComboboxTrigger = ComboboxPrimitive.Trigger;
-const ComboboxValue = ComboboxPrimitive.Value;
-
 type ComboboxContentProps = React.ComponentProps<typeof ComboboxPrimitive.Popup> & {
   align?: 'start' | 'center' | 'end';
   sideOffset?: number;
@@ -162,7 +160,6 @@ export {
   ComboboxItem,
   ComboboxList,
   ComboboxTrigger,
-  ComboboxValue,
 };
 
 const styles = stylex.create({

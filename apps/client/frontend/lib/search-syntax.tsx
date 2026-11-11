@@ -10,7 +10,7 @@
 export type SearchSyntaxMode = 'simple' | 'advanced';
 
 /** Searchable FTS5 column exposed to users. */
-export type SearchFieldOption = {
+type SearchFieldOption = {
   column: string;
   label: string;
 };

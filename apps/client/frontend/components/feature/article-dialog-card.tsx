@@ -2,7 +2,7 @@
  * Keyboard-accessible article rows that open in the docked reader or a detail sheet.
  */
 
-import { useEffect, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useState, type MouseEvent, type ReactNode, type Ref } from 'react';
 import { createPortal } from 'react-dom';
 import type { BaseUIEvent } from '@base-ui/react/types';
 
@@ -33,7 +33,7 @@ type ArticleDialogCardProps = {
   favoriteToggleFolderId?: number;
   extraActions?: ReactNode;
   leading?: ReactNode;
-  triggerRef?: (node?: Element | null) => void;
+  triggerRef?: Ref<HTMLDivElement>;
   xstyle?: stylex.StyleXStyles;
 };
 
@@ -130,11 +130,11 @@ export function ArticleDialogCard({
               {...{ [READER_ITEM_ATTRIBUTE]: '' }}
               data-selected={isSelected ? 'true' : 'false'}
               aria-current={isSelected ? 'true' : undefined}
-              aria-label={`查看文章详情：${displayTitle}`}
               {...stylex.props(styles.articleDialogCardDiv3)}
             />
           }
         >
+          <span {...stylex.props(styles.visuallyHidden)}>查看文章详情：</span>
           <ArticleListCard
             title={resolvedTitle}
             authors={article.authors}
@@ -156,6 +156,15 @@ export function ArticleDialogCard({
 }
 
 const styles = stylex.create({
+  visuallyHidden: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+  },
   articleDialogCardDiv: {
     position: 'relative',
     display: 'flex',

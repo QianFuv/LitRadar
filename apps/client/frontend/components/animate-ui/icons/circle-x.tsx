@@ -87,10 +87,4 @@ function CircleX(props: CircleXProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  CircleX,
-  CircleX as CircleXIcon,
-  type CircleXProps,
-  type CircleXProps as CircleXIconProps,
-};
+export { CircleX };

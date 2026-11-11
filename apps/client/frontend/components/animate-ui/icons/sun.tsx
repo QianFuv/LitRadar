@@ -12,12 +12,10 @@ type SunProps = IconProps<keyof typeof animations>;
 
 const animations = {
   default: (() => {
-    const animation: Record<string, Variants> = {
-      circle: {},
-    };
+    const animation = new Map<string, Variants>([['circle', {}]]);
 
     for (let i = 1; i <= 8; i++) {
-      animation[`line${i}`] = {
+      animation.set(`line${i}`, {
         initial: { opacity: 1, scale: 1 },
         animate: {
           opacity: [0, 1],
@@ -28,10 +26,10 @@ const animations = {
             delay: (i - 1) * 0.15,
           },
         },
-      };
+      });
     }
 
-    return animation;
+    return Object.fromEntries(animation);
   })() satisfies Record<string, Variants>,
 } as const;
 
@@ -142,4 +140,4 @@ function Sun(props: SunProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export { animations, Sun, Sun as SunIcon, type SunProps, type SunProps as SunIconProps };
+export { Sun };

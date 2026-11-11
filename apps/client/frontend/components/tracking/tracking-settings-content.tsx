@@ -18,7 +18,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
 
-export type TrackingSettingsSectionId = 'tracking' | 'notifications';
+type TrackingSettingsSectionId = 'tracking' | 'notifications';
 
 /** Actions and state exposed to the settings-center transition guard. */
 export type TrackingSettingsController = {
@@ -108,12 +108,12 @@ export function TrackingSettingsContent({
  */
 function renderTrackingBlockPlaceholder(heightStyle: stylex.StyleXStyles) {
   return (
-    <div role="status" {...stylex.props(styles.renderTrackingBlockPlaceholderDiv)}>
+    <output {...stylex.props(styles.statusOutput, styles.renderTrackingBlockPlaceholderDiv)}>
       <span {...stylex.props(styles.renderTrackingBlockPlaceholderSpan)}>
         正在加载已保存的推荐配置…
       </span>
       <Skeleton xstyle={[styles.trackingBlockSkeleton, heightStyle]} />
-    </div>
+    </output>
   );
 }
 
@@ -180,9 +180,7 @@ function renderTrackingSaveFeedback(state: TrackingSettingsViewState) {
         </span>
       )}
       {recommendation.save.didSave && (
-        <span role="status" {...stylex.props(styles.renderTrackingSaveFeedbackSpan2)}>
-          已保存
-        </span>
+        <output {...stylex.props(styles.renderTrackingSaveFeedbackSpan2)}>已保存</output>
       )}
       {recommendation.save.mutation.isError && (
         <span role="alert" {...stylex.props(styles.renderTrackingSaveFeedbackSpan)}>
@@ -237,6 +235,9 @@ type TrackingSettingsViewState = {
 };
 
 const styles = stylex.create({
+  statusOutput: {
+    display: 'block',
+  },
   trackingBlockSkeleton: {
     width: '100%',
     borderRadius: '12px',

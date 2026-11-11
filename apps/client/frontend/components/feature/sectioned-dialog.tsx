@@ -291,7 +291,7 @@ export function SectionedDialogFrame<SectionId extends string>({
                 type="button"
                 variant="ghost"
                 static
-                aria-label="关闭"
+                aria-label="返回"
                 xstyle={styles.sectionedDialogFrameButton}
               />
             }
@@ -356,13 +356,12 @@ export function SectionedDialogFrame<SectionId extends string>({
                 </MotionDiv>
               </MotionPresence>
             </div>
-            <div
-              role="region"
+            <section
               aria-label={`${activeDefinition.label}${contentLabelSuffix}`}
               data-slot="sectioned-dialog-panel"
             >
               {children}
-            </div>
+            </section>
           </div>
         </div>
       </DialogContent>

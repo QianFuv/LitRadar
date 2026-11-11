@@ -120,9 +120,9 @@ export function AnnouncementsCard() {
           xstyle={styles.announcementsCardRevealItem}
           placeholderXstyle={null}
           placeholder={
-            <p role="status" {...stylex.props(styles.announcementsCardP2)}>
+            <output {...stylex.props(styles.statusOutput, styles.announcementsCardP2)}>
               <LoadingText text="加载中…" />
-            </p>
+            </output>
           }
         >
           {renderAnnouncementList(state)}
@@ -157,9 +157,9 @@ function useAnnouncementsViewState() {
       return adminCreateAnnouncement(form);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-announcements'] });
-      queryClient.invalidateQueries({ queryKey: ['announcements'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-announcements'] });
+      void queryClient.invalidateQueries({ queryKey: ['announcements'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
       setDialogOpen(false);
       setEditingAnnouncement(null);
       setForm(DEFAULT_FORM);
@@ -170,18 +170,18 @@ function useAnnouncementsViewState() {
     mutationFn: ({ announcementId, enabled }: { announcementId: number; enabled: boolean }) =>
       adminUpdateAnnouncement(announcementId, { enabled }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-announcements'] });
-      queryClient.invalidateQueries({ queryKey: ['announcements'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-announcements'] });
+      void queryClient.invalidateQueries({ queryKey: ['announcements'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: (announcementId: number) => adminDeleteAnnouncement(announcementId),
     onSuccess: (_data, announcementId) => {
-      queryClient.invalidateQueries({ queryKey: ['admin-announcements'] });
-      queryClient.invalidateQueries({ queryKey: ['announcements'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-announcements'] });
+      void queryClient.invalidateQueries({ queryKey: ['announcements'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
       setAnnouncementToDelete((current) => (current?.id === announcementId ? null : current));
     },
   });
@@ -397,7 +397,7 @@ function renderAnnouncementList(state: AnnouncementsViewState) {
             data-motion-announcement-key={announcement.id}
             {...stylex.props(
               styles.renderAnnouncementListMotionDiv2,
-              !announcement.enabled && styles.renderAnnouncementListMotionDivEnabled,
+              !announcement.enabled && styles.renderAnnouncementListMotionDivDisabled,
             )}
             initial="hidden"
             animate="visible"
@@ -521,6 +521,9 @@ function renderAnnouncementDeletion(
 }
 
 const styles = stylex.create({
+  statusOutput: {
+    display: 'block',
+  },
   priorityAccent: {
     position: 'absolute',
     insetBlock: '0px',
@@ -682,7 +685,7 @@ const styles = stylex.create({
     borderBottomStyle: 'solid',
     borderBottomWidth: '1px',
   },
-  renderAnnouncementListMotionDivEnabled: {
+  renderAnnouncementListMotionDivDisabled: {
     opacity: '70%',
   },
   renderAnnouncementListDiv: {

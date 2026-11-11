@@ -93,10 +93,4 @@ function WandSparkles(props: WandSparklesProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  WandSparkles,
-  WandSparkles as WandSparklesIcon,
-  type WandSparklesProps,
-  type WandSparklesProps as WandSparklesIconProps,
-};
+export { WandSparkles };

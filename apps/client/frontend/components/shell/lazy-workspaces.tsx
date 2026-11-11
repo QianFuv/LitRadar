@@ -69,12 +69,12 @@ export const preloadAdminCenter = ADMIN_CENTER_DIALOG.preload;
  */
 export function WorkspaceViewFallback() {
   return (
-    <div role="status" {...stylex.props(styles.workspaceViewFallbackDiv)}>
+    <output {...stylex.props(styles.statusOutput, styles.workspaceViewFallbackDiv)}>
       <span {...stylex.props(styles.workspaceViewFallbackSpan)}>加载中…</span>
       <Skeleton aria-hidden="true" xstyle={styles.workspaceViewFallbackSkeleton} />
       <Skeleton aria-hidden="true" xstyle={styles.workspaceViewFallbackSkeleton2} />
       <Skeleton aria-hidden="true" xstyle={styles.workspaceViewFallbackSkeleton3} />
-    </div>
+    </output>
   );
 }
 
@@ -145,13 +145,16 @@ export function LazyAdminCenterDialog() {
  */
 function CenterLoadingStatus({ label }: { label: string }) {
   return (
-    <div role="status" {...stylex.props(styles.workspaceViewFallbackSpan)}>
+    <output {...stylex.props(styles.statusOutput, styles.workspaceViewFallbackSpan)}>
       {label}
-    </div>
+    </output>
   );
 }
 
 const styles = stylex.create({
+  statusOutput: {
+    display: 'block',
+  },
   workspaceViewFallbackDiv: {
     display: 'flex',
     height: '100%',

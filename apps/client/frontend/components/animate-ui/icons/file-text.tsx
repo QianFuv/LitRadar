@@ -81,10 +81,4 @@ function FileText(props: FileTextProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  FileText,
-  FileText as FileTextIcon,
-  type FileTextProps,
-  type FileTextProps as FileTextIconProps,
-};
+export { FileText };

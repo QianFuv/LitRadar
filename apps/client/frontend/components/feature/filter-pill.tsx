@@ -70,7 +70,7 @@ export function getFilterPillText(
   isActive: boolean,
   summary?: string,
   accessibleSummary?: string,
-): { visibleText: string; accessibleName: string } {
+) {
   const spokenSummary = accessibleSummary ?? summary;
   return {
     visibleText: isActive && summary ? summary : label,

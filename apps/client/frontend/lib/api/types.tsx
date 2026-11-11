@@ -9,9 +9,8 @@ type ApiSchemas = components['schemas'];
 export type ArticleId = ApiSchemas['ArticleId'];
 export type JournalId = ApiSchemas['JournalId'];
 export type ArticleSearchMode = ApiSchemas['ArticleSearchMode'];
-export type { DatePrecision, PushStatsState } from '@/lib/api-contract';
 
-export type PageMeta = Omit<ApiSchemas['PageMeta'], 'total'> &
+type PageMeta = Omit<ApiSchemas['PageMeta'], 'total'> &
   Required<Pick<ApiSchemas['PageMeta'], 'total'>>;
 
 /** Article cards also accept sparse metadata from unavailable favorite records. */
@@ -32,7 +31,6 @@ export type ArticlePage = Omit<ApiSchemas['ArticlePage'], 'items' | 'page'> & {
   page: PageMeta;
 };
 
-export type ArticleAccessAction = ApiSchemas['ArticleAccessAction'];
 export type ArticleAccessResponse = ApiSchemas['ArticleAccessResponse'];
 export type ValueCount = ApiSchemas['ValueCount'];
 export type JournalRatingOptions = ApiSchemas['JournalRatingOptions'];
@@ -40,7 +38,6 @@ export type YearSummary = ApiSchemas['YearSummary'];
 export type JournalOption = Pick<ApiSchemas['JournalOption'], 'journal_id'> &
   Partial<Pick<ApiSchemas['JournalOption'], 'title'>>;
 export type JournalRecord = ApiSchemas['JournalRecord'];
-export type JournalPage = ApiSchemas['JournalPage'];
 export type CfpCatalogResponse = ApiSchemas['CfpCatalogResponse'];
 export type CfpJournalSummary = ApiSchemas['CfpJournalSummary'];
 export type CfpNoticePage = ApiSchemas['CfpNoticePage'];
@@ -92,10 +89,10 @@ export type {
 } from '@/lib/api-contract';
 
 export type AdminUserInfo = ApiSchemas['AdminUserInfo'];
-export type IndexDbStats = Omit<ApiSchemas['IndexDatabaseStats'], 'error'> & {
+type IndexDbStats = Omit<ApiSchemas['IndexDatabaseStats'], 'error'> & {
   error?: Exclude<ApiSchemas['IndexDatabaseStats']['error'], null>;
 };
-export type PushDbStats = Omit<ApiSchemas['PushStats'], 'delivered_count' | 'user_results'> & {
+type PushDbStats = Omit<ApiSchemas['PushStats'], 'delivered_count' | 'user_results'> & {
   [Field in 'delivered_count' | 'user_results']?: NonNullable<ApiSchemas['PushStats'][Field]>;
 };
 export type AdminStats = Omit<ApiSchemas['AdminStatsResponse'], 'index' | 'push'> & {

@@ -339,13 +339,12 @@ function RelationGraphFavoriteButtons({
           </DropdownMenuContent>
         </DropdownMenu>
       )}
-      <span
-        role="status"
+      <output
         {...stylex.props(styles.relationGraphFavoriteButtonsSpan2)}
         data-testid="relation-graph-favorite-status"
       >
         {status}
-      </span>
+      </output>
     </>
   );
 }

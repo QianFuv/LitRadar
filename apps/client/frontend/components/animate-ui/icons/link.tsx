@@ -204,4 +204,4 @@ function Link(props: LinkProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export { animations, Link, Link as LinkIcon, type LinkProps, type LinkProps as LinkIconProps };
+export { Link };

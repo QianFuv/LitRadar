@@ -54,10 +54,7 @@ type SearchBuilderDialogProps = {
  * @param currentQuery - Applied query.
  * @returns Initial rows and whether a handwritten expression will be replaced.
  */
-function getInitialConditions(currentQuery: string): {
-  conditions: SearchBuilderCondition[];
-  replacesHandwritten: boolean;
-} {
+function getInitialConditions(currentQuery: string) {
   const query = currentQuery.trim();
   const stored = readStoredSearchBuilder();
   if (stored && query && stored.query === query) {
@@ -196,13 +193,7 @@ function SearchBuilderBody({
                         aria-label={`第 ${position} 个条件的连接方式`}
                         xstyle={styles.searchBuilderBodyToggleGroup}
                         value={condition.connector}
-                        onValueChange={(connector) => {
-                          if (connector) {
-                            updateCondition(condition.id, {
-                              connector: connector as typeof condition.connector,
-                            });
-                          }
-                        }}
+                        onValueChange={(connector) => updateCondition(condition.id, { connector })}
                       >
                         {SEARCH_BUILDER_CONNECTORS.map((connector) => (
                           <ToggleGroupItem

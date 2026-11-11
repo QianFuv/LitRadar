@@ -3,12 +3,12 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
-import { useInView } from 'react-intersection-observer';
 
 import { RevealItem } from '@/components/ui/reveal';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getRelatedArticles, type Article } from '@/lib/api';
 import { getArticleDisplayTitle } from '@/lib/article-title';
+import { useInView } from '@/lib/use-in-view';
 import { LinkIcon } from '@/components/ui/animated-icons';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
@@ -30,16 +30,12 @@ type RelatedArticlesProps = {
  * @returns Related-article section.
  */
 export function RelatedArticles({ article, dbName, onOpen }: RelatedArticlesProps) {
-  const { ref, inView } = useInView({
-    triggerOnce: true,
-    rootMargin: '300px',
-    fallbackInView: false,
-  });
+  const { ref, isInView } = useInView({ isOnce: true, rootMargin: '300px' });
   const relatedQuery = useQuery({
     queryKey: ['related-articles', dbName, String(article.article_id)],
     queryFn: ({ signal }) =>
       getRelatedArticles(article.article_id, dbName, RELATED_ARTICLE_LIMIT, signal),
-    enabled: inView && Boolean(dbName),
+    enabled: isInView && Boolean(dbName),
     staleTime: 10 * 60 * 1000,
     retry: false,
   });
@@ -56,7 +52,7 @@ export function RelatedArticles({ article, dbName, onOpen }: RelatedArticlesProp
       <RevealItem
         isReady={!relatedQuery.isLoading}
         placeholder={
-          <div role="status" {...stylex.props(styles.relatedArticlesDiv)}>
+          <output {...stylex.props(styles.statusOutput, styles.relatedArticlesDiv)}>
             <span {...stylex.props(styles.relatedArticlesDivItem, styles.relatedArticlesSpan2)}>
               正在查找相关文章
             </span>
@@ -70,7 +66,7 @@ export function RelatedArticles({ article, dbName, onOpen }: RelatedArticlesProp
                 />
               </div>
             ))}
-          </div>
+          </output>
         }
       >
         {relatedQuery.isError ? (
@@ -108,6 +104,9 @@ export function RelatedArticles({ article, dbName, onOpen }: RelatedArticlesProp
 }
 
 const styles = stylex.create({
+  statusOutput: {
+    display: 'block',
+  },
   relatedArticlesSection: {
     marginTop: '2rem',
   },

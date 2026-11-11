@@ -331,9 +331,9 @@ export function ScheduledTasksCard({ isActive = true }: { isActive?: boolean } =
         <RevealItem
           isReady={!isLoading}
           placeholder={
-            <p role="status" {...stylex.props(styles.scheduledTasksCardP2)}>
+            <output {...stylex.props(styles.statusOutput, styles.scheduledTasksCardP2)}>
               <LoadingText text="加载中…" />
-            </p>
+            </output>
           }
         >
           <SettingsGroup>{renderScheduledTaskList(state)}</SettingsGroup>
@@ -391,9 +391,9 @@ function useSchedulerViewState(isActive: boolean) {
       return adminCreateScheduledTask(payload);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-scheduler-status'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-scheduler-status'] });
       setDialogOpen(false);
       setEditingTask(null);
       setForm(DEFAULT_FORM);
@@ -405,18 +405,18 @@ function useSchedulerViewState(isActive: boolean) {
     mutationFn: ({ enabled, taskId }: { enabled: boolean; taskId: number }) =>
       adminUpdateScheduledTask(taskId, { enabled }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-scheduler-status'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-scheduler-status'] });
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: (taskId: number) => adminDeleteScheduledTask(taskId),
     onSuccess: (_data, taskId) => {
-      queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-scheduler-status'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-scheduler-status'] });
       setTaskToDelete((current) => (current?.id === taskId ? null : current));
     },
   });
@@ -1253,6 +1253,9 @@ function getScheduledTaskForm(task: ScheduledTaskInfo): TaskFormState {
 const pingKeyframes = stylex.keyframes({ '75%, 100%': { transform: 'scale(2)', opacity: 0 } });
 
 const styles = stylex.create({
+  statusOutput: {
+    display: 'block',
+  },
   inert: {
     pointerEvents: 'none',
   },

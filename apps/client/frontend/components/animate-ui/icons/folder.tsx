@@ -126,10 +126,4 @@ function Folder(props: FolderProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  Folder,
-  Folder as FolderIcon,
-  type FolderProps,
-  type FolderProps as FolderIconProps,
-};
+export { Folder };

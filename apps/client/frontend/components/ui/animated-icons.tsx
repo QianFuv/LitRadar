@@ -34,7 +34,6 @@ import {
   CheckCircle2 as StillCheckCircle2,
   ChevronDown as StillChevronDown,
   ChevronRight as StillChevronRight,
-  ChevronUp as StillChevronUp,
   Clock as StillClock,
   Clock3 as StillClock3,
   Copy as StillCopy,
@@ -103,7 +102,6 @@ import { CalendarDays as AnimatedCalendarDays } from '@/components/animate-ui/ic
 import { Check as AnimatedCheck } from '@/components/animate-ui/icons/check';
 import { ChevronDown as AnimatedChevronDown } from '@/components/animate-ui/icons/chevron-down';
 import { ChevronRight as AnimatedChevronRight } from '@/components/animate-ui/icons/chevron-right';
-import { ChevronUp as AnimatedChevronUp } from '@/components/animate-ui/icons/chevron-up';
 import { CircleAlert as AnimatedCircleAlert } from '@/components/animate-ui/icons/circle-alert';
 import { CircleCheck as AnimatedCircleCheck } from '@/components/animate-ui/icons/circle-check';
 import { CircleQuestionMark as AnimatedCircleQuestionMark } from '@/components/animate-ui/icons/circle-question-mark';
@@ -166,13 +164,23 @@ const IconTriggerContext = createContext(false);
 const IconStyleContext = createContext<stylex.StyleXStyles>(null);
 
 /** Props accepted by every application icon, animated or still. */
-export type AppIconProps = { xstyle?: stylex.StyleXStyles; strokeWidth?: number } & AriaAttributes;
+type AppIconProps = { xstyle?: stylex.StyleXStyles; strokeWidth?: number } & AriaAttributes;
+
+/**
+ * Marker carried by the icon components this module builds. Raw lucide-react icons ignore `xstyle`
+ * and the styles of the control around them, and the marker keeps them out of `AppIcon` slots.
+ */
+type StyledIconMarker = { readonly canApplyXstyle: true };
 
 /** An icon component usable in navigation and section definitions. */
-export type AppIcon = ComponentType<AppIconProps>;
+export type AppIcon = ComponentType<AppIconProps> & StyledIconMarker;
 
 /** An animated icon that can play on its own when it scrolls into view. */
-export type AnimatedIcon = ComponentType<AppIconProps & { animateOnView?: boolean }>;
+export type AnimatedIcon = ComponentType<AppIconProps & { animateOnView?: boolean }> &
+  StyledIconMarker;
+
+/** Marker value attached to every icon component built here. */
+const STYLED_ICON_MARKER: StyledIconMarker = { canApplyXstyle: true };
 
 /**
  * Bind an Animate UI icon to the surrounding control: it plays while the control is hovered or
@@ -235,10 +243,9 @@ function withIconTrigger<Animation extends string>(
       />
     );
   }
-  return TriggeredIcon;
+  return Object.assign(TriggeredIcon, STYLED_ICON_MARKER);
 }
 
-/** Pointer handlers of a control; Base UI parts pass their own extended event type. */
 /**
  * Wrap a lucide-react icon that has no Animate UI drawing so it still takes the default styles of
  * the control around it.
@@ -262,7 +269,7 @@ function withIconStyle(StillIcon: LucideIcon) {
     const { className, style: stylexStyle } = stylex.props(defaultXstyle, xstyle);
     return <StillIcon className={className} style={{ ...stylexStyle, ...style }} {...props} />;
   }
-  return StyledIcon;
+  return Object.assign(StyledIcon, STYLED_ICON_MARKER);
 }
 
 type IconTriggerHandlers<TriggerEvent extends PointerEvent<Element>> = {
@@ -372,7 +379,6 @@ export const Check = withIconTrigger(StillCheck, AnimatedCheck);
 export const CheckCircle2 = withIconTrigger(StillCheckCircle2, AnimatedCircleCheck);
 export const ChevronDown = withIconTrigger(StillChevronDown, AnimatedChevronDown);
 export const ChevronRight = withIconTrigger(StillChevronRight, AnimatedChevronRight);
-export const ChevronUp = withIconTrigger(StillChevronUp, AnimatedChevronUp);
 export const CircleQuestionMark = withIconTrigger(
   StillCircleQuestionMark,
   AnimatedCircleQuestionMark,

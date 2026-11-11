@@ -167,9 +167,9 @@ export function AdminInviteCodesCard(props: { isEnabled: boolean }) {
           isReady={!isLoading}
           xstyle={styles.adminInviteCodesCardCardContent}
           placeholder={
-            <p role="status" {...stylex.props(styles.adminInviteCodesCardP4)}>
+            <output {...stylex.props(styles.statusOutput, styles.adminInviteCodesCardP4)}>
               <LoadingText text="加载中…" />
-            </p>
+            </output>
           }
         >
           {state.inviteRows.length > 0 && (
@@ -353,7 +353,7 @@ function renderAdminInviteList(state: AdminInviteViewState) {
                       <code
                         {...stylex.props(
                           styles.renderAdminInviteListCode,
-                          !isActive && styles.renderAdminInviteListCodeActive,
+                          !isActive && styles.renderAdminInviteListCodeInactive,
                         )}
                       >
                         {inviteCode.code}
@@ -460,6 +460,9 @@ function renderAdminInviteRevocation(
 }
 
 const styles = stylex.create({
+  statusOutput: {
+    display: 'block',
+  },
   copyIcon: {
     width: '0.875rem',
     height: '0.875rem',
@@ -652,7 +655,7 @@ const styles = stylex.create({
     fontWeight: 700,
     wordBreak: 'break-all',
   },
-  renderAdminInviteListCodeActive: {
+  renderAdminInviteListCodeInactive: {
     color: colors.mutedForeground,
     textDecorationLine: 'line-through',
   },

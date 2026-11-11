@@ -122,9 +122,13 @@ export function SettingsSectionContent({
 export function SettingsGroup({
   xstyle,
   ...props
-}: Omit<ComponentProps<'div'>, 'className'> & { xstyle?: stylex.StyleXStyles }) {
+}: Omit<ComponentProps<'section'>, 'className'> & { xstyle?: stylex.StyleXStyles }) {
   return (
-    <div data-slot="settings-group" {...stylex.props(styles.settingsGroup, xstyle)} {...props} />
+    <section
+      data-slot="settings-group"
+      {...stylex.props(styles.settingsGroup, xstyle)}
+      {...props}
+    />
   );
 }
 

@@ -69,10 +69,4 @@ function SendHorizontal(props: SendHorizontalProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  SendHorizontal,
-  SendHorizontal as SendHorizontalIcon,
-  type SendHorizontalProps,
-  type SendHorizontalProps as SendHorizontalIconProps,
-};
+export { SendHorizontal };

@@ -73,10 +73,12 @@ type ArticleCopyTarget = 'title' | 'info';
 type ArticleDetailVariant = 'dialog' | 'pane';
 
 /** Short forms of the default access labels used when the docked toolbar is narrow. */
-const ACCESS_SHORT_LABELS: Record<string, string> = {
-  查看摘要页: '摘要页',
-  获取全文: '全文',
-};
+const ACCESS_SHORT_LABELS = new Map(
+  Object.entries({
+    查看摘要页: '摘要页',
+    获取全文: '全文',
+  }),
+);
 
 /**
  * Check whether an API flag is explicitly enabled.
@@ -615,16 +617,16 @@ function renderActionLabel(label: string, shortLabel: string) {
  * @returns Short label, or the original label when no shorter form is known.
  */
 function shortenAccessLabel(label: string): string {
-  return ACCESS_SHORT_LABELS[label] ?? label;
+  return ACCESS_SHORT_LABELS.get(label) ?? label;
 }
 
 /** Render the favorite, copy, access, and caller-provided article actions as one toolbar group. */
 function renderArticleActions(state: ArticleDetailViewState, variant: ArticleDetailVariant) {
   return (
-    <div
-      role="group"
+    <fieldset
       aria-label="文章操作"
       {...stylex.props(
+        styles.groupFieldset,
         styles.renderArticleActionsDiv,
         variant === 'pane' ? styles.paneActions : styles.renderArticleActionsDivNotPane,
       )}
@@ -634,7 +636,7 @@ function renderArticleActions(state: ArticleDetailViewState, variant: ArticleDet
       {renderArticleAccessActions(state, variant)}
       {state.extraActions}
       {renderArticleRelationAction(state, variant)}
-    </div>
+    </fieldset>
   );
 }
 
@@ -1159,6 +1161,9 @@ function renderArticleAccessLoading(state: ArticleDetailViewState) {
 const spinKeyframes = stylex.keyframes({ to: { transform: 'rotate(360deg)' } });
 
 const styles = stylex.create({
+  groupFieldset: {
+    minInlineSize: 0,
+  },
   accessRow: {
     display: 'flex',
     gap: {

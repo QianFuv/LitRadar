@@ -76,10 +76,4 @@ function RotateCcw(props: RotateCcwProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  RotateCcw,
-  RotateCcw as RotateCcwIcon,
-  type RotateCcwProps,
-  type RotateCcwProps as RotateCcwIconProps,
-};
+export { RotateCcw };

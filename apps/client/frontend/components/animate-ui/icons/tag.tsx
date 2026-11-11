@@ -52,4 +52,4 @@ function Tag(props: TagProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export { animations, Tag, Tag as TagIcon, type TagProps, type TagProps as TagIconProps };
+export { Tag };

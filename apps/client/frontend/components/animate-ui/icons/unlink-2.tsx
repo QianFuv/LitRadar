@@ -66,10 +66,4 @@ function Unlink2(props: Unlink2Props) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  Unlink2,
-  Unlink2 as Unlink2Icon,
-  type Unlink2Props,
-  type Unlink2Props as Unlink2IconProps,
-};
+export { Unlink2 };

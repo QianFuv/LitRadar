@@ -659,11 +659,10 @@ function renderDatabaseSelectionState(state: Pick<RecommendationViewState, 'data
   const { databaseSelection } = state;
   if (databaseSelection.query.isPending)
     return (
-      <SettingsGroupBody
-        role="status"
-        xstyle={styles.renderDatabaseSelectionStateSettingsGroupBody}
-      >
-        <LoadingText text="正在加载数据库列表…" />
+      <SettingsGroupBody xstyle={styles.renderDatabaseSelectionStateSettingsGroupBody}>
+        <output>
+          <LoadingText text="正在加载数据库列表…" />
+        </output>
       </SettingsGroupBody>
     );
   if (databaseSelection.query.isError)
@@ -743,7 +742,7 @@ function renderRecommendationDatabases(state: Pick<RecommendationViewState, 'dat
   const { databaseSelection } = state;
 
   return (
-    <SettingsSection role="group" aria-labelledby="push-databases-label">
+    <SettingsSection aria-labelledby="push-databases-label">
       <SettingsSectionHeader>
         <SettingsSectionTitle icon={Layers} id="push-databases-label">
           推送数据库
@@ -797,15 +796,15 @@ function renderRecommendationDatabases(state: Pick<RecommendationViewState, 'dat
           </div>
         )}
         {databaseSelection.notice && (
-          <p
-            role="status"
+          <output
             {...stylex.props(
+              styles.statusOutput,
               styles.renderRecommendationDatabasesSettingsSectionContentItem,
               styles.renderRecommendationDatabasesP3,
             )}
           >
             {databaseSelection.notice}
-          </p>
+          </output>
         )}
       </SettingsSectionContent>
     </SettingsSection>
@@ -823,6 +822,9 @@ type RecommendationViewState = RecommendationSettingsSectionProps & {
 };
 
 const styles = stylex.create({
+  statusOutput: {
+    display: 'block',
+  },
   aiSectionHeaderIcon: {
     width: '1rem',
     height: '1rem',

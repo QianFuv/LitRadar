@@ -20,6 +20,7 @@ import { RevealItem } from '@/components/ui/reveal';
 import { LoadingText } from '@/components/ui/loading-text';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
+import { isFiniteNumber } from '@/lib/type-guards';
 
 const NUMBER_FORMATTER = new Intl.NumberFormat('zh-CN');
 
@@ -40,14 +41,14 @@ function StatCard({
 }) {
   return (
     <div {...stylex.props(styles.statCardDiv)}>
-      <div {...stylex.props(styles.statCardDiv2)}>
-        <dt {...stylex.props(styles.statCardDt)}>{label}</dt>
+      <dt {...stylex.props(styles.statCardDiv2)}>
+        <span {...stylex.props(styles.statCardDt)}>{label}</span>
         <span aria-hidden="true" {...stylex.props(styles.statCardSpan)}>
           {Icon && <Icon xstyle={styles.statCardIcon} />}
         </span>
-      </div>
+      </dt>
       <dd {...stylex.props(styles.statCardDd)}>
-        {typeof value === 'number' ? <SlidingNumber number={value} /> : value}
+        {isFiniteNumber(value) ? <SlidingNumber number={value} /> : value}
       </dd>
     </div>
   );
@@ -99,9 +100,9 @@ export function AdminOverviewCard(props: { isEnabled: boolean }) {
           isReady={!statsLoading}
           xstyle={styles.adminOverviewCardRevealItem}
           placeholder={
-            <div {...stylex.props(styles.adminOverviewCardDiv)} role="status">
+            <output {...stylex.props(styles.statusOutput, styles.adminOverviewCardDiv)}>
               <LoadingText text="加载中…" />
-            </div>
+            </output>
           }
         >
           {renderIndexHero(state)}
@@ -313,6 +314,9 @@ function getAuthStatisticValue(value: number | null | undefined): number {
 }
 
 const styles = stylex.create({
+  statusOutput: {
+    display: 'block',
+  },
   statCardIcon: {
     width: '0.875rem',
     height: '0.875rem',

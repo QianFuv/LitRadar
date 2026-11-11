@@ -157,7 +157,7 @@ function useAccessTokenViewState({
     mutationFn: () => createAccessToken(tokenName, tokenTtl),
     onSuccess: (data) => {
       setNewTokenValue(data.token);
-      queryClient.invalidateQueries({ queryKey: ['access-tokens'] });
+      void queryClient.invalidateQueries({ queryKey: ['access-tokens'] });
       setTokenName('');
     },
   });
@@ -165,7 +165,7 @@ function useAccessTokenViewState({
   const revokeMut = useMutation({
     mutationFn: (id: number) => revokeAccessToken(id),
     onSuccess: (_data, tokenId) => {
-      queryClient.invalidateQueries({ queryKey: ['access-tokens'] });
+      void queryClient.invalidateQueries({ queryKey: ['access-tokens'] });
       setTokenToRevoke((current) => (current?.id === tokenId ? null : current));
     },
   });
@@ -308,9 +308,7 @@ function renderAccessTokenForm(state: AccessTokenViewState) {
           aria-label="访问令牌有效期"
           xstyle={[styles.renderAccessTokenFormDivItem, styles.renderAccessTokenFormToggleGroup]}
           value={String(tokenTtl)}
-          onValueChange={(value) => {
-            if (value) setTokenTtl(Number(value));
-          }}
+          onValueChange={(value) => setTokenTtl(Number(value))}
         >
           {TTL_OPTIONS.map((opt) => (
             <ToggleGroupItem

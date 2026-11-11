@@ -34,7 +34,7 @@ function Badge({
   );
 }
 
-export { Badge, type BadgeVariant };
+export { Badge };
 
 const styles = stylex.create({
   base: {

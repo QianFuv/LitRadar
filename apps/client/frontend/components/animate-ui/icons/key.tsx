@@ -101,4 +101,4 @@ function Key(props: KeyProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export { animations, Key, Key as KeyIcon, type KeyProps, type KeyProps as KeyIconProps };
+export { Key };

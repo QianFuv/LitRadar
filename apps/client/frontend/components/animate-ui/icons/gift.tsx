@@ -153,4 +153,4 @@ function Gift(props: GiftProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export { animations, Gift, Gift as GiftIcon, type GiftProps, type GiftProps as GiftIconProps };
+export { Gift };

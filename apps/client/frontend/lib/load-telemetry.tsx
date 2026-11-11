@@ -11,16 +11,12 @@ import type {
 } from '@/lib/api/types';
 
 /** Interface kinds in their fixed display order. */
-export const TELEMETRY_KINDS = [
-  'http',
-  'mcp',
-  'search',
-] as const satisfies readonly TelemetryKind[];
+const TELEMETRY_KINDS = ['http', 'mcp', 'search'] as const satisfies readonly TelemetryKind[];
 
 const HOUR_MS = 3_600_000;
 
 /** Search-shape features in display order; hits are rendered per hit-count basis instead. */
-export const SEARCH_SHAPE_FEATURES = [
+const SEARCH_SHAPE_FEATURES = [
   'endpoint',
   'mode',
   'database',
@@ -34,25 +30,25 @@ export const SEARCH_SHAPE_FEATURES = [
 export type SearchShapeFeature = (typeof SEARCH_SHAPE_FEATURES)[number];
 
 /** Hit-count bases in display order. */
-export const HIT_COUNT_BASES = [
-  'total',
-  'returned',
-  'candidates',
-] as const satisfies readonly NonNullable<TelemetrySeries['hit_count_basis']>[];
+const HIT_COUNT_BASES = ['total', 'returned', 'candidates'] as const satisfies readonly NonNullable<
+  TelemetrySeries['hit_count_basis']
+>[];
 
 /** Hit-count basis that a hits bucket was measured against. */
 export type HitCountBasis = (typeof HIT_COUNT_BASES)[number];
 
-const BUCKET_ORDERS: Readonly<Record<string, readonly string[]>> = {
-  hits: ['0', '1-9', '10-99', '100-999', '1000+'],
-  term_count: ['0', '1', '2-4', '5-9', '10+'],
-  uses_boolean: ['true', 'false'],
-  uses_prefix: ['true', 'false'],
-  hit_count_basis: HIT_COUNT_BASES,
-};
+const BUCKET_ORDERS = new Map<string, readonly string[]>(
+  Object.entries({
+    hits: ['0', '1-9', '10-99', '100-999', '1000+'],
+    term_count: ['0', '1', '2-4', '5-9', '10+'],
+    uses_boolean: ['true', 'false'],
+    uses_prefix: ['true', 'false'],
+    hit_count_basis: HIT_COUNT_BASES,
+  }),
+);
 
 /** One zero-filled hour of calls and errors. */
-export type TrendHour = {
+type TrendHour = {
   calls: number;
   errors: number;
   /** UTC hour start in epoch milliseconds. */
@@ -96,7 +92,7 @@ export type HitsDistribution = {
  * @returns Values in display order.
  */
 function sortDistributionValues(feature: string, values: DistributionValue[]): DistributionValue[] {
-  const order = BUCKET_ORDERS[feature];
+  const order = BUCKET_ORDERS.get(feature);
   if (order) {
     const rank = (value: string) => {
       const index = order.indexOf(value);

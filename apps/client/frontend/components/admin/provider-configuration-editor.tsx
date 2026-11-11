@@ -628,11 +628,11 @@ export function ProviderConfigurationEditor({
         </SettingsSectionHeader>
         <SettingsGroup xstyle={styles.providerConfigurationEditorSettingsGroup}>
           {catalog.providers.map((provider) => (
-            <div
+            <fieldset
               key={provider.name}
-              role="group"
               aria-labelledby={`provider-proxy-label-${provider.name}`}
               {...stylex.props(
+                styles.groupFieldset,
                 settingsGroupItemStyle,
                 styles.providerConfigurationEditorSettingsGroupItem,
                 styles.providerConfigurationEditorDiv,
@@ -654,7 +654,7 @@ export function ProviderConfigurationEditor({
                 checked={configuration.proxyPolicy[provider.name] === true}
                 onCheckedChange={(checked: boolean) => updateProxyDecision(provider.name, checked)}
               />
-            </div>
+            </fieldset>
           ))}
         </SettingsGroup>
       </SettingsSection>
@@ -738,7 +738,6 @@ export function ProviderConfigurationEditor({
               <SettingsGroup
                 xstyle={styles.providerConfigurationEditorSectionItem}
                 key={catalogInfo.stem}
-                role="region"
                 aria-labelledby={`provider-catalog-${catalogInfo.stem}`}
               >
                 <div
@@ -878,6 +877,9 @@ function hasProviderSettingControls(
 }
 
 const styles = stylex.create({
+  groupFieldset: {
+    minInlineSize: 0,
+  },
   defaultProviderOrderGroupItem: {
     backgroundColor: colors.background,
     borderBottomWidth: {

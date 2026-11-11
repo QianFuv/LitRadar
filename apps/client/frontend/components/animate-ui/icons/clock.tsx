@@ -89,10 +89,4 @@ function Clock(props: ClockProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  Clock,
-  Clock as ClockIcon,
-  type ClockProps,
-  type ClockProps as ClockIconProps,
-};
+export { Clock };

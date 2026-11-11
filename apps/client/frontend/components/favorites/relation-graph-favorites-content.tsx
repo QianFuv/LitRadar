@@ -137,7 +137,9 @@ export function RelationGraphFavoritesContent() {
         <RevealItem
           isReady={!pagesQuery.isPending}
           placeholder={
-            <div role="status" {...stylex.props(styles.relationGraphFavoritesContentDiv3)}>
+            <output
+              {...stylex.props(styles.statusOutput, styles.relationGraphFavoritesContentDiv3)}
+            >
               <span
                 {...stylex.props(
                   styles.relationGraphFavoritesContentDivItem,
@@ -158,7 +160,7 @@ export function RelationGraphFavoritesContent() {
                   styles.relationGraphFavoritesContentSkeleton,
                 ]}
               />
-            </div>
+            </output>
           }
         >
           {renderRelationGraphFavoriteList(pagesQuery, favorites, startRename, setDeleteTarget)}
@@ -339,6 +341,9 @@ function renderRelationGraphFavoriteList(
 }
 
 const styles = stylex.create({
+  statusOutput: {
+    display: 'block',
+  },
   relationGraphFavoritesContentDiv: {
     display: 'flex',
     flexDirection: 'column',

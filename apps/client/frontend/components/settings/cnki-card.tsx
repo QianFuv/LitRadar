@@ -292,7 +292,7 @@ function useCnkiViewState({
       queryClient.setQueryData(cnkiSessionQueryKey, data.session);
       queryClient.setQueryData(currentCnkiSessionQueryKey, data.session);
       queryClient.removeQueries({ queryKey: ['article-access'] });
-      queryClient.invalidateQueries({ queryKey: ['article-access'] });
+      void queryClient.invalidateQueries({ queryKey: ['article-access'] });
     },
     onError: (err) => setCnkiMessage(getCnkiApiErrorMessage(err, '启动知网登录失败')),
   });
@@ -307,9 +307,9 @@ function useCnkiViewState({
       });
       queryClient.setQueryData(cnkiSessionQueryKey, data.session);
       queryClient.setQueryData(currentCnkiSessionQueryKey, data.session);
-      queryClient.invalidateQueries({ queryKey: ['cnki-session'] });
+      void queryClient.invalidateQueries({ queryKey: ['cnki-session'] });
       queryClient.removeQueries({ queryKey: ['article-access'] });
-      queryClient.invalidateQueries({ queryKey: ['article-access'] });
+      void queryClient.invalidateQueries({ queryKey: ['article-access'] });
     },
     onError: (err) => setCnkiMessage(getCnkiApiErrorMessage(err, '确认知网登录失败')),
   });
@@ -321,9 +321,9 @@ function useCnkiViewState({
       setCnkiMessage({ text: '登录状态已清除', tone: 'success' });
       queryClient.setQueryData(cnkiSessionQueryKey, data);
       queryClient.setQueryData(currentCnkiSessionQueryKey, data);
-      queryClient.invalidateQueries({ queryKey: ['cnki-session'] });
+      void queryClient.invalidateQueries({ queryKey: ['cnki-session'] });
       queryClient.removeQueries({ queryKey: ['article-access'] });
-      queryClient.invalidateQueries({ queryKey: ['article-access'] });
+      void queryClient.invalidateQueries({ queryKey: ['article-access'] });
     },
     onError: (err) => setCnkiMessage(getCnkiApiErrorMessage(err, '清除知网登录失败')),
   });
@@ -434,13 +434,10 @@ function renderCnkiLoginChallenge(state: CnkiViewState) {
         >
           <div {...stylex.props(styles.renderCnkiLoginChallengeDiv)}>
             {isQrImageSource(cnkiLogin.qr_code) ? (
-              <div
-                role="img"
-                aria-label="浙江图书馆 CNKI 二维码"
-                {...stylex.props(
-                  styles.renderCnkiLoginChallengeDiv2,
-                  styles.qrCode(`url(${JSON.stringify(cnkiLogin.qr_code)})`),
-                )}
+              <img
+                src={cnkiLogin.qr_code}
+                alt="浙江图书馆 CNKI 二维码"
+                {...stylex.props(styles.renderCnkiLoginChallengeDiv2)}
               />
             ) : (
               <code {...stylex.props(styles.renderCnkiLoginChallengeCode)}>
@@ -626,9 +623,6 @@ function renderCnkiClearConfirmation(
 const spinKeyframes = stylex.keyframes({ to: { transform: 'rotate(360deg)' } });
 
 const styles = stylex.create({
-  qrCode: (backgroundImage: string) => ({
-    backgroundImage,
-  }),
   cnkiMessageError: {
     fontSize: '0.875rem',
     lineHeight: lineHeights.textSm,
@@ -863,10 +857,8 @@ const styles = stylex.create({
     borderStyle: 'solid',
     borderWidth: '1px',
     backgroundColor: '#fff',
-    backgroundSize: 'contain',
-    backgroundPosition: 'center',
-    backgroundRepeat: 'no-repeat',
-    padding: '0.5rem',
+    objectFit: 'contain',
+    objectPosition: 'center',
   },
   renderCnkiLoginChallengeCode: {
     maxHeight: '10rem',

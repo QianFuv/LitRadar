@@ -69,10 +69,4 @@ function TriangleAlert(props: TriangleAlertProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  TriangleAlert,
-  TriangleAlert as TriangleAlertIcon,
-  type TriangleAlertProps,
-  type TriangleAlertProps as TriangleAlertIconProps,
-};
+export { TriangleAlert };

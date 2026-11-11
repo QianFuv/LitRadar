@@ -7,7 +7,6 @@ import { useSearch } from '@tanstack/react-router';
 
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import {
-  FAVORITE_KINDS,
   useUpdateWorkspaceSearch,
   WORKSPACE_ROUTE_ID,
   type FavoriteKind,
@@ -15,16 +14,6 @@ import {
 import * as stylex from '@stylexjs/stylex';
 
 const DEFAULT_FAVORITE_KIND = 'articles' satisfies FavoriteKind;
-
-/**
- * Check whether a toggle value names a favorite kind.
- *
- * @param value - Selected toggle value.
- * @returns Whether the value is a favorite kind.
- */
-function isFavoriteKind(value: string): value is FavoriteKind {
-  return FAVORITE_KINDS.some((kind) => kind === value);
-}
 
 const FAVORITE_KIND_OPTIONS = [
   { kind: 'articles', label: '文章', icon: FileText },
@@ -66,13 +55,7 @@ export function FavoriteKindSwitch() {
   const [kind, setKind] = useFavoriteKind();
 
   return (
-    <ToggleGroup
-      aria-label="收藏类型"
-      value={kind}
-      onValueChange={(option) => {
-        if (isFavoriteKind(option)) setKind(option);
-      }}
-    >
+    <ToggleGroup aria-label="收藏类型" value={kind} onValueChange={setKind}>
       {FAVORITE_KIND_OPTIONS.map(({ kind: option, label, icon: Icon }) => (
         <ToggleGroupItem key={option} value={option}>
           <Icon xstyle={styles.favoriteKindSwitchIcon} aria-hidden="true" />

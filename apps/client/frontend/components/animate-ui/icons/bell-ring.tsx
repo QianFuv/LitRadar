@@ -110,10 +110,4 @@ function BellRing(props: BellRingProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  BellRing,
-  BellRing as BellRingIcon,
-  type BellRingProps,
-  type BellRingProps as BellRingIconProps,
-};
+export { BellRing };

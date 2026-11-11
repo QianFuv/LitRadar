@@ -61,10 +61,4 @@ function KeyRound(props: KeyRoundProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  KeyRound,
-  KeyRound as KeyRoundIcon,
-  type KeyRoundProps,
-  type KeyRoundProps as KeyRoundIconProps,
-};
+export { KeyRound };

@@ -142,10 +142,4 @@ function Share2(props: Share2Props) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  Share2,
-  Share2 as Share2Icon,
-  type Share2Props,
-  type Share2Props as Share2IconProps,
-};
+export { Share2 };

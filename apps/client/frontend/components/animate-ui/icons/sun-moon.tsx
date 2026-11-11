@@ -12,24 +12,27 @@ type SunMoonProps = IconProps<keyof typeof animations>;
 
 const animations = {
   default: (() => {
-    const animation: Record<string, Variants> = {
-      path1: {
-        initial: {
-          rotate: 0,
-        },
-        animate: {
-          rotate: [0, -10, 10, 0],
-          transition: {
-            duration: 0.6,
-            ease: 'easeInOut',
+    const animation = new Map<string, Variants>([
+      [
+        'path1',
+        {
+          initial: {
+            rotate: 0,
+          },
+          animate: {
+            rotate: [0, -10, 10, 0],
+            transition: {
+              duration: 0.6,
+              ease: 'easeInOut',
+            },
           },
         },
-      },
-      path2: {},
-    };
+      ],
+      ['path2', {}],
+    ]);
 
     for (let i = 1; i <= 3; i++) {
-      animation[`line${i}`] = {
+      animation.set(`line${i}`, {
         initial: { opacity: 1, scale: 1 },
         animate: {
           opacity: [0, 1],
@@ -40,10 +43,10 @@ const animations = {
             delay: (i - 1) * 0.15,
           },
         },
-      };
+      });
     }
 
-    return animation;
+    return Object.fromEntries(animation);
   })() satisfies Record<string, Variants>,
 } as const;
 
@@ -113,10 +116,4 @@ function SunMoon(props: SunMoonProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  SunMoon,
-  SunMoon as SunMoonIcon,
-  type SunMoonProps,
-  type SunMoonProps as SunMoonIconProps,
-};
+export { SunMoon };

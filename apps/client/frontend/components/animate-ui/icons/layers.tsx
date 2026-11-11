@@ -110,10 +110,4 @@ function Layers(props: LayersProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  Layers,
-  Layers as LayersIcon,
-  type LayersProps,
-  type LayersProps as LayersIconProps,
-};
+export { Layers };

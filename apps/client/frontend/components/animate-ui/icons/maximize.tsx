@@ -158,10 +158,4 @@ function Maximize(props: MaximizeProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  Maximize,
-  Maximize as MaximizeIcon,
-  type MaximizeProps,
-  type MaximizeProps as MaximizeIconProps,
-};
+export { Maximize };

@@ -31,7 +31,7 @@ import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
 
 /** Successful `oidc_link` query result written by the link callback. */
-export const OIDC_LINK_SUCCESS = 'linked';
+const OIDC_LINK_SUCCESS = 'linked';
 
 /** Display name used when the server has not configured a provider label. */
 const DEFAULT_OIDC_DISPLAY_NAME = '单点登录';

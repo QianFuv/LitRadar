@@ -14,14 +14,17 @@ import { colors } from '@/lib/theme.stylex';
 export function RouteLoadingFallback() {
   return (
     <main id="main-content" {...stylex.props(styles.routeLoadingFallbackMain)}>
-      <div role="status" {...stylex.props(styles.routeLoadingFallbackDiv)}>
+      <output {...stylex.props(styles.statusOutput, styles.routeLoadingFallbackDiv)}>
         <LoadingText text="加载中…" />
-      </div>
+      </output>
     </main>
   );
 }
 
 const styles = stylex.create({
+  statusOutput: {
+    display: 'block',
+  },
   routeLoadingFallbackMain: {
     display: 'flex',
     height: '100dvh',

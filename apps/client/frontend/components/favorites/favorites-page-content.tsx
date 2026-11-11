@@ -248,72 +248,71 @@ function renderFolderTabs(state: FavoritesViewState) {
       {folders.length === 0 ? (
         <p {...stylex.props(styles.renderFavoritesHeaderP)}>暂无收藏夹，点击「新建」创建第一个。</p>
       ) : (
-        <ScrollFade orientation="horizontal" shrink={0} asChild>
-          <div
-            ref={attachHorizontalWheelScroll}
-            role="group"
-            aria-label="收藏夹"
-            data-slot="favorite-folder-tabs"
-            {...stylex.props(styles.favoriteFolderTabs)}
-          >
-            <Highlight
-              controlledItems
-              value={activeFolderId === null ? null : String(activeFolderId)}
-              click={false}
-              {...stylex.props(styles.renderFolderTabsHighlight)}
+        <fieldset aria-label="收藏夹" {...stylex.props(styles.layoutFreeGroup)}>
+          <ScrollFade orientation="horizontal" shrink={0} asChild>
+            <div
+              ref={attachHorizontalWheelScroll}
+              data-slot="favorite-folder-tabs"
+              {...stylex.props(styles.favoriteFolderTabs)}
             >
-              {folders.map((folder) => {
-                const isActive = activeFolderId === folder.id;
-                return (
-                  <HighlightItem
-                    key={folder.id}
-                    value={String(folder.id)}
-                    {...stylex.props(styles.renderFolderTabsHighlightItem)}
-                  >
-                    <button
-                      type="button"
-                      data-motion-folder-key={folder.id}
-                      aria-pressed={isActive}
-                      aria-label={folder.name}
-                      title={folder.is_tracking ? `${folder.name}（追踪文件夹）` : folder.name}
-                      onClick={() => handleSelectFolder(folder.id)}
-                      {...stylex.props(
-                        styles.renderFolderTabsButton,
-                        isActive
-                          ? styles.renderFolderTabsButtonActive
-                          : styles.renderFolderTabsButtonNotActive,
-                      )}
+              <Highlight
+                controlledItems
+                value={activeFolderId === null ? null : String(activeFolderId)}
+                click={false}
+                {...stylex.props(styles.renderFolderTabsHighlight)}
+              >
+                {folders.map((folder) => {
+                  const isActive = activeFolderId === folder.id;
+                  return (
+                    <HighlightItem
+                      key={folder.id}
+                      value={String(folder.id)}
+                      {...stylex.props(styles.renderFolderTabsHighlightItem)}
                     >
-                      {folder.is_tracking && (
-                        <Radar
-                          xstyle={[
-                            styles.renderFolderTabsRadar,
-                            isActive
-                              ? styles.renderFolderTabsRadarActive
-                              : styles.renderFolderTabsRadarNotActive,
-                          ]}
-                          aria-hidden="true"
-                        />
-                      )}
-                      <span {...stylex.props(styles.renderFolderTabsSpan)}>{folder.name}</span>
-                      <span
-                        aria-hidden="true"
+                      <button
+                        type="button"
+                        data-motion-folder-key={folder.id}
+                        aria-pressed={isActive}
+                        title={folder.is_tracking ? `${folder.name}（追踪文件夹）` : folder.name}
+                        onClick={() => handleSelectFolder(folder.id)}
                         {...stylex.props(
-                          styles.renderFolderTabsSpan2,
+                          styles.renderFolderTabsButton,
                           isActive
-                            ? styles.renderFolderTabsSpanActive
-                            : styles.renderFolderTabsSpanNotActive,
+                            ? styles.renderFolderTabsButtonActive
+                            : styles.renderFolderTabsButtonNotActive,
                         )}
                       >
-                        {folder.article_count}
-                      </span>
-                    </button>
-                  </HighlightItem>
-                );
-              })}
-            </Highlight>
-          </div>
-        </ScrollFade>
+                        {folder.is_tracking && (
+                          <Radar
+                            xstyle={[
+                              styles.renderFolderTabsRadar,
+                              isActive
+                                ? styles.renderFolderTabsRadarActive
+                                : styles.renderFolderTabsRadarNotActive,
+                            ]}
+                            aria-hidden="true"
+                          />
+                        )}
+                        <span {...stylex.props(styles.renderFolderTabsSpan)}>{folder.name}</span>
+                        <span
+                          aria-hidden="true"
+                          {...stylex.props(
+                            styles.renderFolderTabsSpan2,
+                            isActive
+                              ? styles.renderFolderTabsSpanActive
+                              : styles.renderFolderTabsSpanNotActive,
+                          )}
+                        >
+                          {folder.article_count}
+                        </span>
+                      </button>
+                    </HighlightItem>
+                  );
+                })}
+              </Highlight>
+            </div>
+          </ScrollFade>
+        </fieldset>
       )}
     </RevealItem>
   );
@@ -601,12 +600,12 @@ function renderFavoriteBulkActions(state: FavoritesViewState) {
             清空选择
           </Button>
         </div>
-        <div
-          role="group"
+        <fieldset
           aria-label="批量操作"
           {...stylex.props(
+            styles.groupFieldset,
             styles.renderFavoriteBulkActionsDiv5,
-            !hasSelection && styles.renderFavoriteBulkActionsDivSelection,
+            !hasSelection && styles.renderFavoriteBulkActionsDivNoSelection,
           )}
         >
           <Select
@@ -649,7 +648,7 @@ function renderFavoriteBulkActions(state: FavoritesViewState) {
           >
             {bulkRemoveMut.isPending ? '删除中…' : '删除所选'}
           </Button>
-        </div>
+        </fieldset>
       </div>
       {(hasNextPage || visiblePageCount < loadedPages) && (
         <p {...stylex.props(styles.renderFavoriteBulkActionsP2)}>
@@ -1018,6 +1017,12 @@ function isFavoriteBulkRemoveDisabled(state: FavoritesViewState): boolean {
 }
 
 const styles = stylex.create({
+  layoutFreeGroup: {
+    display: 'contents',
+  },
+  groupFieldset: {
+    minInlineSize: 0,
+  },
   bulkRemoveButton: {
     color: {
       default: colors.destructive,
@@ -1317,7 +1322,7 @@ const styles = stylex.create({
     alignItems: 'center',
     gap: '0.375rem',
   },
-  renderFavoriteBulkActionsDivSelection: {
+  renderFavoriteBulkActionsDivNoSelection: {
     display: 'none',
   },
   renderFavoriteBulkActionsSelectTrigger: {

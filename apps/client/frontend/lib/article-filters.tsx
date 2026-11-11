@@ -44,7 +44,7 @@ export function buildMonthKey(year: number, month: number): string {
  * @param value - Candidate query value.
  * @returns Whether the value is a valid month key.
  */
-export function isMonthKey(value: string | null | undefined): value is string {
+function isMonthKey(value: string | null | undefined): value is string {
   return typeof value === 'string' && MONTH_KEY_PATTERN.test(value);
 }
 
@@ -129,7 +129,7 @@ export function resolveMonthRangeForYears(
  * @param value - Candidate month key.
  * @returns First-day ISO date, or null when invalid.
  */
-export function monthKeyToDateFrom(value: string | null | undefined): string | null {
+function monthKeyToDateFrom(value: string | null | undefined): string | null {
   return isMonthKey(value) ? `${value}-01` : null;
 }
 
@@ -139,7 +139,7 @@ export function monthKeyToDateFrom(value: string | null | undefined): string | n
  * @param value - Candidate month key.
  * @returns Last-day ISO date, or null when invalid.
  */
-export function monthKeyToDateTo(value: string | null | undefined): string | null {
+function monthKeyToDateTo(value: string | null | undefined): string | null {
   if (!isMonthKey(value)) {
     return null;
   }
@@ -173,7 +173,7 @@ export function getMonthRangeDateBounds(
  * @param value - Valid month key.
  * @returns Human-readable year-month label.
  */
-export function formatMonthLabel(value: string): string {
+function formatMonthLabel(value: string): string {
   return `${value.slice(0, 4)}年${value.slice(5, 7)}月`;
 }
 

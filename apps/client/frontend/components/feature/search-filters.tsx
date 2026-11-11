@@ -124,32 +124,29 @@ export function SearchFilters({ xstyle }: { xstyle?: stylex.StyleXStyles }) {
   const { appliedFilterCount, handleClearAll } = state;
 
   return (
-    <ScrollFade orientation="horizontal" shrink={0} asChild>
-      <div
-        ref={attachHorizontalWheelScroll}
-        role="group"
-        aria-label="筛选条件"
-        {...stylex.props(styles.searchFiltersDiv, xstyle)}
-      >
-        {renderDatabaseFacet(state)}
-        <span {...stylex.props(styles.searchFiltersSpan)} aria-hidden="true" />
-        <TimeFacet state={state} />
-        {renderRatingFacet(state)}
-        <JournalFacet state={state} />
-        <AreaFacet state={state} />
-        {appliedFilterCount > 0 && (
-          <button
-            type="button"
-            title="清空全部筛选"
-            {...stylex.props(styles.searchFiltersButton)}
-            onClick={handleClearAll}
-          >
-            <X xstyle={styles.searchFiltersX} aria-hidden="true" />
-            清除筛选
-          </button>
-        )}
-      </div>
-    </ScrollFade>
+    <fieldset aria-label="筛选条件" {...stylex.props(styles.layoutFreeGroup)}>
+      <ScrollFade orientation="horizontal" shrink={0} asChild>
+        <div ref={attachHorizontalWheelScroll} {...stylex.props(styles.searchFiltersDiv, xstyle)}>
+          {renderDatabaseFacet(state)}
+          <span {...stylex.props(styles.searchFiltersSpan)} aria-hidden="true" />
+          <TimeFacet state={state} />
+          {renderRatingFacet(state)}
+          <JournalFacet state={state} />
+          <AreaFacet state={state} />
+          {appliedFilterCount > 0 && (
+            <button
+              type="button"
+              title="清空全部筛选"
+              {...stylex.props(styles.searchFiltersButton)}
+              onClick={handleClearAll}
+            >
+              <X xstyle={styles.searchFiltersX} aria-hidden="true" />
+              清除筛选
+            </button>
+          )}
+        </div>
+      </ScrollFade>
+    </fieldset>
   );
 }
 
@@ -568,12 +565,12 @@ function renderRatingFacet(state: SearchFilterState) {
           placeholder={<Skeleton xstyle={styles.timeFacetSkeleton} />}
         >
           {isRatingError ? (
-            <div {...stylex.props(styles.renderRatingFacetDiv)} role="status">
+            <output {...stylex.props(styles.statusOutput, styles.renderRatingFacetDiv)}>
               无法加载期刊评级
               <Button variant="ghost" size="sm" onClick={() => void refetchRatings()}>
                 重试
               </Button>
-            </div>
+            </output>
           ) : hasRatings ? (
             <MultiSelectList xstyle={styles.renderRatingFacetMultiSelectList}>
               {JOURNAL_RATING_SYSTEMS.map(({ key, label }) => {
@@ -846,6 +843,12 @@ function getFilterMonthValues(
 }
 
 const styles = stylex.create({
+  layoutFreeGroup: {
+    display: 'contents',
+  },
+  statusOutput: {
+    display: 'block',
+  },
   dateSegmentSelectSelectTrigger: {
     width: '100%',
     justifyContent: 'space-between',

@@ -159,8 +159,8 @@ export function useTrackingPage(userId: number) {
   const setTrackMut = useMutation({
     mutationFn: (folderId: number) => setTrackingFolder(folderId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tracking-status'] });
-      queryClient.invalidateQueries({ queryKey: ['folders'] });
+      void queryClient.invalidateQueries({ queryKey: ['tracking-status'] });
+      void queryClient.invalidateQueries({ queryKey: ['folders'] });
     },
   });
 
@@ -170,8 +170,8 @@ export function useTrackingPage(userId: number) {
       return folder;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tracking-status'] });
-      queryClient.invalidateQueries({ queryKey: ['folders'] });
+      void queryClient.invalidateQueries({ queryKey: ['tracking-status'] });
+      void queryClient.invalidateQueries({ queryKey: ['folders'] });
       setNewFolderName('');
     },
   });
@@ -234,8 +234,8 @@ export function useTrackingPage(userId: number) {
     ) {
       return;
     }
-    queryClient.invalidateQueries({ queryKey: ['tracking-status'] });
-    queryClient.invalidateQueries({ queryKey: ['folders'] });
+    void queryClient.invalidateQueries({ queryKey: ['tracking-status'] });
+    void queryClient.invalidateQueries({ queryKey: ['folders'] });
   }, [manualPushStatus, queryClient]);
 
   const saveSettingsMut = useMutation({
@@ -257,8 +257,8 @@ export function useTrackingPage(userId: number) {
       queryClient.setQueryData(['notification-settings', userId], savedSettings);
       setDraftSettings(null);
       setDatabaseSelectionNotice(null);
-      queryClient.invalidateQueries({ queryKey: ['notification-settings', userId] });
-      queryClient.invalidateQueries({ queryKey: ['tracking-status'] });
+      void queryClient.invalidateQueries({ queryKey: ['notification-settings', userId] });
+      void queryClient.invalidateQueries({ queryKey: ['tracking-status'] });
       setSettingsSaved(true);
       setTimeout(() => setSettingsSaved(false), 2000);
     },

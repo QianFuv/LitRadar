@@ -237,10 +237,4 @@ function SlidersVertical(props: SlidersVerticalProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  SlidersVertical,
-  SlidersVertical as SlidersVerticalIcon,
-  type SlidersVerticalProps,
-  type SlidersVerticalProps as SlidersVerticalIconProps,
-};
+export { SlidersVertical };

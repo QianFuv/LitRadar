@@ -56,10 +56,4 @@ function CircleQuestionMark(props: CircleQuestionMarkProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  CircleQuestionMark,
-  CircleQuestionMark as CircleQuestionMarkIcon,
-  type CircleQuestionMarkProps,
-  type CircleQuestionMarkProps as CircleQuestionMarkIconProps,
-};
+export { CircleQuestionMark };

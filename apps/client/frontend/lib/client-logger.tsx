@@ -2,6 +2,8 @@
  * Privacy-bounded browser error events written only to the local developer console.
  */
 
+import { isString } from '@/lib/type-guards';
+
 export type ClientErrorSource =
   | 'global_boundary'
   | 'route_boundary'
@@ -78,7 +80,7 @@ function readAllowedProperty(value: unknown, property: 'digest' | 'name' | 'requ
  * @returns Safe identifier or undefined.
  */
 function normalizeIdentifier(value: unknown): string | undefined {
-  if (typeof value !== 'string') {
+  if (!isString(value)) {
     return undefined;
   }
   const identifier = value.trim();
@@ -105,7 +107,7 @@ function normalizeErrorKind(source: ClientErrorSource, error: unknown): string {
   }
   if (error instanceof Error) {
     const name = readAllowedProperty(error, 'name');
-    if (typeof name === 'string') {
+    if (isString(name)) {
       return ERROR_KINDS_BY_NAME[name] ?? 'unknown_error';
     }
     return 'unknown_error';
@@ -170,7 +172,7 @@ function isDuplicateError(error: unknown): boolean {
  * @param context - Optional safe correlation context.
  * @returns Frozen JSON-compatible event object.
  */
-export function buildClientErrorEvent(
+function buildClientErrorEvent(
   source: ClientErrorSource,
   error: unknown,
   context: ClientErrorContext = {},

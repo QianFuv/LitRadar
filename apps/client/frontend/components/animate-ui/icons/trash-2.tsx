@@ -125,10 +125,4 @@ function Trash2(props: Trash2Props) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  Trash2,
-  Trash2 as Trash2Icon,
-  type Trash2Props,
-  type Trash2Props as Trash2IconProps,
-};
+export { Trash2 };

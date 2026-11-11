@@ -80,9 +80,9 @@ function NativeServerGate({
   if (phase.kind === 'loading') {
     return (
       <main id="main-content" {...stylex.props(styles.nativeServerGateMain)}>
-        <div role="status" {...stylex.props(styles.nativeServerGateDiv)}>
+        <output {...stylex.props(styles.statusOutput, styles.nativeServerGateDiv)}>
           <LoadingText text="正在读取服务器配置…" />
-        </div>
+        </output>
       </main>
     );
   }
@@ -199,6 +199,9 @@ function ServerSetupForm({
 }
 
 const styles = stylex.create({
+  statusOutput: {
+    display: 'block',
+  },
   nativeServerGateMain: {
     display: 'flex',
     minHeight: '100dvh',

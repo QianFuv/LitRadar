@@ -148,4 +148,4 @@ function List(props: ListProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export { animations, List, List as ListIcon, type ListProps, type ListProps as ListIconProps };
+export { List };

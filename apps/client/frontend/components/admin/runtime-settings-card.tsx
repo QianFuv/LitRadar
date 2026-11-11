@@ -512,9 +512,11 @@ export function RuntimeSettingsCard() {
         <RevealItem
           isReady={!isLoading}
           placeholder={
-            <div role="status" {...stylex.props(styles.runtimeSecretPoolEditorMotionParagraph)}>
+            <output
+              {...stylex.props(styles.statusOutput, styles.runtimeSecretPoolEditorMotionParagraph)}
+            >
               <LoadingText text="加载中…" />
-            </div>
+            </output>
           }
         >
           <fieldset
@@ -607,10 +609,10 @@ function useRuntimeViewState() {
       setSaveFeedback('');
     },
     mutationFn: () => {
-      const values: Record<string, string | null> = { ...formOverrides };
-      for (const field of clearedSecrets) {
-        values[field] = null;
-      }
+      const values = Object.fromEntries([
+        ...Object.entries(formOverrides),
+        ...Array.from(clearedSecrets, (field) => [field, null] as const),
+      ]);
       const secretPoolUpdates: RuntimeSettingsUpdate['secret_pool_updates'] = {};
       for (const setting of settings) {
         if (!isSecretPoolSetting(setting) || clearedSecrets.has(setting.field)) {
@@ -631,7 +633,7 @@ function useRuntimeViewState() {
       setSecretPoolRemovals({});
       setSaveFeedback('运行配置已保存。');
       queryClient.setQueryData(['admin-runtime-settings'], updatedSettings);
-      queryClient.invalidateQueries({ queryKey: ['admin-runtime-settings'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-runtime-settings'] });
     },
   });
 
@@ -910,9 +912,11 @@ function renderRuntimeProviderSettings(
       <RevealItem
         isReady={!isProviderCatalogLoading}
         placeholder={
-          <div role="status" {...stylex.props(styles.runtimeSecretPoolEditorMotionParagraph)}>
+          <output
+            {...stylex.props(styles.statusOutput, styles.runtimeSecretPoolEditorMotionParagraph)}
+          >
             <LoadingText text="正在加载 Provider 能力目录…" />
-          </div>
+          </output>
         }
       >
         {providerCatalog && (
@@ -1003,6 +1007,9 @@ function getRuntimeSecretDescription(
 }
 
 const styles = stylex.create({
+  statusOutput: {
+    display: 'block',
+  },
   runtimeGroupSection: {
     marginTop: 0,
   },

@@ -120,9 +120,9 @@ function useFavoriteButtonState({
       });
       queryClient.removeQueries({ queryKey: batchKey, type: 'inactive' });
       await queryClient.invalidateQueries({ queryKey: batchKey });
-      queryClient.invalidateQueries({ queryKey: ['folders'] });
+      void queryClient.invalidateQueries({ queryKey: ['folders'] });
       if (folderId !== toggleFolderId) {
-        queryClient.invalidateQueries({ queryKey: ['folder-articles', folderId] });
+        void queryClient.invalidateQueries({ queryKey: ['folder-articles', folderId] });
       }
     },
   });
@@ -148,9 +148,9 @@ function useFavoriteButtonState({
       );
       queryClient.removeQueries({ queryKey: batchKey, type: 'inactive' });
       await queryClient.invalidateQueries({ queryKey: batchKey });
-      queryClient.invalidateQueries({ queryKey: ['folders'] });
+      void queryClient.invalidateQueries({ queryKey: ['folders'] });
       if (folderId !== toggleFolderId) {
-        queryClient.invalidateQueries({ queryKey: ['folder-articles', folderId] });
+        void queryClient.invalidateQueries({ queryKey: ['folder-articles', folderId] });
       }
       setFolderToRemove((current) => (current?.id === folderId ? null : current));
     },
@@ -417,9 +417,9 @@ function FavoriteLookup({ state }: { state: FavoriteButtonViewState }) {
       isReady={Boolean(lookupError) || !isLookupPending}
       xstyle={styles.renderFavoriteButtonDiv}
       placeholder={
-        <div role="status" {...stylex.props(styles.favoriteLookupDiv)}>
+        <output {...stylex.props(styles.statusOutput, styles.favoriteLookupDiv)}>
           <LoadingText text="加载中…" />
-        </div>
+        </output>
       }
     >
       <FavoriteLookupContent state={state} />
@@ -467,6 +467,9 @@ function getResolvedFavoriteFolderIds(
 }
 
 const styles = stylex.create({
+  statusOutput: {
+    display: 'block',
+  },
   renderFavoriteButtonButton: {
     backgroundColor: {
       default: 'transparent',

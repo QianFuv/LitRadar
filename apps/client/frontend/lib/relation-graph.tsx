@@ -17,6 +17,7 @@ import { z } from 'zod';
 import type { Article } from '@/lib/api';
 import { parseStoredJson } from '@/lib/browser-storage';
 import type { WorkspaceSearch } from '@/lib/search-params';
+import { isFiniteNumber, isRecord, isString } from '@/lib/type-guards';
 
 /** Number of related articles requested when a node is expanded. */
 export const RELATION_CHILD_LIMIT = 6;
@@ -81,11 +82,17 @@ export type RelationPoint = {
   y: number;
 };
 
+/** Node positions keyed by node id. */
+export type RelationPositions = Record<string, RelationPoint>;
+
 /** Angular range around the root, in radians, that a branch may occupy; `end` is above `start`. */
-export type RelationSector = {
+type RelationSector = {
   start: number;
   end: number;
 };
+
+/** Branch sectors keyed by node id. */
+type RelationSectors = Record<string, RelationSector>;
 
 /** Serializable relation tree with expansion state, cross links, and node positions. */
 export type RelationGraph = {
@@ -94,7 +101,7 @@ export type RelationGraph = {
   childIds: Record<string, string[]>;
   expandedIds: string[];
   crossLinks: Array<[string, string]>;
-  positions: Record<string, RelationPoint>;
+  positions: RelationPositions;
   /** Nodes the reader dropped in place; the simulation keeps them fixed. */
   pinnedIds: string[];
   /** Incremented when every position is recomputed, so the canvas adopts the new layout. */
@@ -227,10 +234,10 @@ function slotRadius(minimum: number, step: number, count: number): number {
  */
 function placeRelationChildren(
   graph: RelationGraph,
-  positions: Record<string, RelationPoint>,
+  positions: RelationPositions,
   parentId: string,
   childIds: string[],
-): Record<string, RelationPoint> {
+) {
   const placed = { ...positions };
   const center = placed[parentId];
   if (!center || childIds.length === 0) {
@@ -347,7 +354,7 @@ export function collapseRelationNode(graph: RelationGraph, nodeId: string): Rela
   const removed = new Set(listRelationBranch(graph, nodeId).filter((id) => id !== nodeId));
   const nodes: Record<string, RelationNode> = {};
   const childIds: Record<string, string[]> = {};
-  const positions: Record<string, RelationPoint> = {};
+  const positions: RelationPositions = {};
   for (const [id, node] of Object.entries(graph.nodes)) {
     if (!removed.has(id)) {
       nodes[id] = node;
@@ -379,7 +386,7 @@ export function collapseRelationNode(graph: RelationGraph, nodeId: string): Rela
  * @returns Graph with fresh automatic positions and a new layout revision.
  */
 export function relayoutRelationGraph(graph: RelationGraph): RelationGraph {
-  let positions: Record<string, RelationPoint> = { [graph.rootId]: { x: 0, y: 0 } };
+  let positions = { [graph.rootId]: { x: 0, y: 0 } };
   const order = [graph.rootId, ...graph.expandedIds.filter((id) => id !== graph.rootId)];
   for (const id of order) {
     positions = placeRelationChildren(graph, positions, id, graph.childIds[id] ?? []);
@@ -405,8 +412,8 @@ export function relayoutRelationGraph(graph: RelationGraph): RelationGraph {
  */
 function arrangeRelationBranches(
   graph: RelationGraph,
-  positions: Record<string, RelationPoint>,
-): Record<string, RelationPoint> | null {
+  positions: RelationPositions,
+): RelationPositions | null {
   const center = positions[graph.rootId];
   if (!center) {
     return null;
@@ -491,7 +498,7 @@ function listRelationBranch(graph: RelationGraph, nodeId: string): string[] {
  */
 export function storeRelationPositions(
   graph: RelationGraph,
-  positions: Record<string, RelationPoint>,
+  positions: RelationPositions,
   pinnedId?: string,
 ): RelationGraph {
   const next = { ...graph.positions };
@@ -739,13 +746,13 @@ function chooseSiblingOrder(
  */
 export function computeRelationSectors(
   graph: RelationGraph,
-  positions: Record<string, RelationPoint>,
+  positions: RelationPositions,
   fixedIds: Iterable<string> = graph.pinnedIds,
-): Record<string, RelationSector> {
+): RelationSectors {
   const center = positions[graph.rootId];
-  const sectors: Record<string, RelationSector> = {};
+  const sectors = new Map<string, RelationSector>();
   if (!center) {
-    return sectors;
+    return Object.fromEntries(sectors);
   }
   const leaves = new Map<string, number>();
   const angleOf = (id: string) => {
@@ -820,15 +827,16 @@ export function computeRelationSectors(
     let start = sector.start;
     for (const id of ordered) {
       const end = start + ((sector.end - sector.start) * weightOf(id)) / totalWeight;
-      sectors[id] = { start, end };
-      divide(id, sectors[id]);
+      const childSector = { start, end };
+      sectors.set(id, childSector);
+      divide(id, childSector);
       start = end;
     }
   }
 
   const firstLevel = (graph.childIds[graph.rootId] ?? []).filter((id) => positions[id]);
   if (firstLevel.length === 0) {
-    return sectors;
+    return Object.fromEntries(sectors);
   }
   const ordered = orderSiblings(
     graph.rootId,
@@ -852,11 +860,12 @@ export function computeRelationSectors(
   });
   let start = Math.atan2(sine, cosine);
   ordered.forEach((child, index) => {
-    sectors[child.id] = { start, end: start + spans[index] };
-    divide(child.id, sectors[child.id]);
+    const sector = { start, end: start + spans[index] };
+    sectors.set(child.id, sector);
+    divide(child.id, sector);
     start += spans[index];
   });
-  return sectors;
+  return Object.fromEntries(sectors);
 }
 
 /** Circular route of a cross link around the graph, centred on the root. */
@@ -1058,9 +1067,8 @@ export type StoredRelationGraph = {
 export function normalizeRelationGraph(value: unknown): RelationGraph | null {
   const graph = value as Partial<RelationGraph> | null;
   if (
-    !graph ||
-    typeof graph !== 'object' ||
-    typeof graph.rootId !== 'string' ||
+    !isRecord(graph) ||
+    !isString(graph.rootId) ||
     !graph.nodes?.[graph.rootId] ||
     !graph.childIds ||
     !Array.isArray(graph.expandedIds) ||
@@ -1072,7 +1080,7 @@ export function normalizeRelationGraph(value: unknown): RelationGraph | null {
     ...(graph as RelationGraph),
     positions: graph.positions ?? {},
     pinnedIds: Array.isArray(graph.pinnedIds) ? graph.pinnedIds : [],
-    layoutRevision: typeof graph.layoutRevision === 'number' ? graph.layoutRevision : 0,
+    layoutRevision: isFiniteNumber(graph.layoutRevision) ? graph.layoutRevision : 0,
   };
   const hasPositions = Object.keys(normalized.nodes).every((id) => normalized.positions[id]);
   return hasPositions ? normalized : relayoutRelationGraph(normalized);
