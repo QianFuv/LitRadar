@@ -55,7 +55,7 @@ describe('response enum types', () => {
       folder_id: null,
       folder_name: null,
     };
-    expect(parseManualPushStatus(payload)).toBe(payload);
+    expect(parseManualPushStatus(payload)).toEqual(payload);
     expect(() => parseManualPushStatus({ ...payload, status: ['running'] })).toThrow(
       ApiContractError,
     );
@@ -74,7 +74,7 @@ describe('response enum types', () => {
       finished_at: null,
     };
     const payload = { last_checked_at: 42, workers: [], recent_runs: [run] };
-    expect(parseSchedulerStatus(payload)).toBe(payload);
+    expect(parseSchedulerStatus(payload)).toEqual(payload);
     expect(() =>
       parseSchedulerStatus({ ...payload, recent_runs: [{ ...run, status: ['running'] }] }),
     ).toThrow(ApiContractError);

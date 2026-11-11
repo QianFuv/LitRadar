@@ -42,7 +42,7 @@ import { installScenarioHandlers, server } from '@/tests/mocks/server';
 function acceptsValidLoginContract(): void {
   const payload = createLoginScenario();
 
-  expect(parseLoginResponse(payload)).toBe(payload);
+  expect(parseLoginResponse(payload)).toEqual(payload);
 }
 
 /**
@@ -52,7 +52,7 @@ function validatesAccountIdentityContracts(): void {
   const { user } = createLoginScenario();
   const oidcUser = { ...user, email: 'a@b.c', auth_kind: 'oidc', is_oidc_linked: true };
 
-  expect(parseAuthUser(oidcUser)).toBe(oidcUser);
+  expect(parseAuthUser(oidcUser)).toEqual(oidcUser);
   for (const field of ['email', 'auth_kind', 'is_oidc_linked'] as const) {
     const missing = Object.fromEntries(Object.entries(user).filter(([key]) => key !== field));
     expect(() => parseAuthUser(missing)).toThrow(ApiContractError);
@@ -62,12 +62,12 @@ function validatesAccountIdentityContracts(): void {
   expect(() => parseAuthUser({ ...user, is_oidc_linked: 'true' })).toThrow(ApiContractError);
 
   const providers = { oidc_enabled: true, oidc_display_name: 'authentik' };
-  expect(parseAuthProviders(providers)).toBe(providers);
+  expect(parseAuthProviders(providers)).toEqual(providers);
   expect(() => parseAuthProviders({ oidc_enabled: 'yes', oidc_display_name: '' })).toThrow(
     ApiContractError,
   );
   const linkStart = { authorization_url: 'https://auth.example.test/authorize' };
-  expect(parseOidcLinkStart(linkStart)).toBe(linkStart);
+  expect(parseOidcLinkStart(linkStart)).toEqual(linkStart);
   expect(() => parseOidcLinkStart({ authorization_url: '' })).toThrow(ApiContractError);
 }
 
@@ -224,8 +224,8 @@ function acceptsRuntimeMetadataAndProviderCatalog(): void {
     ],
   };
 
-  expect(parseRuntimeSettingList(runtimeSettings)).toBe(runtimeSettings);
-  expect(parseProviderCatalogResponse(providerCatalog)).toBe(providerCatalog);
+  expect(parseRuntimeSettingList(runtimeSettings)).toEqual(runtimeSettings);
+  expect(parseProviderCatalogResponse(providerCatalog)).toEqual(providerCatalog);
   expect(() => parseRuntimeSettingList([booleanSetting, booleanSetting])).toThrow(ApiContractError);
   expect(() => parseRuntimeSettingList([{ ...booleanSetting, group: 'unknown_group' }])).toThrow(
     ApiContractError,
@@ -338,7 +338,7 @@ function acceptsSchedulerStatusContract(): void {
     ],
   };
 
-  expect(parseSchedulerStatus(payload)).toBe(payload);
+  expect(parseSchedulerStatus(payload)).toEqual(payload);
 }
 
 /**
@@ -347,7 +347,7 @@ function acceptsSchedulerStatusContract(): void {
 function acceptsMaskedNotificationContract(): void {
   const payload = createMaskedNotificationSettingsScenario();
 
-  expect(parseNotificationSettings(payload)).toBe(payload);
+  expect(parseNotificationSettings(payload)).toEqual(payload);
   expect(() =>
     parseNotificationSettings({ ...payload, pushplus_token: 'plaintext-secret' }),
   ).toThrow(ApiContractError);

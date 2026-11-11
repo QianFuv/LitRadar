@@ -24,16 +24,6 @@ export function isString(value: unknown): value is string {
 }
 
 /**
- * Check whether a value is a boolean flag.
- *
- * @param value - Value to inspect.
- * @returns Whether the value is a boolean.
- */
-export function isBoolean(value: unknown): value is boolean {
-  return typeof value === 'boolean';
-}
-
-/**
  * Check whether a value is a finite number.
  *
  * @param value - Value to inspect.
