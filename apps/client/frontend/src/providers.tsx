@@ -2,7 +2,7 @@
  * Root client providers and browser-global error listener lifecycle.
  */
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from 'next-themes';
 import { useEffect, useState } from 'react';
 
@@ -10,6 +10,7 @@ import { MotionProvider } from '@/components/ui/motion';
 import { RevealScope } from '@/components/ui/reveal';
 import { AuthProvider } from '@/lib/auth-context';
 import { reportClientError } from '@/lib/client-logger';
+import { createQueryClient } from '@/lib/query-client';
 
 /**
  * Report an uncaught browser error without reading its message, source URL, or stack.
@@ -47,15 +48,6 @@ function registerClientErrorListeners(): () => void {
   }
 
   return removeClientErrorListeners;
-}
-
-/**
- * Create the application query client once per provider instance.
- *
- * @returns Query client with application defaults.
- */
-function createQueryClient(): QueryClient {
-  return new QueryClient();
 }
 
 /**

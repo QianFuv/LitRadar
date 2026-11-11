@@ -117,14 +117,8 @@ const LEGACY_SELECTED_DATABASE_KEY = 'selected_database';
 const REQUEST_ID_HEADER = 'X-Request-Id';
 
 // ponytail: one ceiling for every request; add a per-call override when a longer endpoint appears.
-/** Upper bound for one request attempt, including reading the response body. */
+/** Upper bound for one request, including reading the response body. */
 export const REQUEST_TIMEOUT_MS = 60_000;
-/** Additional attempts allowed for idempotent requests. */
-export const MAX_IDEMPOTENT_RETRIES = 2;
-/** Longest server-requested Retry-After delay the client waits for before giving up. */
-const MAX_RETRY_AFTER_MS = 5_000;
-/** First backoff delay after a network failure; doubles for each later attempt. */
-export const NETWORK_RETRY_BASE_DELAY_MS = 300;
 
 /** Display labels of request-validation location roots, which also identify validation entries. */
 const VALIDATION_LOCATION_LABELS = new Map([
@@ -139,13 +133,9 @@ const VALIDATION_LOCATION_PATTERN = /^([a-z]+)(?:\.(.+)|(\[.+))?$/;
 const MAX_LISTED_VALIDATION_ERRORS = 3;
 
 const RETRY_AFTER_STATUSES = new Set([429, 503]);
-const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD']);
 
-/** Transport that performs one request attempt. */
+/** Transport that performs one request. */
 export type RequestTransport = (url: string, init: RequestInit) => Promise<Response>;
-
-/** Result of one request attempt: a consumed value or a delay before the next attempt. */
-type AttemptOutcome<T> = { kind: 'done'; value: T } | { kind: 'retry'; delayMs: number };
 
 /**
  * Resolve the backend base URL from the active client platform.
@@ -162,9 +152,6 @@ export function resolveApiBase(): string {
  * @returns Selected database name.
  */
 export function readSelectedDatabase(): string {
-  if (typeof window === 'undefined') {
-    return DEFAULT_DATABASE;
-  }
   const selectedDatabase = readLocalStorageValue(SELECTED_DATABASE_KEY);
   if (selectedDatabase) {
     return selectedDatabase;
@@ -183,10 +170,8 @@ export function readSelectedDatabase(): string {
  * @param dbName - Database file name.
  */
 export function storeSelectedDatabase(dbName: string): void {
-  if (typeof window !== 'undefined') {
-    writeLocalStorageValue(SELECTED_DATABASE_KEY, dbName);
-    removeLocalStorageValue(LEGACY_SELECTED_DATABASE_KEY);
-  }
+  writeLocalStorageValue(SELECTED_DATABASE_KEY, dbName);
+  removeLocalStorageValue(LEGACY_SELECTED_DATABASE_KEY);
 }
 
 /**
@@ -320,7 +305,7 @@ function buildRequestInit(init?: RequestInit): RequestInit {
 }
 
 /**
- * Create the typed error raised when one request attempt exceeds its time budget.
+ * Create the typed error raised when one request exceeds its time budget.
  *
  * @returns Retryable timeout API error.
  */
@@ -329,106 +314,10 @@ function createTimeoutError(): ApiError {
 }
 
 /**
- * Wait before retrying unless the caller cancels first.
+ * Send one request through a transport with a timeout that also covers reading the response
+ * body, propagating caller cancellation unchanged. Retries belong to TanStack Query.
  *
- * @param delayMs - Delay in milliseconds.
- * @param signal - Caller cancellation signal.
- * @returns Promise resolved after the delay or rejected with the abort reason.
- */
-function waitForRetry(delayMs: number, signal: AbortSignal | null | undefined): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(signal.reason);
-      return;
-    }
-    /** Stop waiting and propagate the caller's cancellation. */
-    function handleAbort(): void {
-      clearTimeout(timer);
-      reject(signal?.reason);
-    }
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', handleAbort);
-      resolve();
-    }, delayMs);
-    signal?.addEventListener('abort', handleAbort, { once: true });
-  });
-}
-
-/**
- * Read a server-requested retry delay that the client is willing to honor.
- *
- * @param response - Failed response.
- * @returns Delay in milliseconds, or null when the response should not be retried.
- */
-function readRetryAfterDelay(response: Response): number | null {
-  if (!RETRY_AFTER_STATUSES.has(response.status)) {
-    return null;
-  }
-  const seconds = parseRetryAfterSeconds(response.headers.get('Retry-After'));
-  if (seconds === null || seconds * 1000 > MAX_RETRY_AFTER_MS) {
-    return null;
-  }
-  return seconds * 1000;
-}
-
-/**
- * Run one request attempt with its own timeout that also covers reading the response body.
- *
- * @param transport - Transport that performs the attempt.
- * @param url - Absolute endpoint URL.
- * @param requestInit - Prepared request options, including an optional caller signal.
- * @param consume - Response reader that returns the result or throws a typed API error.
- * @param attempt - Zero-based attempt number.
- * @param canRetry - Whether this attempt may request another one.
- * @returns Consumed value or the delay before the next attempt.
- */
-async function runAttempt<T>(
-  transport: RequestTransport,
-  url: string,
-  requestInit: RequestInit,
-  consume: (response: Response) => Promise<T>,
-  attempt: number,
-  canRetry: boolean,
-): Promise<AttemptOutcome<T>> {
-  const callerSignal = requestInit.signal;
-  const timeoutController = new AbortController();
-  const timer = setTimeout(() => timeoutController.abort(), REQUEST_TIMEOUT_MS);
-  const signal = callerSignal
-    ? AbortSignal.any([callerSignal, timeoutController.signal])
-    : timeoutController.signal;
-  try {
-    let response: Response;
-    try {
-      response = await transport(url, { ...requestInit, signal });
-    } catch (error) {
-      if (canRetry && !signal.aborted) {
-        return { kind: 'retry', delayMs: NETWORK_RETRY_BASE_DELAY_MS * 2 ** attempt };
-      }
-      throw error;
-    }
-    if (!response.ok && canRetry) {
-      const delayMs = readRetryAfterDelay(response);
-      if (delayMs !== null) {
-        await response.body?.cancel().catch(() => undefined);
-        return { kind: 'retry', delayMs };
-      }
-    }
-    return { kind: 'done', value: await consume(response) };
-  } catch (error) {
-    if (timeoutController.signal.aborted && !callerSignal?.aborted) {
-      throw createTimeoutError();
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
- * Send one request through a transport, retrying idempotent requests after network
- * failures or an honored Retry-After, and propagating caller cancellation unchanged.
- *
- * @param transport - Transport that performs each attempt.
+ * @param transport - Transport that performs the request.
  * @param url - Absolute endpoint URL.
  * @param init - Caller request options, including an optional cancellation signal.
  * @param consume - Response reader that returns the result or throws a typed API error.
@@ -441,14 +330,16 @@ async function executeRequest<T>(
   consume: (response: Response) => Promise<T>,
 ): Promise<T> {
   const requestInit = buildRequestInit(init);
-  const isIdempotent = IDEMPOTENT_METHODS.has((requestInit.method ?? 'GET').toUpperCase());
-  for (let attempt = 0; ; attempt += 1) {
-    const canRetry = isIdempotent && attempt < MAX_IDEMPOTENT_RETRIES;
-    const outcome = await runAttempt(transport, url, requestInit, consume, attempt, canRetry);
-    if (outcome.kind === 'done') {
-      return outcome.value;
+  const callerSignal = requestInit.signal;
+  const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const signal = callerSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : timeoutSignal;
+  try {
+    return await consume(await transport(url, { ...requestInit, signal }));
+  } catch (error) {
+    if (timeoutSignal.aborted && !callerSignal?.aborted) {
+      throw createTimeoutError();
     }
-    await waitForRetry(outcome.delayMs, requestInit.signal);
+    throw error;
   }
 }
 

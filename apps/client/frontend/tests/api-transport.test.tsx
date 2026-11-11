@@ -1,18 +1,22 @@
 /**
- * Platform API transport timeout, cancellation, bounded retry, and problem-details coverage.
+ * Platform API transport timeout, cancellation, single-attempt, and problem-details coverage, plus
+ * the QueryClient retry policy that owns every retry.
  */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import {
   ApiError,
-  MAX_IDEMPOTENT_RETRIES,
-  NETWORK_RETRY_BASE_DELAY_MS,
   REQUEST_TIMEOUT_TYPE,
   REQUEST_TIMEOUT_MS,
   requestDownload,
   requestJson,
 } from '@/lib/api/client';
+import {
+  createQueryClient,
+  MAX_QUERY_RETRIES,
+  NETWORK_RETRY_BASE_DELAY_MS,
+} from '@/lib/query-client';
 
 const ENDPOINT = 'http://transport.example/api/resource';
 
@@ -156,33 +160,49 @@ async function propagatesCallerCancellation(): Promise<void> {
 }
 
 /**
- * Verify cancellation during a Retry-After wait stops further attempts.
+ * Fetch one endpoint through a QueryClient with the application retry policy.
+ *
+ * @returns Query promise.
  */
-async function cancelsDuringRetryWait(): Promise<void> {
-  const fetchSpy = scriptFetch([
-    problemResponse(503, 'busy', { 'Retry-After': '2' }),
-    jsonResponse({ ok: true }),
-  ]);
-  const controller = new AbortController();
-  const outcome = settle(requestJson(ENDPOINT, { signal: controller.signal }));
-  await vi.advanceTimersByTimeAsync(1_000);
-
-  controller.abort();
-  await vi.advanceTimersByTimeAsync(5_000);
-
-  expect(await outcome).toMatchObject({ name: 'AbortError' });
-  expect(fetchSpy).toHaveBeenCalledTimes(1);
+function fetchWithRetryPolicy<T>(): Promise<T> {
+  return createQueryClient().fetchQuery({
+    queryKey: ['transport-test'],
+    queryFn: ({ signal }) => requestJson<T>(ENDPOINT, { signal }),
+  });
 }
 
 /**
- * Verify idempotent requests wait exactly for an honored Retry-After before retrying.
+ * Verify the transport itself never retries, whatever the method or failure.
  */
-async function honorsRetryAfterForIdempotentRequests(): Promise<void> {
+async function performsOneAttempt(): Promise<void> {
+  const busySpy = scriptFetch([problemResponse(503, 'busy', { 'Retry-After': '1' })]);
+  await expect(requestJson(ENDPOINT)).rejects.toMatchObject({
+    status: 503,
+    retryable: true,
+    retryAfterSeconds: 1,
+  });
+  expect(busySpy).toHaveBeenCalledTimes(1);
+  busySpy.mockRestore();
+
+  const networkSpy = scriptFetch([new TypeError('Failed to fetch')]);
+  await expect(requestJson(ENDPOINT)).rejects.toBeInstanceOf(TypeError);
+  expect(networkSpy).toHaveBeenCalledTimes(1);
+  networkSpy.mockRestore();
+
+  const gatewaySpy = scriptFetch([problemResponse(502, 'bad gateway')]);
+  await expect(requestDownload(ENDPOINT)).rejects.toMatchObject({ status: 502 });
+  expect(gatewaySpy).toHaveBeenCalledTimes(1);
+}
+
+/**
+ * Verify queries wait exactly for an honored Retry-After before retrying.
+ */
+async function honorsRetryAfterForQueries(): Promise<void> {
   const fetchSpy = scriptFetch([
     problemResponse(503, 'busy', { 'Retry-After': '1' }),
     jsonResponse({ value: 7 }),
   ]);
-  const outcome = requestJson<{ value: number }>(ENDPOINT);
+  const outcome = fetchWithRetryPolicy<{ value: number }>();
 
   await vi.advanceTimersByTimeAsync(999);
   expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -194,18 +214,18 @@ async function honorsRetryAfterForIdempotentRequests(): Promise<void> {
 }
 
 /**
- * Verify network failures retry with backoff and the attempt count stays bounded.
+ * Verify query network failures retry with backoff and the attempt count stays bounded.
  */
 async function boundsNetworkRetries(): Promise<void> {
   const fetchSpy = scriptFetch([new TypeError('Failed to fetch')]);
-  const outcome = settle(requestJson(ENDPOINT));
+  const outcome = settle(fetchWithRetryPolicy());
 
   await vi.advanceTimersByTimeAsync(NETWORK_RETRY_BASE_DELAY_MS);
   expect(fetchSpy).toHaveBeenCalledTimes(2);
   await vi.advanceTimersByTimeAsync(NETWORK_RETRY_BASE_DELAY_MS * 2);
 
   expect(await outcome).toBeInstanceOf(TypeError);
-  expect(fetchSpy).toHaveBeenCalledTimes(MAX_IDEMPOTENT_RETRIES + 1);
+  expect(fetchSpy).toHaveBeenCalledTimes(MAX_QUERY_RETRIES + 1);
 }
 
 /**
@@ -213,12 +233,12 @@ async function boundsNetworkRetries(): Promise<void> {
  */
 async function surfacesExhaustedRetryAfter(): Promise<void> {
   const fetchSpy = scriptFetch(
-    Array.from({ length: MAX_IDEMPOTENT_RETRIES + 1 }, () =>
+    Array.from({ length: MAX_QUERY_RETRIES + 1 }, () =>
       problemResponse(503, 'still busy', { 'Retry-After': '0' }),
     ),
   );
 
-  const outcome = settle(requestJson(ENDPOINT));
+  const outcome = settle(fetchWithRetryPolicy());
   await vi.runAllTimersAsync();
   const error = await outcome;
 
@@ -229,34 +249,29 @@ async function surfacesExhaustedRetryAfter(): Promise<void> {
     retryable: true,
     retryAfterSeconds: 0,
   });
-  expect(fetchSpy).toHaveBeenCalledTimes(MAX_IDEMPOTENT_RETRIES + 1);
+  expect(fetchSpy).toHaveBeenCalledTimes(MAX_QUERY_RETRIES + 1);
 }
 
 /**
- * Verify non-idempotent requests, long Retry-After delays, and non-retry statuses fail at once.
+ * Verify queries do not retry long Retry-After delays, timeouts, or client and server errors.
  */
-async function skipsUnsafeRetries(): Promise<void> {
-  const postSpy = scriptFetch([problemResponse(503, 'busy', { 'Retry-After': '1' })]);
-  await expect(requestJson(ENDPOINT, { method: 'POST', body: '{}' })).rejects.toMatchObject({
-    status: 503,
-    retryable: true,
-    retryAfterSeconds: 1,
-  });
-  expect(postSpy).toHaveBeenCalledTimes(1);
-  postSpy.mockRestore();
-
-  const longDelaySpy = scriptFetch([problemResponse(429, 'later', { 'Retry-After': '30' })]);
-  await expect(requestJson(ENDPOINT)).rejects.toMatchObject({
-    status: 429,
-    retryable: true,
-    retryAfterSeconds: 30,
-  });
-  expect(longDelaySpy).toHaveBeenCalledTimes(1);
-  longDelaySpy.mockRestore();
-
-  const gatewaySpy = scriptFetch([problemResponse(502, 'bad gateway')]);
-  await expect(requestDownload(ENDPOINT)).rejects.toMatchObject({ status: 502 });
-  expect(gatewaySpy).toHaveBeenCalledTimes(1);
+async function skipsUnhelpfulQueryRetries(): Promise<void> {
+  const cases: FetchStep[][] = [
+    [problemResponse(429, 'later', { 'Retry-After': '30' })],
+    [problemResponse(404, 'missing')],
+    [problemResponse(401, 'signed out')],
+    [problemResponse(502, 'bad gateway')],
+    ['hang'],
+  ];
+  for (const steps of cases) {
+    const fetchSpy = scriptFetch(steps);
+    const outcome = settle(fetchWithRetryPolicy());
+    await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+    await vi.runAllTimersAsync();
+    expect(await outcome).toBeInstanceOf(ApiError);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    fetchSpy.mockRestore();
+  }
 }
 
 /**
@@ -428,6 +443,14 @@ async function toleratesMalformedProblems(): Promise<void> {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  vi.spyOn(AbortSignal, 'timeout').mockImplementation((milliseconds) => {
+    const controller = new AbortController();
+    setTimeout(
+      () => controller.abort(new DOMException('The operation timed out.', 'TimeoutError')),
+      milliseconds,
+    );
+    return controller.signal;
+  });
 });
 
 afterEach(() => {
@@ -438,15 +461,18 @@ describe('platform API transport', () => {
   test('times out stalled requests without retrying', timesOutStalledRequests);
   test('times out stalled response bodies', timesOutStalledBodies);
   test('propagates caller cancellation', propagatesCallerCancellation);
-  test('stops retrying when cancelled during a retry wait', cancelsDuringRetryWait);
-  test('honors Retry-After for idempotent requests', honorsRetryAfterForIdempotentRequests);
-  test('bounds network failure retries', boundsNetworkRetries);
-  test('surfaces the final Retry-After failure', surfacesExhaustedRetryAfter);
-  test('skips retries that are unsafe or too slow', skipsUnsafeRetries);
+  test('performs one attempt per request', performsOneAttempt);
   test('preserves RFC 9457 problem details', preservesProblemDetails);
   test('names invalid fields of validation problems', namesInvalidFields);
   test('truncates long validation field lists', truncatesManyInvalidFields);
   test('keeps the detail without validation entries', keepsDetailWithoutValidationEntries);
   test('classifies retryable statuses by Retry-After', classifiesRetryableStatuses);
   test('tolerates malformed problem bodies', toleratesMalformedProblems);
+});
+
+describe('query retry policy', () => {
+  test('honors Retry-After for queries', honorsRetryAfterForQueries);
+  test('bounds network failure retries', boundsNetworkRetries);
+  test('surfaces the final Retry-After failure', surfacesExhaustedRetryAfter);
+  test('skips retries that cannot help', skipsUnhelpfulQueryRetries);
 });
