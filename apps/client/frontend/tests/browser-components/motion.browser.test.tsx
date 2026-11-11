@@ -189,7 +189,7 @@ async function transitionsSectionHeaderAndRestoresFocus(): Promise<void> {
   expect(dialog.querySelector('[data-mobile-overflow-cue="true"]')).not.toBeNull();
   expect(dialog.querySelector('[data-motion-section-header="first"]')).not.toBeNull();
 
-  await act(async () => page.getByRole('button', { name: '第二分类' }).first().click());
+  await act(async () => page.getByRole('tab', { name: '第二分类' }).first().click());
   expect(dialog.querySelector('[data-motion-section-header="first"]')).not.toBeNull();
   await waitFor(() =>
     expect(dialog.querySelector('[data-motion-section-header="second"]')).not.toBeNull(),
@@ -198,8 +198,8 @@ async function transitionsSectionHeaderAndRestoresFocus(): Promise<void> {
   expect(screen.getByTestId('sectioned-active-content')).toHaveTextContent('second');
   expect(
     screen
-      .getAllByRole('button', { name: '第二分类' })
-      .every((button) => button.getAttribute('data-section-active') === 'true'),
+      .getAllByRole('tab', { name: '第二分类' })
+      .every((tab) => tab.getAttribute('aria-selected') === 'true'),
   ).toBe(true);
 
   await act(async () => userEvent.keyboard('{Escape}'));

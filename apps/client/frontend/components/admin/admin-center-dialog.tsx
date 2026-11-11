@@ -11,6 +11,7 @@ import {
   SlidersVertical,
   Users,
 } from '@/components/ui/animated-icons';
+import { Tabs } from '@animate-ui/react/primitives/base-ui/tabs';
 import { useSearch } from '@tanstack/react-router';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
@@ -41,7 +42,7 @@ type AdminCenterSessionState = {
 type AdminPanelProps = {
   children: ReactNode;
   isActive: boolean;
-  label: string;
+  section: AdminSectionId;
 };
 
 const ADMIN_SECTIONS = [
@@ -95,26 +96,29 @@ const ADMIN_SECTIONS = [
 /**
  * Mount administrator data on its first activation and retain visited panels across navigation.
  *
- * @param props - Stable panel content, active state, and accessible label.
- * @returns Mounted tab panel with entry-only visual motion.
+ * @param props - Stable panel content, active state, and section id.
+ * @returns Mounted tab panel, named by its tab, with entry-only visual motion.
  */
-function AdminPanel({ children, isActive, label }: AdminPanelProps) {
+function AdminPanel({ children, isActive, section }: AdminPanelProps) {
   const [hasVisited, setHasVisited] = useState(isActive);
   if (isActive && !hasVisited) {
     setHasVisited(true);
   }
   return (
-    <MotionSection
-      role="tabpanel"
-      aria-label={label}
+    <Tabs.Panel
+      value={section}
+      keepMounted
       data-admin-panel-state={isActive ? 'active' : 'inactive'}
-      hidden={!isActive}
-      variants={PANEL_VARIANTS}
-      initial={false}
-      animate={isActive ? 'visible' : 'hidden'}
+      render={
+        <MotionSection
+          variants={PANEL_VARIANTS}
+          initial={false}
+          animate={isActive ? 'visible' : 'hidden'}
+        />
+      }
     >
       {hasVisited ? children : null}
-    </MotionSection>
+    </Tabs.Panel>
   );
 }
 
@@ -223,25 +227,25 @@ export function AdminCenterDialog() {
       returnFocusRef={returnFocusRef}
       sections={ADMIN_SECTIONS}
     >
-      <AdminPanel isActive={activeSection === 'overview'} label="概览面板">
+      <AdminPanel section="overview" isActive={activeSection === 'overview'}>
         <AdminOverviewCard isEnabled />
       </AdminPanel>
-      <AdminPanel isActive={activeSection === 'load'} label="负载面板">
+      <AdminPanel section="load" isActive={activeSection === 'load'}>
         <LoadTelemetryCard isEnabled />
       </AdminPanel>
-      <AdminPanel isActive={activeSection === 'users'} label="用户面板">
+      <AdminPanel section="users" isActive={activeSection === 'users'}>
         <AdminUsersCard currentUserId={user.id} isEnabled />
       </AdminPanel>
-      <AdminPanel isActive={activeSection === 'invite-codes'} label="邀请码面板">
+      <AdminPanel section="invite-codes" isActive={activeSection === 'invite-codes'}>
         <AdminInviteCodesCard isEnabled />
       </AdminPanel>
-      <AdminPanel isActive={activeSection === 'runtime-settings'} label="运行配置面板">
+      <AdminPanel section="runtime-settings" isActive={activeSection === 'runtime-settings'}>
         <RuntimeSettingsCard />
       </AdminPanel>
-      <AdminPanel isActive={activeSection === 'scheduled-tasks'} label="计划任务面板">
+      <AdminPanel section="scheduled-tasks" isActive={activeSection === 'scheduled-tasks'}>
         <ScheduledTasksCard isActive={isDialogOpen && activeSection === 'scheduled-tasks'} />
       </AdminPanel>
-      <AdminPanel isActive={activeSection === 'announcements'} label="公告面板">
+      <AdminPanel section="announcements" isActive={activeSection === 'announcements'}>
         <AnnouncementsCard />
       </AdminPanel>
     </SectionedDialogFrame>

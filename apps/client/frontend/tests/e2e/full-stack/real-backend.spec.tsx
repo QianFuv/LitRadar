@@ -266,13 +266,13 @@ async function administratorMutationJourney(
   await page.goto('/?admin=overview');
   await expect(page).toHaveURL(/\/?\?admin=overview$/);
   const adminDialog = page.getByRole('dialog', { name: '管理面板' });
-  const adminCategories = adminDialog.getByRole('navigation', { name: '管理分类' });
+  const adminCategories = adminDialog.getByRole('tablist', { name: '管理分类' });
   await expect(adminDialog).toBeVisible();
   await expect(adminDialog.getByText('full-stack.sqlite', { exact: true })).toBeVisible();
-  const usersCategory = adminCategories.getByRole('button', { name: '用户', exact: true });
+  const usersCategory = adminCategories.getByRole('tab', { name: '用户', exact: true });
   await usersCategory.click();
   await expect(page).toHaveURL(/\/?\?admin=users$/);
-  await expect(usersCategory).toHaveAttribute('aria-current', 'page');
+  await expect(usersCategory).toHaveAttribute('aria-selected', 'true');
   await expect(adminDialog.getByRole('region', { name: '用户管理内容' })).toBeVisible();
 
   const grantAdminButton = adminDialog.getByRole('button', {
@@ -294,7 +294,7 @@ async function administratorMutationJourney(
     adminDialog.getByRole('button', { name: `取消 ${MEMBER_USERNAME} 的管理员` }),
   ).toBeVisible();
 
-  await adminCategories.getByRole('button', { name: '邀请码', exact: true }).click();
+  await adminCategories.getByRole('tab', { name: '邀请码', exact: true }).click();
   await expect(page).toHaveURL(/\/?\?admin=invite-codes$/);
   const inviteResponse = page.waitForResponse(
     (response) =>
@@ -309,7 +309,7 @@ async function administratorMutationJourney(
   await page.reload();
   await expect(adminDialog.getByText(createdInvite.code, { exact: true })).toBeVisible();
 
-  await adminCategories.getByRole('button', { name: '公告', exact: true }).click();
+  await adminCategories.getByRole('tab', { name: '公告', exact: true }).click();
   await expect(page).toHaveURL(/\/?\?admin=announcements$/);
   await page.getByRole('button', { name: '新建公告' }).click();
   const announcementDialog = page.getByRole('dialog', { name: '新建公告' });
@@ -329,7 +329,7 @@ async function administratorMutationJourney(
   await page.reload();
   await expect(adminDialog.getByText(createdAnnouncementTitle, { exact: true })).toBeVisible();
 
-  await adminCategories.getByRole('button', { name: '用户', exact: true }).click();
+  await adminCategories.getByRole('tab', { name: '用户', exact: true }).click();
   await expect(page).toHaveURL(/\/?\?admin=users$/);
   const revokeAdminButton = adminDialog.getByRole('button', {
     name: `取消 ${MEMBER_USERNAME} 的管理员`,

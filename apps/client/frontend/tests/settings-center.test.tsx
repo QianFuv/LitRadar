@@ -112,7 +112,7 @@ async function opensAndNavigatesSettingsDialog(): Promise<void> {
 
   expect(await screen.findByRole('dialog', { name: '设置中心' })).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: '常规' })).toBeInTheDocument();
-  expect(screen.getAllByRole('navigation', { name: '设置分类' })).toHaveLength(1);
+  expect(screen.getAllByRole('tablist', { name: '设置分类' })).toHaveLength(1);
   expect(screen.getByRole('region', { name: '常规设置内容' })).toBeInTheDocument();
   expect(screen.getByRole('radiogroup', { name: '外观主题' })).toBeInTheDocument();
   expect(document.querySelector('[data-mobile-overflow-cue="true"]')).toBeInTheDocument();
@@ -120,11 +120,11 @@ async function opensAndNavigatesSettingsDialog(): Promise<void> {
   expect(document.querySelector('[data-settings-content-key="general"]')).toBeInTheDocument();
   expect(
     screen
-      .getAllByRole('button', { name: '常规' })
-      .every((button) => button.getAttribute('data-section-active') === 'true'),
+      .getAllByRole('tab', { name: '常规' })
+      .every((tab) => tab.getAttribute('aria-selected') === 'true'),
   ).toBe(true);
 
-  await user.click(screen.getAllByRole('button', { name: '通知与推送' })[0]);
+  await user.click(screen.getAllByRole('tab', { name: '通知与推送' })[0]);
   await waitFor(() =>
     expect(readRouterUrl(view.router)).toBe(`${WORKSPACE_URL}&settings=notifications`),
   );
@@ -258,7 +258,7 @@ async function guardsUnsavedCrossCategoryNavigation(): Promise<void> {
   });
 
   await user.click(await screen.findByRole('switch', { name: '启用推荐' }));
-  await user.click(screen.getAllByRole('button', { name: '账号与安全' })[0]);
+  await user.click(screen.getAllByRole('tab', { name: '账号与安全' })[0]);
 
   expect(screen.getByRole('alertdialog', { name: '放弃未保存的配置？' })).toBeInTheDocument();
   expect(readRouterUrl(view.router)).toBe(`${WORKSPACE_URL}&settings=tracking`);
@@ -267,7 +267,7 @@ async function guardsUnsavedCrossCategoryNavigation(): Promise<void> {
   await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
   expect(screen.getByRole('switch', { name: '启用推荐' })).not.toBeChecked();
 
-  await user.click(screen.getAllByRole('button', { name: '账号与安全' })[0]);
+  await user.click(screen.getAllByRole('tab', { name: '账号与安全' })[0]);
   fireEvent.click(screen.getByRole('button', { name: '放弃更改' }));
   await waitFor(() => expect(readRouterUrl(view.router)).toBe(`${WORKSPACE_URL}&settings=account`));
 }

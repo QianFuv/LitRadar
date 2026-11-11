@@ -2,7 +2,7 @@
  * Shared responsive frame for query-driven sectioned dialogs.
  */
 
-import { Highlight, HighlightItem } from '@animate-ui/react/primitives/effects/highlight';
+import { Tabs } from '@animate-ui/react/primitives/base-ui/tabs';
 import { ScrollFade } from '@animate-ui/react/primitives/effects/scroll-fade';
 import {
   ArrowLeft,
@@ -31,8 +31,12 @@ import {
 } from '@/components/ui/dialog';
 import { MotionDiv, MotionPresence, PANEL_VARIANTS } from '@/components/ui/motion';
 import { attachHorizontalWheelScroll } from '@/lib/horizontal-wheel-scroll';
+import { useMediaQuery } from '@/lib/use-media-query';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
+
+/** Viewport where sections are listed in a vertical sidebar instead of a horizontal strip. */
+const SIDEBAR_LAYOUT_MEDIA_QUERY = '(min-width: 48rem)';
 
 /** One-shot marker used to return focus from a sectioned dialog to its persistent trigger. */
 export const SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE = 'data-sectioned-dialog-return-focus';
@@ -77,7 +81,6 @@ type SectionedDialogNavigationProps<SectionId extends string> = {
   xstyle?: stylex.StyleXStyles;
   isDisabled: boolean;
   label: string;
-  onSelect: (section: SectionId) => void;
   sections: readonly SectionedDialogSectionDefinition<SectionId>[];
 };
 
@@ -114,25 +117,19 @@ function resolveReturnFocusTarget(activeElement: HTMLElement | null): HTMLElemen
  * Render one category button whose icon plays on hover, on touch, and when it becomes active.
  *
  * @param props - Button properties and whether the category is active.
- * @returns Category button that drives its animated icon.
+ * @returns Category tab that drives its animated icon.
  */
-function SectionNavigationButton({
+function SectionNavigationTab({
   isActive,
   ...props
-}: ComponentProps<'button'> & { isActive: boolean }) {
+}: Omit<ComponentProps<'button'>, 'value'> & { isActive: boolean; value: string }) {
   const { isTriggered, triggerHandlers } = useIconTrigger<PointerEvent<HTMLButtonElement>>(
     props,
     isActive,
   );
   return (
     <IconTriggerProvider isTriggered={isTriggered}>
-      <button
-        type="button"
-        {...props}
-        {...triggerHandlers}
-        aria-current={isActive ? 'page' : undefined}
-        data-section-active={isActive ? 'true' : 'false'}
-      />
+      <Tabs.Tab {...props} {...triggerHandlers} data-section-active={isActive ? 'true' : 'false'} />
     </IconTriggerProvider>
   );
 }
@@ -149,46 +146,37 @@ function SectionedDialogNavigation<SectionId extends string>({
   xstyle,
   isDisabled,
   label,
-  onSelect,
   sections,
 }: SectionedDialogNavigationProps<SectionId>) {
   return (
     <ScrollFade orientation="horizontal" shrink={0} asChild>
-      <nav ref={attachHorizontalWheelScroll} aria-label={label} {...stylex.props(xstyle)}>
-        <Highlight
-          controlledItems
-          value={activeSection}
-          click={false}
-          {...stylex.props(styles.sectionedDialogNavigationHighlight)}
-        >
-          {sections.map((section) => {
-            const Icon = section.icon;
-            const isActive = section.id === activeSection;
-            return (
-              <HighlightItem
-                key={section.id}
-                value={section.id}
-                {...stylex.props(styles.sectionedDialogNavigationHighlightItem)}
-              >
-                <SectionNavigationButton
-                  isActive={isActive}
-                  disabled={isDisabled}
-                  {...stylex.props(
-                    styles.sectionedDialogNavigationSectionNavigationButton,
-                    isActive
-                      ? styles.sectionedDialogNavigationSectionNavigationButtonActive
-                      : styles.sectionedDialogNavigationSectionNavigationButtonNotActive,
-                  )}
-                  onClick={() => onSelect(section.id)}
-                >
-                  <Icon xstyle={styles.sectionedDialogNavigationIcon} aria-hidden="true" />
-                  <span>{section.label}</span>
-                </SectionNavigationButton>
-              </HighlightItem>
-            );
-          })}
-        </Highlight>
-      </nav>
+      <Tabs.List
+        ref={attachHorizontalWheelScroll}
+        aria-label={label}
+        {...stylex.props(styles.sectionedDialogNavigationList, xstyle)}
+      >
+        {sections.map((section) => {
+          const Icon = section.icon;
+          const isActive = section.id === activeSection;
+          return (
+            <SectionNavigationTab
+              key={section.id}
+              value={section.id}
+              isActive={isActive}
+              disabled={isDisabled}
+              {...stylex.props(
+                styles.sectionedDialogNavigationSectionNavigationButton,
+                isActive
+                  ? styles.sectionedDialogNavigationSectionNavigationButtonActive
+                  : styles.sectionedDialogNavigationSectionNavigationButtonNotActive,
+              )}
+            >
+              <Icon xstyle={styles.sectionedDialogNavigationIcon} aria-hidden="true" />
+              <span>{section.label}</span>
+            </SectionNavigationTab>
+          );
+        })}
+      </Tabs.List>
     </ScrollFade>
   );
 }
@@ -224,6 +212,7 @@ export function SectionedDialogFrame<SectionId extends string>({
   const contentRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const descriptionId = useId();
+  const isSidebarLayout = useMediaQuery(SIDEBAR_LAYOUT_MEDIA_QUERY);
   const isOpenRef = useRef(open);
   useLayoutEffect(() => {
     isOpenRef.current = open;
@@ -281,111 +270,111 @@ export function SectionedDialogFrame<SectionId extends string>({
           {dialogDescription}
         </DialogDescription>
 
-        <aside
-          data-slot="sectioned-dialog-sidebar"
-          {...stylex.props(styles.sectionedDialogSidebar)}
-        >
-          <DialogClose
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                static
-                aria-label="返回"
-                xstyle={styles.sectionedDialogFrameButton}
-              />
+        <Tabs.Root
+          value={activeSection}
+          onValueChange={(value) => {
+            const section = sections.find((candidate) => candidate.id === value);
+            if (section) {
+              onSelectSection(section.id);
             }
+          }}
+          orientation={isSidebarLayout ? 'vertical' : 'horizontal'}
+          {...stylex.props(styles.sectionedDialogTabsRoot)}
+        >
+          <aside
+            data-slot="sectioned-dialog-sidebar"
+            {...stylex.props(styles.sectionedDialogSidebar)}
           >
-            <X xstyle={styles.sectionedDialogFrameX} aria-hidden="true" />
-            <ArrowLeft xstyle={styles.sectionedDialogFrameArrowLeft} aria-hidden="true" />
-            <span {...stylex.props(styles.sectionedDialogFrameSpan)}>返回</span>
-          </DialogClose>
-          <div {...stylex.props(styles.sectionedDialogFrameDiv)}>
-            <span aria-hidden="true" {...stylex.props(styles.sectionedDialogFrameSpan2)}>
-              <CenterIcon xstyle={styles.sectionedDialogFrameCenterIcon} />
-            </span>
-            <div {...stylex.props(styles.sectionedDialogFrameDiv2)}>
-              <p {...stylex.props(styles.sectionedDialogFrameP)}>{centerTitle}</p>
-              <p {...stylex.props(styles.sectionedDialogFrameP2)}>{centerSubtitle}</p>
-            </div>
-          </div>
-          <div {...stylex.props(styles.sectionedDialogFrameDiv3)} data-mobile-overflow-cue="true">
-            <SectionedDialogNavigation
-              activeSection={activeSection}
-              xstyle={styles.sectionedDialogFrameSectionedDialogNavigation}
-              isDisabled={isNavigationDisabled}
-              label={navigationLabel}
-              onSelect={onSelectSection}
-              sections={sections}
-            />
-          </div>
-          {sidebarFooter && (
-            <div {...stylex.props(styles.sectionedDialogFrameDiv4)}>{sidebarFooter}</div>
-          )}
-        </aside>
-
-        <div data-slot="sectioned-dialog-scroll" {...stylex.props(styles.sectionedDialogScroll)}>
-          <div
-            {...stylex.props(
-              styles.sectionedDialogFrameDiv5,
-              contentWidth === 'wide'
-                ? styles.sectionedDialogFrameDivWide
-                : styles.sectionedDialogFrameDivNotWide,
-            )}
-          >
-            <div {...stylex.props(styles.sectionedDialogFrameDiv6)}>
-              <h2 {...stylex.props(styles.sectionedDialogFrameDialogTitle)}>
-                {activeDefinition.label}
-              </h2>
-              <MotionPresence mode="wait">
-                <MotionDiv
-                  key={activeDefinition.id}
-                  aria-hidden="true"
-                  data-motion-section-header={activeDefinition.id}
-                  variants={PANEL_VARIANTS}
-                  initial="hidden"
-                  animate="visible"
-                  exit="exit"
-                >
-                  <div {...stylex.props(styles.sectionedDialogFrameDiv7)}>
-                    {activeDefinition.label}
-                  </div>
-                  <p {...stylex.props(styles.sectionedDialogFrameP3)}>
-                    {activeDefinition.description}
-                  </p>
-                </MotionDiv>
-              </MotionPresence>
-            </div>
-            <section
-              aria-label={`${activeDefinition.label}${contentLabelSuffix}`}
-              data-slot="sectioned-dialog-panel"
+            <DialogClose
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  static
+                  aria-label="返回"
+                  xstyle={styles.sectionedDialogFrameButton}
+                />
+              }
             >
-              {children}
-            </section>
+              <X xstyle={styles.sectionedDialogFrameX} aria-hidden="true" />
+              <ArrowLeft xstyle={styles.sectionedDialogFrameArrowLeft} aria-hidden="true" />
+              <span {...stylex.props(styles.sectionedDialogFrameSpan)}>返回</span>
+            </DialogClose>
+            <div {...stylex.props(styles.sectionedDialogFrameDiv)}>
+              <span aria-hidden="true" {...stylex.props(styles.sectionedDialogFrameSpan2)}>
+                <CenterIcon xstyle={styles.sectionedDialogFrameCenterIcon} />
+              </span>
+              <div {...stylex.props(styles.sectionedDialogFrameDiv2)}>
+                <p {...stylex.props(styles.sectionedDialogFrameP)}>{centerTitle}</p>
+                <p {...stylex.props(styles.sectionedDialogFrameP2)}>{centerSubtitle}</p>
+              </div>
+            </div>
+            <div {...stylex.props(styles.sectionedDialogFrameDiv3)} data-mobile-overflow-cue="true">
+              <SectionedDialogNavigation
+                activeSection={activeSection}
+                xstyle={styles.sectionedDialogFrameSectionedDialogNavigation}
+                isDisabled={isNavigationDisabled}
+                label={navigationLabel}
+                sections={sections}
+              />
+            </div>
+            {sidebarFooter && (
+              <div {...stylex.props(styles.sectionedDialogFrameDiv4)}>{sidebarFooter}</div>
+            )}
+          </aside>
+
+          <div data-slot="sectioned-dialog-scroll" {...stylex.props(styles.sectionedDialogScroll)}>
+            <div
+              {...stylex.props(
+                styles.sectionedDialogFrameDiv5,
+                contentWidth === 'wide'
+                  ? styles.sectionedDialogFrameDivWide
+                  : styles.sectionedDialogFrameDivNotWide,
+              )}
+            >
+              <div {...stylex.props(styles.sectionedDialogFrameDiv6)}>
+                <h2 {...stylex.props(styles.sectionedDialogFrameDialogTitle)}>
+                  {activeDefinition.label}
+                </h2>
+                <MotionPresence mode="wait">
+                  <MotionDiv
+                    key={activeDefinition.id}
+                    aria-hidden="true"
+                    data-motion-section-header={activeDefinition.id}
+                    variants={PANEL_VARIANTS}
+                    initial="hidden"
+                    animate="visible"
+                    exit="exit"
+                  >
+                    <div {...stylex.props(styles.sectionedDialogFrameDiv7)}>
+                      {activeDefinition.label}
+                    </div>
+                    <p {...stylex.props(styles.sectionedDialogFrameP3)}>
+                      {activeDefinition.description}
+                    </p>
+                  </MotionDiv>
+                </MotionPresence>
+              </div>
+              <section
+                aria-label={`${activeDefinition.label}${contentLabelSuffix}`}
+                data-slot="sectioned-dialog-panel"
+              >
+                {children}
+              </section>
+            </div>
           </div>
-        </div>
+        </Tabs.Root>
       </DialogContent>
     </Dialog>
   );
 }
 
 const styles = stylex.create({
-  sectionedDialogNavigationHighlight: {
-    borderRadius: {
-      default: 'calc(infinity * 1px)',
-      '@media (min-width: 48rem)': '8px',
-    },
-    backgroundColor: {
-      default: colors.foreground,
-      '@media (min-width: 48rem)': colors.accent,
-    },
+  sectionedDialogTabsRoot: {
+    display: 'contents',
   },
-  sectionedDialogNavigationHighlightItem: {
-    flexShrink: 0,
-    width: {
-      default: null,
-      '@media (min-width: 48rem)': '100%',
-    },
+  sectionedDialogNavigationList: {
+    position: 'relative',
   },
   sectionedDialogNavigationSectionNavigationButton: {
     display: 'flex',
@@ -439,6 +428,10 @@ const styles = stylex.create({
   },
   sectionedDialogNavigationSectionNavigationButtonActive: {
     fontWeight: 700,
+    backgroundColor: {
+      default: colors.foreground,
+      '@media (min-width: 48rem)': colors.accent,
+    },
     color: {
       default: colors.background,
       '@media (min-width: 48rem)': colors.foreground,

@@ -675,13 +675,15 @@ async function completesFixtureTrackingPush(page: Page): Promise<void> {
 
 /** Verify the overflowing category strip fades at its trailing edge without blocking input. */
 async function expectMobileCategoryFadeCoverage(dialog: Locator): Promise<void> {
-  const cue = await dialog.locator('[data-mobile-overflow-cue="true"] nav').evaluate((element) => {
-    const style = getComputedStyle(element);
-    return {
-      maskImage: style.maskImage || style.getPropertyValue('-webkit-mask-image'),
-      pointerEvents: style.pointerEvents,
-    };
-  });
+  const cue = await dialog
+    .locator('[data-mobile-overflow-cue="true"] [role="tablist"]')
+    .evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        maskImage: style.maskImage || style.getPropertyValue('-webkit-mask-image'),
+        pointerEvents: style.pointerEvents,
+      };
+    });
   expect(cue.maskImage).toContain('linear-gradient');
   expect(cue.pointerEvents).not.toBe('none');
 }
@@ -713,8 +715,8 @@ async function verifiesAggregatedSettingsCenter(page: Page): Promise<void> {
     fullPage: true,
   });
 
-  const desktopCategories = settingsDialog.getByRole('navigation', { name: '设置分类' });
-  await desktopCategories.getByRole('button', { name: '文献追踪' }).click();
+  const desktopCategories = settingsDialog.getByRole('tablist', { name: '设置分类' });
+  await desktopCategories.getByRole('tab', { name: '文献追踪' }).click();
   await expect(page).toHaveURL('/?view=favorites&folder=4&settings=tracking');
   await page.getByRole('switch', { name: '启用推荐' }).click();
 
@@ -724,7 +726,7 @@ async function verifiesAggregatedSettingsCenter(page: Page): Promise<void> {
   await expect(page).toHaveURL('/?view=favorites&folder=4&settings=tracking');
   await expect(page.getByRole('switch', { name: '启用推荐' })).not.toBeChecked();
 
-  await desktopCategories.getByRole('button', { name: '账号与安全' }).click();
+  await desktopCategories.getByRole('tab', { name: '账号与安全' }).click();
   await page.getByRole('button', { name: '放弃更改' }).click();
   await expect(page).toHaveURL('/?view=favorites&folder=4&settings=account');
   await expect(page.getByRole('heading', { name: '账号与安全', exact: true })).toBeVisible();
@@ -742,7 +744,7 @@ async function verifiesAggregatedSettingsCenter(page: Page): Promise<void> {
   await expect(mobileDialog).toHaveCSS('height', '844px');
   const mobileCategories = mobileDialog
     .locator('[data-slot="sectioned-dialog-sidebar"]')
-    .getByRole('navigation', { name: '设置分类' });
+    .getByRole('tablist', { name: '设置分类' });
   const navigationInsets = await mobileCategories.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
     return { left: Math.round(bounds.left), right: Math.round(innerWidth - bounds.right) };
@@ -750,7 +752,7 @@ async function verifiesAggregatedSettingsCenter(page: Page): Promise<void> {
   expect(navigationInsets.right).toBe(navigationInsets.left);
   await expect(mobileDialog.locator('[data-mobile-overflow-cue="true"]')).toBeVisible();
   await expectMobileCategoryFadeCoverage(mobileDialog);
-  await expect(mobileCategories.getByRole('button', { name: '常规' })).toHaveAttribute(
+  await expect(mobileCategories.getByRole('tab', { name: '常规' })).toHaveAttribute(
     'data-section-active',
     'true',
   );
@@ -761,7 +763,7 @@ async function verifiesAggregatedSettingsCenter(page: Page): Promise<void> {
     path: '../../../output/ui/settings-center-mobile.png',
     fullPage: true,
   });
-  const mobileTokensButton = mobileCategories.getByRole('button', { name: '访问令牌' });
+  const mobileTokensButton = mobileCategories.getByRole('tab', { name: '访问令牌' });
   await mobileTokensButton.scrollIntoViewIfNeeded();
   await expect(mobileTokensButton).toBeInViewport();
 }
@@ -842,21 +844,21 @@ async function verifiesAdministratorCenter(page: Page): Promise<void> {
   await expect(adminDialog).toHaveCSS('width', '1600px');
   await expect(page.getByRole('heading', { name: '概览', exact: true })).toBeVisible();
   await expect(adminDialog.locator('[data-motion-section-header="overview"]')).toBeVisible();
-  const desktopCategories = adminDialog.getByRole('navigation', { name: '管理分类' });
-  await expect(desktopCategories.getByRole('button')).toHaveCount(7);
+  const desktopCategories = adminDialog.getByRole('tablist', { name: '管理分类' });
+  await expect(desktopCategories.getByRole('tab')).toHaveCount(7);
   await page.screenshot({ path: '../../../output/ui/admin-center-desktop.png', fullPage: true });
 
-  await desktopCategories.getByRole('button', { name: '负载' }).click();
+  await desktopCategories.getByRole('tab', { name: '负载' }).click();
   await expect(page).toHaveURL('/?q=graph&admin=load');
   await expect(adminDialog.getByRole('table', { name: /调用排行/ })).toContainText('/api/articles');
   await expect(adminDialog.locator('[data-telemetry-trend="http"]')).toBeVisible();
   await page.screenshot({ path: '../../../output/ui/admin-load-desktop.png', fullPage: true });
 
-  await desktopCategories.getByRole('button', { name: '用户' }).click();
+  await desktopCategories.getByRole('tab', { name: '用户' }).click();
   await expect(page).toHaveURL('/?q=graph&admin=users');
   await expect(page.getByRole('heading', { name: '用户', exact: true })).toBeVisible();
 
-  await desktopCategories.getByRole('button', { name: '计划任务' }).click();
+  await desktopCategories.getByRole('tab', { name: '计划任务' }).click();
   await expect(page).toHaveURL('/?q=graph&admin=scheduled-tasks');
   await expect(adminDialog.locator('[data-motion-scheduled-task-key="8"]')).toBeVisible();
   await expect(adminDialog.locator('[data-motion-scheduler-state="workers-1-1"]')).toBeVisible();
@@ -896,7 +898,7 @@ async function verifiesAdministratorCenter(page: Page): Promise<void> {
   await expect(mobileDialog).toHaveCSS('height', '844px');
   const mobileCategories = mobileDialog
     .locator('[data-slot="sectioned-dialog-sidebar"]')
-    .getByRole('navigation', { name: '管理分类' });
+    .getByRole('tablist', { name: '管理分类' });
   const navigationInsets = await mobileCategories.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
     return { left: Math.round(bounds.left), right: Math.round(innerWidth - bounds.right) };
@@ -904,7 +906,7 @@ async function verifiesAdministratorCenter(page: Page): Promise<void> {
   expect(navigationInsets.right).toBe(navigationInsets.left);
   await expect(mobileDialog.locator('[data-mobile-overflow-cue="true"]')).toBeVisible();
   await expectMobileCategoryFadeCoverage(mobileDialog);
-  await expect(mobileCategories.getByRole('button', { name: '概览' })).toHaveAttribute(
+  await expect(mobileCategories.getByRole('tab', { name: '概览' })).toHaveAttribute(
     'data-section-active',
     'true',
   );
@@ -912,7 +914,7 @@ async function verifiesAdministratorCenter(page: Page): Promise<void> {
     await mobileCategories.evaluate((element) => element.scrollWidth > element.clientWidth),
   ).toBe(true);
   await page.screenshot({ path: '../../../output/ui/admin-center-mobile.png', fullPage: true });
-  const mobileScheduledButton = mobileCategories.getByRole('button', { name: '计划任务' });
+  const mobileScheduledButton = mobileCategories.getByRole('tab', { name: '计划任务' });
   await mobileScheduledButton.scrollIntoViewIfNeeded();
   await mobileScheduledButton.click();
   await expect(mobileDialog.locator('[data-motion-scheduled-task-key="8"]')).toBeVisible();
@@ -2662,6 +2664,10 @@ async function serveArticleSettingsApi(route: Route): Promise<void> {
     });
     return;
   }
+  if (pathname === '/api/favorites/check') {
+    await fulfillJson(route, []);
+    return;
+  }
   await serveTrackingApi(route);
 }
 
@@ -3047,7 +3053,7 @@ async function mobileSettingsNavigationTest(page: Page, workspace: string): Prom
   await page.getByRole('menuitem', { name: '打开设置中心' }).tap();
   const settings = page.getByRole('dialog', { name: '设置中心' });
   await expect(settings).toBeVisible();
-  await settings.getByRole('button', { name: '账号与安全', exact: true }).tap();
+  await settings.getByRole('tab', { name: '账号与安全', exact: true }).tap();
   await expect(settings.getByRole('region', { name: '账号与安全设置内容' })).toBeVisible();
   await settings.getByRole('button', { name: '返回', exact: true }).tap();
   await expect(settings).toHaveCount(0);
@@ -3063,7 +3069,7 @@ async function mobileSettingsNavigationTest(page: Page, workspace: string): Prom
   await expect(settings.getByText('未配置', { exact: true })).toBeVisible();
   await settings.getByRole('button', { name: '刷新 CNKI 登录状态' }).tap();
   await expect(page.getByRole('dialog')).toHaveCount(1);
-  await settings.getByRole('button', { name: '常规', exact: true }).tap();
+  await settings.getByRole('tab', { name: '常规', exact: true }).tap();
   await expect(settings.getByRole('region', { name: '常规设置内容' })).toBeVisible();
   await settings.getByRole('button', { name: '返回', exact: true }).tap();
   await expect(settings).toHaveCount(0);
@@ -3141,7 +3147,7 @@ test.describe('mobile settings navigation', () => {
     );
     await expect(page).toHaveURL(/settings=general/);
     await expect(settings).toHaveAttribute('data-open', '');
-    await settings.getByRole('button', { name: '数据源', exact: true }).tap();
+    await settings.getByRole('tab', { name: '数据源', exact: true }).tap();
     await expect(settings.getByText('未配置', { exact: true })).toBeVisible();
   });
 });
@@ -3206,16 +3212,16 @@ async function themeInteractionFeedbackTest({ page }: { page: Page }): Promise<v
     const dialog = page.getByRole('dialog', { name: '设置中心' });
     await expect(dialog).toBeVisible();
     await page.evaluate(() => document.fonts.ready);
-    const navigation = page.getByRole('navigation', { name: '设置分类' });
-    const inactiveCategory = navigation.getByRole('button', { name: '数据源' });
-    const currentCategory = navigation.getByRole('button', { name: '文献追踪' });
+    const navigation = page.getByRole('tablist', { name: '设置分类' });
+    const inactiveCategory = navigation.getByRole('tab', { name: '数据源' });
+    const currentCategory = navigation.getByRole('tab', { name: '文献追踪' });
     const initialBox = await settledBoundingBox(inactiveCategory);
     await inactiveCategory.hover();
     await expect(inactiveCategory).toHaveCSS(
       'background-color',
       colorScheme === 'light' ? 'rgb(237, 237, 238)' : 'rgb(30, 30, 30)',
     );
-    await expect(currentCategory).toHaveAttribute('aria-current', 'page');
+    await expect(currentCategory).toHaveAttribute('aria-selected', 'true');
     expect(await inactiveCategory.boundingBox()).toEqual(initialBox);
     await page.mouse.down();
     await expect(inactiveCategory).toHaveCSS(
@@ -3224,7 +3230,7 @@ async function themeInteractionFeedbackTest({ page }: { page: Page }): Promise<v
     );
     await page.mouse.move(1, 1);
     await page.mouse.up();
-    await expect(currentCategory).toHaveAttribute('aria-current', 'page');
+    await expect(currentCategory).toHaveAttribute('aria-selected', 'true');
 
     const modelInput = page.locator('#ai-model');
     await modelInput.scrollIntoViewIfNeeded();

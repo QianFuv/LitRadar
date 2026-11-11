@@ -2,6 +2,7 @@
  * Query-driven aggregated settings dialog for every authenticated route.
  */
 
+import { Tabs } from '@animate-ui/react/primitives/base-ui/tabs';
 import {
   Bell,
   KeyRound,
@@ -395,25 +396,27 @@ function SettingsCenterSession({
         returnFocusRef={returnFocusRef}
         sections={SETTINGS_SECTIONS}
       >
-        <MotionPresence mode="wait">
-          <MotionDiv
-            key={activeContentKey}
-            data-settings-content-key={activeContentKey}
-            variants={PANEL_VARIANTS}
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-          >
-            <SettingsCategoryContent
-              activeSection={activeSection}
-              copyFeedback={copyFeedback}
-              handleCopy={handleCopy}
-              oidcLinkResult={oidcLinkResult}
-              onTrackingControllerChange={handleTrackingControllerChange}
-              user={user}
-            />
-          </MotionDiv>
-        </MotionPresence>
+        <Tabs.Panel value={activeSection} render={<div />}>
+          <MotionPresence mode="wait">
+            <MotionDiv
+              key={activeContentKey}
+              data-settings-content-key={activeContentKey}
+              variants={PANEL_VARIANTS}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+            >
+              <SettingsCategoryContent
+                activeSection={activeSection}
+                copyFeedback={copyFeedback}
+                handleCopy={handleCopy}
+                oidcLinkResult={oidcLinkResult}
+                onTrackingControllerChange={handleTrackingControllerChange}
+                user={user}
+              />
+            </MotionDiv>
+          </MotionPresence>
+        </Tabs.Panel>
       </SectionedDialogFrame>
 
       <ConfirmDialog

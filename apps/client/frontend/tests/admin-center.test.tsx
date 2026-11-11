@@ -25,6 +25,17 @@ const adminCenterMocks = vi.hoisted(() => ({
 const WORKSPACE_URL = '/?q=graph&area=Accounting+%26+Auditing';
 
 /**
+ * Find the panel a section tab controls, including hidden retained panels, which have no
+ * accessible name while hidden.
+ *
+ * @param tabName - Section tab name.
+ * @returns Controlled panel element, or null when it is not mounted.
+ */
+function findPanelOfTab(tabName: string): HTMLElement | null {
+  const tab = screen.getAllByRole('tab', { name: tabName })[0];
+  return document.getElementById(tab.getAttribute('aria-controls') ?? '');
+}
+/**
  * Move the in-memory location as an external navigation would.
  *
  * @param router - Router of the rendered dialog.
@@ -106,7 +117,7 @@ async function navigatesPersistentAdministratorPanels(): Promise<void> {
 
   expect(await screen.findByRole('dialog', { name: '管理面板' })).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: '概览' })).toBeInTheDocument();
-  expect(screen.getAllByRole('navigation', { name: '管理分类' })).toHaveLength(1);
+  expect(screen.getAllByRole('tablist', { name: '管理分类' })).toHaveLength(1);
   expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(7);
   expect(screen.getByText('overview card marker')).toBeInTheDocument();
   for (const marker of [
@@ -119,10 +130,8 @@ async function navigatesPersistentAdministratorPanels(): Promise<void> {
   ]) {
     expect(screen.queryByText(marker)).not.toBeInTheDocument();
   }
-  const overviewPanel = screen.getByRole('tabpanel', { name: '概览面板' });
-  const retainedUserPanel = screen
-    .getByRole('dialog', { name: '管理面板' })
-    .querySelector<HTMLElement>('[role="tabpanel"][aria-label="用户面板"]');
+  const overviewPanel = screen.getByRole('tabpanel', { name: '概览' });
+  const retainedUserPanel = findPanelOfTab('用户');
   expect(overviewPanel).not.toHaveAttribute('hidden');
   expect(overviewPanel).toHaveAttribute('data-admin-panel-state', 'active');
   expect(retainedUserPanel).not.toBeNull();
@@ -141,25 +150,21 @@ async function navigatesPersistentAdministratorPanels(): Promise<void> {
   await visit(view.router, `${WORKSPACE_URL}&admin=users`);
   await waitFor(() => expect(screen.getByRole('heading', { name: '用户' })).toBeInTheDocument());
 
-  expect(screen.getByRole('tabpanel', { name: '用户面板' })).not.toHaveAttribute('hidden');
-  expect(screen.getByRole('tabpanel', { name: '用户面板' })).toBe(retainedUserPanel);
+  expect(screen.getByRole('tabpanel', { name: '用户' })).not.toHaveAttribute('hidden');
+  expect(screen.getByRole('tabpanel', { name: '用户' })).toBe(retainedUserPanel);
   expect(retainedUserPanel).toHaveAttribute('data-admin-panel-state', 'active');
   expect(overviewPanel).toHaveAttribute('data-admin-panel-state', 'inactive');
-  expect(
-    screen
-      .getByRole('dialog', { name: '管理面板' })
-      .querySelector('[role="tabpanel"][aria-label="概览面板"]'),
-  ).toHaveAttribute('hidden');
+  expect(findPanelOfTab('概览')).toHaveAttribute('hidden');
   expect(screen.getByLabelText('用户草稿')).toBe(userDraft);
   expect(userDraft).toHaveValue('preserved');
   expect(screen.queryByText('scheduled tasks card marker')).not.toBeInTheDocument();
   expect(
     screen
-      .getAllByRole('button', { name: '用户' })
-      .every((button) => button.hasAttribute('aria-current')),
+      .getAllByRole('tab', { name: '用户' })
+      .every((tab) => tab.getAttribute('aria-selected') === 'true'),
   ).toBe(true);
 
-  await user.click(screen.getAllByRole('button', { name: '运行配置' })[0]);
+  await user.click(screen.getAllByRole('tab', { name: '运行配置' })[0]);
   await waitFor(() =>
     expect(readRouterUrl(view.router)).toBe(`${WORKSPACE_URL}&admin=runtime-settings`),
   );
