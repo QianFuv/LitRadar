@@ -4,6 +4,7 @@
 
 import type { ReactNode } from 'react';
 import * as stylex from '@stylexjs/stylex';
+import { animations } from '@/lib/animations.stylex';
 import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
 type ReaderPlaceholderProps = {
@@ -87,12 +88,10 @@ export function ReaderPlaceholder({
   );
 }
 
-const radarSweepKeyframes = stylex.keyframes({ to: { transform: 'rotate(360deg)' } });
-
 const styles = stylex.create({
   radarSweep: {
     transformOrigin: '50% 50%',
-    animationName: radarSweepKeyframes,
+    animationName: animations.spin,
     animationDuration: '6s',
     animationTimingFunction: 'linear',
     animationIterationCount: 'infinite',

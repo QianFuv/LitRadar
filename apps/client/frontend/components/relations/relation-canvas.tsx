@@ -56,6 +56,7 @@ import {
   type RelationPoint,
 } from '@/lib/relation-graph';
 import * as stylex from '@stylexjs/stylex';
+import { animations } from '@/lib/animations.stylex';
 import { nodeMarker } from '@/lib/markers.stylex';
 import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
@@ -193,10 +194,11 @@ function formatArticleAuthors(authors: Article['authors']): string {
  * @returns Expand or collapse button.
  */
 function NodeToggle({ data, dotCenter }: { data: ArticleNodeData; dotCenter: number }) {
-  const { className } = stylex.props(
+  const { className, style } = stylex.props(
     styles.nodeToggleButton,
     styles.toggleHitArea,
     data.isExpanded && styles.nodeToggleButtonExpanded,
+    styles.nodeTogglePosition(`${dotCenter}px`, `calc(50% + ${data.isRoot ? 15 : 11}px)`),
   );
   return (
     <button
@@ -206,7 +208,7 @@ function NodeToggle({ data, dotCenter }: { data: ArticleNodeData; dotCenter: num
       aria-expanded={data.isExpanded}
       disabled={data.isLoading}
       className={`nodrag ${className}`}
-      style={{ top: dotCenter, left: `calc(50% + ${data.isRoot ? 15 : 11}px)` }}
+      style={style}
       onClick={data.onToggle}
     >
       {data.isLoading ? (
@@ -924,8 +926,6 @@ export function RelationCanvas({
   );
 }
 
-const spinKeyframes = stylex.keyframes({ to: { transform: 'rotate(360deg)' } });
-
 const styles = stylex.create({
   box: (width: string, height: string) => ({
     width,
@@ -940,6 +940,10 @@ const styles = stylex.create({
     left,
     top,
     transformOrigin: 'center top',
+  }),
+  nodeTogglePosition: (top: string, left: string) => ({
+    top,
+    left,
   }),
   nodeToggleButton: {
     position: 'absolute',
@@ -1018,7 +1022,7 @@ const styles = stylex.create({
       default: '0.75rem',
       '@media (pointer: coarse)': '1rem',
     },
-    animationName: spinKeyframes,
+    animationName: animations.spin,
     animationDuration: '1s',
     animationTimingFunction: 'linear',
     animationIterationCount: 'infinite',

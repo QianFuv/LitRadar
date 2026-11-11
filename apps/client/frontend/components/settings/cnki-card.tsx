@@ -43,6 +43,7 @@ import type {
   SettingsCopyScope,
 } from '@/components/settings/use-settings-copy';
 import * as stylex from '@stylexjs/stylex';
+import { animations } from '@/lib/animations.stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
 
 type CnkiMessageTone = 'error' | 'success' | 'warning';
@@ -620,8 +621,6 @@ function renderCnkiClearConfirmation(
   );
 }
 
-const spinKeyframes = stylex.keyframes({ to: { transform: 'rotate(360deg)' } });
-
 const styles = stylex.create({
   cnkiMessageError: {
     fontSize: '0.875rem',
@@ -925,7 +924,7 @@ const styles = stylex.create({
   renderCnkiLoginChallengeLoader2: {
     height: '1rem',
     width: '1rem',
-    animationName: spinKeyframes,
+    animationName: animations.spin,
     animationDuration: '1s',
     animationTimingFunction: 'linear',
     animationIterationCount: 'infinite',
@@ -993,7 +992,7 @@ const styles = stylex.create({
   renderCnkiSessionActionsLoader2: {
     width: '1rem',
     height: '1rem',
-    animationName: spinKeyframes,
+    animationName: animations.spin,
     animationDuration: '1s',
     animationTimingFunction: 'linear',
     animationIterationCount: 'infinite',

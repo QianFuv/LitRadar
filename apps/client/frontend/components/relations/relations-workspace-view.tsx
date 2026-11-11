@@ -68,6 +68,7 @@ import { useSelectedDatabase } from '@/lib/selected-database';
 import { READER_DOCK_MEDIA_QUERY, useMediaQuery } from '@/lib/use-media-query';
 import { LoadingText } from '@/components/ui/loading-text';
 import * as stylex from '@stylexjs/stylex';
+import { animations } from '@/lib/animations.stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
 
 /** Related lists are shared with the article reader and change only when the index updates. */
@@ -710,8 +711,6 @@ function RelationList({
   );
 }
 
-const spinKeyframes = stylex.keyframes({ to: { transform: 'rotate(360deg)' } });
-
 const styles = stylex.create({
   statusOutput: {
     display: 'block',
@@ -928,7 +927,7 @@ const styles = stylex.create({
   relationExplorerLoader2: {
     width: '1rem',
     height: '1rem',
-    animationName: spinKeyframes,
+    animationName: animations.spin,
     animationDuration: '1s',
     animationTimingFunction: 'linear',
     animationIterationCount: 'infinite',
@@ -976,7 +975,7 @@ const styles = stylex.create({
   relationListLoader2: {
     width: '0.875rem',
     height: '0.875rem',
-    animationName: spinKeyframes,
+    animationName: animations.spin,
     animationDuration: '1s',
     animationTimingFunction: 'linear',
     animationIterationCount: 'infinite',

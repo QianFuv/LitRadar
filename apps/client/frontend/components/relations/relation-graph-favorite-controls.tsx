@@ -40,6 +40,7 @@ import {
   type RelationGraph,
 } from '@/lib/relation-graph';
 import * as stylex from '@stylexjs/stylex';
+import { animations } from '@/lib/animations.stylex';
 import { colors } from '@/lib/theme.stylex';
 
 /** Longest saved title accepted by the server, in characters. */
@@ -484,8 +485,6 @@ function RelationGraphLeaveGuard({ favorite }: { favorite: RelationGraphFavorite
   );
 }
 
-const spinKeyframes = stylex.keyframes({ to: { transform: 'rotate(360deg)' } });
-
 const styles = stylex.create({
   relationGraphFavoriteButtonsButton: {
     width: {
@@ -500,7 +499,7 @@ const styles = stylex.create({
   relationGraphFavoriteButtonsLoader2: {
     width: '1rem',
     height: '1rem',
-    animationName: spinKeyframes,
+    animationName: animations.spin,
     animationDuration: '1s',
     animationTimingFunction: 'linear',
     animationIterationCount: 'infinite',
