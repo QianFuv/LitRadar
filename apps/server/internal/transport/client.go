@@ -1,10 +1,8 @@
 package transport
 
 import (
-	"compress/gzip"
 	"context"
 	"errors"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -13,7 +11,7 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-// ClientTransport supplies frozen reqwest defaults and case-sensitive gzip decoding.
+// ClientTransport supplies source headers and delegates gzip decoding to net/http.
 // Request contexts own connection and handshake deadlines, including proxy negotiation.
 type ClientTransport struct{ *http.Transport }
 
@@ -26,7 +24,7 @@ func (selection Proxy) ClientTransport() (*ClientTransport, error) {
 	dialer := &net.Dialer{KeepAlive: 30 * time.Second}
 	wire.DialContext = dialer.DialContext
 	wire.TLSHandshakeTimeout = 0
-	wire.DisableCompression = true
+	wire.DisableCompression = false
 	if selection.IsExplicit() {
 		location, err := url.Parse(selection.canonical)
 		if err != nil {
@@ -50,47 +48,8 @@ func (wire *ClientTransport) RoundTrip(request *http.Request) (*http.Response, e
 	if _, exists := request.Header["Accept"]; !exists {
 		request.Header.Set("Accept", "*/*")
 	}
-	if _, exists := request.Header["Accept-Encoding"]; !exists {
-		request.Header.Set("Accept-Encoding", "gzip")
-	}
-	response, err := wire.Transport.RoundTrip(request)
-	if err != nil {
-		return nil, err
-	}
-	if response.Header.Get("Content-Encoding") == "gzip" {
-		response.Body = &gzipBody{source: response.Body}
-		response.Header.Del("Content-Encoding")
-		response.Header.Del("Content-Length")
-		response.ContentLength = -1
-		response.Uncompressed = true
-	}
-	return response, nil
-}
 
-type gzipBody struct {
-	source  io.ReadCloser
-	decoded *gzip.Reader
-	failure error
-}
-
-func (body *gzipBody) Read(destination []byte) (int, error) {
-	if body.failure != nil {
-		return 0, body.failure
-	}
-	if body.decoded == nil {
-		body.decoded, body.failure = gzip.NewReader(body.source)
-		if body.failure != nil {
-			return 0, body.failure
-		}
-		body.decoded.Multistream(false)
-	}
-	return body.decoded.Read(destination)
-}
-func (body *gzipBody) Close() error {
-	if body.decoded != nil {
-		_ = body.decoded.Close()
-	}
-	return body.source.Close()
+	return wire.Transport.RoundTrip(request)
 }
 
 // configureSocksDialer installs explicit proxy authentication and the selected DNS policy.

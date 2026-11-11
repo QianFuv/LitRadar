@@ -368,11 +368,12 @@ func TestLiveSharedDeadlineStopsProxyRetrySleep(t *testing.T) {
 	}
 }
 
-func TestLiveHttpRedirectNormalizesBeforeFamilyValidation(t *testing.T) {
+func TestLiveHttpRedirectUsesStandardParsingBeforeFamilyValidation(t *testing.T) {
 	for _, test := range []struct {
 		name, location string
 		requests       int32
-	}{{"fragment", "/proxy/next#fragment", 2}, {"empty", "", 2}, {"invalid", "https://[", 1}, {"backslash", `\proxy\next`, 2}} {
+		failure        string
+	}{{"fragment", "/proxy/next#fragment", 1, "error following redirect"}, {"empty", "", 1, ""}, {"invalid", "https://[", 1, "error sending request"}, {"backslash", `\proxy\next`, 1, "error following redirect"}} {
 		t.Run(test.name, func(t *testing.T) {
 			var count atomic.Int32
 			live, server := loopbackLive(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -387,7 +388,7 @@ func TestLiveHttpRedirectNormalizesBeforeFamilyValidation(t *testing.T) {
 				}
 			}), DefaultLiveConfig(), time.Time{})
 			_, err := live.DownloadPdf(context.Background(), server.URL+"/proxy/start", nil, nil)
-			if err != nil || count.Load() != test.requests {
+			if (err == nil) != (test.failure == "") || err != nil && err.Error() != test.failure || count.Load() != test.requests {
 				t.Fatalf("redirect normalization differs: count=%d error=%v", count.Load(), err)
 			}
 		})
@@ -566,7 +567,7 @@ func assertShareSyncForm(t *testing.T, request *http.Request, serverUrl string) 
 // assertShareSyncRedirect retains all assertions for the corresponding protocol request.
 func assertShareSyncRedirect(t *testing.T, request *http.Request, serverUrl string) {
 	t.Helper()
-	if request.Method != "GET" || request.Header.Get("Referer") != serverUrl+"/share/entry/sso-login/cookie/sync" {
+	if request.Method != "GET" || request.Header.Get("Referer") != serverUrl+"/share/protocolAuth" {
 		t.Error("redirect method/referer mismatch")
 	}
 }

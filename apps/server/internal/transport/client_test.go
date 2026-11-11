@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"compress/gzip"
 	"io"
 	"net"
 	"net/http"
@@ -56,5 +57,39 @@ func TestSourceTlsHandshakeUsesRequestBudget(t *testing.T) {
 	body, err := BoundedText(response, 64)
 	if err != nil || body != "ready" {
 		t.Fatalf("%q %v", body, err)
+	}
+}
+
+// TestSourceGzipUsesStandardMultistreamDecoding covers the decoded body and response metadata.
+func TestSourceGzipUsesStandardMultistreamDecoding(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Accept-Encoding") != "gzip" {
+			t.Error("gzip negotiation missing")
+		}
+		writer.Header().Set("Content-Encoding", "GZIP")
+		for _, text := range []string{"first", "second"} {
+			compressed := gzip.NewWriter(writer)
+			if _, err := io.WriteString(compressed, text); err != nil {
+				t.Error(err)
+			}
+			if err := compressed.Close(); err != nil {
+				t.Error(err)
+			}
+		}
+	}))
+	t.Cleanup(server.Close)
+	wire, err := (Proxy{}).ClientTransport()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(wire.CloseIdleConnections)
+	client := http.Client{Transport: wire}
+	response, err := client.Get(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := BoundedText(response, 64)
+	if err != nil || body != "firstsecond" || !response.Uncompressed || response.Header.Get("Content-Encoding") != "" {
+		t.Fatalf("standard gzip decoding failed: %q %v", body, err)
 	}
 }

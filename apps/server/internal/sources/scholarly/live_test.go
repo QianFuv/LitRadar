@@ -71,7 +71,7 @@ func TestLiveSourceWireQueriesAndCursorTermination(t *testing.T) {
 	if err != nil || page.NextCursor != nil || len(page.Items) != 1 {
 		t.Fatalf("%#v %v", page, err)
 	}
-	if len(received) != 2 || !strings.HasPrefix(received[0], "/v1/journals/1234-5678/works?rows=225&filter=type%3Ajournal-article%2Cfrom-created-date%3A1970-01-01T00%3A00%3A00%2Cuntil-created-date%3A1970-01-01T00%3A00%3A01&mailto=fixture%40example.test") || !strings.Contains(received[1], "filter=primary_location.source.id%3AS1%2Ctype%3Aarticle%7Cbook-chapter&per-page=200&cursor=*&sort=publication_date%3Adesc&select=") {
+	if len(received) != 2 || !strings.HasPrefix(received[0], "/v1/journals/1234-5678/works?rows=225&filter=type%3Ajournal-article%2Cfrom-created-date%3A1970-01-01T00%3A00%3A00%2Cuntil-created-date%3A1970-01-01T00%3A00%3A01&mailto=fixture%40example.test") || !strings.Contains(received[1], "filter=primary_location.source.id%3AS1%2Ctype%3Aarticle%7Cbook-chapter&per-page=200&cursor=%2A&sort=publication_date%3Adesc&select=") {
 		t.Fatalf("wire queries: %q", received)
 	}
 	encoded, _ := json.Marshal(live.Attempts())

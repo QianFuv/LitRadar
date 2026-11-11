@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 
 	platform "github.com/QianFuv/LitRadar/apps/server/internal/platform/transport"
@@ -31,7 +30,12 @@ func ExplicitProxy(value string) (Proxy, error) {
 	}
 	canonical := location.Href(false)
 	if hasCompleteUserinfo {
-		credentials := url.UserPassword(proxyCredential(location.Username()), proxyCredential(location.Password())).String()
+		username, userError := url.PathUnescape(location.Username())
+		password, passwordError := url.PathUnescape(location.Password())
+		if userError != nil || passwordError != nil {
+			return Proxy{}, ErrProxyUrl
+		}
+		credentials := url.UserPassword(LossyUtf8([]byte(username)), LossyUtf8([]byte(password))).String()
 		_, authority, _ := strings.Cut(canonical, "://")
 		_, host, _ := strings.Cut(authority, "@")
 		canonical = location.Scheme() + "://" + credentials + "@" + host
@@ -42,21 +46,6 @@ func ExplicitProxy(value string) (Proxy, error) {
 	}
 	wire.CloseIdleConnections()
 	return Proxy{raw: value, canonical: canonical}, nil
-}
-
-func proxyCredential(value string) string {
-	decoded := make([]byte, 0, len(value))
-	for index := 0; index < len(value); index++ {
-		if value[index] == '%' && index+2 < len(value) {
-			if character, err := strconv.ParseUint(value[index+1:index+3], 16, 8); err == nil {
-				decoded = append(decoded, byte(character))
-				index += 2
-				continue
-			}
-		}
-		decoded = append(decoded, value[index])
-	}
-	return LossyUtf8(decoded)
 }
 
 // IsExplicit reports whether the decision has an explicit managed proxy.

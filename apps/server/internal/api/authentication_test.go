@@ -23,7 +23,8 @@ func TestCredentialPrecedenceDoesNotFallBackFromMalformedAuthorization(t *testin
 		{nil, []string{"irrelevant=x", "litradar_session=second"}, "", false},
 		{nil, []string{"litradar_session=first; litradar_session=second"}, "first", false},
 		{nil, []string{"litradar_session=; litradar_session=second"}, "", false},
-		{nil, []string{"litradar_session =ignored; litradar_session=%61"}, "%61", false},
+		{nil, []string{"litradar_session =ignored; litradar_session=%61"}, "ignored", false},
+		{nil, []string{`litradar_session="quoted"`}, "quoted", false},
 	} {
 		headers := http.Header{}
 		for _, value := range scenario.authorization {
@@ -43,10 +44,10 @@ func TestCredentialPrecedenceDoesNotFallBackFromMalformedAuthorization(t *testin
 }
 
 func TestCookieWirePreservesClearingAndFractionalMaxAge(t *testing.T) {
-	if value := sessionCookieHeader("fixture", 102.9, 100.1, true); value != "litradar_session=fixture; Max-Age=2; Path=/; SameSite=lax; HttpOnly; Secure" {
+	if value := sessionCookieHeader("fixture", 102.9, 100.1, true); value != "litradar_session=fixture; Path=/; Max-Age=2; HttpOnly; Secure; SameSite=Lax" {
 		t.Fatal(value)
 	}
-	if value := sessionCookieHeader("", 0, 100, false); value != "litradar_session=; Max-Age=0; Path=/; SameSite=lax; HttpOnly" {
+	if value := sessionCookieHeader("", 0, 100, false); value != "litradar_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax" {
 		t.Fatal(value)
 	}
 	if _, hasCookie := sessionCookie(http.Header{"Cookie": {"litradar_session="}}); !hasCookie {

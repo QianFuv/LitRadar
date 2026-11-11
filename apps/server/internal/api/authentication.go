@@ -5,7 +5,6 @@ import (
 	"errors"
 	"math"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/auth"
@@ -109,28 +108,23 @@ func sessionCookie(headers http.Header) (string, bool) {
 	if len(values) == 0 || !validHeaderText(values[0]) {
 		return "", false
 	}
-	for _, cookie := range strings.Split(values[0], ";") {
-		name, value, hasEquals := strings.Cut(strings.TrimSpace(cookie), "=")
-		if hasEquals && name == domain.SessionCookieName {
-			return strings.TrimSpace(value), true
-		}
+	request := http.Request{Header: http.Header{"Cookie": values[:1]}}
+	cookie, err := request.Cookie(domain.SessionCookieName)
+	if err != nil {
+		return "", false
 	}
-	return "", false
+	return cookie.Value, true
 }
 
 func sessionCookieHeader(token string, expires, now float64, isSecure bool) string {
 	maxAge := math.Floor(math.Max(expires-now, 0))
-	seconds := int64(0)
-	if maxAge >= float64(math.MaxInt64) {
-		seconds = math.MaxInt64
-	} else if !math.IsNaN(maxAge) {
-		seconds = int64(maxAge)
+	seconds := -1
+	if maxAge >= float64(math.MaxInt) {
+		seconds = math.MaxInt
+	} else if !math.IsNaN(maxAge) && maxAge > 0 {
+		seconds = int(maxAge)
 	}
-	value := domain.SessionCookieName + "=" + token + "; Max-Age=" + strconv.FormatInt(seconds, 10) + "; Path=/; SameSite=lax; HttpOnly"
-	if isSecure {
-		value += "; Secure"
-	}
-	return value
+	return (&http.Cookie{Name: domain.SessionCookieName, Value: token, MaxAge: seconds, Path: "/", SameSite: http.SameSiteLaxMode, HttpOnly: true, Secure: isSecure}).String()
 }
 
 func mapAuthError(err error) *apiError {

@@ -1,7 +1,7 @@
 package cnki
 
 import (
-	"strconv"
+	"net/url"
 	"strings"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/sources/scholarly"
@@ -25,31 +25,21 @@ func parseDomesticUrl(value string) (*whatwg.Url, error) {
 	return parsed, nil
 }
 
-func formDecode(value string) string {
-	value = strings.ReplaceAll(value, "+", " ")
-	output := make([]byte, 0, len(value))
-	for index := 0; index < len(value); index++ {
-		if value[index] == '%' && index+2 < len(value) {
-			if character, err := strconv.ParseUint(value[index+1:index+3], 16, 8); err == nil {
-				output = append(output, byte(character))
-				index += 2
-				continue
-			}
-		}
-		output = append(output, value[index])
-	}
-	return transport.LossyUtf8(output)
-}
-func queryPairs(query string) []scholarly.QueryPair {
+func queryPairs(query string) ([]scholarly.QueryPair, error) {
 	pairs := []scholarly.QueryPair{}
-	for _, part := range strings.Split(strings.TrimPrefix(query, "?"), "&") {
+	for part := range strings.SplitSeq(strings.TrimPrefix(query, "?"), "&") {
 		if part == "" {
 			continue
 		}
 		key, value, _ := strings.Cut(part, "=")
-		pairs = append(pairs, scholarly.QueryPair{Name: formDecode(key), Value: formDecode(value)})
+		name, keyError := url.QueryUnescape(key)
+		decoded, valueError := url.QueryUnescape(value)
+		if keyError != nil || valueError != nil {
+			return nil, &Error{Kind: "Request", Message: "domestic CNKI URL query is invalid"}
+		}
+		pairs = append(pairs, scholarly.QueryPair{Name: transport.LossyUtf8([]byte(name)), Value: transport.LossyUtf8([]byte(decoded))})
 	}
-	return pairs
+	return pairs, nil
 }
 func asciiLower(value string) string {
 	var output strings.Builder
@@ -69,8 +59,12 @@ func WithDomesticPlatform(value string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	query, err := queryPairs(parsed.Search())
+	if err != nil {
+		return "", err
+	}
 	pairs := []scholarly.QueryPair{}
-	for _, pair := range queryPairs(parsed.Search()) {
+	for _, pair := range query {
 		key := asciiLower(pair.Name)
 		if key != "language" && key != "uniplatform" {
 			pairs = append(pairs, pair)
@@ -87,7 +81,10 @@ func RedactUrl(value string) string {
 	if err != nil {
 		return "[REDACTED INVALID DOMESTIC URL]"
 	}
-	pairs := queryPairs(parsed.Search())
+	pairs, err := queryPairs(parsed.Search())
+	if err != nil {
+		return "[REDACTED INVALID DOMESTIC URL]"
+	}
 	for index, pair := range pairs {
 		switch asciiLower(pair.Name) {
 		case "captchaid", "ident", "returnurl", "token", "secretkey", "pointjson", "originalimagebase64", "jigsawimagebase64":

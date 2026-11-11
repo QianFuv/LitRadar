@@ -3,6 +3,7 @@ package scholarly
 import (
 	"encoding/json"
 	"errors"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -85,32 +86,13 @@ func RedactUrl(value string) string {
 // QueryPair preserves upstream query ordering.
 type QueryPair struct{ Name, Value string }
 
-// EncodeQuery follows application/x-www-form-urlencoded, including '*' and '~'.
+// EncodeQuery escapes ordered form pairs with net/url without reordering duplicate keys.
 func EncodeQuery(pairs []QueryPair) string {
 	parts := make([]string, len(pairs))
 	for index, pair := range pairs {
-		parts[index] = formEncode(pair.Name) + "=" + formEncode(pair.Value)
+		parts[index] = url.QueryEscape(pair.Name) + "=" + url.QueryEscape(pair.Value)
 	}
 	return strings.Join(parts, "&")
-}
-
-func formEncode(value string) string {
-	const hex = "0123456789ABCDEF"
-	var output strings.Builder
-	for index := range len(value) {
-		character := value[index]
-		switch {
-		case character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || strings.ContainsRune("*-._", rune(character)):
-			output.WriteByte(character)
-		case character == ' ':
-			output.WriteByte('+')
-		default:
-			output.WriteByte('%')
-			output.WriteByte(hex[character>>4])
-			output.WriteByte(hex[character&15])
-		}
-	}
-	return output.String()
 }
 
 // OpenAlexDoiQuery creates the ordered DOI filter query with an optional credential.
@@ -165,21 +147,7 @@ func encodedDoiLength(value string) int {
 	if len(value) > openAlexUrlBudget {
 		return openAlexUrlBudget + 1
 	}
-	length := 0
-	for index := range len(value) {
-		character := value[index]
-		switch {
-		case character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' ||
-			character == '*' || character == '-' || character == '.' || character == '_' || character == ' ':
-			length++
-		default:
-			length += 3
-		}
-		if length > openAlexUrlBudget {
-			return openAlexUrlBudget + 1
-		}
-	}
-	return length
+	return min(openAlexUrlBudget+1, len(url.QueryEscape(value)))
 }
 
 // CrossrefParameters validates frozen date bounds and builds the canonical query.

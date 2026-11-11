@@ -39,9 +39,9 @@ func TestHttpRedirectBoundariesAndWireBehavior(t *testing.T) {
 		expected       error
 	}{
 		{"relative", "/cfp/final", 302, 2, nil},
-		{"nonstandard-3xx", "/cfp/final", 399, 2, nil},
-		{"literal-percent-reaches-server", "/cfp/%", 302, 1, SourceError{Kind: "http_status", Status: 400}},
-		{"empty-location", "", 302, 6, ErrDisallowedUrl},
+		{"nonstandard-3xx", "/cfp/final", 399, 1, SourceError{Kind: "http_status", Status: 399}},
+		{"invalid-percent-fails-acquisition", "/cfp/%", 302, 2, ErrRequest},
+		{"empty-location", "", 302, 1, SourceError{Kind: "http_status", Status: 302}},
 		{"sibling-prefix", "/cfps", 302, 1, ErrDisallowedUrl},
 		{"private-literal", "http://127.0.0.1/cfp", 302, 1, ErrDisallowedUrl},
 		{"credentials", "http://user:pass@publisher.example/cfp", 302, 1, ErrDisallowedUrl},
@@ -143,7 +143,7 @@ func TestHttpPublicDnsAndLifetime(t *testing.T) {
 		<-release
 		return nil, fmt.Errorf("fixture")
 	}
-	for index := 0; index < cap(dnsSlots); index++ {
+	for index := 0; index < dnsLookupLimit; index++ {
 		ctx, cancel := context.WithCancel(context.Background())
 		finished := make(chan error, 1)
 		go func() { _, err := transport.resolve(ctx, "publisher.example"); finished <- err }()

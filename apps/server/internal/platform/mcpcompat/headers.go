@@ -4,6 +4,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -24,45 +26,37 @@ type origin struct {
 	authority authority
 }
 
-func asciiLower(value string) string {
-	return strings.Map(func(value rune) rune {
-		if value >= 'A' && value <= 'Z' {
-			return value + 32
-		}
-		return value
-	}, value)
-}
-
 func normalizeHost(value string) string {
-	return asciiLower(strings.Trim(strings.Trim(value, "["), "]"))
+	return strings.ToLower(strings.Trim(value, "[]"))
 }
 
-// parseAuthority preserves structural authority validation and legacy port extraction.
+// parseAuthority uses net/url and rejects userinfo, invalid ports and non-authority suffixes.
 func parseAuthority(value string) (authority, bool) {
-	if value == "" {
+	parsed, err := url.Parse("//" + value)
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || strings.Contains(value, "#") {
 		return authority{}, false
 	}
-	atSign, ok := authorityUserinfoBoundary(value)
-	if !ok {
+	if strings.HasPrefix(parsed.Host, "[") {
+		if _, err := netip.ParseAddr(parsed.Hostname()); err != nil {
+			return authority{}, false
+		}
+	} else if strings.Count(parsed.Host, ":") > 1 {
 		return authority{}, false
-	}
-	hostPort := value[atSign+1:]
-	host := hostPort
-	if strings.HasPrefix(hostPort, "[") {
-		host = hostPort[:strings.IndexByte(hostPort, ']')+1]
-	} else if index := strings.IndexByte(hostPort, ':'); index >= 0 {
-		host = hostPort[:index]
 	}
 	port := -1
-	if index := strings.LastIndexByte(value, ':'); index >= 0 {
-		if number, err := strconv.ParseUint(strings.TrimPrefix(value[index+1:], "+"), 10, 16); err == nil {
-			port = int(number)
+	if text := parsed.Port(); text != "" {
+		value, err := strconv.ParseUint(text, 10, 16)
+		if err != nil {
+			return authority{}, false
 		}
+		port = int(value)
+	} else if strings.HasSuffix(parsed.Host, ":") {
+		return authority{}, false
 	}
-	return authority{host: normalizeHost(host), port: port}, true
+	return authority{host: normalizeHost(parsed.Hostname()), port: port}, true
 }
 
-// parseOrigin validates legacy scheme and tail syntax before authority parsing.
+// parseOrigin delegates URL syntax to net/url and compares the scheme and authority.
 func parseOrigin(value string) (origin, bool) {
 	value = strings.TrimSpace(value)
 	if strings.EqualFold(value, "null") {
@@ -71,21 +65,12 @@ func parseOrigin(value string) (origin, bool) {
 	if len(value) > 65534 {
 		return origin{}, false
 	}
-	scheme, remainder, found := strings.Cut(value, "://")
-	if !found || scheme == "" || len(scheme) > 64 {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || len(parsed.Scheme) > 64 || parsed.User != nil {
 		return origin{}, false
 	}
-	if !validOriginScheme(scheme) {
-		return origin{}, false
-	}
-	if index := strings.IndexAny(remainder, "/?#"); index >= 0 {
-		if !validOriginTail(remainder[index:]) {
-			return origin{}, false
-		}
-		remainder = remainder[:index]
-	}
-	parsed, ok := parseAuthority(remainder)
-	return origin{scheme: asciiLower(scheme), authority: parsed}, ok
+	actual, ok := parseAuthority(parsed.Host)
+	return origin{scheme: strings.ToLower(parsed.Scheme), authority: actual}, ok
 }
 
 func visibleHeader(value string) bool {
@@ -127,114 +112,6 @@ func (policy HostOriginPolicy) validate(writer http.ResponseWriter, request *htt
 		return headerError(writer, 403, "Forbidden: Host header is not allowed")
 	}
 	return policy.validateOrigin(writer, request)
-}
-
-// authoritySyntax retains global bracket state and local colon/percent state across userinfo.
-type authoritySyntax struct {
-	colons     int
-	atSign     int
-	isOpened   bool
-	isClosed   bool
-	hasPercent bool
-}
-
-// authorityUserinfoBoundary validates bytes and returns the last userinfo separator.
-func authorityUserinfoBoundary(value string) (int, bool) {
-	state := authoritySyntax{atSign: -1}
-	for index, character := range []byte(value) {
-		if !state.accept(character, index) {
-			return 0, false
-		}
-	}
-	if state.isOpened != state.isClosed || state.colons > 1 || state.atSign == len(value)-1 || state.hasPercent {
-		return 0, false
-	}
-	return state.atSign, true
-}
-
-// accept updates the authority syntax state using the original ASCII allowlist.
-func (state *authoritySyntax) accept(character byte, index int) bool {
-	if !strings.ContainsRune("!$&'()*+,-.0123456789:;=@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_abcdefghijklmnopqrstuvwxyz~%", rune(character)) {
-		return false
-	}
-	switch character {
-	case '%':
-		state.hasPercent = true
-	case ':':
-		state.colons++
-		return state.colons <= 8
-	case '[':
-		return state.openBracket()
-	case ']':
-		return state.closeBracket()
-	case '@':
-		state.atSign = index
-		state.colons = 0
-		state.hasPercent = false
-	}
-	return true
-}
-
-// openBracket rejects repeated brackets and an active percent marker.
-func (state *authoritySyntax) openBracket() bool {
-	if state.hasPercent || state.isOpened {
-		return false
-	}
-	state.isOpened = true
-	return true
-}
-
-// closeBracket preserves bracket state while clearing local colon and percent counters.
-func (state *authoritySyntax) closeBracket() bool {
-	if !state.isOpened || state.isClosed {
-		return false
-	}
-	state.isClosed = true
-	state.colons = 0
-	state.hasPercent = false
-	return true
-}
-
-// validOriginScheme retains the legacy digit and punctuation allowance.
-func validOriginScheme(value string) bool {
-	for _, character := range []byte(value) {
-		if !strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+.-~", rune(character)) {
-			return false
-		}
-	}
-	return true
-}
-
-// validOriginTail validates path and query bytes up to the first ignored fragment.
-func validOriginTail(value string) bool {
-	isQuery := false
-	for _, character := range []byte(value) {
-		if character == '#' {
-			break
-		}
-		if character == '?' {
-			isQuery = true
-			continue
-		}
-		if !validOriginTailCharacter(character, isQuery) {
-			return false
-		}
-	}
-	return true
-}
-
-// validOriginTailCharacter preserves the distinct legacy path and query allowlists.
-func validOriginTailCharacter(character byte, isQuery bool) bool {
-	isAllowed := character == 0x21 || character >= 0x24 && character <= 0x3b || character == 0x3d
-	if isQuery {
-		return isAllowed || character >= 0x3f && character <= 0x7e
-	}
-	return isAllowed || validOriginPathCharacter(character)
-}
-
-// validOriginPathCharacter admits the path-only byte ranges and legacy punctuation.
-func validOriginPathCharacter(character byte) bool {
-	return character >= 0x40 && character <= 0x5f || character >= 0x61 && character <= 0x7a || strings.ContainsRune("|~\"{}", rune(character))
 }
 
 // requestAuthority retains present-empty header precedence and URL fallback.

@@ -84,3 +84,14 @@ func TestSearchDuplicateSkipsConflictingDownload(t *testing.T) {
 		t.Fatal(results)
 	}
 }
+
+// TestQueryMetadataUsesLastDuplicateAndRejectsMalformedEncoding avoids partial identifier projection.
+func TestQueryMetadataUsesLastDuplicateAndRejectsMalformedEncoding(t *testing.T) {
+	values, err := queryDict(ProxyBase + "/kns55/detail?FileName=first&FileName=a%2Bb")
+	if err != nil || values["FileName"] != "a+b" {
+		t.Fatal(values, err)
+	}
+	if _, err := queryDict(ProxyBase + "/kns55/detail?FileName=%zz"); err == nil {
+		t.Fatal("malformed identifier query accepted")
+	}
+}

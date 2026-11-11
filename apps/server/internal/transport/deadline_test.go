@@ -94,3 +94,19 @@ func assertArticleSleepBudget(t *testing.T) {
 		t.Fatal(elapsed)
 	}
 }
+
+// TestRetryAfterUsesHTTPDateFormats rejects the former non-HTTP date extensions.
+func TestRetryAfterUsesHTTPDateFormats(t *testing.T) {
+	now := time.Date(1994, time.November, 6, 8, 49, 0, 250000000, time.UTC)
+	for _, value := range []string{"Sun, 06 Nov 1994 08:49:37 GMT", "Sunday, 06-Nov-94 08:49:37 GMT", "Sun Nov  6 08:49:37 1994"} {
+		delay, ok := ParseRetryAfter(value, now)
+		if !ok || delay != (Delay{Seconds: 36, Nanoseconds: 750000000}) {
+			t.Fatalf("HTTP date %q: %+v %v", value, delay, ok)
+		}
+	}
+	for _, value := range []string{"Sun, 06 Nov 1994 08:49:60 GMT", "Sun, 06 Nov 1994 08:49:37 EST", "Sun, 06 Nov 1994 08:49:37 GMT (comment)"} {
+		if _, ok := ParseRetryAfter(value, now); ok {
+			t.Fatalf("non-HTTP date accepted: %q", value)
+		}
+	}
+}

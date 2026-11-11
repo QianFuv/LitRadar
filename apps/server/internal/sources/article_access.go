@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"math"
+	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
@@ -208,26 +209,8 @@ func emitSourceAttemptSummary(ctx context.Context, name string, attempts []schol
 	slog.InfoContext(ctx, "index.provider.attempts", "event", "index.provider.attempts", "component", "index", "provider", name, "attempt_count", len(attempts), "failure_count", failures, "retry_count", retries)
 }
 
-// encodeDoiPath escapes UTF-8 bytes exactly once while retaining the DOI path safe set.
-func encodeDoiPath(doi string) string {
-	var encoded strings.Builder
-	const hex = "0123456789ABCDEF"
-	for _, value := range []byte(doi) {
-		if isUnescapedDoiByte(value) {
-			encoded.WriteByte(value)
-		} else {
-			encoded.WriteByte('%')
-			encoded.WriteByte(hex[value>>4])
-			encoded.WriteByte(hex[value&15])
-		}
-	}
-	return encoded.String()
-}
-
-// isUnescapedDoiByte admits only the original ASCII alphanumeric and path punctuation set.
-func isUnescapedDoiByte(value byte) bool {
-	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9' || strings.ContainsRune("-._~/", rune(value))
-}
+// encodeDoiPath escapes DOI path segments while preserving their separating slashes.
+func encodeDoiPath(doi string) string { return strings.ReplaceAll(url.PathEscape(doi), "%2F", "/") }
 
 // resolveCnkiIssue scans pages in source order and checks overflow only after continuing page work.
 func (access *CnkiArticleAccess) resolveCnkiIssue(ctx context.Context, journal, issue any, article domain.ArticleLocator) (domain.ArticleRedirect, bool, error) {

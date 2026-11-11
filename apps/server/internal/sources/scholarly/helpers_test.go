@@ -47,3 +47,11 @@ func TestProgrammaticFixtureIntegerTimestamp(t *testing.T) {
 		t.Fatal("float accepted as integer")
 	}
 }
+
+// TestQueryEncodingPreservesOrderAndDuplicateKeys checks standard escaping without sorting pairs.
+func TestQueryEncodingPreservesOrderAndDuplicateKeys(t *testing.T) {
+	encoded := EncodeQuery([]QueryPair{{"same", "a+b *~"}, {"same", "second"}})
+	if encoded != "same=a%2Bb+%2A~&same=second" {
+		t.Fatal(encoded)
+	}
+}

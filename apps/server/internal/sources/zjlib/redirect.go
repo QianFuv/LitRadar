@@ -27,7 +27,7 @@ func (live *LiveTransport) roundTripSequence(ctx context.Context, method, locati
 			return nil
 		}
 	}
-	response, err := transport.RedirectSequence(ctx, live.state.redirect.Transport, live.state.redirect.Jar, live.state.proxy, method, location, body, headers, policy)
+	response, err := transport.RedirectSequence(ctx, live.state.redirect.Transport, live.state.redirect.Jar, method, location, body, headers, policy)
 	if err != nil {
 		var failure *Error
 		if errors.As(err, &failure) {

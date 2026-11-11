@@ -16,7 +16,7 @@ import (
 )
 
 func TestProxyCredentialDecodingOnHttpWire(t *testing.T) {
-	for encoded, decoded := range map[string]string{"u%zz": "u%zz", "u%FF": "u\ufffd", "u%F1%80%80": "u\ufffd", "u+name": "u+name", "u%40name": "u@name"} {
+	for encoded, decoded := range map[string]string{"u%25zz": "u%zz", "u%FF": "u\ufffd", "u%F1%80%80": "u\ufffd", "u+name": "u+name", "u%40name": "u@name"} {
 		t.Run(encoded, func(t *testing.T) {
 			capture := make(chan string, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -155,7 +155,7 @@ func TestProxyCredentialDecodingOnSocksWire(t *testing.T) {
 				_, err = io.WriteString(connection, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
 				failures <- err
 			}()
-			proxy, err := ExplicitProxy(scheme + "://u%FF:p%zz@" + listener.Addr().String())
+			proxy, err := ExplicitProxy(scheme + "://u%FF:p%25zz@" + listener.Addr().String())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -225,6 +225,15 @@ func assertProxyRedaction(t *testing.T, proxy Proxy) {
 		output.WriteString(fmt.Sprintf("%v %+v %#v", value, value, value))
 		if strings.Contains(output.String(), "private-") {
 			t.Fatal("proxy credentials leaked")
+		}
+	}
+}
+
+// TestProxyRejectsMalformedCredentialEscapes prevents inconsistent URL and wire credentials.
+func TestProxyRejectsMalformedCredentialEscapes(t *testing.T) {
+	for _, value := range []string{"http://u%zz:p@proxy.test:80", "socks5://u:p%zz@proxy.test:1080"} {
+		if _, err := ExplicitProxy(value); err != ErrProxyUrl {
+			t.Fatalf("malformed proxy credential accepted: %v", err)
 		}
 	}
 }

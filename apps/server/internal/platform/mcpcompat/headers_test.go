@@ -48,9 +48,9 @@ func TestHostOriginGuardPrecedesMediaAndJson(t *testing.T) {
 		{"wrong-host-port", "example.test:8444", "", false, 403, "Forbidden: Host header is not allowed", ""},
 		{"origin-port-absent", "localhost", "https://exact.test", false, 403, "Forbidden: Origin header is not allowed", ""},
 		{"origin-port-exact", "localhost", "https://exact.test:443/path", false, 406, "Not Acceptable: Client must accept both application/json and text/event-stream", ""},
-		{"positive-port", "example.test:+8443", "https://exact.test:+443", false, 406, "Not Acceptable: Client must accept both application/json and text/event-stream", ""},
-		{"invalid-path", "localhost", "https://app.test/<", false, 400, "Bad Request: Invalid Origin header", "text/plain; charset=utf-8"},
-		{"invalid-query", "localhost", "https://app.test/?q=\"", false, 400, "Bad Request: Invalid Origin header", "text/plain; charset=utf-8"},
+		{"invalid-positive-port", "example.test:+8443", "https://exact.test:+443", false, 400, "Bad Request: Invalid Host header", "text/plain; charset=utf-8"},
+		{"url-path", "localhost", "https://app.test/<", false, 406, "Not Acceptable: Client must accept both application/json and text/event-stream", ""},
+		{"url-query", "localhost", "https://app.test/?q=\"", false, 406, "Not Acceptable: Client must accept both application/json and text/event-stream", ""},
 		{"ignored-fragment", "localhost", "https://app.test/#x y", false, 406, "Not Acceptable: Client must accept both application/json and text/event-stream", ""},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
@@ -77,10 +77,10 @@ func TestHostOriginGuardPrecedesMediaAndJson(t *testing.T) {
 	}
 }
 
-func TestLegacyAuthorityAndSchemeSyntax(t *testing.T) {
+func TestAuthorityRejectsLegacySchemeSyntax(t *testing.T) {
 	for _, value := range []string{"1://app.test", "a~://app.test", "+://app.test"} {
-		if _, ok := parseOrigin(value); !ok {
-			t.Errorf("legacy scheme rejected: %s", value)
+		if _, ok := parseOrigin(value); ok {
+			t.Errorf("invalid scheme accepted: %s", value)
 		}
 	}
 	policy := HostOriginPolicy{AllowedHosts: []string{"example.test:+80"}}
@@ -101,5 +101,14 @@ func TestEmptyOriginPolicyAndPresentEmptyHost(t *testing.T) {
 	writer := httptest.NewRecorder()
 	if policy.validate(writer, request) || writer.Code != 400 || writer.Body.String() != "Bad Request: Invalid Host header" {
 		t.Fatalf("empty present Host %d %q", writer.Code, writer.Body.String())
+	}
+}
+
+// TestAuthorityRejectsNonAuthoritySyntax keeps DNS rebinding checks ahead of MCP dispatch.
+func TestAuthorityRejectsNonAuthoritySyntax(t *testing.T) {
+	for _, value := range []string{"user@localhost", "localhost:65536", "localhost:abc", "[bad]", "localhost/path", "localhost?query", "localhost#fragment"} {
+		if _, ok := parseAuthority(value); ok {
+			t.Errorf("invalid authority accepted: %s", value)
+		}
 	}
 }

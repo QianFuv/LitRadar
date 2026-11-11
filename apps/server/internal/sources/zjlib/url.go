@@ -1,6 +1,7 @@
 package zjlib
 
 import (
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -82,38 +83,26 @@ func (allowed endpoints) join(base, reference string, expected endpointFamily) (
 	}
 	return joined.Href(false), nil
 }
-func queryDict(value string) map[string]string {
-	result := map[string]string{}
+func queryDict(value string) (map[string]string, error) {
 	location, err := whatwg.NewParser().Parse(value)
 	if err != nil {
-		return result
+		return nil, &Error{Kind: "Parse", Message: "URL query is invalid."}
 	}
-	for _, part := range strings.Split(strings.TrimPrefix(location.Search(), "?"), "&") {
-		if part == "" {
-			continue
-		}
-		name, value, _ := strings.Cut(part, "=")
-		result[formDecode(name)] = formDecode(value)
+	query, err := url.ParseQuery(strings.TrimPrefix(location.Search(), "?"))
+	if err != nil {
+		return nil, &Error{Kind: "Parse", Message: "URL query contains invalid encoding."}
 	}
-	return result
-}
-func formDecode(value string) string {
-	value = strings.ReplaceAll(value, "+", " ")
-	output := make([]byte, 0, len(value))
-	for index := 0; index < len(value); index++ {
-		if value[index] == '%' && index+2 < len(value) {
-			if character, err := strconv.ParseUint(value[index+1:index+3], 16, 8); err == nil {
-				output = append(output, byte(character))
-				index += 2
-				continue
-			}
-		}
-		output = append(output, value[index])
+	result := make(map[string]string, len(query))
+	for name, values := range query {
+		result[transport.LossyUtf8([]byte(name))] = transport.LossyUtf8([]byte(values[len(values)-1]))
 	}
-	return transport.LossyUtf8(output)
+	return result, nil
 }
 func titleFromPdfUrl(value string) *string {
-	query := queryDict(value)
+	query, err := queryDict(value)
+	if err != nil {
+		return nil
+	}
 	if title, ok := query["filetitle"]; ok {
 		return cleanText(title)
 	}
@@ -196,7 +185,10 @@ func searchResultRow(text, lower string, anchor anchorLink) string {
 
 // buildSearchResult resolves title before row hints and retains case-sensitive query metadata.
 func buildSearchResult(anchor anchorLink, detail, row, base string, allowed endpoints, index int) (SearchResult, error) {
-	query := queryDict(detail)
+	query, err := queryDict(detail)
+	if err != nil {
+		return SearchResult{}, err
+	}
 	title := anchorTitle(anchor.body)
 	if title == nil {
 		if value, ok := query["FileName"]; ok {

@@ -2,6 +2,7 @@ package settings
 
 import (
 	"errors"
+	"net/url"
 	"strings"
 
 	whatwg "github.com/nlnwa/whatwg-url/url"
@@ -107,18 +108,6 @@ func isBaseUrlLocation(value string, location *whatwg.Url) bool {
 }
 
 func percentDecodedLength(value string) (int, bool) {
-	length := 0
-	isHex := func(character byte) bool {
-		return character >= '0' && character <= '9' || character >= 'a' && character <= 'f' || character >= 'A' && character <= 'F'
-	}
-	for index := 0; index < len(value); index++ {
-		if value[index] == '%' {
-			if index+2 >= len(value) || !isHex(value[index+1]) || !isHex(value[index+2]) {
-				return 0, false
-			}
-			index += 2
-		}
-		length++
-	}
-	return length, true
+	decoded, err := url.PathUnescape(value)
+	return len(decoded), err == nil
 }

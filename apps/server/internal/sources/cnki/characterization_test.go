@@ -124,3 +124,18 @@ func TestJournalNoCandidatesWarmsOnce(t *testing.T) {
 		t.Fatalf("navigation warmup order: %v %v", endpoints, err)
 	}
 }
+
+// TestQueryDecodingRejectsInvalidEscapesWithoutExposingSecrets checks URL boundary failures and redaction.
+func TestQueryDecodingRejectsInvalidEscapesWithoutExposingSecrets(t *testing.T) {
+	pairs, err := queryPairs("v=a%2Bb+~&v=second")
+	if err != nil || len(pairs) != 2 || pairs[0].Value != "a+b ~" || pairs[1].Value != "second" {
+		t.Fatal(pairs, err)
+	}
+	invalid := KnsBase + "/kcms2/article/abstract?token=private%zz"
+	if _, err := WithDomesticPlatform(invalid); err == nil {
+		t.Fatal("malformed query accepted")
+	}
+	if strings.Contains(RedactUrl(invalid), "private") {
+		t.Fatal("malformed query bypassed redaction")
+	}
+}
