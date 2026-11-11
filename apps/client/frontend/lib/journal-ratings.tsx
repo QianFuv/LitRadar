@@ -47,18 +47,3 @@ export function withJournalRatings(
     fmscn_rating: ratings?.fmscn_rating,
   };
 }
-
-/**
- * Append exact repeated rating parameters while retaining all other query filters.
- *
- * @param params - Article query parameters to update.
- * @param ratings - Selected grades for each rating system.
- */
-export function appendJournalRatingParams(
-  params: URLSearchParams,
-  ratings: Record<JournalRatingKey, string[]>,
-): void {
-  for (const { key } of JOURNAL_RATING_SYSTEMS) {
-    for (const value of ratings[key]) params.append(key, value);
-  }
-}

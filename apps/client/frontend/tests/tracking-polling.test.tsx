@@ -131,7 +131,7 @@ async function resumesPersistedJobAfterMount(): Promise<void> {
     }),
   );
 
-  await renderWithQuery(<TrackingSettingsContent userId={31} section="notifications" />);
+  await renderWithQuery(<TrackingSettingsContent section="notifications" />);
 
   const runningMessage = await screen.findByText('任务执行中');
   const feedbackNode = runningMessage.closest('[data-motion-feedback="manual-push"]');
@@ -167,7 +167,7 @@ async function cancelsQueuedJobAndAllowsRetry(): Promise<void> {
     ),
   );
   const user = userEvent.setup();
-  await renderWithQuery(<TrackingSettingsContent userId={32} section="notifications" />);
+  await renderWithQuery(<TrackingSettingsContent section="notifications" />);
 
   await user.click(await screen.findByRole('button', { name: '推送到追踪文件夹' }));
   expect(await screen.findByText('任务已排队')).toBeInTheDocument();
@@ -202,7 +202,7 @@ async function acknowledgesUnknownOutcomeOnlyThroughTheExplicitAction(): Promise
     ),
   );
   const user = userEvent.setup();
-  await renderWithQuery(<TrackingSettingsContent userId={33} section="notifications" />);
+  await renderWithQuery(<TrackingSettingsContent section="notifications" />);
 
   expect(await screen.findByText('结果未知，请先检查投递记录')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: '推送到追踪文件夹' })).toBeDisabled();
@@ -228,7 +228,7 @@ async function discardsUnsavedSettings(): Promise<void> {
     ),
   );
   const user = userEvent.setup();
-  await renderWithQuery(<TrackingSettingsContent userId={34} section="tracking" />);
+  await renderWithQuery(<TrackingSettingsContent section="tracking" />);
 
   const recommendationSwitch = await screen.findByRole('switch', { name: '启用推荐' });
   await user.click(recommendationSwitch);

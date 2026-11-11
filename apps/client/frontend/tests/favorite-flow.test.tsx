@@ -12,7 +12,15 @@ import { beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 import { FavoriteButton } from '@/components/feature/favorite-button';
 import { FavoritesPageContent } from '@/components/favorites/favorites-page-content';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
-import type { FavoriteArticleItem, FavoriteArticlePage, FavoriteCheck, Folder } from '@/lib/api';
+import {
+  favoriteCheckQuery,
+  folderArticlePagesQuery,
+  foldersQuery,
+  type FavoriteArticleItem,
+  type FavoriteArticlePage,
+  type FavoriteCheck,
+  type Folder,
+} from '@/lib/api';
 import { createAuthUserScenario } from '@/tests/mocks/scenarios';
 import { server } from '@/tests/mocks/server';
 import { favoriteArticlePageResponse } from '@/tests/mocks/handlers/favorites';
@@ -136,7 +144,7 @@ function favoriteArticleFixture(id: number): FavoriteArticleItem {
   return {
     id,
     folder_id: 3,
-    article_id: `article-${id}`,
+    article_id: String(1000 + id),
     db_name: 'fixture.sqlite',
     note: '',
     created_at: 2,
@@ -166,7 +174,7 @@ function renderFavoritesPage(): ReturnType<typeof renderWithQuery> {
 function AuthenticatedFavoriteFixture() {
   const { user, loading } = useAuth();
   if (loading || !user) return null;
-  return <FavoritesPageContent userId={user.id} />;
+  return <FavoritesPageContent />;
 }
 
 /**
@@ -180,7 +188,7 @@ async function addFavoriteResponse(context: { request: Request }): Promise<Respo
   return HttpResponse.json({
     id: 9,
     folder_id: 3,
-    article_id: 'article-1',
+    article_id: '1001',
     db_name: 'fixture.sqlite',
     note: '',
     created_at: 2,
@@ -233,7 +241,7 @@ async function updatesFavoriteCache(): Promise<void> {
   const user = userEvent.setup();
   const { queryClient } = await renderWithQuery(
     <AuthProvider>
-      <FavoriteButton articleId="article-1" dbName="fixture.sqlite" />
+      <FavoriteButton articleId="1001" dbName="fixture.sqlite" />
     </AuthProvider>,
   );
 
@@ -242,14 +250,14 @@ async function updatesFavoriteCache(): Promise<void> {
 
   expect(await screen.findByRole('button', { name: '已收藏' })).toBeInTheDocument();
   expect(favoriteRequestBody).toEqual({
-    article_id: 'article-1',
+    article_id: '1001',
     db_name: 'fixture.sqlite',
     note: '',
   });
   await waitFor(() => {
-    expect(
-      queryClient.getQueryData<FavoriteCheck[]>(['fav-check', 21, 'fixture.sqlite', 'article-1']),
-    ).toEqual([{ folder_id: 3, folder_name: 'Reading' }]);
+    expect(queryClient.getQueryData(favoriteCheckQuery('1001', 'fixture.sqlite').queryKey)).toEqual(
+      [{ folder_id: 3, folder_name: 'Reading' }],
+    );
   });
 }
 
@@ -262,15 +270,12 @@ async function confirmsFavoriteRemoval(): Promise<void> {
     http.get('http://localhost/api/auth/me', currentUserResponse),
     http.get('http://localhost/api/favorites/folders', foldersResponse),
     http.get('http://localhost/api/favorites/check', existingFavoriteResponse),
-    http.delete(
-      'http://localhost/api/favorites/folders/3/articles/article-1',
-      removeFavoriteResponse,
-    ),
+    http.delete('http://localhost/api/favorites/folders/3/articles/1001', removeFavoriteResponse),
   );
   const user = userEvent.setup();
   await renderWithQuery(
     <AuthProvider>
-      <FavoriteButton articleId="article-1" dbName="fixture.sqlite" initialFolderIds={[3]} />
+      <FavoriteButton articleId="1001" dbName="fixture.sqlite" initialFolderIds={[3]} />
     </AuthProvider>,
   );
 
@@ -364,7 +369,7 @@ async function togglesFavoriteInCurrentFolder(): Promise<void> {
     http.get('http://localhost/api/favorites/folders/3/articles/page', () =>
       favoriteArticlePageResponse(articles),
     ),
-    http.delete('http://localhost/api/favorites/folders/3/articles/article-1', async () => {
+    http.delete('http://localhost/api/favorites/folders/3/articles/1001', async () => {
       removeCount += 1;
       if (removeCount === 1) {
         await failedRemovalGate;
@@ -381,10 +386,8 @@ async function togglesFavoriteInCurrentFolder(): Promise<void> {
   const { queryClient } = await renderFavoritesPage();
 
   expect(await screen.findByText('Article 1')).toBeInTheDocument();
-  const singleKey = ['fav-check', 21, 'fixture.sqlite', 'article-1'];
-  const otherUserKey = ['fav-check', 22, 'fixture.sqlite', 'article-1'];
+  const singleKey = favoriteCheckQuery('1001', 'fixture.sqlite').queryKey;
   queryClient.setQueryData(singleKey, [{ folder_id: 3, folder_name: 'Reading' }]);
-  queryClient.setQueryData(otherUserKey, [{ folder_id: 9, folder_name: 'Other user' }]);
   expect(screen.queryByRole('button', { name: '移除收藏' })).not.toBeInTheDocument();
 
   const toggle = await screen.findByRole('button', { name: '已收藏' });
@@ -404,9 +407,6 @@ async function togglesFavoriteInCurrentFolder(): Promise<void> {
   expect(screen.getByText('Article 1')).toBeInTheDocument();
   expect(document.querySelector('[data-motion-favorite-key="1"]')).not.toBeNull();
   expect(queryClient.getQueryData(singleKey)).toEqual([]);
-  expect(queryClient.getQueryData(otherUserKey)).toEqual([
-    { folder_id: 9, folder_name: 'Other user' },
-  ]);
 
   await user.click(restored);
   await waitFor(() => expect(addCount).toBe(1));
@@ -458,8 +458,8 @@ async function confirmsBulkFavoriteRemoval(): Promise<void> {
   await waitFor(() =>
     expect(requestBody).toEqual({
       articles: [
-        { article_id: 'article-1', db_name: 'fixture.sqlite' },
-        { article_id: 'article-2', db_name: 'fixture.sqlite' },
+        { article_id: '1001', db_name: 'fixture.sqlite' },
+        { article_id: '1002', db_name: 'fixture.sqlite' },
       ],
     }),
   );
@@ -499,7 +499,7 @@ async function rendersFavoriteMetadataAvailability(): Promise<void> {
 
   expect(await screen.findByText(/来源数据库或文章已不存在。收藏仍保留/)).toBeInTheDocument();
   expect(screen.getByText(/文章元数据暂时无法读取，请稍后重试/)).toBeInTheDocument();
-  const missingCheckbox = screen.getByRole('checkbox', { name: '选择文章 article-1' });
+  const missingCheckbox = screen.getByRole('checkbox', { name: '选择文章 1001' });
   expect(missingCheckbox).toBeEnabled();
   expect(screen.queryByRole('button', { name: '移除收藏' })).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: '导出收藏夹' }));
@@ -660,15 +660,15 @@ async function retriesFailedBulkMove(): Promise<void> {
     {
       target_folder_id: 4,
       articles: [
-        { article_id: 'article-1', db_name: 'fixture.sqlite' },
-        { article_id: 'article-2', db_name: 'fixture.sqlite' },
+        { article_id: '1001', db_name: 'fixture.sqlite' },
+        { article_id: '1002', db_name: 'fixture.sqlite' },
       ],
     },
     {
       target_folder_id: 4,
       articles: [
-        { article_id: 'article-1', db_name: 'fixture.sqlite' },
-        { article_id: 'article-2', db_name: 'fixture.sqlite' },
+        { article_id: '1001', db_name: 'fixture.sqlite' },
+        { article_id: '1002', db_name: 'fixture.sqlite' },
       ],
     },
   ]);
@@ -745,7 +745,7 @@ async function retriesUnknownFavoriteState(): Promise<void> {
   const user = userEvent.setup();
   await renderWithQuery(
     <AuthProvider>
-      <FavoriteButton articleId="article-1" dbName="fixture.sqlite" />
+      <FavoriteButton articleId="1001" dbName="fixture.sqlite" />
     </AuthProvider>,
   );
   await user.click(await screen.findByRole('button', { name: '收藏' }));
@@ -782,11 +782,11 @@ async function rejectsUnavailableCachedMembership(
   const user = userEvent.setup();
   const { queryClient } = await renderWithQuery(
     <AuthProvider>
-      <FavoriteButton articleId="article-1" dbName="fixture.sqlite" isFavoriteStateUnavailable />
+      <FavoriteButton articleId="1001" dbName="fixture.sqlite" isFavoriteStateUnavailable />
     </AuthProvider>,
   );
   await screen.findByRole('button', { name: '收藏状态未知' });
-  const queryKey = ['fav-check', 21, 'fixture.sqlite', 'article-1'];
+  const queryKey = favoriteCheckQuery('1001', 'fixture.sqlite').queryKey;
   await act(async () => {
     queryClient.setQueryData<FavoriteCheck[]>(
       queryKey,
@@ -860,7 +860,7 @@ async function reusesUnchangedFavoritePages(): Promise<void> {
   const user = userEvent.setup();
   const { queryClient } = await renderFavoritesPage();
   await screen.findByText('Article 1', undefined, { timeout: 3000 });
-  const queryKey = ['folder-articles', 3, 'cursor', 21];
+  const queryKey = folderArticlePagesQuery(3).queryKey;
   const data = queryClient.getQueryData<InfiniteData<FavoriteArticlePage>>(queryKey)!;
   const flatten = vi.spyOn(Array.prototype, 'flatMap');
   try {
@@ -901,7 +901,7 @@ async function defersClosedFavoriteFolderRows(): Promise<void> {
   const user = userEvent.setup();
   const view = await renderWithQuery(
     <AuthProvider>
-      <FavoriteButton articleId="article-1" dbName="fixture.sqlite" />
+      <FavoriteButton articleId="1001" dbName="fixture.sqlite" />
     </AuthProvider>,
   );
   await screen.findByRole('button', { name: '收藏' });
@@ -912,16 +912,16 @@ async function defersClosedFavoriteFolderRows(): Promise<void> {
     article_count: 0,
     created_at: 1,
   }));
-  view.queryClient.setQueryDefaults(['folders', 21], { staleTime: Infinity });
+  view.queryClient.setQueryDefaults(foldersQuery().queryKey, { staleTime: Infinity });
   await act(async () => {
-    view.queryClient.setQueryData(['folders', 21], folders);
+    view.queryClient.setQueryData(foldersQuery().queryKey, folders);
   });
-  const cachedFolders = view.queryClient.getQueryData<Folder[]>(['folders', 21]);
+  const cachedFolders = view.queryClient.getQueryData(foldersQuery().queryKey);
   const map = vi.spyOn(Array.prototype, 'map');
   try {
     view.rerender(
       <AuthProvider>
-        <FavoriteButton articleId="article-2" dbName="fixture.sqlite" />
+        <FavoriteButton articleId="1002" dbName="fixture.sqlite" />
       </AuthProvider>,
     );
     expect(map.mock.contexts.filter((value) => value === cachedFolders)).toHaveLength(0);

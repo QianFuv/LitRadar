@@ -7,6 +7,7 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, test } from 'vite-plus/test';
 
+import { $api } from '@/lib/api/client';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
 import { createAuthUserScenario, createLoginScenario } from '@/tests/mocks/scenarios';
 import { renderWithQuery } from '@/tests/render';
@@ -384,6 +385,31 @@ async function acceptsAlreadyExpiredSessionLogout(): Promise<void> {
 }
 
 /**
+ * Verify logout drops every cached query, which isolates users because API query keys carry no
+ * user identity.
+ */
+async function clearsCachedQueriesOnLogout(): Promise<void> {
+  server.use(
+    http.get('http://localhost/api/auth/me', currentUserResponse),
+    http.post('http://localhost/api/auth/logout', () => HttpResponse.json({ ok: true })),
+  );
+  const user = userEvent.setup();
+  const { queryClient } = await renderWithQuery(
+    <AuthProvider>
+      <AuthActionProbe />
+    </AuthProvider>,
+  );
+  expect(await screen.findByText('restored_admin')).toBeInTheDocument();
+  const folderKey = $api.queryOptions('get', '/api/favorites/folders').queryKey;
+  queryClient.setQueryData(folderKey, [{ id: 3, name: 'Private' }]);
+
+  await user.click(screen.getByRole('button', { name: 'Logout action' }));
+
+  expect(await screen.findByText('anonymous')).toBeInTheDocument();
+  expect(queryClient.getQueryCache().getAll()).toEqual([]);
+}
+
+/**
  * Verify fresh reauthentication revokes all sessions and clears the persisted warning.
  */
 async function recoversLogoutAfterFreshAuthentication(): Promise<void> {
@@ -536,5 +562,6 @@ describe('AuthProvider restore', () => {
   );
   test('preserves logout failure across refresh', preservesLogoutFailureAcrossRefresh);
   test('accepts an already expired session logout', acceptsAlreadyExpiredSessionLogout);
+  test('clears every cached query on logout', clearsCachedQueriesOnLogout);
   test('recovers logout after fresh authentication', recoversLogoutAfterFreshAuthentication);
 });

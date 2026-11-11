@@ -5,14 +5,16 @@ import { AlertTriangle, Clock3, Pencil, Plus, Trash2, Clock } from '@/components
 import {
   adminCreateScheduledTask,
   adminDeleteScheduledTask,
-  adminGetSchedulerStatus,
-  adminGetScheduledTasks,
   adminUpdateScheduledTask,
   type ScheduledJobSpec,
   type SchedulerRunState,
   type ScheduledTaskCreate,
   type ScheduledTaskInfo,
+  adminStatsQuery,
+  scheduledTasksQuery,
+  schedulerStatusQuery,
 } from '@/lib/api';
+import type { SchedulerStatus } from '@/lib/api-contract';
 import { AdminListHeader } from '@/components/admin/admin-list-header';
 import {
   SettingsGroup,
@@ -359,8 +361,7 @@ function useSchedulerViewState(isActive: boolean) {
     error,
     isLoading,
   } = useQuery({
-    queryKey: ['admin-scheduled-tasks'],
-    queryFn: () => adminGetScheduledTasks(),
+    ...scheduledTasksQuery(),
     enabled: isActive,
   });
   const {
@@ -368,8 +369,7 @@ function useSchedulerViewState(isActive: boolean) {
     error: schedulerStatusError,
     isLoading: isSchedulerStatusLoading,
   } = useQuery({
-    queryKey: ['admin-scheduler-status'],
-    queryFn: () => adminGetSchedulerStatus(),
+    ...schedulerStatusQuery(),
     enabled: isActive,
     refetchInterval: 30_000,
   });
@@ -391,9 +391,9 @@ function useSchedulerViewState(isActive: boolean) {
       return adminCreateScheduledTask(payload);
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
-      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-      void queryClient.invalidateQueries({ queryKey: ['admin-scheduler-status'] });
+      void queryClient.invalidateQueries({ queryKey: scheduledTasksQuery().queryKey });
+      void queryClient.invalidateQueries({ queryKey: adminStatsQuery().queryKey });
+      void queryClient.invalidateQueries({ queryKey: schedulerStatusQuery().queryKey });
       setDialogOpen(false);
       setEditingTask(null);
       setForm(DEFAULT_FORM);
@@ -405,18 +405,18 @@ function useSchedulerViewState(isActive: boolean) {
     mutationFn: ({ enabled, taskId }: { enabled: boolean; taskId: number }) =>
       adminUpdateScheduledTask(taskId, { enabled }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
-      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-      void queryClient.invalidateQueries({ queryKey: ['admin-scheduler-status'] });
+      void queryClient.invalidateQueries({ queryKey: scheduledTasksQuery().queryKey });
+      void queryClient.invalidateQueries({ queryKey: adminStatsQuery().queryKey });
+      void queryClient.invalidateQueries({ queryKey: schedulerStatusQuery().queryKey });
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: (taskId: number) => adminDeleteScheduledTask(taskId),
     onSuccess: (_data, taskId) => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
-      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-      void queryClient.invalidateQueries({ queryKey: ['admin-scheduler-status'] });
+      void queryClient.invalidateQueries({ queryKey: scheduledTasksQuery().queryKey });
+      void queryClient.invalidateQueries({ queryKey: adminStatsQuery().queryKey });
+      void queryClient.invalidateQueries({ queryKey: schedulerStatusQuery().queryKey });
       setTaskToDelete((current) => (current?.id === taskId ? null : current));
     },
   });
@@ -1214,7 +1214,7 @@ function getSchedulerStatusKey(
   isSchedulerStatusLoading: boolean,
   schedulerStatusError: unknown,
   healthyWorkerCount: number,
-  schedulerStatus: Awaited<ReturnType<typeof adminGetSchedulerStatus>> | undefined,
+  schedulerStatus: SchedulerStatus | undefined,
 ): string {
   return isSchedulerStatusLoading
     ? 'loading'

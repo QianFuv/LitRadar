@@ -3,6 +3,7 @@
  */
 
 import { Eye, EyeOff, Megaphone, Search, Radar } from '@/components/ui/animated-icons';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { useEffect, useRef, useState, type ComponentType, type FormEvent } from 'react';
 import { Shine } from '@animate-ui/react/primitives/effects/shine';
@@ -21,12 +22,7 @@ import {
   REVEAL_VARIANTS,
   SWAP_VARIANTS,
 } from '@/components/ui/motion';
-import {
-  buildOidcLoginUrl,
-  getAuthProviders,
-  getInviteRequirement,
-  type AuthProviders,
-} from '@/lib/api';
+import { buildOidcLoginUrl, authProvidersQuery, inviteRequirementQuery } from '@/lib/api';
 import {
   getAuthErrorMessage,
   getNativeOidcErrorMessage,
@@ -224,13 +220,10 @@ function useLoginViewState() {
   const [password, setPassword] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [email, setEmail] = useState('');
-  const [authProviders, setAuthProviders] = useState<AuthProviders | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [mode, setMode] = useState<AuthFormMode>('login');
-  const [inviteRequired, setInviteRequired] = useState(true);
-  const [bootstrapRequired, setBootstrapRequired] = useState(false);
   const [isRecoveryComplete, setIsRecoveryComplete] = useState(false);
   const authModeKey = isLogoutRecovery ? 'recovery' : mode;
   const title = getLoginTitle(isLogoutRecovery, mode);
@@ -243,40 +236,11 @@ function useLoginViewState() {
     }
   }, [isLogoutRecovery, loading, navigate, nextPath, user]);
 
-  useEffect(() => {
-    if (loading || user || isLogoutRecovery) {
-      return;
-    }
-    let didCancel = false;
-    getInviteRequirement()
-      .then((data) => {
-        if (!didCancel) {
-          setInviteRequired(data.required);
-          setBootstrapRequired(data.bootstrap_required);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      didCancel = true;
-    };
-  }, [isLogoutRecovery, loading, user]);
-
-  useEffect(() => {
-    if (loading || user || isLogoutRecovery) {
-      return;
-    }
-    let didCancel = false;
-    getAuthProviders()
-      .then((data) => {
-        if (!didCancel) {
-          setAuthProviders(data);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      didCancel = true;
-    };
-  }, [isLogoutRecovery, loading, user]);
+  const isSigningIn = !loading && !user && !isLogoutRecovery;
+  const inviteRequirement = useQuery({ ...inviteRequirementQuery(), enabled: isSigningIn }).data;
+  const inviteRequired = inviteRequirement?.required ?? true;
+  const bootstrapRequired = inviteRequirement?.bootstrap_required ?? false;
+  const authProviders = useQuery({ ...authProvidersQuery(), enabled: isSigningIn }).data ?? null;
 
   useEffect(() => {
     if (loading || user || isLogoutRecovery || !CLIENT_PLATFORM.nativeSession) {

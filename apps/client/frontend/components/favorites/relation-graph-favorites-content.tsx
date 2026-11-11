@@ -10,10 +10,6 @@ import { useState } from 'react';
 import { FavoriteKindSwitch } from '@/components/favorites/favorite-kind-switch';
 import { ReaderPlaceholder } from '@/components/feature/reader-placeholder';
 import { WorkspaceShell } from '@/components/feature/workspace-shell';
-import {
-  RELATION_GRAPH_FAVORITES_KEY,
-  relationGraphFavoriteKey,
-} from '@/components/relations/relation-graph-favorite-controls';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
@@ -36,9 +32,11 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { StateMessage } from '@/components/ui/state-message';
 import {
   deleteRelationGraphFavorite,
-  getRelationGraphFavoritePage,
+  relationGraphFavoritePagesQuery,
   updateRelationGraphFavorite,
   type RelationGraphFavoriteSummary,
+  relationGraphFavoriteQuery,
+  RELATION_GRAPH_FAVORITES_QUERY_PREFIX,
 } from '@/lib/api';
 import { buildSavedRelationSearch } from '@/lib/relation-graph';
 import * as stylex from '@stylexjs/stylex';
@@ -73,29 +71,23 @@ export function RelationGraphFavoritesContent() {
   const [renameTarget, setRenameTarget] = useState<RelationGraphFavoriteSummary | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<RelationGraphFavoriteSummary | null>(null);
-  const pagesQuery = useInfiniteQuery({
-    queryKey: RELATION_GRAPH_FAVORITES_KEY,
-    queryFn: ({ pageParam, signal }) =>
-      getRelationGraphFavoritePage(RELATION_GRAPH_PAGE_SIZE, pageParam, signal),
-    initialPageParam: null as string | null,
-    getNextPageParam: (page) => page.next_cursor,
-  });
+  const pagesQuery = useInfiniteQuery(relationGraphFavoritePagesQuery(RELATION_GRAPH_PAGE_SIZE));
   const favorites = pagesQuery.data?.pages.flatMap((page) => page.items) ?? [];
 
   const renameMut = useMutation({
     mutationFn: ({ id, title }: { id: number; title: string }) =>
       updateRelationGraphFavorite(id, { title }),
     onSuccess: (favorite) => {
-      queryClient.setQueryData(relationGraphFavoriteKey(favorite.id), favorite);
-      void queryClient.invalidateQueries({ queryKey: RELATION_GRAPH_FAVORITES_KEY });
+      queryClient.setQueryData(relationGraphFavoriteQuery(favorite.id).queryKey, favorite);
+      void queryClient.invalidateQueries({ queryKey: RELATION_GRAPH_FAVORITES_QUERY_PREFIX });
       setRenameTarget(null);
     },
   });
   const deleteMut = useMutation({
     mutationFn: (graphId: number) => deleteRelationGraphFavorite(graphId),
     onSuccess: (_data, graphId) => {
-      queryClient.removeQueries({ queryKey: relationGraphFavoriteKey(graphId) });
-      void queryClient.invalidateQueries({ queryKey: RELATION_GRAPH_FAVORITES_KEY });
+      queryClient.removeQueries({ queryKey: relationGraphFavoriteQuery(graphId).queryKey });
+      void queryClient.invalidateQueries({ queryKey: RELATION_GRAPH_FAVORITES_QUERY_PREFIX });
       setDeleteTarget(null);
     },
   });

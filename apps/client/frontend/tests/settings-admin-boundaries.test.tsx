@@ -109,7 +109,7 @@ async function rendersSettingsCards(): Promise<void> {
           auth_kind: 'oidc',
         })}
       />
-      <CnkiSettingsCard userId={1} copyFeedback={null} handleCopy={ignoreCopy} />
+      <CnkiSettingsCard copyFeedback={null} handleCopy={ignoreCopy} />
       <InviteCodeCard copyFeedback={null} handleCopy={ignoreCopy} />
       <AccessTokensCard copyFeedback={null} handleCopy={ignoreCopy} />
     </>,
@@ -207,9 +207,7 @@ async function confirmsCnkiSessionClear(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  await renderWithQuery(
-    <CnkiSettingsCard userId={1} copyFeedback={null} handleCopy={ignoreCopy} />,
-  );
+  await renderWithQuery(<CnkiSettingsCard copyFeedback={null} handleCopy={ignoreCopy} />);
 
   await user.click(await screen.findByRole('button', { name: '清除' }));
   expect(clearRequestCount).toBe(0);

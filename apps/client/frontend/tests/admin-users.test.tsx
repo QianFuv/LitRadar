@@ -8,7 +8,7 @@ import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import { AdminUsersCard } from '@/components/admin/users-card';
-import type { AdminUserInfo } from '@/lib/api';
+import { adminUsersQuery, type AdminUserInfo } from '@/lib/api';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
@@ -182,7 +182,7 @@ async function reusesRegistrationDatesDuringPasswordEntry(): Promise<void> {
   await user.type(within(dialog).getByLabelText('新密码'), 'replacement-password');
   expect(formatDate.mock.calls.length).toBe(0);
   await act(async () => {
-    view.queryClient.setQueryData<AdminUserInfo[]>(['admin-users'], (current) =>
+    view.queryClient.setQueryData(adminUsersQuery().queryKey, (current) =>
       current?.map((entry) =>
         entry.id === 2 ? { ...entry, created_at: updatedTimestamp } : entry,
       ),

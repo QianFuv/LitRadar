@@ -18,7 +18,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { MotionParagraph, MotionPresence, REVEAL_VARIANTS } from '@/components/ui/motion';
 import {
-  getAuthProviders,
+  authProvidersQuery,
   startOidcLink,
   unlinkOidc,
   updateAccountEmail,
@@ -105,8 +105,7 @@ export function AccountSignInCard({ oidcLinkResult }: { oidcLinkResult: string |
   const [isUnlinkDialogOpen, setIsUnlinkDialogOpen] = useState(false);
   const isLocalAccount = user?.auth_kind === 'local';
   const { data: providers } = useQuery({
-    queryKey: ['auth-providers'],
-    queryFn: getAuthProviders,
+    ...authProvidersQuery(),
     enabled: Boolean(user),
   });
   const displayName = providers?.oidc_display_name.trim() || DEFAULT_OIDC_DISPLAY_NAME;

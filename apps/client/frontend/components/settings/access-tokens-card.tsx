@@ -2,7 +2,12 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Key, KeyRound, Plus, Trash2 } from '@/components/ui/animated-icons';
 
-import { createAccessToken, getAccessTokens, revokeAccessToken, type AccessToken } from '@/lib/api';
+import {
+  createAccessToken,
+  accessTokensQuery,
+  revokeAccessToken,
+  type AccessToken,
+} from '@/lib/api';
 import {
   SettingsGroup,
   SettingsSection,
@@ -149,15 +154,13 @@ function useAccessTokenViewState({
       ? ACCESS_TOKEN_NAME_LENGTH_DETAIL
       : null;
   const { data: tokens = [], isPending: isTokensLoading } = useQuery({
-    queryKey: ['access-tokens'],
-    queryFn: () => getAccessTokens(),
-    enabled: true,
+    ...accessTokensQuery(),
   });
   const createTokenMut = useMutation({
     mutationFn: () => createAccessToken(tokenName, tokenTtl),
     onSuccess: (data) => {
       setNewTokenValue(data.token);
-      void queryClient.invalidateQueries({ queryKey: ['access-tokens'] });
+      void queryClient.invalidateQueries({ queryKey: accessTokensQuery().queryKey });
       setTokenName('');
     },
   });
@@ -165,7 +168,7 @@ function useAccessTokenViewState({
   const revokeMut = useMutation({
     mutationFn: (id: number) => revokeAccessToken(id),
     onSuccess: (_data, tokenId) => {
-      void queryClient.invalidateQueries({ queryKey: ['access-tokens'] });
+      void queryClient.invalidateQueries({ queryKey: accessTokensQuery().queryKey });
       setTokenToRevoke((current) => (current?.id === tokenId ? null : current));
     },
   });

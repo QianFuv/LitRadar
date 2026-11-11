@@ -4,12 +4,14 @@
 
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import LoginClient from '@/src/routes/login-client';
 import { MotionProvider } from '@/components/ui/motion';
 import { getAuthErrorMessage } from '@/lib/auth-error';
 import { ApiError } from '@/lib/api/client';
+import { server } from '@/tests/mocks/server';
 import { renderWithQuery, type QueryRenderResult } from '@/tests/render';
 
 type MockUser = {
@@ -65,11 +67,19 @@ vi.mock('@/lib/auth-context', () => ({
   useAuth: () => loginPageMocks.auth,
 }));
 
-vi.mock('@/lib/api', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/lib/api')>()),
-  getAuthProviders: loginPageMocks.getAuthProviders,
-  getInviteRequirement: loginPageMocks.getInviteRequirement,
-}));
+/**
+ * Serve the sign-in metadata endpoints from the per-test mock functions.
+ */
+function serveSignInMetadata(): void {
+  server.use(
+    http.get('http://localhost/api/auth/providers', async () =>
+      HttpResponse.json(await loginPageMocks.getAuthProviders()),
+    ),
+    http.get('http://localhost/api/auth/invite-required', async () =>
+      HttpResponse.json(await loginPageMocks.getInviteRequirement()),
+    ),
+  );
+}
 
 /**
  * Restore the default anonymous login fixture.
@@ -91,6 +101,7 @@ function resetLoginPageMocks(): void {
   loginPageMocks.oidcErrorParam = null;
   loginPageMocks.logoutRecoveryParam = '';
   loginPageMocks.navigate.mockReset();
+  serveSignInMetadata();
 }
 
 /**

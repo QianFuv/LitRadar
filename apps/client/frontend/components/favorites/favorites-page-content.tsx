@@ -132,11 +132,10 @@ function AnimatedFeedback({ feedback, scope }: AnimatedFeedbackProps) {
 /**
  * Render favorite folders, article pages, exports, and batch controls.
  *
- * @param props - Authenticated user identifier.
  * @returns Favorites feature UI.
  */
-export function FavoritesPageContent({ userId }: { userId: number }) {
-  const page = useFavoritesPage(userId);
+export function FavoritesPageContent() {
+  const page = useFavoritesPage();
   const [folderToDelete, setFolderToDelete] = useState<{ id: number; name: string } | null>(null);
   const favoritesState = getFavoritesState(page);
   const state = {

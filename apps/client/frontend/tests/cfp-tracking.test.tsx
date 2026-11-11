@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vite-plus/tes
 import { READER_DOCK_MEDIA_QUERY } from '@/lib/use-media-query';
 
 import { CfpTrackingView } from '@/components/cfp/cfp-tracking-view';
-import type { CfpJournalSummary, CfpNoticePage } from '@/lib/api';
+import { cfpNoticesQuery, type CfpJournalSummary, type CfpNoticePage } from '@/lib/api';
 import { findCfpFixturePage } from '@/tests/fixtures/cfp-pages';
 import { SELECTED_DATABASE_KEY } from '@/lib/api/client';
 import { server } from '@/tests/mocks/server';
@@ -176,7 +176,11 @@ async function reusesUnchangedNoticePages(): Promise<void> {
   );
   const title = noticePage('issn-1949-3045', false).items[0].title;
   await screen.findByRole('heading', { name: title }, { timeout: 3000 });
-  const queryKey = ['cfp', 'notices', DATABASES[0], 'issn-1949-3045', false];
+  const queryKey = cfpNoticesQuery({
+    dbName: DATABASES[0],
+    catalogId: 'issn-1949-3045',
+    includeClosed: false,
+  }).queryKey;
   const data = queryClient.getQueryData<InfiniteData<CfpNoticePage>>(queryKey)!;
   const flatten = vi.spyOn(data.pages, 'flatMap');
   try {

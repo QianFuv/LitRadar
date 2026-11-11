@@ -9,7 +9,7 @@ import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import { AnnouncementToasts } from '@/components/announcement-toasts';
-import type { AnnouncementInfo } from '@/lib/api';
+import { announcementsQuery, type AnnouncementInfo } from '@/lib/api';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
@@ -152,7 +152,7 @@ async function showsEachAnnouncementOncePerPage(): Promise<void> {
   await waitFor(() => expect(hasToast(31)).toBe(false));
   expect(window.localStorage.getItem(`${STORAGE_PREFIX}31`)).toBeNull();
 
-  await act(() => queryClient.setQueryData(['announcements'], [first, second]));
+  await act(() => queryClient.setQueryData(announcementsQuery().queryKey, [first, second]));
 
   await findToast(32);
   expect(hasToast(31)).toBe(false);

@@ -32,7 +32,7 @@ async function ignoreCopy(): Promise<void> {}
 async function rendersFavoritesBoundary(): Promise<void> {
   server.use(http.get('http://localhost/api/favorites/folders', () => HttpResponse.json([])));
 
-  await renderWithQuery(<FavoritesPageContent userId={21} />, { url: '/?folder=7' });
+  await renderWithQuery(<FavoritesPageContent />, { url: '/?folder=7' });
 
   expect(await screen.findByText('暂无收藏夹，点击「新建」创建第一个。')).toBeInTheDocument();
   expect(getFavoriteSelectionKey(7, 'article-1', 'fixture.sqlite')).toBe(

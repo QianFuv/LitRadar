@@ -13,20 +13,16 @@ import {
   type NotificationSettingsUpdate,
   type TrackingStatus,
 } from '@/lib/api-contract';
-import { buildApiUrl, requestJson } from '@/lib/api/client';
+import { $api, apiClient, readData } from '@/lib/api/client';
+import { validatedApiQuery } from '@/lib/api/query';
 
 /**
  * Fetch tracking status.
  *
  * @returns Tracking status.
  */
-export function getTrackingStatus(): Promise<TrackingStatus> {
-  return requestJson<TrackingStatus>(
-    buildApiUrl('/api/tracking/status'),
-    undefined,
-    '获取追踪状态失败',
-    parseTrackingStatus,
-  );
+export async function getTrackingStatus(): Promise<TrackingStatus> {
+  return parseTrackingStatus(readData(await apiClient.GET('/api/tracking/status')));
 }
 
 /**
@@ -34,27 +30,8 @@ export function getTrackingStatus(): Promise<TrackingStatus> {
  *
  * @returns Push status.
  */
-export function pushWeeklyToTracking(): Promise<ManualPushStatus> {
-  return requestJson<ManualPushStatus>(
-    buildApiUrl('/api/tracking/push-weekly'),
-    { method: 'POST' },
-    '推送每周文章失败',
-    parseManualPushStatus,
-  );
-}
-
-/**
- * Fetch weekly push status.
- *
- * @returns Push status.
- */
-export function getPushWeeklyStatus(): Promise<ManualPushStatus> {
-  return requestJson<ManualPushStatus>(
-    buildApiUrl('/api/tracking/push-weekly/status'),
-    undefined,
-    '获取推送状态失败',
-    parseManualPushStatus,
-  );
+export async function pushWeeklyToTracking(): Promise<ManualPushStatus> {
+  return parseManualPushStatus(readData(await apiClient.POST('/api/tracking/push-weekly')));
 }
 
 /**
@@ -63,12 +40,13 @@ export function getPushWeeklyStatus(): Promise<ManualPushStatus> {
  * @param jobId - Owner-visible durable job identifier.
  * @returns Updated durable push status.
  */
-export function cancelPushWeeklyRun(jobId: string): Promise<ManualPushStatus> {
-  return requestJson<ManualPushStatus>(
-    buildApiUrl(`/api/tracking/push-weekly/runs/${encodeURIComponent(jobId)}/cancel`),
-    { method: 'POST' },
-    '取消推送任务失败',
-    parseManualPushStatus,
+export async function cancelPushWeeklyRun(jobId: string): Promise<ManualPushStatus> {
+  return parseManualPushStatus(
+    readData(
+      await apiClient.POST('/api/tracking/push-weekly/runs/{run_id}/cancel', {
+        params: { path: { run_id: jobId } },
+      }),
+    ),
   );
 }
 
@@ -78,40 +56,13 @@ export function cancelPushWeeklyRun(jobId: string): Promise<ManualPushStatus> {
  * @param jobId - Owner-visible ambiguous job identifier.
  * @returns Newly queued push status.
  */
-export function acknowledgeUnknownPushWeeklyRun(jobId: string): Promise<ManualPushStatus> {
-  return requestJson<ManualPushStatus>(
-    buildApiUrl(`/api/tracking/push-weekly/runs/${encodeURIComponent(jobId)}/acknowledge`),
-    { method: 'POST' },
-    '确认未知推送结果失败',
-    parseManualPushStatus,
-  );
-}
-
-/**
- * Fetch notification settings.
- *
- * @returns Notification settings or null.
- */
-export function getNotificationSettings(): Promise<NotificationSettings | null> {
-  return requestJson<NotificationSettings | null>(
-    buildApiUrl('/api/tracking/notification-settings'),
-    undefined,
-    '获取通知设置失败',
-    parseNullableNotificationSettings,
-  );
-}
-
-/**
- * Fetch the administrator-approved AI endpoint catalog.
- *
- * @returns Exact selectable AI base URLs.
- */
-export function getAiEndpoints(): Promise<string[]> {
-  return requestJson<string[]>(
-    buildApiUrl('/api/tracking/ai-endpoints'),
-    undefined,
-    '获取 AI Endpoint 列表失败',
-    parseAiEndpointCatalog,
+export async function acknowledgeUnknownPushWeeklyRun(jobId: string): Promise<ManualPushStatus> {
+  return parseManualPushStatus(
+    readData(
+      await apiClient.POST('/api/tracking/push-weekly/runs/{run_id}/acknowledge', {
+        params: { path: { run_id: jobId } },
+      }),
+    ),
   );
 }
 
@@ -121,16 +72,55 @@ export function getAiEndpoints(): Promise<string[]> {
  * @param settings - Settings payload.
  * @returns Saved settings.
  */
-export function updateNotificationSettings(
+export async function updateNotificationSettings(
   settings: NotificationSettingsUpdate,
 ): Promise<NotificationSettings> {
-  return requestJson<NotificationSettings>(
-    buildApiUrl('/api/tracking/notification-settings'),
-    {
-      method: 'PUT',
-      body: JSON.stringify(settings),
-    },
-    '更新通知设置失败',
-    parseNotificationSettings,
+  return parseNotificationSettings(
+    readData(await apiClient.PUT('/api/tracking/notification-settings', { body: settings })),
+  );
+}
+
+/**
+ * Query of the tracking status, contract-validated.
+ *
+ * @returns Query options.
+ */
+export function trackingStatusQuery() {
+  return validatedApiQuery($api.queryOptions('get', '/api/tracking/status'), parseTrackingStatus);
+}
+
+/**
+ * Query of the latest manual weekly push, contract-validated.
+ *
+ * @returns Query options.
+ */
+export function pushWeeklyStatusQuery() {
+  return validatedApiQuery(
+    $api.queryOptions('get', '/api/tracking/push-weekly/status'),
+    parseManualPushStatus,
+  );
+}
+
+/**
+ * Query of the redacted notification settings, contract-validated.
+ *
+ * @returns Query options.
+ */
+export function notificationSettingsQuery() {
+  return validatedApiQuery(
+    $api.queryOptions('get', '/api/tracking/notification-settings'),
+    parseNullableNotificationSettings,
+  );
+}
+
+/**
+ * Query of the administrator-approved AI endpoints, contract-validated.
+ *
+ * @returns Query options.
+ */
+export function aiEndpointsQuery() {
+  return validatedApiQuery(
+    $api.queryOptions('get', '/api/tracking/ai-endpoints'),
+    parseAiEndpointCatalog,
   );
 }

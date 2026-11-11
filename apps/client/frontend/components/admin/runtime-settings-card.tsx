@@ -3,13 +3,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Save, SlidersVertical, Trash2 } from '@/components/ui/animated-icons';
 
 import {
-  adminGetProviderCatalog,
-  adminGetRuntimeSettings,
   adminUpdateRuntimeSettings,
   type RuntimeSettingApplyMode,
   type RuntimeSettingGroup,
   type RuntimeSettingInfo,
   type RuntimeSettingsUpdate,
+  runtimeSettingsQuery,
+  providerCatalogQuery,
 } from '@/lib/api';
 import { ProviderConfigurationEditor } from '@/components/admin/provider-configuration-editor';
 import {
@@ -552,8 +552,7 @@ function useRuntimeViewState() {
     error,
     isLoading,
   } = useQuery({
-    queryKey: ['admin-runtime-settings'],
-    queryFn: () => adminGetRuntimeSettings(),
+    ...runtimeSettingsQuery(),
   });
 
   const providerSettings = useMemo(
@@ -577,8 +576,7 @@ function useRuntimeViewState() {
     error: providerCatalogError,
     isLoading: isProviderCatalogLoading,
   } = useQuery({
-    queryKey: ['admin-provider-catalog'],
-    queryFn: () => adminGetProviderCatalog(),
+    ...providerCatalogQuery(),
     enabled: providerSettings.length > 0,
   });
 
@@ -632,8 +630,8 @@ function useRuntimeViewState() {
       setSecretPoolAdditions({});
       setSecretPoolRemovals({});
       setSaveFeedback('运行配置已保存。');
-      queryClient.setQueryData(['admin-runtime-settings'], updatedSettings);
-      void queryClient.invalidateQueries({ queryKey: ['admin-runtime-settings'] });
+      queryClient.setQueryData(runtimeSettingsQuery().queryKey, updatedSettings);
+      void queryClient.invalidateQueries({ queryKey: runtimeSettingsQuery().queryKey });
     },
   });
 

@@ -80,9 +80,8 @@ function PaginationHarness() {
     queryKey: ['pagination-harness'],
     queryFn: ({ pageParam }) =>
       getArticles(
-        new URLSearchParams('q=systems'),
+        { q: 'systems', include_total: true },
         pageParam as string | null,
-        true,
         'fixture.sqlite',
       ),
     initialPageParam: null,
@@ -112,15 +111,17 @@ function PaginationHarness() {
  */
 async function serializesArticleQuery(): Promise<void> {
   server.use(http.get('http://localhost/api/articles', captureArticleRequest));
-  const filters = new URLSearchParams();
-  filters.append('area', 'systems');
-  filters.append('area', 'security');
-  filters.append('abs_rating', '4');
-  filters.append('abs_rating', '4*');
-  filters.append('fms_rating', 'A');
-  filters.set('q', 'rust async');
-
-  await getArticles(filters, 'cursor-token', true, 'fixture.sqlite');
+  await getArticles(
+    {
+      area: ['systems', 'security'],
+      abs_rating: ['4', '4*'],
+      fms_rating: ['A'],
+      q: 'rust async',
+      include_total: true,
+    },
+    'cursor-token',
+    'fixture.sqlite',
+  );
 
   const url = new URL(capturedArticleUrl);
   expect(url.searchParams.getAll('area')).toEqual(['systems', 'security']);
@@ -129,7 +130,7 @@ async function serializesArticleQuery(): Promise<void> {
   expect(url.searchParams.get('q')).toBe('rust async');
   expect(url.searchParams.get('search_mode')).toBe('simple');
   expect(url.searchParams.get('cursor')).toBe('cursor-token');
-  expect(url.searchParams.get('include_total')).toBe('1');
+  expect(url.searchParams.get('include_total')).toBe('true');
   expect(url.searchParams.get('db')).toBe('fixture.sqlite');
 }
 
@@ -142,7 +143,7 @@ async function selectsAdvancedModeForSyntax(): Promise<void> {
     ['title:graph AND "neural network"', 'advanced'],
     ['graph neural network', 'simple'],
   ] as const) {
-    await getArticles(new URLSearchParams({ q: query }), null, false, 'fixture.sqlite');
+    await getArticles({ q: query }, null, 'fixture.sqlite');
     expect(new URL(capturedArticleUrl).searchParams.get('search_mode')).toBe(mode);
   }
 }
@@ -172,7 +173,7 @@ async function loadsInfinitePages(): Promise<void> {
 async function preservesPartialDatePrecision(): Promise<void> {
   server.use(http.get('http://localhost/api/articles', partialDateArticleResponse));
 
-  const page = await getArticles(new URLSearchParams(), null, true, 'fixture.sqlite');
+  const page = await getArticles({ include_total: true }, null, 'fixture.sqlite');
 
   expect(page.items[0]?.date).toBe('2026');
   expect(page.items[0]?.date_precision).toBe('year');
@@ -224,13 +225,7 @@ async function forwardsArticleCancellation(): Promise<void> {
     }),
   );
   const controller = new AbortController();
-  const result = getArticles(
-    new URLSearchParams(),
-    null,
-    false,
-    'fixture.sqlite',
-    controller.signal,
-  );
+  const result = getArticles({}, null, 'fixture.sqlite', controller.signal);
   const rejected = expect(result).rejects.toMatchObject({ name: 'AbortError' });
   try {
     await waitFor(() => expect(didStart).toBe(true));

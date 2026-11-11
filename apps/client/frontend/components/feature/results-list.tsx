@@ -1,6 +1,11 @@
 import { useInfiniteQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { useLocation, useSearch } from '@tanstack/react-router';
-import { getArticles, type ArticlePage } from '@/lib/api';
+import {
+  articlePagesQueryKey,
+  getArticles,
+  type ArticlePage,
+  type ArticleSearchQuery,
+} from '@/lib/api';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import { ArticleListSkeleton } from '@/components/feature/article-list-card';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
@@ -22,7 +27,7 @@ import { useFtsHighlighter } from '@/lib/fts-highlight';
 import { useSelectedDatabase } from '@/lib/selected-database';
 import { useFavoriteChecks } from '@/components/feature/use-favorite-checks';
 import {
-  appendJournalRatingParams,
+  JOURNAL_RATING_SYSTEMS,
   readJournalRatings,
   type JournalRatingKey,
 } from '@/lib/journal-ratings';
@@ -161,22 +166,21 @@ function useResultsViewState() {
   const ratings = readJournalRatings(search);
   const searchKey = useLocation({ select: (location) => location.searchStr });
 
-  const params = getResultsArticleParams(q, areas, journalIds, ratings, monthRange);
-  const paramsString = params.toString();
+  const articleQuery = getResultsArticleQuery(q, areas, journalIds, ratings, monthRange);
   const currentDb = useSelectedDatabase();
-  const queryKey = ['articles', currentDb, paramsString];
+  const queryKey = articlePagesQueryKey(articleQuery, currentDb);
 
   const { data, isLoading, isError, error, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useInfiniteQuery<
       ArticlePage,
       Error,
       InfiniteData<ArticlePage, string | null>,
-      string[],
+      typeof queryKey,
       string | null
     >({
       queryKey,
       queryFn: async ({ pageParam, signal }) => {
-        const page = await getArticles(params, pageParam, false, currentDb, signal);
+        const page = await getArticles(articleQuery, pageParam, currentDb, signal);
         const cachedData =
           queryClient.getQueryData<InfiniteData<ArticlePage, string | null>>(queryKey);
         return validateArticlePageCursor(page, pageParam, cachedData?.pageParams ?? []);
@@ -356,32 +360,37 @@ function getResultsPresentation(state: ResultsViewState) {
   return { resultContent, resultAnnouncement, resultAnnouncementRole, resultState };
 }
 
-/** Serialize raw search text and selected filters in the original request order. */
-function getResultsArticleParams(
+/**
+ * Build the article search filters for the workspace's query text and selected filters.
+ *
+ * @param q - Raw search text, or null.
+ * @param areas - Selected subject areas, or null.
+ * @param journalIds - Selected journal ids, or null.
+ * @param ratings - Selected values per journal rating system.
+ * @param monthRange - Selected month range, or null.
+ * @returns Article search filters; empty selections are left out of the request.
+ */
+function getResultsArticleQuery(
   q: string | null,
   areas: string[] | null,
   journalIds: string[] | null,
   ratings: Record<JournalRatingKey, string[]>,
   monthRange: string | null,
-): URLSearchParams {
-  const params = new URLSearchParams();
-  if (q) params.set('q', q);
-
-  if (areas && areas.length > 0) {
-    areas.forEach((a) => params.append('area', a));
-  }
-  if (journalIds && journalIds.length > 0) {
-    journalIds.forEach((id) => params.append('journal_id', id));
-  }
-  appendJournalRatingParams(params, ratings);
-
+): ArticleSearchQuery {
   const dateBounds = getMonthRangeDateBounds(monthRange);
-  if (dateBounds) {
-    params.set('date_from', dateBounds.dateFrom);
-    params.set('date_to', dateBounds.dateTo);
+  const ratingFilters: Partial<Record<JournalRatingKey, string[]>> = {};
+  for (const { key } of JOURNAL_RATING_SYSTEMS) {
+    if (ratings[key].length > 0) {
+      ratingFilters[key] = ratings[key];
+    }
   }
-
-  return params;
+  return {
+    ...(q ? { q } : {}),
+    ...(areas && areas.length > 0 ? { area: areas } : {}),
+    ...(journalIds && journalIds.length > 0 ? { journal_id: journalIds.map(Number) } : {}),
+    ...ratingFilters,
+    ...(dateBounds ? { date_from: dateBounds.dateFrom, date_to: dateBounds.dateTo } : {}),
+  };
 }
 
 const styles = stylex.create({

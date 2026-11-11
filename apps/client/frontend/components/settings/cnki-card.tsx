@@ -11,8 +11,9 @@ import {
 
 import {
   ApiError,
+  ARTICLE_ACCESS_QUERY_PREFIX,
   clearCnkiSession,
-  getCnkiSession,
+  cnkiSessionQuery,
   pollCnkiLogin,
   startCnkiLogin,
   type CnkiLoginStartResponse,
@@ -192,11 +193,10 @@ function getCnkiApiErrorMessage(error: unknown, fallback: string): CnkiMessageSt
 /**
  * Render and manage the current user's Zhejiang Library CNKI session.
  *
- * @param props - User id plus shared copy feedback/action.
+ * @param props - Shared copy feedback and action.
  * @returns CNKI settings card.
  */
 export function CnkiSettingsCard(props: {
-  userId: number;
   copyFeedback: SettingsCopyFeedback | null;
   handleCopy: (value: string, successMessage: string, scope: SettingsCopyScope) => Promise<void>;
 }) {
@@ -260,11 +260,9 @@ export function CnkiSettingsCard(props: {
 }
 /** Own the original settings hooks and exact mutation/cache completion order. */
 function useCnkiViewState({
-  userId,
   copyFeedback,
   handleCopy,
 }: {
-  userId: number;
   copyFeedback: SettingsCopyFeedback | null;
   handleCopy: (value: string, successMessage: string, scope: SettingsCopyScope) => Promise<void>;
 }) {
@@ -272,8 +270,7 @@ function useCnkiViewState({
   const [cnkiLogin, setCnkiLogin] = useState<CnkiLoginStartResponse | null>(null);
   const [cnkiMessage, setCnkiMessage] = useState<CnkiMessageState | null>(null);
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
-  const cnkiSessionQueryKey = ['cnki-session', userId] as const;
-  const currentCnkiSessionQueryKey = ['cnki-session', 'current'] as const;
+  const cnkiSessionQueryKey = cnkiSessionQuery().queryKey;
   const {
     data: cnkiSession,
     isLoading: isCnkiSessionLoading,
@@ -281,9 +278,7 @@ function useCnkiViewState({
     error: cnkiSessionError,
     refetch: refetchCnkiSession,
   } = useQuery({
-    queryKey: cnkiSessionQueryKey,
-    queryFn: () => getCnkiSession(),
-    enabled: true,
+    ...cnkiSessionQuery(),
   });
   const startCnkiLoginMut = useMutation({
     mutationFn: () => startCnkiLogin(),
@@ -291,9 +286,8 @@ function useCnkiViewState({
       setCnkiLogin(data);
       setCnkiMessage(null);
       queryClient.setQueryData(cnkiSessionQueryKey, data.session);
-      queryClient.setQueryData(currentCnkiSessionQueryKey, data.session);
-      queryClient.removeQueries({ queryKey: ['article-access'] });
-      void queryClient.invalidateQueries({ queryKey: ['article-access'] });
+      queryClient.removeQueries({ queryKey: ARTICLE_ACCESS_QUERY_PREFIX });
+      void queryClient.invalidateQueries({ queryKey: ARTICLE_ACCESS_QUERY_PREFIX });
     },
     onError: (err) => setCnkiMessage(getCnkiApiErrorMessage(err, '启动知网登录失败')),
   });
@@ -307,10 +301,9 @@ function useCnkiViewState({
         tone: data.session.status === 'active' ? 'success' : 'warning',
       });
       queryClient.setQueryData(cnkiSessionQueryKey, data.session);
-      queryClient.setQueryData(currentCnkiSessionQueryKey, data.session);
-      void queryClient.invalidateQueries({ queryKey: ['cnki-session'] });
-      queryClient.removeQueries({ queryKey: ['article-access'] });
-      void queryClient.invalidateQueries({ queryKey: ['article-access'] });
+      void queryClient.invalidateQueries({ queryKey: cnkiSessionQueryKey });
+      queryClient.removeQueries({ queryKey: ARTICLE_ACCESS_QUERY_PREFIX });
+      void queryClient.invalidateQueries({ queryKey: ARTICLE_ACCESS_QUERY_PREFIX });
     },
     onError: (err) => setCnkiMessage(getCnkiApiErrorMessage(err, '确认知网登录失败')),
   });
@@ -321,10 +314,9 @@ function useCnkiViewState({
       setCnkiLogin(null);
       setCnkiMessage({ text: '登录状态已清除', tone: 'success' });
       queryClient.setQueryData(cnkiSessionQueryKey, data);
-      queryClient.setQueryData(currentCnkiSessionQueryKey, data);
-      void queryClient.invalidateQueries({ queryKey: ['cnki-session'] });
-      queryClient.removeQueries({ queryKey: ['article-access'] });
-      void queryClient.invalidateQueries({ queryKey: ['article-access'] });
+      void queryClient.invalidateQueries({ queryKey: cnkiSessionQueryKey });
+      queryClient.removeQueries({ queryKey: ARTICLE_ACCESS_QUERY_PREFIX });
+      void queryClient.invalidateQueries({ queryKey: ARTICLE_ACCESS_QUERY_PREFIX });
     },
     onError: (err) => setCnkiMessage(getCnkiApiErrorMessage(err, '清除知网登录失败')),
   });

@@ -8,10 +8,12 @@ import { Star } from '@/components/ui/animated-icons';
 
 import { useAuth } from '@/lib/auth-context';
 import {
-  checkFavorite,
+  FAVORITE_CHECK_BATCH_QUERY_PREFIX,
+  favoriteCheckQuery,
+  folderArticlePagesQuery,
   addFavorite,
   removeFavorite,
-  getFolders,
+  foldersQuery,
   type ArticleId,
   type FavoriteCheck,
   type Folder,
@@ -88,7 +90,8 @@ function useFavoriteButtonState({
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [folderToRemove, setFolderToRemove] = useState<Folder | null>(null);
-  const queryKey = ['fav-check', user?.id, db, articleId] as const;
+  const checkQuery = favoriteCheckQuery(articleId, db);
+  const queryKey = checkQuery.queryKey;
   const initialFolderIdsValue = Array.from(new Set(initialFolderIds)).sort((a, b) => a - b);
   const [optimisticFolderIds, setOptimisticFolderIds] = useState<number[] | null>(null);
   const cachedFolderIds =
@@ -100,8 +103,7 @@ function useFavoriteButtonState({
     isFetching: isCheckingFavorite,
     refetch: refetchChecks,
   } = useQuery({
-    queryKey,
-    queryFn: () => checkFavorite(articleId, db),
+    ...checkQuery,
     enabled: !!user && open,
     staleTime: 5 * 60 * 1000,
   });
@@ -112,15 +114,14 @@ function useFavoriteButtonState({
     error: foldersError,
     refetch: refetchFolders,
   } = useQuery({
-    queryKey: ['folders', user?.id],
-    queryFn: () => getFolders(),
+    ...foldersQuery(),
     enabled: !!user && open,
   });
 
   const addMut = useMutation({
     mutationFn: (folderId: number) => addFavorite(folderId, articleId, db),
     onSuccess: async (_, folderId) => {
-      const batchKey = ['fav-check-batch', user?.id, db];
+      const batchKey = FAVORITE_CHECK_BATCH_QUERY_PREFIX;
       await Promise.all([
         queryClient.cancelQueries({ queryKey, exact: true }),
         queryClient.cancelQueries({ queryKey: batchKey }),
@@ -142,9 +143,11 @@ function useFavoriteButtonState({
       });
       queryClient.removeQueries({ queryKey: batchKey, type: 'inactive' });
       await queryClient.invalidateQueries({ queryKey: batchKey });
-      void queryClient.invalidateQueries({ queryKey: ['folders'] });
+      void queryClient.invalidateQueries({ queryKey: foldersQuery().queryKey });
       if (folderId !== toggleFolderId) {
-        void queryClient.invalidateQueries({ queryKey: ['folder-articles', folderId] });
+        void queryClient.invalidateQueries({
+          queryKey: folderArticlePagesQuery(folderId).queryKey,
+        });
       }
     },
   });
@@ -152,7 +155,7 @@ function useFavoriteButtonState({
   const removeMut = useMutation({
     mutationFn: (folderId: number) => removeFavorite(folderId, articleId, db),
     onSuccess: async (_, folderId) => {
-      const batchKey = ['fav-check-batch', user?.id, db];
+      const batchKey = FAVORITE_CHECK_BATCH_QUERY_PREFIX;
       await Promise.all([
         queryClient.cancelQueries({ queryKey, exact: true }),
         queryClient.cancelQueries({ queryKey: batchKey }),
@@ -170,9 +173,11 @@ function useFavoriteButtonState({
       );
       queryClient.removeQueries({ queryKey: batchKey, type: 'inactive' });
       await queryClient.invalidateQueries({ queryKey: batchKey });
-      void queryClient.invalidateQueries({ queryKey: ['folders'] });
+      void queryClient.invalidateQueries({ queryKey: foldersQuery().queryKey });
       if (folderId !== toggleFolderId) {
-        void queryClient.invalidateQueries({ queryKey: ['folder-articles', folderId] });
+        void queryClient.invalidateQueries({
+          queryKey: folderArticlePagesQuery(folderId).queryKey,
+        });
       }
       setFolderToRemove((current) => (current?.id === folderId ? null : current));
     },

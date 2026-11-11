@@ -9,7 +9,7 @@ import { z } from 'zod';
 
 import { X } from '@/components/ui/animated-icons';
 import { Button } from '@/components/ui/button';
-import { getAnnouncements, type AnnouncementInfo } from '@/lib/api';
+import { announcementsQuery, type AnnouncementInfo } from '@/lib/api';
 import {
   readLocalStorageValue,
   removeLocalStorageValue,
@@ -189,8 +189,7 @@ export function AnnouncementToasts() {
   const [toastManager] = useState(() => Toast.createToastManager());
   const shownIdsRef = useRef(new Set<number>());
   const { data } = useQuery({
-    queryKey: ['announcements'],
-    queryFn: getAnnouncements,
+    ...announcementsQuery(),
     refetchInterval: 60_000,
   });
 

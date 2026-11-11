@@ -28,8 +28,8 @@ function preventDocumentNavigation(event: MouseEvent): void {
 }
 
 const SAFE_ARTICLE: Article = {
-  article_id: 'article-1',
-  journal_id: 'journal-1',
+  article_id: '1001',
+  journal_id: '301',
   title: 'Selectable title',
   abstract: 'Selectable abstract text',
   authors: ['Ada Lovelace'],
@@ -258,12 +258,12 @@ async function copiesArticleValuesAndUsesStableActionRoutes(): Promise<void> {
   const abstractLink = await screen.findByRole('link', { name: '查看摘要页' });
   expect(abstractLink).toHaveAttribute(
     'href',
-    'http://localhost/api/articles/article-1/abstract?db=fixture.sqlite',
+    'http://localhost/api/articles/1001/abstract?db=fixture.sqlite',
   );
   const fulltextLink = screen.getByRole('link', { name: '获取全文' });
   expect(fulltextLink).toHaveAttribute(
     'href',
-    'http://localhost/api/articles/article-1/fulltext?db=fixture.sqlite',
+    'http://localhost/api/articles/1001/fulltext?db=fixture.sqlite',
   );
   for (const link of [abstractLink, fulltextLink]) {
     expect(link).toHaveAttribute('target', '_blank');
@@ -324,10 +324,10 @@ async function doesNotExposeStoredOrDirectExternalLinks(): Promise<void> {
 async function showsBibliographicMetadata(): Promise<void> {
   registerArticleDialogHandlers();
   server.use(
-    http.get('http://localhost/api/journals/journal-1', ({ request }) => {
+    http.get('http://localhost/api/journals/301', ({ request }) => {
       expect(new URL(request.url).searchParams.get('db')).toBe('fixture.sqlite');
       return HttpResponse.json({
-        journal_id: 'journal-1',
+        journal_id: '301',
         catalog_id: 'issn-1234-5678',
         title: 'Journal of Tests',
         title_aliases: [],

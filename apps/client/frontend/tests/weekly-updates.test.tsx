@@ -9,7 +9,12 @@ import { http, HttpResponse, type HttpResponseResolver } from 'msw';
 import { beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import { WeeklyUpdatesView } from '@/components/weekly/weekly-updates-view';
-import { SELECTED_DATABASE_KEY, readSelectedDatabase } from '@/lib/api';
+import {
+  SELECTED_DATABASE_KEY,
+  readSelectedDatabase,
+  weeklyUpdateArticlesQuery,
+  weeklyUpdatesSummaryQuery,
+} from '@/lib/api';
 import type { WeeklyArticlePage, WeeklyUpdatesSummaryResponse } from '@/lib/api';
 import { server } from '@/tests/mocks/server';
 import {
@@ -399,7 +404,7 @@ async function resetsForSummaryWindow(): Promise<void> {
 
   expect(await screen.findByText('Initial window article')).toBeInTheDocument();
   act(() => {
-    queryClient.setQueryData<WeeklyUpdatesSummaryResponse>(['weekly-updates-summary'], {
+    queryClient.setQueryData(weeklyUpdatesSummaryQuery().queryKey, {
       ...WEEKLY_SUMMARY_FIXTURE,
       generated_at: '2026-07-09T23:59:59Z',
       window_end: '2026-07-09T23:59:59Z',
@@ -541,7 +546,12 @@ async function reusesWeeklyFavoriteIds(): Promise<void> {
   expect(weeklyViewMocks.favoriteArticleIds).toBe(articleIds);
   await act(async () => {
     view.queryClient.setQueryData<InfiniteData<WeeklyArticlePage>>(
-      ['weekly-update-articles', 'fixture.sqlite', '101', '', WEEKLY_SUMMARY_FIXTURE.window_end],
+      weeklyUpdateArticlesQuery({
+        dbName: 'fixture.sqlite',
+        journalId: '101',
+        windowEnd: WEEKLY_SUMMARY_FIXTURE.window_end,
+        limit: 50,
+      }).queryKey,
       (previous) =>
         previous && {
           ...previous,

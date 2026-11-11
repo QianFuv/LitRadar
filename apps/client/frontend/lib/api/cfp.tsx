@@ -1,14 +1,16 @@
 /** Authenticated, database-scoped queries for backend-owned original CFP data. */
 
-import { buildDatabaseUrl, requestJson } from '@/lib/api/client';
+import { $api, apiClient, readData } from '@/lib/api/client';
+import { apiCursorQuery, apiQuery } from '@/lib/api/query';
 import type { CfpCatalogResponse, CfpNoticePage } from '@/lib/api/types';
 
 /** Fetch the complete lightweight journal catalog without downloading notice bodies. */
-export function getCfpJournals(dbName: string, signal?: AbortSignal): Promise<CfpCatalogResponse> {
-  return requestJson<CfpCatalogResponse>(
-    buildDatabaseUrl('/api/cfp/journals', dbName),
-    { signal },
-    '获取征稿期刊失败',
+export async function getCfpJournals(
+  dbName: string,
+  signal?: AbortSignal,
+): Promise<CfpCatalogResponse> {
+  return readData(
+    await apiClient.GET('/api/cfp/journals', { params: { query: { db: dbName } }, signal }),
   );
 }
 
@@ -21,23 +23,55 @@ export interface CfpNoticeQuery {
 }
 
 /** Fetch one server-evaluated page, preserving its opaque cursor and cancellation signal. */
-export function getCfpNotices(
+export async function getCfpNotices(
   query: CfpNoticeQuery,
   cursor: string | null = null,
   signal?: AbortSignal,
 ): Promise<CfpNoticePage> {
-  const params = new URLSearchParams({
-    include_closed: String(query.includeClosed),
-    limit: String(query.limit ?? 50),
-  });
-  if (cursor) params.set('cursor', cursor);
-  return requestJson<CfpNoticePage>(
-    buildDatabaseUrl(
-      `/api/cfp/journals/${encodeURIComponent(query.catalogId)}/notices`,
-      query.dbName,
-      params,
-    ),
-    { signal },
-    '获取征稿需求失败',
+  return readData(
+    await apiClient.GET('/api/cfp/journals/{catalog_id}/notices', {
+      params: {
+        path: { catalog_id: query.catalogId },
+        query: {
+          db: query.dbName,
+          include_closed: query.includeClosed,
+          limit: query.limit ?? 50,
+          ...(cursor ? { cursor } : {}),
+        },
+      },
+      signal,
+    }),
+  );
+}
+
+/**
+ * Query of a database's call-for-papers journal catalog.
+ *
+ * @param dbName - Database name.
+ * @returns Query options.
+ */
+export function cfpJournalsQuery(dbName: string) {
+  return apiQuery(
+    $api.queryOptions('get', '/api/cfp/journals', { params: { query: { db: dbName } } }),
+  );
+}
+
+/**
+ * Cursor-paged query of one journal's call-for-papers notices.
+ *
+ * @param query - Database, journal, closed-notice filter, and optional page size.
+ * @returns Infinite query options.
+ */
+export function cfpNoticesQuery(query: CfpNoticeQuery) {
+  const queryKey = $api.queryOptions('get', '/api/cfp/journals/{catalog_id}/notices', {
+    params: {
+      path: { catalog_id: query.catalogId },
+      query: { db: query.dbName, include_closed: query.includeClosed, limit: query.limit ?? 50 },
+    },
+  }).queryKey;
+  return apiCursorQuery(
+    queryKey,
+    (cursor, signal) => getCfpNotices(query, cursor, signal),
+    (page) => page.page.next_cursor,
   );
 }

@@ -74,7 +74,7 @@ async function renderFavoritesPage(): Promise<void> {
 function AuthenticatedFavoriteFixture() {
   const { user, loading } = useAuth();
   if (loading || !user) return null;
-  return <FavoritesPageContent userId={user.id} />;
+  return <FavoritesPageContent />;
 }
 
 /**

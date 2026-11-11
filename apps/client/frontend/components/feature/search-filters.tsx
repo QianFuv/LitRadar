@@ -49,7 +49,13 @@ import {
 } from '@/components/ui/select';
 import { RevealItem } from '@/components/ui/reveal';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getAreas, getDatabases, getJournalOptions, getJournalRatings, getYears } from '@/lib/api';
+import {
+  areasQuery,
+  databasesQuery,
+  journalOptionsQuery,
+  journalRatingsQuery,
+  yearsQuery,
+} from '@/lib/api';
 import { getAreaDisplayName } from '@/lib/area-labels';
 import {
   buildMonthKey,
@@ -174,8 +180,7 @@ function useSearchFilterState() {
   };
 
   const { data: databases, isLoading: loadingDatabases } = useQuery({
-    queryKey: ['meta', 'databases'],
-    queryFn: () => getDatabases(),
+    ...databasesQuery(),
     enabled: !!user,
   });
   const activeDb = resolveAvailableSelectedDatabase(selectedDb, databases ?? []);
@@ -185,20 +190,17 @@ function useSearchFilterState() {
   }, [databases, selectedDb]);
 
   const { data: areaOptions, isLoading: loadingAreas } = useQuery({
-    queryKey: ['meta', 'areas', activeDb],
-    queryFn: () => getAreas(activeDb),
+    ...areasQuery(activeDb),
     enabled: !!user,
   });
 
   const { data: journalOptions, isLoading: loadingJournals } = useQuery({
-    queryKey: ['meta', 'journals', activeDb],
-    queryFn: () => getJournalOptions(activeDb),
+    ...journalOptionsQuery(activeDb),
     enabled: !!user,
   });
 
   const { data: yearData, isLoading: loadingYears } = useQuery({
-    queryKey: ['meta', 'years', activeDb],
-    queryFn: () => getYears(activeDb),
+    ...yearsQuery(activeDb),
     enabled: !!user,
   });
 
@@ -208,8 +210,7 @@ function useSearchFilterState() {
     isError: isRatingError,
     refetch: refetchRatings,
   } = useQuery({
-    queryKey: ['meta', 'ratings', activeDb],
-    queryFn: () => getJournalRatings(activeDb),
+    ...journalRatingsQuery(activeDb),
     enabled: !!user && !!activeDb,
   });
 

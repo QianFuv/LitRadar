@@ -12,8 +12,7 @@ export type ArticleSearchMode = NonNullable<
   NonNullable<operations['list_articles']['parameters']['query']>['search_mode']
 >;
 
-type PageMeta = Omit<ApiSchemas['PageMeta'], 'total'> &
-  Required<Pick<ApiSchemas['PageMeta'], 'total'>>;
+type PageMeta = ApiSchemas['PageMeta'];
 
 /** Article cards also accept sparse metadata from unavailable favorite records. */
 export type Article = Pick<ApiSchemas['Article'], 'article_id'> &
@@ -31,11 +30,6 @@ export type ArticlePage = Omit<ApiSchemas['PageArticle'], 'items' | 'page'> & {
 };
 
 export type ArticleAccessResponse = ApiSchemas['ArticleAccess'];
-export type ValueCount = ApiSchemas['ValueCount'];
-export type JournalRatingOptions = ApiSchemas['RatingOptions'];
-export type YearSummary = ApiSchemas['YearSummary'];
-export type JournalOption = Pick<ApiSchemas['JournalOption'], 'journal_id'> &
-  Partial<Pick<ApiSchemas['JournalOption'], 'title'>>;
 export type JournalRecord = ApiSchemas['Journal'];
 export type CfpCatalogResponse = ApiSchemas['CfpCatalogResponse'];
 export type CfpJournalSummary = ApiSchemas['CfpJournalSummary'];
@@ -53,11 +47,8 @@ export type WeeklyArticlePage = Omit<ApiSchemas['PageWeeklyArticle'], 'items' | 
   page: PageMeta;
 };
 
-type AnnouncementPriority = 'high' | 'normal' | 'low';
-
-export type AnnouncementInfo = Omit<ApiSchemas['Announcement'], 'priority'> & {
-  priority: AnnouncementPriority;
-};
+export type { AnnouncementInfo } from '@/lib/api-contract';
+type AnnouncementPriority = NonNullable<ApiSchemas['AnnouncementCreate']['priority']>;
 export type Folder = ApiSchemas['FavoriteFolder'];
 export type FavoriteItem = ApiSchemas['FavoriteFavorite'];
 export type FavoriteArticleItem = ApiSchemas['FavoriteArticle'];
@@ -68,7 +59,6 @@ export type FavoriteArticlePage = Omit<ApiSchemas['FavoritePageArticle'], 'page'
 };
 
 export type FavoriteCheck = ApiSchemas['FavoriteMembership'];
-export type FavoriteBatchCheckItem = ApiSchemas['FavoriteBatchMembership'];
 export type FavoriteArticleRef = Required<ApiSchemas['FavoriteArticleRef']>;
 export type RelationGraphFavoriteSummary = ApiSchemas['FavoriteGraphSummary'];
 export type RelationGraphFavorite = ApiSchemas['FavoriteGraph'];
@@ -77,6 +67,7 @@ export type RelationGraphFavoriteCreate = ApiSchemas['RelationGraphFavoriteCreat
 export type RelationGraphFavoriteUpdate = ApiSchemas['RelationGraphFavoriteUpdate'];
 export type CitationFormat = 'bibtex' | 'ris' | 'endnote';
 export type AccessToken = ApiSchemas['TokenInfo'];
+export type CreatedAccessToken = ApiSchemas['IssuedToken'];
 export type CnkiSessionStatus = ApiSchemas['CnkiStatus'];
 export type CnkiLoginStartResponse = ApiSchemas['CnkiStartResponse'];
 export type CnkiLoginPollResponse = ApiSchemas['CnkiPollResponse'];
@@ -88,16 +79,7 @@ export type {
 } from '@/lib/api-contract';
 
 export type AdminUserInfo = ApiSchemas['AdminUserResponse'];
-type IndexDbStats = Omit<ApiSchemas['IndexDatabaseStats'], 'error'> & {
-  error?: Exclude<ApiSchemas['IndexDatabaseStats']['error'], null>;
-};
-type PushDbStats = Omit<ApiSchemas['PushStats'], 'delivered_count' | 'user_results'> & {
-  [Field in 'delivered_count' | 'user_results']?: NonNullable<ApiSchemas['PushStats'][Field]>;
-};
-export type AdminStats = Omit<ApiSchemas['AdminStats'], 'index' | 'push'> & {
-  index: Omit<ApiSchemas['IndexStats'], 'databases'> & { databases: IndexDbStats[] };
-  push: PushDbStats[];
-};
+export type AdminStats = ApiSchemas['AdminStats'];
 export type AnnouncementCreate = Required<Omit<ApiSchemas['AnnouncementCreate'], 'priority'>> & {
   priority: AnnouncementPriority;
 };

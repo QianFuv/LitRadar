@@ -26,10 +26,7 @@ import { ReaderPlaceholder } from '@/components/feature/reader-placeholder';
 import { useFavoriteChecks } from '@/components/feature/use-favorite-checks';
 import { WorkspaceShell } from '@/components/feature/workspace-shell';
 import { RelationCanvas } from '@/components/relations/relation-canvas';
-import {
-  RelationGraphFavoriteControls,
-  relationGraphFavoriteKey,
-} from '@/components/relations/relation-graph-favorite-controls';
+import { RelationGraphFavoriteControls } from '@/components/relations/relation-graph-favorite-controls';
 import { Button } from '@/components/ui/button';
 import { IconTooltip } from '@/components/ui/tooltip';
 import { Dialog } from '@/components/ui/dialog';
@@ -37,10 +34,11 @@ import { Input } from '@/components/ui/input';
 import { RevealItem } from '@/components/ui/reveal';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import {
-  getArticle,
+  articlePagesQueryKey,
+  articleQuery,
   getArticles,
-  getRelatedArticles,
-  getRelationGraphFavorite,
+  relatedArticlesQuery,
+  relationGraphFavoriteQuery,
   type Article,
   type RelationGraphFavorite,
 } from '@/lib/api';
@@ -73,6 +71,8 @@ import { colors, lineHeights } from '@/lib/theme.stylex';
 
 /** Related lists are shared with the article reader and change only when the index updates. */
 const RELATED_STALE_TIME_MS = 10 * 60 * 1000;
+/** Candidate center articles listed for one picker search. */
+const RELATION_PICKER_LIMIT = 8;
 
 type RelationViewMode = 'graph' | 'list';
 
@@ -91,8 +91,7 @@ export function RelationsWorkspaceView() {
   const [stored] = useState(readStoredRelationGraph);
   const isRestoring = (!articleId || !dbName) && stored !== null;
   const savedQuery = useQuery({
-    queryKey: relationGraphFavoriteKey(savedId),
-    queryFn: ({ signal }) => getRelationGraphFavorite(savedId as number, signal),
+    ...relationGraphFavoriteQuery(savedId ?? 0),
     enabled: savedId !== null && Boolean(articleId && dbName),
     staleTime: Number.POSITIVE_INFINITY,
     retry: false,
@@ -185,9 +184,9 @@ function RelationPicker({ onPick }: { onPick: (article: Article, dbName: string)
   const [draft, setDraft] = useState('');
   const [query, setQuery] = useState('');
   const resultsQuery = useQuery({
-    queryKey: ['relation-picker', dbName, query],
+    queryKey: articlePagesQueryKey({ q: query, limit: RELATION_PICKER_LIMIT }, dbName),
     queryFn: ({ signal }) =>
-      getArticles(new URLSearchParams({ q: query, limit: '8' }), null, false, dbName, signal),
+      getArticles({ q: query, limit: RELATION_PICKER_LIMIT }, null, dbName, signal),
     enabled: query.length > 0,
     staleTime: 60 * 1000,
   });
@@ -339,17 +338,16 @@ function RelationExplorer({
   const fetchRelated = useCallback(
     (nodeId: string) =>
       queryClient.fetchQuery({
-        queryKey: ['related-articles', dbName, nodeId],
-        queryFn: ({ signal }) => getRelatedArticles(nodeId, dbName, RELATION_CHILD_LIMIT, signal),
+        ...relatedArticlesQuery(nodeId, dbName, RELATION_CHILD_LIMIT),
         staleTime: RELATED_STALE_TIME_MS,
       }),
     [dbName, queryClient],
   );
 
   const initialQuery = useQuery({
-    queryKey: ['relation-root', dbName, articleId],
-    queryFn: async ({ signal }) => {
-      const root = await getArticle(articleId, dbName, signal);
+    queryKey: [...articleQuery(articleId, dbName).queryKey, 'relation-graph'],
+    queryFn: async () => {
+      const root = await queryClient.fetchQuery(articleQuery(articleId, dbName));
       const related = await fetchRelated(relationNodeId(root));
       return expandRelationNode(createRelationGraph(root), relationNodeId(root), related);
     },

@@ -2,7 +2,13 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { KeyRound, ShieldCheck, Trash2, Users, ShieldOff } from '@/components/ui/animated-icons';
 
-import { adminDeleteUser, adminGetUsers, adminResetPassword, adminSetAdmin } from '@/lib/api';
+import {
+  adminDeleteUser,
+  adminResetPassword,
+  adminSetAdmin,
+  adminStatsQuery,
+  adminUsersQuery,
+} from '@/lib/api';
 import { AdminListHeader } from '@/components/admin/admin-list-header';
 import {
   SettingsGroup,
@@ -66,8 +72,7 @@ export function AdminUsersCard({
     error: usersError,
     isLoading: isUsersLoading,
   } = useQuery({
-    queryKey: ['admin-users'],
-    queryFn: () => adminGetUsers(),
+    ...adminUsersQuery(),
     enabled: isEnabled,
   });
   const userRows = useMemo(
@@ -78,8 +83,8 @@ export function AdminUsersCard({
     mutationFn: ({ userId, isAdmin }: { userId: number; isAdmin: boolean }) =>
       adminSetAdmin(userId, isAdmin),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-users'] });
-      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      void queryClient.invalidateQueries({ queryKey: adminUsersQuery().queryKey });
+      void queryClient.invalidateQueries({ queryKey: adminStatsQuery().queryKey });
     },
   });
   const resetPwMut = useMutation({
@@ -93,8 +98,8 @@ export function AdminUsersCard({
   const deleteUserMut = useMutation({
     mutationFn: (userId: number) => adminDeleteUser(userId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-users'] });
-      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      void queryClient.invalidateQueries({ queryKey: adminUsersQuery().queryKey });
+      void queryClient.invalidateQueries({ queryKey: adminStatsQuery().queryKey });
       setDeleteDialogOpen(false);
       setDeleteUserId(null);
     },

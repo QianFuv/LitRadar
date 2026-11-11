@@ -68,7 +68,8 @@ vi.mock('@/components/feature/article-dialog-card', () => ({
 }));
 
 import { ResultsList } from '@/components/feature/results-list';
-import type { Article, ArticlePage } from '@/lib/api';
+import { articlePagesQueryKey, type Article, type ArticlePage } from '@/lib/api';
+import { apiPathKey } from '@/lib/api/query';
 import { setSelectedDatabase } from '@/lib/selected-database';
 import { useUpdateWorkspaceSearch } from '@/lib/search-params';
 import { createArticlePageScenario } from '@/tests/mocks/scenarios';
@@ -279,7 +280,7 @@ async function rendersTypedResultContent(): Promise<void> {
   expect(requestUrl?.searchParams.getAll('journal_id')).toEqual(['101']);
   expect(requestUrl?.searchParams.get('date_from')).toBe('2024-01-01');
   expect(requestUrl?.searchParams.get('date_to')).toBe('2024-02-29');
-  expect(requestUrl?.searchParams.get('include_total')).toBe('0');
+  expect(requestUrl?.searchParams.get('include_total')).toBe('false');
   expect(screen.queryByText(/共找到 .* 条结果/)).not.toBeInTheDocument();
 }
 
@@ -301,7 +302,7 @@ async function recoversFirstPageFailureToEmptyState(): Promise<void> {
   expect(screen.getAllByRole('alert')).toHaveLength(1);
   expect(await screen.findByTestId('results-state-error')).toHaveTextContent('无法加载文章');
   shouldFail = false;
-  await queryClient.invalidateQueries({ queryKey: ['articles'] });
+  await queryClient.invalidateQueries({ queryKey: apiPathKey('get', '/api/articles') });
 
   expect(await screen.findByText('未找到文章。')).toBeInTheDocument();
   expect(screen.getByTestId('results-state-empty')).toBeInTheDocument();
@@ -368,16 +369,16 @@ async function appendsPagesAndClearsStaleDatabaseResults(): Promise<void> {
   });
   expect(await screen.findByTestId('result-9002')).toBeInTheDocument();
   expect(requestUrls).toHaveLength(2);
-  expect(requestUrls[0].searchParams.get('include_total')).toBe('0');
+  expect(requestUrls[0].searchParams.get('include_total')).toBe('false');
   expect(requestUrls[1].searchParams.get('cursor')).toBe('page-two');
-  expect(requestUrls[1].searchParams.get('include_total')).toBe('0');
+  expect(requestUrls[1].searchParams.get('include_total')).toBe('false');
   expect(screen.queryByText(/共找到 .* 条结果/)).not.toBeInTheDocument();
 
   act(() => setSelectedDatabase('other.sqlite'));
   expect(await screen.findByTestId('result-other-1')).toBeInTheDocument();
   await waitFor(() => expect(screen.queryByTestId('result-9001')).not.toBeInTheDocument());
   expect(screen.queryByTestId('result-9002')).not.toBeInTheDocument();
-  expect(requestUrls[2].searchParams.get('include_total')).toBe('0');
+  expect(requestUrls[2].searchParams.get('include_total')).toBe('false');
 }
 
 /**
@@ -478,7 +479,7 @@ async function reusesHighlightsForFavoriteChanges(): Promise<void> {
   await act(async () => {
     const queryKey = view.queryClient
       .getQueryCache()
-      .find({ queryKey: ['articles'], exact: false })!.queryKey;
+      .find({ queryKey: apiPathKey('get', '/api/articles'), exact: false })!.queryKey;
     view.queryClient.setQueryData(queryKey, {
       pages: [createArticlePage([{ ...SHARED_ARTICLE, title: 'Updated Fixture title' }])],
       pageParams: [null],
@@ -557,7 +558,7 @@ async function refreshesHighlightsForQueryChanges(): Promise<void> {
     'Fixture',
     'Fixture',
   ]);
-  view.queryClient.setQueryData(['articles', 'scenario.sqlite', 'q=Updated'], {
+  view.queryClient.setQueryData(articlePagesQueryKey({ q: 'Updated' }, 'scenario.sqlite'), {
     pages: [createArticlePage([article])],
     pageParams: [null],
   });

@@ -3,31 +3,30 @@
  */
 
 import {
+  parseAnnouncement,
+  parseAnnouncementList,
   parseProviderCatalogResponse,
   parseRuntimeSettingList,
   parseSchedulerStatus,
   parseScheduledTaskInfo,
   parseScheduledTaskList,
-  type ProviderCatalogResponse,
   type RuntimeSettingInfo,
   type RuntimeSettingsUpdate,
-  type SchedulerStatus,
   type ScheduledTaskCreate,
   type ScheduledTaskInfo,
   type ScheduledTaskUpdate,
 } from '@/lib/api-contract';
-import { buildApiUrl, requestJson } from '@/lib/api/client';
+import { $api, apiClient, readData } from '@/lib/api/client';
+import { apiQuery, validatedApiQuery } from '@/lib/api/query';
 import type {
   AdminInviteCode,
   AdminInviteCodeCreate,
   AdminStats,
-  AdminUserInfo,
   AnnouncementCreate,
   AnnouncementInfo,
   AnnouncementUpdate,
   TelemetryKind,
   TelemetryPeriod,
-  TelemetryResponse,
 } from '@/lib/api/types';
 
 /**
@@ -35,43 +34,8 @@ import type {
  *
  * @returns Admin stats.
  */
-export function adminGetStats(): Promise<AdminStats> {
-  return requestJson<AdminStats>(buildApiUrl('/api/admin/stats'), undefined, '获取统计信息失败');
-}
-
-/**
- * Fetch anonymous hourly load and search-shape telemetry for one UTC window.
- *
- * @param period - UTC hour-aligned window ending at the next hour boundary.
- * @param kind - Optional interface kind filter, or null for every kind.
- * @returns Load telemetry report.
- */
-export function adminGetTelemetry(
-  period: TelemetryPeriod,
-  kind: TelemetryKind | null,
-): Promise<TelemetryResponse> {
-  const params = new URLSearchParams({ period });
-  if (kind) {
-    params.set('kind', kind);
-  }
-  return requestJson<TelemetryResponse>(
-    buildApiUrl('/api/admin/telemetry', params),
-    undefined,
-    '获取负载统计失败',
-  );
-}
-
-/**
- * Fetch admin user list.
- *
- * @returns Users.
- */
-export function adminGetUsers(): Promise<AdminUserInfo[]> {
-  return requestJson<AdminUserInfo[]>(
-    buildApiUrl('/api/admin/users'),
-    undefined,
-    '获取用户列表失败',
-  );
+export async function adminGetStats(): Promise<AdminStats> {
+  return readData(await apiClient.GET('/api/admin/stats'));
 }
 
 /**
@@ -81,14 +45,10 @@ export function adminGetUsers(): Promise<AdminUserInfo[]> {
  * @param isAdmin - Whether the user should be admin.
  */
 export async function adminSetAdmin(userId: number, isAdmin: boolean): Promise<void> {
-  await requestJson<unknown>(
-    buildApiUrl(`/api/admin/users/${userId}/admin`),
-    {
-      method: 'PUT',
-      body: JSON.stringify({ is_admin: isAdmin }),
-    },
-    '更新管理员状态失败',
-  );
+  await apiClient.PUT('/api/admin/users/{user_id}/admin', {
+    params: { path: { user_id: userId } },
+    body: { is_admin: isAdmin },
+  });
 }
 
 /**
@@ -98,14 +58,10 @@ export async function adminSetAdmin(userId: number, isAdmin: boolean): Promise<v
  * @param newPassword - New password.
  */
 export async function adminResetPassword(userId: number, newPassword: string): Promise<void> {
-  await requestJson<unknown>(
-    buildApiUrl(`/api/admin/users/${userId}/reset-password`),
-    {
-      method: 'POST',
-      body: JSON.stringify({ new_password: newPassword }),
-    },
-    '重置密码失败',
-  );
+  await apiClient.POST('/api/admin/users/{user_id}/reset-password', {
+    params: { path: { user_id: userId } },
+    body: { new_password: newPassword },
+  });
 }
 
 /**
@@ -114,24 +70,7 @@ export async function adminResetPassword(userId: number, newPassword: string): P
  * @param userId - User id.
  */
 export async function adminDeleteUser(userId: number): Promise<void> {
-  await requestJson<unknown>(
-    buildApiUrl(`/api/admin/users/${userId}`),
-    { method: 'DELETE' },
-    '删除用户失败',
-  );
-}
-
-/**
- * Fetch admin invite codes.
- *
- * @returns Invite codes.
- */
-export function adminGetInviteCodes(): Promise<AdminInviteCode[]> {
-  return requestJson<AdminInviteCode[]>(
-    buildApiUrl('/api/admin/invite-codes'),
-    undefined,
-    '获取邀请码列表失败',
-  );
+  await apiClient.DELETE('/api/admin/users/{user_id}', { params: { path: { user_id: userId } } });
 }
 
 /**
@@ -140,12 +79,10 @@ export function adminGetInviteCodes(): Promise<AdminInviteCode[]> {
  * @param input - Optional expiry and maximum-use overrides.
  * @returns Created invite code.
  */
-export function adminCreateInviteCode(input: AdminInviteCodeCreate = {}): Promise<AdminInviteCode> {
-  return requestJson<AdminInviteCode>(
-    buildApiUrl('/api/admin/invite-codes'),
-    { method: 'POST', body: JSON.stringify(input) },
-    '创建邀请码失败',
-  );
+export async function adminCreateInviteCode(
+  input: AdminInviteCodeCreate = {},
+): Promise<AdminInviteCode> {
+  return readData(await apiClient.POST('/api/admin/invite-codes', { body: input }));
 }
 
 /**
@@ -154,39 +91,9 @@ export function adminCreateInviteCode(input: AdminInviteCodeCreate = {}): Promis
  * @param codeId - Invite code id.
  */
 export async function adminRevokeInviteCode(codeId: number): Promise<void> {
-  await requestJson<unknown>(
-    buildApiUrl(`/api/admin/invite-codes/${codeId}`),
-    { method: 'DELETE' },
-    '撤销邀请码失败',
-  );
-}
-
-/**
- * Fetch runtime settings.
- *
- * @returns Runtime settings.
- */
-export function adminGetRuntimeSettings(): Promise<RuntimeSettingInfo[]> {
-  return requestJson<RuntimeSettingInfo[]>(
-    buildApiUrl('/api/admin/runtime-settings'),
-    undefined,
-    '获取运行配置失败',
-    parseRuntimeSettingList,
-  );
-}
-
-/**
- * Fetch built-in Provider capabilities and discovered catalog files.
- *
- * @returns Capability-aware Provider and catalog metadata.
- */
-export function adminGetProviderCatalog(): Promise<ProviderCatalogResponse> {
-  return requestJson<ProviderCatalogResponse>(
-    buildApiUrl('/api/admin/provider-catalog'),
-    undefined,
-    '获取 Provider 配置目录失败',
-    parseProviderCatalogResponse,
-  );
+  await apiClient.DELETE('/api/admin/invite-codes/{code_id}', {
+    params: { path: { code_id: codeId } },
+  });
 }
 
 /**
@@ -195,45 +102,11 @@ export function adminGetProviderCatalog(): Promise<ProviderCatalogResponse> {
  * @param payload - Runtime settings payload.
  * @returns Updated runtime settings.
  */
-export function adminUpdateRuntimeSettings(
+export async function adminUpdateRuntimeSettings(
   payload: RuntimeSettingsUpdate,
 ): Promise<RuntimeSettingInfo[]> {
-  return requestJson<RuntimeSettingInfo[]>(
-    buildApiUrl('/api/admin/runtime-settings'),
-    {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    },
-    '更新运行配置失败',
-    parseRuntimeSettingList,
-  );
-}
-
-/**
- * Fetch scheduled tasks.
- *
- * @returns Scheduled tasks.
- */
-export function adminGetScheduledTasks(): Promise<ScheduledTaskInfo[]> {
-  return requestJson<ScheduledTaskInfo[]>(
-    buildApiUrl('/api/admin/scheduled-tasks'),
-    undefined,
-    '获取定时任务失败',
-    parseScheduledTaskList,
-  );
-}
-
-/**
- * Fetch persisted scheduler health and recent run metadata.
- *
- * @returns Durable scheduler status without captured process output.
- */
-export function adminGetSchedulerStatus(): Promise<SchedulerStatus> {
-  return requestJson<SchedulerStatus>(
-    buildApiUrl('/api/admin/scheduler/status'),
-    undefined,
-    '获取调度器状态失败',
-    parseSchedulerStatus,
+  return parseRuntimeSettingList(
+    readData(await apiClient.PUT('/api/admin/runtime-settings', { body: payload })),
   );
 }
 
@@ -243,15 +116,11 @@ export function adminGetSchedulerStatus(): Promise<SchedulerStatus> {
  * @param payload - Scheduled task payload.
  * @returns Created scheduled task.
  */
-export function adminCreateScheduledTask(payload: ScheduledTaskCreate): Promise<ScheduledTaskInfo> {
-  return requestJson<ScheduledTaskInfo>(
-    buildApiUrl('/api/admin/scheduled-tasks'),
-    {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    },
-    '创建定时任务失败',
-    parseScheduledTaskInfo,
+export async function adminCreateScheduledTask(
+  payload: ScheduledTaskCreate,
+): Promise<ScheduledTaskInfo> {
+  return parseScheduledTaskInfo(
+    readData(await apiClient.POST('/api/admin/scheduled-tasks', { body: payload })),
   );
 }
 
@@ -262,18 +131,17 @@ export function adminCreateScheduledTask(payload: ScheduledTaskCreate): Promise<
  * @param payload - Scheduled task patch.
  * @returns Updated scheduled task.
  */
-export function adminUpdateScheduledTask(
+export async function adminUpdateScheduledTask(
   taskId: number,
   payload: ScheduledTaskUpdate,
 ): Promise<ScheduledTaskInfo> {
-  return requestJson<ScheduledTaskInfo>(
-    buildApiUrl(`/api/admin/scheduled-tasks/${taskId}`),
-    {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    },
-    '更新定时任务失败',
-    parseScheduledTaskInfo,
+  return parseScheduledTaskInfo(
+    readData(
+      await apiClient.PUT('/api/admin/scheduled-tasks/{task_id}', {
+        params: { path: { task_id: taskId } },
+        body: payload,
+      }),
+    ),
   );
 }
 
@@ -283,24 +151,9 @@ export function adminUpdateScheduledTask(
  * @param taskId - Task id.
  */
 export async function adminDeleteScheduledTask(taskId: number): Promise<void> {
-  await requestJson<unknown>(
-    buildApiUrl(`/api/admin/scheduled-tasks/${taskId}`),
-    { method: 'DELETE' },
-    '删除定时任务失败',
-  );
-}
-
-/**
- * Fetch admin announcement list.
- *
- * @returns Announcements.
- */
-export function adminGetAnnouncements(): Promise<AnnouncementInfo[]> {
-  return requestJson<AnnouncementInfo[]>(
-    buildApiUrl('/api/admin/announcements'),
-    undefined,
-    '获取公告列表失败',
-  );
+  await apiClient.DELETE('/api/admin/scheduled-tasks/{task_id}', {
+    params: { path: { task_id: taskId } },
+  });
 }
 
 /**
@@ -309,14 +162,11 @@ export function adminGetAnnouncements(): Promise<AnnouncementInfo[]> {
  * @param payload - Announcement payload.
  * @returns Created announcement.
  */
-export function adminCreateAnnouncement(payload: AnnouncementCreate): Promise<AnnouncementInfo> {
-  return requestJson<AnnouncementInfo>(
-    buildApiUrl('/api/admin/announcements'),
-    {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    },
-    '创建公告失败',
+export async function adminCreateAnnouncement(
+  payload: AnnouncementCreate,
+): Promise<AnnouncementInfo> {
+  return parseAnnouncement(
+    readData(await apiClient.POST('/api/admin/announcements', { body: payload })),
   );
 }
 
@@ -327,17 +177,17 @@ export function adminCreateAnnouncement(payload: AnnouncementCreate): Promise<An
  * @param payload - Announcement patch.
  * @returns Updated announcement.
  */
-export function adminUpdateAnnouncement(
+export async function adminUpdateAnnouncement(
   announcementId: number,
   payload: AnnouncementUpdate,
 ): Promise<AnnouncementInfo> {
-  return requestJson<AnnouncementInfo>(
-    buildApiUrl(`/api/admin/announcements/${announcementId}`),
-    {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    },
-    '更新公告失败',
+  return parseAnnouncement(
+    readData(
+      await apiClient.PUT('/api/admin/announcements/{announcement_id}', {
+        params: { path: { announcement_id: announcementId } },
+        body: payload,
+      }),
+    ),
   );
 }
 
@@ -347,9 +197,109 @@ export function adminUpdateAnnouncement(
  * @param announcementId - Announcement id.
  */
 export async function adminDeleteAnnouncement(announcementId: number): Promise<void> {
-  await requestJson<unknown>(
-    buildApiUrl(`/api/admin/announcements/${announcementId}`),
-    { method: 'DELETE' },
-    '删除公告失败',
+  await apiClient.DELETE('/api/admin/announcements/{announcement_id}', {
+    params: { path: { announcement_id: announcementId } },
+  });
+}
+
+/**
+ * Query of the administrator statistics.
+ *
+ * @returns Query options.
+ */
+export function adminStatsQuery() {
+  return apiQuery($api.queryOptions('get', '/api/admin/stats'));
+}
+
+/**
+ * Query of anonymous hourly load and search-shape telemetry for one UTC window.
+ *
+ * @param period - UTC hour-aligned window ending at the next hour boundary.
+ * @param kind - Optional interface kind filter, or null for every kind.
+ * @returns Query options.
+ */
+export function adminTelemetryQuery(period: TelemetryPeriod, kind: TelemetryKind | null) {
+  return apiQuery(
+    $api.queryOptions('get', '/api/admin/telemetry', {
+      params: { query: { period, ...(kind ? { kind } : {}) } },
+    }),
+  );
+}
+
+/**
+ * Query of the administrator user list.
+ *
+ * @returns Query options.
+ */
+export function adminUsersQuery() {
+  return apiQuery($api.queryOptions('get', '/api/admin/users'));
+}
+
+/**
+ * Query of the administrator invite codes.
+ *
+ * @returns Query options.
+ */
+export function adminInviteCodesQuery() {
+  return apiQuery($api.queryOptions('get', '/api/admin/invite-codes'));
+}
+
+/**
+ * Query of the runtime settings, contract-validated.
+ *
+ * @returns Query options.
+ */
+export function runtimeSettingsQuery() {
+  return validatedApiQuery(
+    $api.queryOptions('get', '/api/admin/runtime-settings'),
+    parseRuntimeSettingList,
+  );
+}
+
+/**
+ * Query of the Provider capabilities and catalog files, contract-validated.
+ *
+ * @returns Query options.
+ */
+export function providerCatalogQuery() {
+  return validatedApiQuery(
+    $api.queryOptions('get', '/api/admin/provider-catalog'),
+    parseProviderCatalogResponse,
+  );
+}
+
+/**
+ * Query of the scheduled tasks, contract-validated.
+ *
+ * @returns Query options.
+ */
+export function scheduledTasksQuery() {
+  return validatedApiQuery(
+    $api.queryOptions('get', '/api/admin/scheduled-tasks'),
+    parseScheduledTaskList,
+  );
+}
+
+/**
+ * Query of the scheduler health and recent runs, contract-validated.
+ *
+ * @returns Query options.
+ */
+export function schedulerStatusQuery() {
+  return validatedApiQuery(
+    $api.queryOptions('get', '/api/admin/scheduler/status'),
+    parseSchedulerStatus,
+  );
+}
+
+/**
+ * Query of every announcement for administrators, with priorities validated.
+ *
+ * @returns Query options.
+ */
+export function adminAnnouncementsQuery() {
+  return validatedApiQuery(
+    $api.queryOptions('get', '/api/admin/announcements'),
+    parseAnnouncementList,
   );
 }

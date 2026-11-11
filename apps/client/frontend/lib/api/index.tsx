@@ -2,201 +2,83 @@
  * Index metadata, article, weekly update, and announcement API operations.
  */
 
-import {
-  buildApiUrl,
-  buildDatabaseUrl,
-  readSelectedDatabase,
-  requestJson,
-  resolveApiBase,
-} from '@/lib/api/client';
+import { $api, apiClient, readData, readSelectedDatabase, resolveApiBase } from '@/lib/api/client';
+import { apiCursorQuery, apiPathKey, apiQuery, validatedApiQuery } from '@/lib/api/query';
+import type { operations } from '@/lib/generated/api-schema';
 import type {
-  AnnouncementInfo,
-  ArticleAccessResponse,
-  Article,
   ArticleId,
   ArticlePage,
   ArticleSearchMode,
   JournalId,
-  JournalOption,
-  JournalRatingOptions,
-  JournalRecord,
-  ValueCount,
   WeeklyArticlePage,
-  WeeklyUpdatesSummaryResponse,
-  YearSummary,
 } from '@/lib/api/types';
+import { parseAnnouncementList } from '@/lib/api-contract';
 import { isAdvancedSearchQuery } from '@/lib/search-syntax';
 
 const DEFAULT_ARTICLE_SEARCH_MODE: ArticleSearchMode = 'simple';
 
+/** Article search filters accepted by `GET /api/articles`. */
+export type ArticleSearchQuery = NonNullable<operations['list_articles']['parameters']['query']>;
+
 /**
- * List available index databases.
+ * Complete article search filters with the database, the total flag, and the search mode the
+ * query text needs.
  *
- * @returns Database names.
+ * @param query - Search filters.
+ * @param dbName - Database name used when the filters name none.
+ * @returns Filters as sent to the server, without a cursor.
  */
-export function getDatabases(): Promise<string[]> {
-  return requestJson<string[]>(buildApiUrl('/api/meta/databases'), undefined, '获取数据库失败');
+function normalizeArticleSearch(query: ArticleSearchQuery, dbName: string): ArticleSearchQuery {
+  const textMode =
+    query.q && isAdvancedSearchQuery(query.q) ? 'advanced' : DEFAULT_ARTICLE_SEARCH_MODE;
+  const searchMode = query.search_mode ?? (query.q ? textMode : undefined);
+  return {
+    ...query,
+    db: query.db ?? dbName,
+    include_total: query.include_total ?? false,
+    ...(searchMode ? { search_mode: searchMode } : {}),
+  };
 }
 
 /**
- * Fetch metadata areas for a database.
+ * Key of the cursor-paged article search for one set of filters.
  *
- * @param dbName - Database name. Defaults to the selected database.
- * @returns Area counts.
+ * @param query - Search filters.
+ * @param dbName - Database name used when the filters name none.
+ * @returns openapi-react-query key of the first page.
  */
-export function getAreas(dbName = readSelectedDatabase()): Promise<ValueCount[]> {
-  return requestJson<ValueCount[]>(
-    buildDatabaseUrl('/api/meta/areas', dbName),
-    undefined,
-    '获取领域失败',
-  );
+export function articlePagesQueryKey(query: ArticleSearchQuery, dbName: string) {
+  return $api.queryOptions('get', '/api/articles', {
+    params: { query: normalizeArticleSearch(query, dbName) },
+  }).queryKey;
 }
 
 /**
- * Fetch available exact journal grades and journal counts for one database.
+ * Fetch one article page.
  *
- * @param dbName - Database name. Defaults to the selected database.
- * @returns Rating groups, including empty groups when no grades are available.
- */
-export function getJournalRatings(dbName = readSelectedDatabase()): Promise<JournalRatingOptions> {
-  return requestJson<JournalRatingOptions>(
-    buildDatabaseUrl('/api/meta/ratings', dbName),
-    undefined,
-    '获取期刊评级失败',
-  );
-}
-
-/**
- * Fetch indexed year summaries for a database.
- *
- * @param dbName - Database name. Defaults to the selected database.
- * @returns Year summaries.
- */
-export function getYears(dbName = readSelectedDatabase()): Promise<YearSummary[]> {
-  return requestJson<YearSummary[]>(
-    buildDatabaseUrl('/api/years', dbName),
-    undefined,
-    '获取年份失败',
-  );
-}
-
-/**
- * Fetch journal filter options for a database.
- *
- * @param dbName - Database name. Defaults to the selected database.
- * @returns Journal options.
- */
-export function getJournalOptions(dbName = readSelectedDatabase()): Promise<JournalOption[]> {
-  return requestJson<JournalOption[]>(
-    buildDatabaseUrl('/api/meta/journals', dbName),
-    undefined,
-    '获取期刊失败',
-  );
-}
-
-/**
- * Fetch one journal record with its ISSNs, subject area, and ratings.
- *
- * @param journalId - Journal identifier.
- * @param dbName - Database name.
- * @param signal - Cancellation signal for an obsolete request.
- * @returns Journal record.
- */
-export function getJournal(
-  journalId: string,
-  dbName: string,
-  signal?: AbortSignal,
-): Promise<JournalRecord> {
-  return requestJson<JournalRecord>(
-    buildDatabaseUrl(`/api/journals/${encodeURIComponent(journalId)}`, dbName),
-    { signal },
-    '获取期刊信息失败',
-  );
-}
-
-/**
- * Fetch one article.
- *
- * @param articleId - Article identifier.
- * @param dbName - Database name.
- * @param signal - Cancellation signal for an obsolete request.
- * @returns Article record.
- */
-export function getArticle(
-  articleId: ArticleId,
-  dbName: string,
-  signal?: AbortSignal,
-): Promise<Article> {
-  return requestJson<Article>(
-    buildDatabaseUrl(`/api/articles/${encodeURIComponent(String(articleId))}`, dbName),
-    { signal },
-    '获取文章失败',
-  );
-}
-
-/**
- * Fetch articles ranked by FTS5 similarity to one article's title.
- *
- * @param articleId - Source article identifier.
- * @param dbName - Database name.
- * @param limit - Maximum number of related articles (1–30).
- * @param signal - Cancellation signal for an obsolete request.
- * @returns Related articles, most similar first.
- */
-export function getRelatedArticles(
-  articleId: ArticleId,
-  dbName: string,
-  limit: number,
-  signal?: AbortSignal,
-): Promise<Article[]> {
-  return requestJson<Article[]>(
-    buildDatabaseUrl(
-      `/api/articles/${encodeURIComponent(String(articleId))}/related`,
-      dbName,
-      new URLSearchParams({ limit: String(limit) }),
-    ),
-    { signal },
-    '获取相关文章失败',
-  );
-}
-
-/**
- * Fetch a cursor-paginated article page.
- *
- * @param params - Article query parameters.
- * @param pageParam - Continuation cursor or null for the initial page.
- * @param includeTotal - Whether to include total on the first page.
- * @param dbName - Database name. Defaults to the selected database.
- * @param signal - Cancellation signal for an obsolete query.
+ * @param query - Search filters.
+ * @param cursor - Opaque cursor of the requested page, or null for the first page.
+ * @param dbName - Database name used when the filters name none.
+ * @param signal - Optional cancellation signal.
  * @returns Article page.
  */
-export function getArticles(
-  params: URLSearchParams,
-  pageParam: string | null = null,
-  includeTotal = false,
+export async function getArticles(
+  query: ArticleSearchQuery,
+  cursor: string | null = null,
   dbName = readSelectedDatabase(),
   signal?: AbortSignal,
 ): Promise<ArticlePage> {
-  const nextParams = new URLSearchParams(params);
-  if (pageParam) {
-    nextParams.set('cursor', pageParam);
-    nextParams.delete('offset');
-  }
-  if (nextParams.has('q') && !nextParams.has('search_mode')) {
-    nextParams.set(
-      'search_mode',
-      isAdvancedSearchQuery(nextParams.get('q') ?? '') ? 'advanced' : DEFAULT_ARTICLE_SEARCH_MODE,
-    );
-  }
-  nextParams.set('include_total', includeTotal ? '1' : '0');
-  return requestJson<ArticlePage>(
-    buildDatabaseUrl('/api/articles', dbName, nextParams),
-    { signal },
-    '获取文章失败',
+  return readData(
+    await apiClient.GET('/api/articles', {
+      params: {
+        query: { ...normalizeArticleSearch(query, dbName), ...(cursor ? { cursor } : {}) },
+      },
+      signal,
+    }),
   );
 }
 
-/** Parameters for one bounded weekly article page. */
+/** Weekly article page request for one journal and update window. */
 export type WeeklyArticlePageRequest = {
   dbName: string;
   journalId: JournalId;
@@ -206,59 +88,32 @@ export type WeeklyArticlePageRequest = {
 };
 
 /**
- * Fetch weekly update counts without article bodies.
+ * Fetch one page of a journal's weekly update articles.
  *
- * @returns Weekly update summary and fixed pagination window.
- */
-export function getWeeklyUpdatesSummary(): Promise<WeeklyUpdatesSummaryResponse> {
-  return requestJson<WeeklyUpdatesSummaryResponse>(
-    buildApiUrl('/api/weekly-updates/summary'),
-    undefined,
-    '获取每周更新摘要失败',
-  );
-}
-
-/**
- * Fetch one cursor-bounded weekly article page.
- *
- * @param request - Database, journal, fixed window, search, and limit parameters.
- * @param cursor - Optional descending page cursor.
- * @param signal - Optional cancellation signal for an obsolete page request.
+ * @param request - Database, journal, window, optional filter, and page size.
+ * @param cursor - Opaque cursor of the requested page, or null for the first page.
+ * @param signal - Optional cancellation signal.
  * @returns Weekly article page.
  */
-export function getWeeklyUpdateArticles(
+async function getWeeklyUpdateArticles(
   request: WeeklyArticlePageRequest,
   cursor: string | null = null,
   signal?: AbortSignal,
 ): Promise<WeeklyArticlePage> {
-  const params = new URLSearchParams();
-  params.set('db', request.dbName);
-  params.set('journal_id', request.journalId);
-  params.set('window_end', request.windowEnd);
-  params.set('limit', String(request.limit ?? 50));
-  if (request.query) {
-    params.set('q', request.query);
-  }
-  if (cursor) {
-    params.set('cursor', cursor);
-  }
-  return requestJson<WeeklyArticlePage>(
-    buildApiUrl('/api/weekly-updates/articles', params),
-    { signal },
-    '获取每周更新文章失败',
-  );
-}
-
-/**
- * Fetch enabled announcements.
- *
- * @returns Announcements.
- */
-export function getAnnouncements(): Promise<AnnouncementInfo[]> {
-  return requestJson<AnnouncementInfo[]>(
-    buildApiUrl('/api/announcements'),
-    undefined,
-    '获取公告失败',
+  return readData(
+    await apiClient.GET('/api/weekly-updates/articles', {
+      params: {
+        query: {
+          db: request.dbName,
+          journal_id: Number(request.journalId),
+          window_end: request.windowEnd,
+          limit: request.limit ?? 50,
+          ...(request.query ? { q: request.query } : {}),
+          ...(cursor ? { cursor } : {}),
+        },
+      },
+      signal,
+    }),
   );
 }
 
@@ -284,21 +139,163 @@ export function getArticleActionUrlForDatabase(
 }
 
 /**
- * Fetch article abstract-page and full-text access capabilities.
+ * Query of the available index databases.
+ *
+ * @returns Query options.
+ */
+export function databasesQuery() {
+  return apiQuery($api.queryOptions('get', '/api/meta/databases'));
+}
+
+/**
+ * Query of a database's subject areas.
+ *
+ * @param dbName - Database name.
+ * @returns Query options.
+ */
+export function areasQuery(dbName: string) {
+  return apiQuery(
+    $api.queryOptions('get', '/api/meta/areas', { params: { query: { db: dbName } } }),
+  );
+}
+
+/**
+ * Query of a database's journal filter options.
+ *
+ * @param dbName - Database name.
+ * @returns Query options.
+ */
+export function journalOptionsQuery(dbName: string) {
+  return apiQuery(
+    $api.queryOptions('get', '/api/meta/journals', { params: { query: { db: dbName } } }),
+  );
+}
+
+/**
+ * Query of a database's publication years.
+ *
+ * @param dbName - Database name.
+ * @returns Query options.
+ */
+export function yearsQuery(dbName: string) {
+  return apiQuery($api.queryOptions('get', '/api/years', { params: { query: { db: dbName } } }));
+}
+
+/**
+ * Query of a database's journal rating options.
+ *
+ * @param dbName - Database name.
+ * @returns Query options.
+ */
+export function journalRatingsQuery(dbName: string) {
+  return apiQuery(
+    $api.queryOptions('get', '/api/meta/ratings', { params: { query: { db: dbName } } }),
+  );
+}
+
+/**
+ * Query of one journal record.
+ *
+ * @param journalId - Journal id.
+ * @param dbName - Database name.
+ * @returns Query options.
+ */
+export function journalQuery(journalId: JournalId, dbName: string) {
+  return apiQuery(
+    $api.queryOptions('get', '/api/journals/{journal_id}', {
+      params: { path: { journal_id: Number(journalId) }, query: { db: dbName } },
+    }),
+  );
+}
+
+/**
+ * Query of one article.
  *
  * @param articleId - Article id.
  * @param dbName - Database name.
- * @param signal - Cancellation signal for an obsolete access lookup.
- * @returns Article access capabilities.
+ * @returns Query options.
  */
-export function getArticleAccess(
-  articleId: ArticleId,
-  dbName: string,
-  signal?: AbortSignal,
-): Promise<ArticleAccessResponse> {
-  return requestJson<ArticleAccessResponse>(
-    buildDatabaseUrl(`/api/articles/${articleId}/access`, dbName),
-    { signal },
-    '获取文章访问状态失败',
+export function articleQuery(articleId: ArticleId, dbName: string) {
+  return apiQuery(
+    $api.queryOptions('get', '/api/articles/{article_id}', {
+      params: { path: { article_id: Number(articleId) }, query: { db: dbName } },
+    }),
   );
+}
+
+/**
+ * Query of the articles related to one article.
+ *
+ * @param articleId - Source article id.
+ * @param dbName - Database name.
+ * @param limit - Maximum returned articles.
+ * @returns Query options.
+ */
+export function relatedArticlesQuery(articleId: ArticleId, dbName: string, limit: number) {
+  return apiQuery(
+    $api.queryOptions('get', '/api/articles/{article_id}/related', {
+      params: { path: { article_id: Number(articleId) }, query: { db: dbName, limit } },
+    }),
+  );
+}
+
+/**
+ * Query of an article's abstract-page and full-text access capabilities.
+ *
+ * @param articleId - Article id.
+ * @param dbName - Database name.
+ * @returns Query options.
+ */
+export function articleAccessQuery(articleId: ArticleId, dbName: string) {
+  return apiQuery(
+    $api.queryOptions('get', '/api/articles/{article_id}/access', {
+      params: { path: { article_id: Number(articleId) }, query: { db: dbName } },
+    }),
+  );
+}
+
+/** Key prefix shared by every article access query. */
+export const ARTICLE_ACCESS_QUERY_PREFIX = apiPathKey('get', '/api/articles/{article_id}/access');
+
+/**
+ * Query of the weekly updates summary across databases.
+ *
+ * @returns Query options.
+ */
+export function weeklyUpdatesSummaryQuery() {
+  return apiQuery($api.queryOptions('get', '/api/weekly-updates/summary'));
+}
+
+/**
+ * Cursor-paged query of one journal's weekly update articles.
+ *
+ * @param request - Database, journal, window, optional filter, and page size.
+ * @returns Infinite query options.
+ */
+export function weeklyUpdateArticlesQuery(request: WeeklyArticlePageRequest) {
+  const queryKey = $api.queryOptions('get', '/api/weekly-updates/articles', {
+    params: {
+      query: {
+        db: request.dbName,
+        journal_id: Number(request.journalId),
+        window_end: request.windowEnd,
+        limit: request.limit ?? 50,
+        ...(request.query ? { q: request.query } : {}),
+      },
+    },
+  }).queryKey;
+  return apiCursorQuery(
+    queryKey,
+    (cursor, signal) => getWeeklyUpdateArticles(request, cursor, signal),
+    (page) => page.page.next_cursor,
+  );
+}
+
+/**
+ * Query of the enabled announcements, with priorities validated.
+ *
+ * @returns Query options.
+ */
+export function announcementsQuery() {
+  return validatedApiQuery($api.queryOptions('get', '/api/announcements'), parseAnnouncementList);
 }

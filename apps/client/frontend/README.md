@@ -26,7 +26,7 @@ CI 与前端构建阶段使用：
 | StyleX            | 0.19.x（`@stylexjs/unplugin` 编译为原子 CSS，经 Lightning CSS 处理）                      |
 | Go                | 1.27.3；生成 OpenAPI、启动后端和 full-stack e2e 时需要，不需要 C 编译器                   |
 
-依赖由仓库根目录的 pnpm workspace `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Router（含按需加载的 `lazyRouteComponent`）、TanStack Query、TanStack Pacer（防抖与短暂提示的复位）、TanStack Hotkeys（工作区快捷键）、TanStack Store（跨组件共享的当前数据库）、Zod、next-themes、Base UI（经 Animate UI primitives 封装）、StyleX、Motion 和 lucide-react；元素可见性用原生 IntersectionObserver（`lib/use-in-view.tsx`）。根目录 `.gitattributes` 让 `apps/client/frontend/**` 在所有平台以 LF 换行签出，与 Oxfmt 的格式检查一致。样式写在各组件文件末尾的 `stylex.create`，颜色与阴影引用 `lib/theme.stylex.tsx` 的 token；接受样式覆盖的组件使用 `xstyle` 属性（类型为 `stylex.StyleXStyles`），不再接受 `className`。Motion 只通过 `components/ui/motion.tsx` 的 `LazyMotion` / `domAnimation` 封装进入业务代码；Base UI 浮层的进出场由 Animate UI primitives 内置的 Motion 过渡驱动。
+依赖由仓库根目录的 pnpm workspace `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Router（含按需加载的 `lazyRouteComponent`）、TanStack Query、openapi-fetch 与 openapi-react-query（业务 API 请求与查询 key）、TanStack Pacer（防抖与短暂提示的复位）、TanStack Hotkeys（工作区快捷键）、TanStack Store（跨组件共享的当前数据库）、Zod、next-themes、Base UI（经 Animate UI primitives 封装）、StyleX、Motion 和 lucide-react；元素可见性用原生 IntersectionObserver（`lib/use-in-view.tsx`）。根目录 `.gitattributes` 让 `apps/client/frontend/**` 在所有平台以 LF 换行签出，与 Oxfmt 的格式检查一致。样式写在各组件文件末尾的 `stylex.create`，颜色与阴影引用 `lib/theme.stylex.tsx` 的 token；接受样式覆盖的组件使用 `xstyle` 属性（类型为 `stylex.StyleXStyles`），不再接受 `className`。Motion 只通过 `components/ui/motion.tsx` 的 `LazyMotion` / `domAnimation` 封装进入业务代码；Base UI 浮层的进出场由 Animate UI primitives 内置的 Motion 过渡驱动。
 
 ## 本地运行
 
@@ -67,9 +67,10 @@ pnpm --filter litradar-frontend dev
 前端没有应用专用环境配置，也不把 API 根地址嵌入构建产物：
 
 - 请求统一经过 `lib/platform/` 的 `ClientPlatform`；Web 实现从 `window.location.origin` 生成同源 API URL 并携带会话 Cookie。
-- `lib/api/client.tsx` 为每次请求设置 60 秒超时（`AbortSignal.timeout`，同时覆盖读取响应体），传递调用方 `AbortSignal`，每次调用只发一次请求。
+- 业务请求统一由 `lib/api/client.tsx` 的 openapi-fetch 客户端 `apiClient` 按生成的 `paths` 类型发出；它的 `fetch` 把占位 origin 换成当前服务器 origin，经平台 `send` 发送（Web 携带 Cookie，原生经 Go 桥），并在 60 秒超时（`AbortSignal.timeout`）内读完响应体，同时传递调用方 `AbortSignal`，每次调用只发一次请求。原生密码登录与单点登录交换由 Go 桥自行构造请求，走同一超时与错误处理的 `nativeSessionClient`。
+- 组件查询使用 `lib/api/*.tsx` 导出的 query 工厂（如 `databasesQuery()`、`folderArticlePagesQuery(id)`），key 均来自 openapi-react-query 的 `$api.queryOptions(...)`，形如 `[method, path, init]`；缓存失效用工厂的 `.queryKey` 或 `apiPathKey(method, path)` 前缀，不手写数组 key。控制面响应经 `validatedApiQuery` 在查询函数内做 Zod 契约校验，校验失败以 `ApiContractError` 失败，缓存只保存校验过的数据。key 不含用户 ID：登录、退出和跨标签页换用户时 `AuthProvider` 会清空整个 QueryClient。
 - 重试只由 `lib/query-client.tsx` 的 QueryClient 默认策略负责：查询在网络失败或不超过 5 秒的 `Retry-After`（429/503）时最多再试两次（网络失败退避 300 ms、600 ms），超时与其他 4xx/5xx 不重试；mutation 不重试。会话检查经 `queryClient.fetchQuery` 使用同一策略。
-- 非 2xx 响应体按 RFC 9457 `application/problem+json` 用 Zod 解析为 `ApiError`：`errors[]` 中带 `body`/`path`/`query`/`header`/`cookie` 校验位置的条目（如 422）拼成"请求参数无效：字段（原因）"的中文提示，最多列 3 条；其余情况以 `detail` 作为显示文本（缺失时使用调用方的回退文案），`type`、`title`、`instance` 与 `errors[]` 原样保留，`findErrorDetail(location)` 读取 `errors[]` 中某个 `location` 的 `message`（例如 CNKI 工作流的 `code` 与 `phase`）。只有带 `Retry-After` 的 429/503 响应才标记为 `retryable`；格式异常的成员按缺失处理。
+- 非 2xx 响应体按 RFC 9457 `application/problem+json` 用 Zod 解析为 `ApiError`：`errors[]` 中带 `body`/`path`/`query`/`header`/`cookie` 校验位置的条目（如 422）拼成"请求参数无效：字段（原因）"的中文提示，最多列 3 条；其余情况以 `detail` 作为显示文本（缺失时使用 `lib/api/endpoint-messages.tsx` 中该端点的中文回退文案），`type`、`title`、`instance` 与 `errors[]` 原样保留，`findErrorDetail(location)` 读取 `errors[]` 中某个 `location` 的 `message`（例如 CNKI 工作流的 `code` 与 `phase`）。只有带 `Retry-After` 的 429/503 响应才标记为 `retryable`；格式异常的成员按缺失处理。
 - `pnpm dev` / `pnpm preview` 只使用 `vite.config.ts` 中的开发代理。
 - 生产环境由外部反向代理让网页与 API 共用一个 Origin。
 - 浏览器跨源直连和构建时 API 地址覆盖不再受支持；需要不同公网入口时，应在同一 Origin 前部署反向代理。
@@ -197,7 +198,7 @@ pnpm generate:api:check
 
 生成命令会运行 Go `litradar openapi` 子命令、生成 TypeScript 类型并用 Oxfmt 格式化产物。openapi-typescript 依赖 TypeScript 5/6 的编译器 JS API，而 TypeScript 7 包不再提供该 API，因此脚本把它的 `typescript` 导入解析到 `@typescript/typescript6`。不要手工修改 `lib/generated/`。
 
-`lib/api/` 提供面向页面的请求 facade；`lib/api-contract.tsx` 对认证、运行设置元数据、Provider 能力目录、计划任务和手动推送等控制面响应再做运行时校验。管理页按后端返回的 group、control、apply mode 和 allowed values 渲染全部设置，并按 capability 过滤 Provider 选项。普通页面不应绕过共享 transport 自行复制 Cookie、Bearer、数据库选择或错误解析逻辑。
+`lib/api/` 提供面向页面的请求 facade 与 query 工厂（`lib/api/query.tsx` 把 `$api.queryOptions` 包装为错误类型为 `Error` 的查询选项、带契约校验的查询选项和按游标翻页的无限查询选项）；`lib/api-contract.tsx` 对认证、运行设置元数据、Provider 能力目录、计划任务和手动推送等控制面响应再做运行时校验。管理页按后端返回的 group、control、apply mode 和 allowed values 渲染全部设置，并按 capability 过滤 Provider 选项。普通页面不应绕过 `apiClient` 自行拼接 URL，或复制 Cookie、Bearer、数据库选择或错误解析逻辑。
 
 ## 质量检查
 

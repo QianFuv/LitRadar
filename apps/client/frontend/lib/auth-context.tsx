@@ -16,7 +16,7 @@ import {
 import { z } from 'zod';
 import {
   ApiError,
-  getCurrentUser,
+  currentUserQuery,
   loginUser,
   loginWithNativeOidc,
   logoutAllSessions,
@@ -67,8 +67,6 @@ const AuthContext = createContext<AuthState | null>(null);
 const ACCESS_TOKEN_STORAGE_KEY = 'litradar:v1:session_access_token';
 const LOGOUT_WARNING_STORAGE_KEY = 'litradar:v1:logout_revocation_unconfirmed';
 const USER_STORAGE_KEY = 'litradar:v1:user';
-/** Query key of the session check, which shares the application retry policy. */
-const CURRENT_USER_QUERY_KEY = ['auth', 'current-user'] as const;
 
 /**
  * Persist non-secret authenticated user metadata locally.
@@ -191,8 +189,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLogoutWarning(readStoredLogoutWarning());
       try {
         const currentUser = await queryClient.fetchQuery({
-          queryKey: CURRENT_USER_QUERY_KEY,
-          queryFn: getCurrentUser,
+          ...currentUserQuery(),
           staleTime: 0,
         });
         if (effectLifetime.signal.aborted || generation !== sessionGeneration.current) {

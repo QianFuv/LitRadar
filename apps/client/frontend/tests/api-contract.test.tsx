@@ -5,7 +5,7 @@
 import { http, HttpResponse } from 'msw';
 import { describe, expect, test } from 'vite-plus/test';
 
-import { requestJson } from '@/lib/api/client';
+import { apiClient } from '@/lib/api/client';
 
 import {
   ApiContractError,
@@ -366,14 +366,14 @@ async function acceptsGenericErrorRecoveryContract(): Promise<void> {
     detail: 'Authentication required',
   });
   server.use(
-    http.get('http://localhost/api/problem', () =>
+    http.get('http://localhost/api/auth/me', () =>
       HttpResponse.json(payload, {
         status: 401,
         headers: { 'Content-Type': 'application/problem+json' },
       }),
     ),
   );
-  await expect(requestJson('http://localhost/api/problem')).rejects.toMatchObject({
+  await expect(apiClient.GET('/api/auth/me')).rejects.toMatchObject({
     message: 'Authentication required',
     retryable: false,
     status: 401,

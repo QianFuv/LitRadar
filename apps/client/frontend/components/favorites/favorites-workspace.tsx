@@ -31,7 +31,7 @@ export function FavoritesWorkspace({ userId }: { userId: number }) {
         {kind === 'graphs' ? (
           <RelationGraphFavoritesContent />
         ) : (
-          <FavoritesPageContent userId={userId} />
+          <FavoritesPageContent key={userId} />
         )}
       </MotionDiv>
     </MotionPresence>

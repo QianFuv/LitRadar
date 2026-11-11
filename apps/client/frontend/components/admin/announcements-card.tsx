@@ -5,9 +5,11 @@ import { BellRing, Megaphone, Pencil, Plus, Trash2 } from '@/components/ui/anima
 import {
   adminCreateAnnouncement,
   adminDeleteAnnouncement,
-  adminGetAnnouncements,
   adminUpdateAnnouncement,
+  announcementsQuery,
   type AnnouncementInfo,
+  adminStatsQuery,
+  adminAnnouncementsQuery,
 } from '@/lib/api';
 import { AdminListHeader } from '@/components/admin/admin-list-header';
 import { StatusPill } from '@/components/settings/settings-section';
@@ -145,8 +147,7 @@ function useAnnouncementsViewState() {
     error,
     isLoading,
   } = useQuery({
-    queryKey: ['admin-announcements'],
-    queryFn: () => adminGetAnnouncements(),
+    ...adminAnnouncementsQuery(),
   });
 
   const saveMutation = useMutation({
@@ -157,9 +158,9 @@ function useAnnouncementsViewState() {
       return adminCreateAnnouncement(form);
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-announcements'] });
-      void queryClient.invalidateQueries({ queryKey: ['announcements'] });
-      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      void queryClient.invalidateQueries({ queryKey: adminAnnouncementsQuery().queryKey });
+      void queryClient.invalidateQueries({ queryKey: announcementsQuery().queryKey });
+      void queryClient.invalidateQueries({ queryKey: adminStatsQuery().queryKey });
       setDialogOpen(false);
       setEditingAnnouncement(null);
       setForm(DEFAULT_FORM);
@@ -170,18 +171,18 @@ function useAnnouncementsViewState() {
     mutationFn: ({ announcementId, enabled }: { announcementId: number; enabled: boolean }) =>
       adminUpdateAnnouncement(announcementId, { enabled }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-announcements'] });
-      void queryClient.invalidateQueries({ queryKey: ['announcements'] });
-      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      void queryClient.invalidateQueries({ queryKey: adminAnnouncementsQuery().queryKey });
+      void queryClient.invalidateQueries({ queryKey: announcementsQuery().queryKey });
+      void queryClient.invalidateQueries({ queryKey: adminStatsQuery().queryKey });
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: (announcementId: number) => adminDeleteAnnouncement(announcementId),
     onSuccess: (_data, announcementId) => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-announcements'] });
-      void queryClient.invalidateQueries({ queryKey: ['announcements'] });
-      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      void queryClient.invalidateQueries({ queryKey: adminAnnouncementsQuery().queryKey });
+      void queryClient.invalidateQueries({ queryKey: announcementsQuery().queryKey });
+      void queryClient.invalidateQueries({ queryKey: adminStatsQuery().queryKey });
       setAnnouncementToDelete((current) => (current?.id === announcementId ? null : current));
     },
   });

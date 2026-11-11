@@ -30,9 +30,10 @@ import {
   ApiError,
   createRelationGraphFavorite,
   deleteRelationGraphFavorite,
-  getRelationGraphFavorite,
+  relationGraphFavoriteQuery,
   updateRelationGraphFavorite,
   type RelationGraphFavorite,
+  RELATION_GRAPH_FAVORITES_QUERY_PREFIX,
 } from '@/lib/api';
 import {
   normalizeRelationGraph,
@@ -45,19 +46,6 @@ import { colors } from '@/lib/theme.stylex';
 
 /** Longest saved title accepted by the server, in characters. */
 const RELATION_GRAPH_TITLE_LIMIT = 200;
-
-/** Query key prefix of saved relation graph pages. */
-export const RELATION_GRAPH_FAVORITES_KEY = ['relation-graph-favorites'] as const;
-
-/**
- * Query key of one saved relation graph.
- *
- * @param graphId - Saved graph id.
- * @returns Stable query key.
- */
-export function relationGraphFavoriteKey(graphId: number | null) {
-  return ['relation-graph-favorite', graphId] as const;
-}
 
 /**
  * Build the default saved title from the center article's title.
@@ -101,8 +89,7 @@ function useRelationGraphFavorite({
   const queryClient = useQueryClient();
   const [status, setStatus] = useState('');
   const savedQuery = useQuery({
-    queryKey: relationGraphFavoriteKey(savedId),
-    queryFn: ({ signal }) => getRelationGraphFavorite(savedId as number, signal),
+    ...relationGraphFavoriteQuery(savedId ?? 0),
     enabled: savedId !== null,
     staleTime: Number.POSITIVE_INFINITY,
     retry: false,
@@ -126,8 +113,8 @@ function useRelationGraphFavorite({
    * @param favorite - Saved graph returned by the server.
    */
   const remember = (favorite: RelationGraphFavorite) => {
-    queryClient.setQueryData(relationGraphFavoriteKey(favorite.id), favorite);
-    void queryClient.invalidateQueries({ queryKey: RELATION_GRAPH_FAVORITES_KEY });
+    queryClient.setQueryData(relationGraphFavoriteQuery(favorite.id).queryKey, favorite);
+    void queryClient.invalidateQueries({ queryKey: RELATION_GRAPH_FAVORITES_QUERY_PREFIX });
   };
 
   /**
@@ -171,8 +158,8 @@ function useRelationGraphFavorite({
   const deleteMut = useMutation({
     mutationFn: (graphId: number) => deleteRelationGraphFavorite(graphId),
     onSuccess: (_data, graphId) => {
-      queryClient.removeQueries({ queryKey: relationGraphFavoriteKey(graphId) });
-      void queryClient.invalidateQueries({ queryKey: RELATION_GRAPH_FAVORITES_KEY });
+      queryClient.removeQueries({ queryKey: relationGraphFavoriteQuery(graphId).queryKey });
+      void queryClient.invalidateQueries({ queryKey: RELATION_GRAPH_FAVORITES_QUERY_PREFIX });
       onSavedIdChange(null);
       setStatus('已取消收藏关系图。');
     },

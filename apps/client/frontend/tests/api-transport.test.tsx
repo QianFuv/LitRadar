@@ -9,8 +9,8 @@ import {
   ApiError,
   REQUEST_TIMEOUT_TYPE,
   REQUEST_TIMEOUT_MS,
-  requestDownload,
-  requestJson,
+  apiClient,
+  readData,
 } from '@/lib/api/client';
 import {
   createQueryClient,
@@ -18,7 +18,40 @@ import {
   NETWORK_RETRY_BASE_DELAY_MS,
 } from '@/lib/query-client';
 
-const ENDPOINT = 'http://transport.example/api/resource';
+/**
+ * Read the database list, an idempotent JSON endpoint.
+ *
+ * @param signal - Optional caller cancellation signal.
+ * @returns Database names.
+ */
+async function readDatabases(signal?: AbortSignal): Promise<string[]> {
+  return readData(await apiClient.GET('/api/meta/databases', { signal }));
+}
+
+/**
+ * Create a folder, a JSON endpoint with a request body.
+ *
+ * @returns Created folder.
+ */
+async function createFolder(): Promise<unknown> {
+  return readData(
+    await apiClient.POST('/api/favorites/folders', { body: { name: 'f', is_tracking: false } }),
+  );
+}
+
+/**
+ * Download a folder export, a binary endpoint.
+ *
+ * @returns Export blob.
+ */
+async function downloadExport(): Promise<Blob> {
+  return readData(
+    await apiClient.GET('/api/favorites/folders/{folder_id}/export', {
+      params: { path: { folder_id: 1 }, query: { format: 'ris' } },
+      parseAs: 'blob',
+    }),
+  );
+}
 
 type FetchStep = Response | Error | 'hang';
 
@@ -107,7 +140,7 @@ function settle(promise: Promise<unknown>): Promise<unknown> {
  */
 async function timesOutStalledRequests(): Promise<void> {
   const fetchSpy = scriptFetch(['hang']);
-  const outcome = settle(requestJson(ENDPOINT));
+  const outcome = settle(readDatabases());
 
   await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS - 1);
   expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -133,7 +166,7 @@ async function timesOutStalledBodies(): Promise<void> {
     });
     return Promise.resolve(new Response(stalledBody, { status: 200 }));
   });
-  const outcome = settle(requestJson(ENDPOINT, { method: 'POST', body: '{}' }));
+  const outcome = settle(createFolder());
 
   await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
 
@@ -146,7 +179,7 @@ async function timesOutStalledBodies(): Promise<void> {
 async function propagatesCallerCancellation(): Promise<void> {
   const fetchSpy = scriptFetch(['hang']);
   const controller = new AbortController();
-  const outcome = settle(requestJson(ENDPOINT, { signal: controller.signal }));
+  const outcome = settle(readDatabases(controller.signal));
   await vi.advanceTimersByTimeAsync(0);
 
   controller.abort();
@@ -164,10 +197,10 @@ async function propagatesCallerCancellation(): Promise<void> {
  *
  * @returns Query promise.
  */
-function fetchWithRetryPolicy<T>(): Promise<T> {
+function fetchWithRetryPolicy(): Promise<string[]> {
   return createQueryClient().fetchQuery({
     queryKey: ['transport-test'],
-    queryFn: ({ signal }) => requestJson<T>(ENDPOINT, { signal }),
+    queryFn: ({ signal }) => readDatabases(signal),
   });
 }
 
@@ -176,7 +209,7 @@ function fetchWithRetryPolicy<T>(): Promise<T> {
  */
 async function performsOneAttempt(): Promise<void> {
   const busySpy = scriptFetch([problemResponse(503, 'busy', { 'Retry-After': '1' })]);
-  await expect(requestJson(ENDPOINT)).rejects.toMatchObject({
+  await expect(readDatabases()).rejects.toMatchObject({
     status: 503,
     retryable: true,
     retryAfterSeconds: 1,
@@ -185,12 +218,12 @@ async function performsOneAttempt(): Promise<void> {
   busySpy.mockRestore();
 
   const networkSpy = scriptFetch([new TypeError('Failed to fetch')]);
-  await expect(requestJson(ENDPOINT)).rejects.toBeInstanceOf(TypeError);
+  await expect(readDatabases()).rejects.toBeInstanceOf(TypeError);
   expect(networkSpy).toHaveBeenCalledTimes(1);
   networkSpy.mockRestore();
 
   const gatewaySpy = scriptFetch([problemResponse(502, 'bad gateway')]);
-  await expect(requestDownload(ENDPOINT)).rejects.toMatchObject({ status: 502 });
+  await expect(downloadExport()).rejects.toMatchObject({ status: 502 });
   expect(gatewaySpy).toHaveBeenCalledTimes(1);
 }
 
@@ -200,15 +233,15 @@ async function performsOneAttempt(): Promise<void> {
 async function honorsRetryAfterForQueries(): Promise<void> {
   const fetchSpy = scriptFetch([
     problemResponse(503, 'busy', { 'Retry-After': '1' }),
-    jsonResponse({ value: 7 }),
+    jsonResponse(['journals.sqlite']),
   ]);
-  const outcome = fetchWithRetryPolicy<{ value: number }>();
+  const outcome = fetchWithRetryPolicy();
 
   await vi.advanceTimersByTimeAsync(999);
   expect(fetchSpy).toHaveBeenCalledTimes(1);
   await vi.advanceTimersByTimeAsync(1);
 
-  await expect(outcome).resolves.toEqual({ value: 7 });
+  await expect(outcome).resolves.toEqual(['journals.sqlite']);
   expect(fetchSpy).toHaveBeenCalledTimes(2);
   expect(fetchSpy.mock.calls[1][1]).toMatchObject({ credentials: 'include' });
 }
@@ -295,7 +328,7 @@ async function preservesProblemDetails(): Promise<void> {
     ),
   ]);
 
-  const error = await settle(requestJson(ENDPOINT, { method: 'POST', body: '{}' }, '请求失败'));
+  const error = await settle(createFolder());
 
   expect(error).toBeInstanceOf(ApiError);
   expect(error).toMatchObject({
@@ -332,7 +365,7 @@ async function namesInvalidFields(): Promise<void> {
     ),
   ]);
 
-  const error = await settle(requestJson(ENDPOINT, { method: 'POST', body: '{}' }));
+  const error = await settle(createFolder());
 
   expect(error).toBeInstanceOf(ApiError);
   expect(error).toMatchObject({
@@ -358,7 +391,7 @@ async function truncatesManyInvalidFields(): Promise<void> {
     ),
   ]);
 
-  const error = await settle(requestJson(ENDPOINT));
+  const error = await settle(readDatabases());
 
   expect(error).toMatchObject({
     message: '请求参数无效：alpha（invalid）；beta（invalid）；gamma（invalid）；…（共 5 项）',
@@ -382,7 +415,7 @@ async function keepsDetailWithoutValidationEntries(): Promise<void> {
       },
     ),
   ]);
-  const businessError = await settle(requestJson(ENDPOINT, { method: 'POST', body: '{}' }));
+  const businessError = await settle(createFolder());
   expect(businessError).toMatchObject({ status: 422, message: '会话已撤销' });
   expect(businessError instanceof ApiError && businessError.findErrorDetail('action')).toBe(
     'revoke_session',
@@ -390,9 +423,11 @@ async function keepsDetailWithoutValidationEntries(): Promise<void> {
   businessSpy.mockRestore();
 
   const detailSpy = scriptFetch([problemResponse(422, 'Announcement limit reached')]);
-  await expect(
-    requestJson(ENDPOINT, { method: 'POST', body: '{}' }, '保存失败'),
-  ).rejects.toMatchObject({ status: 422, message: 'Announcement limit reached', errors: [] });
+  await expect(createFolder()).rejects.toMatchObject({
+    status: 422,
+    message: 'Announcement limit reached',
+    errors: [],
+  });
   detailSpy.mockRestore();
 }
 
@@ -408,7 +443,7 @@ async function classifiesRetryableStatuses(): Promise<void> {
   ];
   for (const [response, isRetryable] of cases) {
     const fetchSpy = scriptFetch([response]);
-    const error = await settle(requestJson(ENDPOINT, { method: 'POST', body: '{}' }));
+    const error = await settle(createFolder());
     expect(error).toMatchObject({ status: response.status, retryable: isRetryable });
     fetchSpy.mockRestore();
   }
@@ -419,25 +454,31 @@ async function classifiesRetryableStatuses(): Promise<void> {
  */
 async function toleratesMalformedProblems(): Promise<void> {
   const textSpy = scriptFetch([new Response('upstream exploded', { status: 500 })]);
-  await expect(
-    requestJson(ENDPOINT, { method: 'POST', body: '{}' }, '保存失败'),
-  ).rejects.toMatchObject({ status: 500, message: '保存失败', errors: [] });
+  await expect(createFolder()).rejects.toMatchObject({
+    status: 500,
+    message: '创建收藏夹失败',
+    errors: [],
+  });
   textSpy.mockRestore();
 
   const malformedSpy = scriptFetch([
     jsonResponse({ detail: 'kept detail', errors: 'not-a-list', status: 'bad' }, 400),
   ]);
-  await expect(
-    requestJson(ENDPOINT, { method: 'POST', body: '{}' }, '保存失败'),
-  ).rejects.toMatchObject({ status: 400, message: 'kept detail', errors: [] });
+  await expect(createFolder()).rejects.toMatchObject({
+    status: 400,
+    message: 'kept detail',
+    errors: [],
+  });
   malformedSpy.mockRestore();
 
   const legacySpy = scriptFetch([
     jsonResponse({ detail: { code: 'legacy', message: 'legacy' }, retryable: true }, 503),
   ]);
-  await expect(
-    requestJson(ENDPOINT, { method: 'POST', body: '{}' }, '保存失败'),
-  ).rejects.toMatchObject({ status: 503, message: '保存失败', retryable: false });
+  await expect(createFolder()).rejects.toMatchObject({
+    status: 503,
+    message: '创建收藏夹失败',
+    retryable: false,
+  });
   legacySpy.mockRestore();
 }
 

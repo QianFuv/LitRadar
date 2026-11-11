@@ -3,14 +3,14 @@
  */
 
 import { useMemo } from 'react';
-import { useInfiniteQuery, useQuery, type InfiniteData } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { FileText, Layers } from '@/components/ui/animated-icons';
 import { useSearch } from '@tanstack/react-router';
 
 import {
-  getDatabases,
-  getWeeklyUpdateArticles,
-  getWeeklyUpdatesSummary,
+  databasesQuery,
+  weeklyUpdateArticlesQuery,
+  weeklyUpdatesSummaryQuery,
   type WeeklyArticle,
   type WeeklyArticlePage,
   type WeeklyDatabaseSummary,
@@ -428,15 +428,13 @@ function useWeeklyViewState() {
     isError: weeklyError,
     error: weeklyErrorData,
   } = useQuery({
-    queryKey: ['weekly-updates-summary'],
-    queryFn: () => getWeeklyUpdatesSummary(),
+    ...weeklyUpdatesSummaryQuery(),
     enabled: !!user,
     staleTime: 5 * 60 * 1000,
   });
 
   const { data: databaseOptions } = useQuery({
-    queryKey: ['meta', 'databases'],
-    queryFn: () => getDatabases(),
+    ...databasesQuery(),
     enabled: !!user,
     staleTime: 10 * 60 * 1000,
   });
@@ -494,12 +492,13 @@ function useWeeklyViewState() {
     return journals.find((item) => item.journal_id === effectiveSelectedJournalId) ?? null;
   }, [journals, effectiveSelectedJournalId]);
 
-  const weeklyArticleQueryKey = getWeeklyArticleQueryKey(
-    effectiveSelectedDb,
-    effectiveSelectedJournalId,
-    searchQuery,
-    weeklySummary,
-  );
+  const weeklyArticleRequest = {
+    dbName: effectiveSelectedDb,
+    journalId: effectiveSelectedJournalId ?? '',
+    windowEnd: weeklySummary?.window_end ?? '',
+    query: searchQuery || undefined,
+    limit: WEEKLY_ARTICLE_PAGE_SIZE,
+  };
   const {
     data: weeklyArticleData,
     fetchNextPage,
@@ -508,31 +507,8 @@ function useWeeklyViewState() {
     isPending: loadingArticles,
     isError: articleError,
     error: articleErrorData,
-  } = useInfiniteQuery<
-    WeeklyArticlePage,
-    Error,
-    InfiniteData<WeeklyArticlePage, string | null>,
-    string[],
-    string | null
-  >({
-    queryKey: weeklyArticleQueryKey,
-    queryFn: ({ pageParam, signal }) => {
-      if (!effectiveSelectedDb || effectiveSelectedJournalId === null || !weeklySummary) {
-        throw new Error('每周更新文章请求缺少必要筛选条件');
-      }
-      return getWeeklyUpdateArticles(
-        {
-          dbName: effectiveSelectedDb,
-          journalId: effectiveSelectedJournalId,
-          windowEnd: weeklySummary.window_end,
-          query: searchQuery || undefined,
-          limit: WEEKLY_ARTICLE_PAGE_SIZE,
-        },
-        pageParam,
-        signal,
-      );
-    },
-    initialPageParam: null,
+  } = useInfiniteQuery({
+    ...weeklyUpdateArticlesQuery(weeklyArticleRequest),
     getNextPageParam: (lastPage, _pages, _lastPageParam, pageParams) =>
       getNextWeeklyArticlePageParam(lastPage, pageParams),
     enabled: Boolean(
@@ -946,15 +922,6 @@ function renderWeeklyPresentation(state: WeeklyViewState) {
 }
 
 /** Build the unchanged database, journal, search and weekly-window query identity. */
-function getWeeklyArticleQueryKey(
-  database: string,
-  journal: JournalId | null,
-  query: string,
-  summary: WeeklyUpdatesSummaryResponse | undefined,
-): string[] {
-  return ['weekly-update-articles', database, journal ?? '', query, summary?.window_end ?? ''];
-}
-
 /** Build the unchanged visible-page reset identity, including the no-journal marker. */
 function getWeeklyArticleListKey(
   database: string,

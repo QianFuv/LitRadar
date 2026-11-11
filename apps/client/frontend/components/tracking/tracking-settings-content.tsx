@@ -30,21 +30,19 @@ export type TrackingSettingsController = {
 type TrackingSettingsContentProps = {
   onControllerChange?: (controller: TrackingSettingsController | null) => void;
   section: TrackingSettingsSectionId;
-  userId: number;
 };
 
 /**
  * Render a shared tracking draft across recommendation and delivery categories.
  *
- * @param props - Authenticated user, active tracking category, and guard callback.
+ * @param props - Active tracking category and guard callback.
  * @returns Tracking category content with a shared sticky save bar.
  */
 export function TrackingSettingsContent({
   onControllerChange,
   section,
-  userId,
 }: TrackingSettingsContentProps) {
-  const trackingPage = useTrackingPage(userId);
+  const trackingPage = useTrackingPage();
   const controller = useMemo<TrackingSettingsController>(
     () => ({
       discardSettings: trackingPage.discardSettings,

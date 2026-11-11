@@ -11,7 +11,7 @@ import {
   type AnimatedIcon,
 } from '@/components/ui/animated-icons';
 
-import { adminGetStats } from '@/lib/api';
+import { adminStatsQuery } from '@/lib/api';
 import { StatusPill } from '@/components/settings/settings-section';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -122,8 +122,7 @@ export function AdminOverviewCard(props: { isEnabled: boolean }) {
 /** Own the administrator statistics query and conditional metadata. */
 function useOverviewViewState({ isEnabled }: { isEnabled: boolean }) {
   const { data: stats, isLoading: statsLoading } = useQuery({
-    queryKey: ['admin-stats'],
-    queryFn: () => adminGetStats(),
+    ...adminStatsQuery(),
     enabled: isEnabled,
   });
   const authStats = stats?.auth;

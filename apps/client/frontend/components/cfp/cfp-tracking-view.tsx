@@ -26,9 +26,9 @@ import { LIST_ITEM_VARIANTS, MotionDiv, MotionPresence } from '@/components/ui/m
 import { StateMessage } from '@/components/ui/state-message';
 import {
   ApiError,
-  getDatabases,
-  getCfpJournals,
-  getCfpNotices,
+  databasesQuery,
+  cfpJournalsQuery,
+  cfpNoticesQuery,
   type CfpJournalSummary,
   type CfpNoticePage,
 } from '@/lib/api';
@@ -125,18 +125,16 @@ function useCfpViewState() {
   };
   const [journalSearch, setJournalSearch] = useState('');
   const [shouldShowClosed, setShouldShowClosed] = useState(false);
-  const databasesQuery = useQuery({
-    queryKey: ['meta', 'databases'],
-    queryFn: getDatabases,
+  const databasesResult = useQuery({
+    ...databasesQuery(),
     enabled: Boolean(user),
   });
-  const databases = databasesQuery.data ?? [];
+  const databases = databasesResult.data ?? [];
   const database = getCfpDatabase(databases, selectedDatabase);
   const queryClient = useQueryClient();
   const cursorRecovery = useRef<string | null>(null);
   const journalsQuery = useQuery({
-    queryKey: ['cfp', 'journals', database],
-    queryFn: ({ signal }) => getCfpJournals(database, signal),
+    ...cfpJournalsQuery(database),
     enabled: Boolean(user && database),
     staleTime: CFP_STALE_TIME_MS,
   });
@@ -156,24 +154,14 @@ function useCfpViewState() {
     }));
   }, [journalSearch, journalGroups]);
   const selectedCatalog = getCfpCatalog(journals, journalGroups, selectedCatalogId);
-  const noticeQueryKey = useMemo(
-    () => ['cfp', 'notices', database, selectedCatalog?.catalogId ?? '', shouldShowClosed] as const,
-    [database, selectedCatalog?.catalogId, shouldShowClosed],
-  );
+  const noticeQuery = cfpNoticesQuery({
+    dbName: database,
+    catalogId: selectedCatalog?.catalogId ?? '',
+    includeClosed: shouldShowClosed,
+  });
+  const noticeQueryKey = noticeQuery.queryKey;
   const noticesQuery = useInfiniteQuery({
-    queryKey: noticeQueryKey,
-    queryFn: ({ pageParam, signal }) =>
-      getCfpNotices(
-        {
-          dbName: database,
-          catalogId: selectedCatalog!.catalogId,
-          includeClosed: shouldShowClosed,
-        },
-        pageParam,
-        signal,
-      ),
-    initialPageParam: null as string | null,
-    getNextPageParam: (lastPage) => lastPage.page.next_cursor ?? undefined,
+    ...noticeQuery,
     enabled: Boolean(user && database && selectedCatalog),
     retry: false,
     staleTime: CFP_STALE_TIME_MS,
@@ -182,14 +170,7 @@ function useCfpViewState() {
     (catalogId: string) => {
       if (!database) return;
       void queryClient.prefetchInfiniteQuery({
-        queryKey: ['cfp', 'notices', database, catalogId, shouldShowClosed] as const,
-        queryFn: ({ pageParam, signal }) =>
-          getCfpNotices(
-            { dbName: database, catalogId, includeClosed: shouldShowClosed },
-            pageParam,
-            signal,
-          ),
-        initialPageParam: null as string | null,
+        ...cfpNoticesQuery({ dbName: database, catalogId, includeClosed: shouldShowClosed }),
         staleTime: CFP_STALE_TIME_MS,
       });
     },
@@ -224,8 +205,8 @@ function useCfpViewState() {
     [noticeData, isNoticeError],
   );
   const currentCount = selected?.currentCount ?? 0;
-  const isLoading = databasesQuery.isLoading || journalsQuery.isLoading;
-  const error = databasesQuery.error ?? journalsQuery.error;
+  const isLoading = databasesResult.isLoading || journalsQuery.isLoading;
+  const error = databasesResult.error ?? journalsQuery.error;
 
   /** Change CFP databases and reset the dependent journal selection in one URL update. */
   function handleDatabaseChange(value: string): void {
@@ -240,7 +221,7 @@ function useCfpViewState() {
 
   /** Retry only the metadata request that failed. */
   function handleRetry(): void {
-    if (databasesQuery.isError) void databasesQuery.refetch();
+    if (databasesResult.isError) void databasesResult.refetch();
     else void journalsQuery.refetch();
   }
 
@@ -250,7 +231,7 @@ function useCfpViewState() {
     setJournalSearch,
     shouldShowClosed,
     setShouldShowClosed,
-    databasesQuery,
+    databasesResult,
     databases,
     database,
     journals,
@@ -461,7 +442,7 @@ function renderCfpHeader(state: CfpViewState) {
   const {
     journalSearch,
     setJournalSearch,
-    databasesQuery,
+    databasesResult,
     databases,
     database,
     journals,
@@ -477,7 +458,7 @@ function renderCfpHeader(state: CfpViewState) {
       </div>
       <div {...stylex.props(styles.renderCfpNoticeContentDivItem, styles.renderCfpHeaderDiv)}>
         <RevealItem
-          isReady={!databasesQuery.isLoading}
+          isReady={!databasesResult.isLoading}
           xstyle={styles.renderCfpHeaderRevealItem}
           placeholder={<Skeleton xstyle={styles.renderCfpHeaderSkeleton} />}
         >

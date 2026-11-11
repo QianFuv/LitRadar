@@ -20,7 +20,7 @@ import { Progress } from '@/components/ui/progress';
 import { RevealItem } from '@/components/ui/reveal';
 import { StateMessage } from '@/components/ui/state-message';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { ApiError, adminGetTelemetry } from '@/lib/api';
+import { ApiError, adminTelemetryQuery } from '@/lib/api';
 import type {
   TelemetryKind,
   TelemetryPeriod,
@@ -199,8 +199,7 @@ export function LoadTelemetryCard({ isEnabled }: { isEnabled: boolean }) {
   const [kindFilter, setKindFilter] = useState<KindFilter>('all');
   const kind = kindFilter === 'all' ? null : kindFilter;
   const { data, error, isLoading, refetch } = useQuery({
-    queryKey: ['admin-telemetry', period, kind],
-    queryFn: () => adminGetTelemetry(period, kind),
+    ...adminTelemetryQuery(period, kind),
     enabled: isEnabled,
     placeholderData: keepPreviousData,
   });

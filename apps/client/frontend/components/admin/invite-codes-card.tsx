@@ -4,10 +4,11 @@ import { CircleX, Gift, Plus } from '@/components/ui/animated-icons';
 
 import {
   adminCreateInviteCode,
-  adminGetInviteCodes,
   adminRevokeInviteCode,
   type AdminInviteCode,
   type InviteCodeStatus,
+  adminStatsQuery,
+  adminInviteCodesQuery,
 } from '@/lib/api';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { AdminListHeader } from '@/components/admin/admin-list-header';
@@ -215,8 +216,7 @@ function useAdminInviteViewState({ isEnabled }: { isEnabled: boolean }) {
     error: inviteCodesError,
     isLoading,
   } = useQuery({
-    queryKey: ['admin-invite-codes'],
-    queryFn: () => adminGetInviteCodes(),
+    ...adminInviteCodesQuery(),
     enabled: isEnabled,
   });
   const inviteRows = useMemo(
@@ -235,15 +235,15 @@ function useAdminInviteViewState({ isEnabled }: { isEnabled: boolean }) {
         max_uses: maxUsesValue,
       }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-invite-codes'] });
-      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      void queryClient.invalidateQueries({ queryKey: adminInviteCodesQuery().queryKey });
+      void queryClient.invalidateQueries({ queryKey: adminStatsQuery().queryKey });
     },
   });
   const revokeCodeMut = useMutation({
     mutationFn: (codeId: number) => adminRevokeInviteCode(codeId),
     onSuccess: (_data, codeId) => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-invite-codes'] });
-      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      void queryClient.invalidateQueries({ queryKey: adminInviteCodesQuery().queryKey });
+      void queryClient.invalidateQueries({ queryKey: adminStatsQuery().queryKey });
       setInviteCodeToRevoke((current) => (current?.id === codeId ? null : current));
     },
   });

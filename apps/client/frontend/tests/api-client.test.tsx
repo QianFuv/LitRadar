@@ -2,13 +2,19 @@
  * Same-origin API URL resolution coverage.
  */
 
-import { describe, expect, test } from 'vite-plus/test';
+import { describe, expect, test, vi } from 'vite-plus/test';
 
-import { buildApiUrl, resolveApiBase } from '@/lib/api/client';
+import { apiClient, resolveApiBase } from '@/lib/api/client';
 
 describe('API client URL resolution', () => {
-  test('uses the current browser origin', () => {
+  test('sends requests to the current browser origin', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(Response.json(['journals.sqlite']));
+
     expect(resolveApiBase()).toBe(window.location.origin);
-    expect(buildApiUrl('/api/articles')).toBe('http://localhost/api/articles');
+    await apiClient.GET('/api/meta/databases');
+
+    expect(fetchSpy.mock.calls[0][0]).toBe('http://localhost/api/meta/databases');
   });
 });

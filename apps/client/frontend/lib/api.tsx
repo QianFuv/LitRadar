@@ -28,7 +28,6 @@ export * from '@/lib/api/index';
 export * from '@/lib/api/tracking';
 export * from '@/lib/api/types';
 
-export type { AuthProviders } from '@/lib/api-contract';
 export type { NotificationSettings } from '@/lib/api-contract';
 export type { ProviderCatalogInfo } from '@/lib/api-contract';
 export type { ScheduledTaskCreate } from '@/lib/api-contract';

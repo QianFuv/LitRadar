@@ -1,0 +1,107 @@
+/**
+ * Chinese failure messages per API endpoint, shown when an error response carries no detail.
+ */
+
+import type { paths } from '@/lib/generated/api-schema';
+
+/** HTTP method plus OpenAPI path template, such as `GET /api/articles/{article_id}`. */
+type EndpointKey = {
+  [
+    Path in keyof paths
+  ]: `${Uppercase<Extract<keyof paths[Path], 'get' | 'post' | 'put' | 'delete'>>} ${Path}`;
+}[keyof paths];
+
+/** Failure message of every endpoint the client calls. */
+const MESSAGES = {
+  'GET /api/meta/databases': '获取数据库失败',
+  'GET /api/meta/areas': '获取领域失败',
+  'GET /api/meta/ratings': '获取期刊评级失败',
+  'GET /api/years': '获取年份失败',
+  'GET /api/meta/journals': '获取期刊失败',
+  'GET /api/journals/{journal_id}': '获取期刊信息失败',
+  'GET /api/articles/{article_id}': '获取文章失败',
+  'GET /api/articles/{article_id}/related': '获取相关文章失败',
+  'GET /api/articles': '获取文章失败',
+  'GET /api/articles/{article_id}/access': '获取文章访问状态失败',
+  'GET /api/weekly-updates/summary': '获取每周更新摘要失败',
+  'GET /api/weekly-updates/articles': '获取每周更新文章失败',
+  'GET /api/announcements': '获取公告失败',
+  'GET /api/cfp/journals': '获取征稿期刊失败',
+  'GET /api/cfp/journals/{catalog_id}/notices': '获取征稿需求失败',
+  'GET /api/favorites/folders': '获取收藏夹失败',
+  'POST /api/favorites/folders': '创建收藏夹失败',
+  'PUT /api/favorites/folders/{folder_id}': '重命名收藏夹失败',
+  'DELETE /api/favorites/folders/{folder_id}': '删除收藏夹失败',
+  'GET /api/favorites/folders/{folder_id}/articles/page': '获取收藏文章失败',
+  'POST /api/favorites/folders/{folder_id}/articles': '添加收藏失败',
+  'DELETE /api/favorites/folders/{folder_id}/articles/{article_id}': '移除收藏失败',
+  'POST /api/favorites/folders/{folder_id}/articles/bulk-remove': '批量移除收藏失败',
+  'POST /api/favorites/folders/{folder_id}/articles/bulk-move': '批量移动收藏失败',
+  'GET /api/favorites/folders/{folder_id}/export': '导出引用失败',
+  'GET /api/favorites/check': '获取收藏状态失败',
+  'POST /api/favorites/check/batch': '获取收藏状态失败',
+  'PUT /api/favorites/tracking': '设置追踪文件夹失败',
+  'GET /api/favorites/graphs': '获取收藏的关系图失败',
+  'GET /api/favorites/graphs/{graph_id}': '获取收藏的关系图失败',
+  'POST /api/favorites/graphs': '收藏关系图失败',
+  'PUT /api/favorites/graphs/{graph_id}': '更新收藏的关系图失败',
+  'DELETE /api/favorites/graphs/{graph_id}': '删除收藏的关系图失败',
+  'GET /api/tracking/status': '获取追踪状态失败',
+  'POST /api/tracking/push-weekly': '推送每周文章失败',
+  'GET /api/tracking/push-weekly/status': '获取推送状态失败',
+  'POST /api/tracking/push-weekly/runs/{run_id}/cancel': '取消推送任务失败',
+  'POST /api/tracking/push-weekly/runs/{run_id}/acknowledge': '确认未知推送结果失败',
+  'GET /api/tracking/notification-settings': '获取通知设置失败',
+  'PUT /api/tracking/notification-settings': '更新通知设置失败',
+  'GET /api/tracking/ai-endpoints': '获取 AI Endpoint 列表失败',
+  'GET /api/admin/stats': '获取统计信息失败',
+  'GET /api/admin/telemetry': '获取负载统计失败',
+  'GET /api/admin/users': '获取用户列表失败',
+  'PUT /api/admin/users/{user_id}/admin': '更新管理员状态失败',
+  'POST /api/admin/users/{user_id}/reset-password': '重置密码失败',
+  'DELETE /api/admin/users/{user_id}': '删除用户失败',
+  'GET /api/admin/invite-codes': '获取邀请码列表失败',
+  'POST /api/admin/invite-codes': '创建邀请码失败',
+  'DELETE /api/admin/invite-codes/{code_id}': '撤销邀请码失败',
+  'GET /api/admin/runtime-settings': '获取运行配置失败',
+  'PUT /api/admin/runtime-settings': '更新运行配置失败',
+  'GET /api/admin/provider-catalog': '获取 Provider 配置目录失败',
+  'GET /api/admin/scheduled-tasks': '获取定时任务失败',
+  'POST /api/admin/scheduled-tasks': '创建定时任务失败',
+  'PUT /api/admin/scheduled-tasks/{task_id}': '更新定时任务失败',
+  'DELETE /api/admin/scheduled-tasks/{task_id}': '删除定时任务失败',
+  'GET /api/admin/scheduler/status': '获取调度器状态失败',
+  'GET /api/admin/announcements': '获取公告列表失败',
+  'POST /api/admin/announcements': '创建公告失败',
+  'PUT /api/admin/announcements/{announcement_id}': '更新公告失败',
+  'DELETE /api/admin/announcements/{announcement_id}': '删除公告失败',
+  'GET /api/auth/me': '获取用户失败',
+  'POST /api/auth/login': '登录失败',
+  'POST /api/auth/native/login': '登录失败',
+  'POST /api/auth/register': '注册失败',
+  'POST /api/auth/oidc/native/exchange': '单点登录失败',
+  'POST /api/auth/logout': '服务端会话撤销未确认',
+  'POST /api/auth/logout-all': '撤销全部会话失败',
+  'GET /api/auth/invite-required': '获取邀请码状态失败',
+  'GET /api/auth/providers': '获取登录方式失败',
+  'PUT /api/auth/email': '更新邮箱失败',
+  'POST /api/auth/oidc/link': '发起单点登录绑定失败',
+  'DELETE /api/auth/oidc/link': '解除单点登录绑定失败',
+  'GET /api/auth/tokens': '获取访问令牌失败',
+  'POST /api/auth/tokens': '创建访问令牌失败',
+  'DELETE /api/auth/tokens/{token_id}': '撤销访问令牌失败',
+  'POST /api/auth/change-password': '修改密码失败',
+  'GET /api/auth/invite-code': '获取邀请码失败',
+  'POST /api/auth/invite-code': '生成邀请码失败',
+  'POST /api/auth/invite-code/rotate': '轮换邀请码失败',
+  'DELETE /api/auth/invite-code': '撤销邀请码失败',
+  'GET /api/cnki/session': '获取知网登录状态失败',
+  'POST /api/cnki/login/start': '启动知网登录失败',
+  'POST /api/cnki/login/poll': '确认知网登录失败',
+  'DELETE /api/cnki/session': '清除知网登录失败',
+} satisfies Partial<Record<EndpointKey, string>>;
+
+/** Failure messages keyed by `METHOD /path/{template}`. */
+export const ENDPOINT_FAILURE_MESSAGES: ReadonlyMap<string, string> = new Map(
+  Object.entries(MESSAGES),
+);

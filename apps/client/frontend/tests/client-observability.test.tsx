@@ -10,7 +10,7 @@ import RouteError from '@/src/route-error';
 import GlobalError from '@/src/global-error';
 import Providers from '@/src/providers';
 import { reportClientError, type ClientErrorEvent } from '@/lib/client-logger';
-import { ApiError, requestDownload, requestJson } from '@/lib/api/client';
+import { ApiError, apiClient } from '@/lib/api/client';
 import { renderWithQuery } from '@/tests/render';
 import { isRecord } from '@/lib/type-guards';
 
@@ -217,10 +217,9 @@ async function capturesFailedResponseRecoveryMetadata(): Promise<void> {
 
   let correlatedError: unknown;
   try {
-    await requestJson(`http://remote.example/failure?token=${querySentinel}`, {
-      method: 'POST',
+    await apiClient.POST('/api/favorites/folders', {
       headers: { Authorization: 'Bearer authorization-token-never-log' },
-      body: JSON.stringify({ secret: bodySentinel }),
+      body: { name: `${bodySentinel} ${querySentinel}`, is_tracking: false },
     });
   } catch (error) {
     correlatedError = error;
@@ -250,7 +249,7 @@ async function capturesFailedResponseRecoveryMetadata(): Promise<void> {
 
   let uncorrelatedError: unknown;
   try {
-    await requestJson('http://remote.example/failure-without-id');
+    await apiClient.GET('/api/meta/databases');
   } catch (error) {
     uncorrelatedError = error;
   }
@@ -267,7 +266,7 @@ async function capturesFailedResponseRecoveryMetadata(): Promise<void> {
 
   let legacyError: unknown;
   try {
-    await requestJson('http://remote.example/legacy-failure');
+    await apiClient.GET('/api/journals');
   } catch (error) {
     legacyError = error;
   }
@@ -282,7 +281,10 @@ async function capturesFailedResponseRecoveryMetadata(): Promise<void> {
 
   let downloadError: unknown;
   try {
-    await requestDownload('http://remote.example/download-failure');
+    await apiClient.GET('/api/favorites/folders/{folder_id}/export', {
+      params: { path: { folder_id: 1 } },
+      parseAs: 'blob',
+    });
   } catch (error) {
     downloadError = error;
   }

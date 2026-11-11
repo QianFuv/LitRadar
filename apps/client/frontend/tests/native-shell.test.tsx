@@ -5,16 +5,17 @@
 
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { http, HttpResponse } from 'msw';
 import { useLocation } from '@tanstack/react-router';
 import { beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import { AccountSignInCard } from '@/components/settings/account-card';
-import { getAuthProviders } from '@/lib/api';
 import type { ClientPlatform } from '@/lib/platform';
 import { PlatformBridgeError } from '@/lib/platform/errors';
 import { useServerConnection } from '@/lib/server-connection';
 import LoginClient from '@/src/routes/login-client';
 import { ServerSetupGate } from '@/src/server-setup-gate';
+import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
 const shellMocks = vi.hoisted(() => ({
@@ -23,6 +24,7 @@ const shellMocks = vi.hoisted(() => ({
   disconnect: vi.fn(),
   signInWithNativeOidc: vi.fn(),
   consumeOidcInterruption: vi.fn(),
+  getAuthProviders: vi.fn(),
   login: vi.fn(),
   user: null as Record<string, unknown> | null,
 }));
@@ -63,12 +65,6 @@ vi.mock('@/lib/auth-context', async (importOriginal) => ({
     updateUser: vi.fn(),
     user: shellMocks.user,
   }),
-}));
-
-vi.mock('@/lib/api', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/lib/api')>()),
-  getAuthProviders: vi.fn(async () => ({ oidc_enabled: true, oidc_display_name: '校园身份' })),
-  getInviteRequirement: vi.fn(async () => ({ required: true, bootstrap_required: false })),
 }));
 
 /**
@@ -128,6 +124,17 @@ beforeEach(() => {
   shellMocks.consumeOidcInterruption.mockReset().mockResolvedValue(false);
   shellMocks.login.mockReset();
   shellMocks.user = null;
+  shellMocks.getAuthProviders
+    .mockReset()
+    .mockResolvedValue({ oidc_enabled: true, oidc_display_name: '校园身份' });
+  server.use(
+    http.get('http://localhost/api/auth/providers', async () =>
+      HttpResponse.json(await shellMocks.getAuthProviders()),
+    ),
+    http.get('http://localhost/api/auth/invite-required', () =>
+      HttpResponse.json({ required: true, bootstrap_required: false }),
+    ),
+  );
 });
 
 describe('native server setup gate', () => {
@@ -255,14 +262,14 @@ describe('native sign-in surface', () => {
   });
 
   test('offers only password sign-in when single sign-on is disabled', async () => {
-    vi.mocked(getAuthProviders).mockResolvedValueOnce({
+    shellMocks.getAuthProviders.mockResolvedValueOnce({
       oidc_enabled: false,
       oidc_display_name: '',
     });
 
     await renderNativeLogin('/login');
 
-    await waitFor(() => expect(getAuthProviders).toHaveBeenCalled());
+    await waitFor(() => expect(shellMocks.getAuthProviders).toHaveBeenCalled());
     expect(await screen.findByRole('button', { name: '登录' })).toBeEnabled();
     expect(screen.queryByRole('button', { name: /使用 .* 登录|访问令牌/ })).toBeNull();
     expect(screen.queryByText('或')).toBeNull();

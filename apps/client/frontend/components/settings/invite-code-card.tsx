@@ -4,7 +4,7 @@ import { CircleX, Gift, RotateCcw } from '@/components/ui/animated-icons';
 
 import {
   generateInviteCode,
-  getInviteCode,
+  inviteCodeQuery,
   revokeInviteCode,
   rotateInviteCode,
   type InviteCodeStatus,
@@ -135,9 +135,7 @@ function useInviteViewState({
     isPending: isInviteCodeLoading,
     refetch: refetchInviteCode,
   } = useQuery({
-    queryKey: ['invite-code'],
-    queryFn: () => getInviteCode(),
-    enabled: true,
+    ...inviteCodeQuery(),
   });
   const generateInviteMut = useMutation({
     mutationFn: () => generateInviteCode(),

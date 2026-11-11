@@ -49,7 +49,7 @@ Go huma operations + request/response types
 4. 修改路由或请求/响应类型后，在 `apps/client/frontend/` 运行 `pnpm generate:api:check`；不要手工编辑 `lib/generated/`。
 5. 不增加跨 Go/TypeScript 的共享 helper、Pact 或另一套 schema 生成器来替代该链路。
 
-MSW 的全局 server 不安装登录态或业务默认值，并以 `onUnhandledRequest: 'error'` 拒绝未声明请求。测试从 `apps/client/frontend/tests/mocks/handlers/` 显式安装 auth、discovery/index、favorites、tracking 或 admin 场景 bundle；单个失败场景只覆盖必要 handler，测试结束后由公共 setup 重置。这样每个请求依赖在套件中可见，不会由其他测试留下的状态暗中满足。
+MSW 的全局 server 不安装登录态或业务默认值，并以 `onUnhandledRequest: 'error'` 拒绝未声明请求。测试从 `apps/client/frontend/tests/mocks/handlers/` 显式安装 auth、discovery/index、favorites、tracking 或 admin 场景 bundle；单个失败场景只覆盖必要 handler，测试结束后由公共 setup 重置。这样每个请求依赖在套件中可见，不会由其他测试留下的状态暗中满足。组件查询经 openapi-react-query 直接发出 HTTP 请求，因此测试用 MSW handler 提供响应，而不是 `vi.mock('@/lib/api')` 替换 facade 函数；需要读写缓存时用对应 query 工厂的 `.queryKey`（如 `foldersQuery().queryKey`），不手写数组 key。路径和查询参数中的文章、期刊 ID 按 OpenAPI 契约以数字发送，fixture 应使用十进制数字字符串作为 ID。
 
 ## 浏览器边界
 

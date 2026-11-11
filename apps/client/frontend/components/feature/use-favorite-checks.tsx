@@ -11,7 +11,15 @@ import {
   type QueryKey,
 } from '@tanstack/react-query';
 
-import { checkFavorite, checkFavoritesBatch, type ArticleId, type FavoriteCheck } from '@/lib/api';
+import {
+  checkFavoritesBatch,
+  FAVORITE_CHECK_BATCH_QUERY_PREFIX,
+  FAVORITE_CHECK_QUERY_PREFIX,
+  favoriteCheckBatchQueryKey,
+  favoriteCheckQuery,
+  type ArticleId,
+  type FavoriteCheck,
+} from '@/lib/api';
 
 /**
  * Favorite state returned to article-list consumers.
@@ -43,7 +51,7 @@ function normalizeArticleIds(articleIds: readonly ArticleId[]): ArticleId[] {
  * Read one successful, fresh, non-invalidated article membership.
  *
  * @param queryClient - Owning browser query cache.
- * @param queryKey - User, database, and article identity.
+ * @param queryKey - Key of one article's favorite check.
  * @returns Fresh membership or undefined when another lookup is required.
  */
 export function readFreshFavoriteCheck(
@@ -61,18 +69,13 @@ export function readFreshFavoriteCheck(
 /**
  * Cancel old reads and refresh single and batch memberships after an owned mutation.
  *
+ * The cache holds one user's memberships at a time because signing in or out clears it.
+ *
  * @param queryClient - Owning browser query cache.
- * @param userId - User whose favorite rows changed.
  * @returns Completion of active membership refreshes.
  */
-export async function invalidateFavoriteMemberships(
-  queryClient: QueryClient,
-  userId: number,
-): Promise<void> {
-  const prefixes = [
-    ['fav-check', userId],
-    ['fav-check-batch', userId],
-  ];
+export async function invalidateFavoriteMemberships(queryClient: QueryClient): Promise<void> {
+  const prefixes = [FAVORITE_CHECK_QUERY_PREFIX, FAVORITE_CHECK_BATCH_QUERY_PREFIX];
   await Promise.all(prefixes.map((queryKey) => queryClient.cancelQueries({ queryKey })));
   for (const queryKey of prefixes) {
     queryClient.removeQueries({ queryKey, predicate: (query) => query.getObserversCount() === 0 });
@@ -89,7 +92,8 @@ export async function invalidateFavoriteMemberships(
  *
  * @param articleIds - Article ids needed by the current list.
  * @param dbName - Database containing the articles.
- * @param userId - Authenticated user id, or an empty value for anonymous state.
+ * @param userId - Authenticated user id, or an empty value for anonymous state; memberships are
+ *   only looked up for a signed-in user.
  * @returns Favorite checks and whether the missing-id request is pending.
  */
 export function useFavoriteChecks(
@@ -101,15 +105,19 @@ export function useFavoriteChecks(
   const normalizedArticleIds = useMemo(() => normalizeArticleIds(articleIds), [articleIds]);
   const hasUser = userId !== null && typeof userId !== 'undefined';
   const hasActiveScope = hasUser && dbName.length > 0 && normalizedArticleIds.length > 0;
-  const favoriteBaseKey = ['fav-check', userId, dbName] as const;
-  const favoriteBatchBaseKey = ['fav-check-batch', userId, dbName] as const;
-  const batchQueryKey = [...favoriteBatchBaseKey, 'visible', normalizedArticleIds.join(',')];
+  const batchQueryKey = favoriteCheckBatchQueryKey(normalizedArticleIds, dbName);
+  /**
+   * Key of one visible article's membership.
+   *
+   * @param articleId - Article id.
+   * @returns Single-article favorite check key.
+   */
+  const membershipKey = (articleId: ArticleId) => favoriteCheckQuery(articleId, dbName).queryKey;
   const memberships = useQueries({
     queries: hasActiveScope
       ? normalizedArticleIds.map((articleId) => ({
-          queryKey: [...favoriteBaseKey, articleId],
-          queryFn: () => checkFavorite(articleId, dbName),
-          notifyOnChangeProps: ['data'],
+          ...favoriteCheckQuery(articleId, dbName),
+          notifyOnChangeProps: ['data' as const],
           enabled: false,
           staleTime: FAVORITE_CACHE_STALE_TIME,
         }))
@@ -120,16 +128,18 @@ export function useFavoriteChecks(
     queryFn: async ({ signal }) => {
       const batchState = queryClient.getQueryState(batchQueryKey);
       if (batchState?.isInvalidated && batchState.status === 'success') {
-        const visibleArticleIds = new Set(normalizedArticleIds);
-        await queryClient.invalidateQueries({
-          queryKey: favoriteBaseKey,
-          predicate: (query) => visibleArticleIds.has(query.queryKey[3] as ArticleId),
-          refetchType: 'none',
-        });
+        await Promise.all(
+          normalizedArticleIds.map((articleId) =>
+            queryClient.invalidateQueries({
+              queryKey: membershipKey(articleId),
+              exact: true,
+              refetchType: 'none',
+            }),
+          ),
+        );
       }
       const missing = normalizedArticleIds.filter(
-        (articleId) =>
-          readFreshFavoriteCheck(queryClient, [...favoriteBaseKey, articleId]) === undefined,
+        (articleId) => readFreshFavoriteCheck(queryClient, membershipKey(articleId)) === undefined,
       );
       for (let offset = 0; offset < missing.length; offset += FAVORITE_CHECK_BATCH_SIZE) {
         const articleBatch = missing.slice(offset, offset + FAVORITE_CHECK_BATCH_SIZE);
@@ -137,7 +147,7 @@ export function useFavoriteChecks(
         signal.throwIfAborted();
         for (const articleId of articleBatch) {
           if (checks[articleId] !== undefined) {
-            queryClient.setQueryData([...favoriteBaseKey, articleId], checks[articleId]);
+            queryClient.setQueryData(membershipKey(articleId), checks[articleId]);
           }
         }
       }
@@ -145,7 +155,7 @@ export function useFavoriteChecks(
         (oldestUpdatedAt, articleId) =>
           Math.min(
             oldestUpdatedAt,
-            queryClient.getQueryState([...favoriteBaseKey, articleId])?.dataUpdatedAt ?? 0,
+            queryClient.getQueryState(membershipKey(articleId))?.dataUpdatedAt ?? 0,
           ),
         Number.POSITIVE_INFINITY,
       );
@@ -174,7 +184,7 @@ export function useFavoriteChecks(
   memberships.forEach((membership, index) => {
     const articleId = normalizedArticleIds[index];
     const checks = error
-      ? readFreshFavoriteCheck(queryClient, [...favoriteBaseKey, articleId])
+      ? readFreshFavoriteCheck(queryClient, membershipKey(articleId))
       : membership.data;
     if (checks !== undefined) favoriteChecksByArticle[articleId] = checks;
   });

@@ -7,14 +7,19 @@ import { z } from 'zod';
 
 type ApiSchemas = components['schemas'];
 
+/** Announcement as shown to readers and administrators. */
+export type AnnouncementInfo = Omit<ApiSchemas['Announcement'], 'priority'> & {
+  priority: NonNullable<ApiSchemas['AnnouncementCreate']['priority']>;
+};
+
 export type AuthUser = ApiSchemas['UserResponse'];
 export type LoginResponse = ApiSchemas['LoginResponse'];
 export type AuthProviders = ApiSchemas['AuthProvidersResponse'];
 export type OidcLinkStart = ApiSchemas['OidcLinkResponse'];
 export type InviteRequirement = ApiSchemas['InviteRequiredResponse'];
 export type InviteCodeStatus = ApiSchemas['InviteResponse']['status'];
-export type InviteCode = Required<ApiSchemas['InviteResponse']>;
-export type AdminInviteCode = Required<ApiSchemas['AdminInviteResponse']>;
+export type InviteCode = ApiSchemas['InviteResponse'];
+export type AdminInviteCode = ApiSchemas['AdminInviteResponse'];
 type GeneratedAdminInviteCodeCreate = ApiSchemas['AdminInviteCodeCreate'];
 export type AdminInviteCodeCreate = {
   expires_at?: Exclude<GeneratedAdminInviteCodeCreate['expires_at'], null | undefined>;
@@ -242,6 +247,16 @@ const MANUAL_PUSH_STATUS_SCHEMA = z.looseObject({
   folder_id: z.number().nullable(),
   folder_name: z.string().nullable(),
 }) satisfies z.ZodType<ManualPushStatus>;
+
+const ANNOUNCEMENT_SCHEMA = z.looseObject({
+  id: z.number(),
+  title: z.string(),
+  message: z.string(),
+  priority: z.enum(['high', 'normal', 'low']).catch('normal'),
+  enabled: z.boolean(),
+  created_at: z.number(),
+  updated_at: z.number(),
+}) satisfies z.ZodType<AnnouncementInfo>;
 
 /** Plaintext secrets that a notification settings response must never carry. */
 const NOTIFICATION_SECRET_FIELDS = ['pushplus_token', 'ai_api_key', 'ai_backup_api_key'];
@@ -663,6 +678,26 @@ export function parseNotificationSettings(value: unknown): NotificationSettings 
  */
 export function parseAiEndpointCatalog(value: unknown): string[] {
   return parseContract(z.array(z.string()), value, 'AI endpoint catalog');
+}
+
+/**
+ * Parse announcements, reading an unknown priority as normal.
+ *
+ * @param value - Unknown JSON payload.
+ * @returns Validated announcements.
+ */
+export function parseAnnouncementList(value: unknown): AnnouncementInfo[] {
+  return parseContract(z.array(ANNOUNCEMENT_SCHEMA), value, 'Announcement[]');
+}
+
+/**
+ * Parse one announcement, reading an unknown priority as normal.
+ *
+ * @param value - Unknown JSON payload.
+ * @returns Validated announcement.
+ */
+export function parseAnnouncement(value: unknown): AnnouncementInfo {
+  return parseContract(ANNOUNCEMENT_SCHEMA, value, 'Announcement');
 }
 
 /**

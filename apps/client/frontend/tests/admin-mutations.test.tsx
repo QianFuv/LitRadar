@@ -10,7 +10,7 @@ import { describe, expect, test, vi } from 'vite-plus/test';
 import { AnnouncementsCard } from '@/components/admin/announcements-card';
 import { AdminInviteCodesCard } from '@/components/admin/invite-codes-card';
 import { ScheduledTasksCard } from '@/components/admin/scheduled-tasks-card';
-import type { AdminInviteCode } from '@/lib/api';
+import { adminInviteCodesQuery, type AdminInviteCode } from '@/lib/api';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 import { isRecord } from '@/lib/type-guards';
@@ -599,7 +599,7 @@ async function reusesInviteDatesDuringFormEdits(): Promise<void> {
       formatDate.mock.contexts.filter((date) => dates.has((date as Date).getTime())),
     ).toHaveLength(0);
     await act(async () => {
-      view.queryClient.setQueryData<AdminInviteCode[]>(['admin-invite-codes'], (current) =>
+      view.queryClient.setQueryData(adminInviteCodesQuery().queryKey, (current) =>
         current?.map((code) =>
           code.id === 1
             ? { ...code, expires_at: updatedExpiry, created_at: updatedCreation }

@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { RevealItem } from '@/components/ui/reveal';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getRelatedArticles, type Article } from '@/lib/api';
+import { relatedArticlesQuery, type Article } from '@/lib/api';
 import { getArticleDisplayTitle } from '@/lib/article-title';
 import { useInView } from '@/lib/use-in-view';
 import { LinkIcon } from '@/components/ui/animated-icons';
@@ -32,9 +32,7 @@ type RelatedArticlesProps = {
 export function RelatedArticles({ article, dbName, onOpen }: RelatedArticlesProps) {
   const { ref, isInView } = useInView({ isOnce: true, rootMargin: '300px' });
   const relatedQuery = useQuery({
-    queryKey: ['related-articles', dbName, String(article.article_id)],
-    queryFn: ({ signal }) =>
-      getRelatedArticles(article.article_id, dbName, RELATED_ARTICLE_LIMIT, signal),
+    ...relatedArticlesQuery(article.article_id, dbName, RELATED_ARTICLE_LIMIT),
     enabled: isInView && Boolean(dbName),
     staleTime: 10 * 60 * 1000,
     retry: false,

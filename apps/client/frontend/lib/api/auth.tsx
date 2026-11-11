@@ -8,19 +8,26 @@ import {
   parseInviteRequirement,
   parseLoginResponse,
   parseOidcLinkStart,
-  type AuthProviders,
   type AuthUser,
-  type InviteRequirement,
   type LoginResponse,
   type OidcLinkStart,
 } from '@/lib/api-contract';
-import { ApiError, buildApiUrl, requestJson, requestJsonVia } from '@/lib/api/client';
+import {
+  ApiError,
+  apiClient,
+  createServerFetch,
+  nativeSessionClient,
+  readData,
+  resolveApiBase,
+  $api,
+} from '@/lib/api/client';
+import { apiQuery, validatedApiQuery } from '@/lib/api/query';
 import { CLIENT_PLATFORM } from '@/lib/platform';
 import type {
-  AccessToken,
   CnkiLoginPollResponse,
   CnkiLoginStartResponse,
   CnkiSessionStatus,
+  CreatedAccessToken,
   InviteCode,
 } from '@/lib/api/types';
 
@@ -29,13 +36,8 @@ import type {
  *
  * @returns Current user.
  */
-export function getCurrentUser(): Promise<AuthUser> {
-  return requestJson<AuthUser>(
-    buildApiUrl('/api/auth/me'),
-    undefined,
-    '获取用户失败',
-    parseAuthUser,
-  );
+export async function getCurrentUser(): Promise<AuthUser> {
+  return parseAuthUser(readData(await apiClient.GET('/api/auth/me')));
 }
 
 /**
@@ -48,25 +50,21 @@ export function getCurrentUser(): Promise<AuthUser> {
  * @param password - Password.
  * @returns Login response.
  */
-export function loginUser(username: string, password: string): Promise<LoginResponse> {
+export async function loginUser(username: string, password: string): Promise<LoginResponse> {
   const nativeSession = CLIENT_PLATFORM.nativeSession;
   if (nativeSession) {
-    return requestJsonVia<LoginResponse>(
-      (_url, init) => nativeSession.login(username, password, init.signal ?? null),
-      buildApiUrl('/api/auth/native/login'),
-      { method: 'POST' },
-      '登录失败',
-      parseLoginResponse,
+    return parseLoginResponse(
+      readData(
+        await nativeSessionClient.POST('/api/auth/native/login', {
+          fetch: createServerFetch((_url, init) =>
+            nativeSession.login(username, password, init.signal ?? null),
+          ),
+        }),
+      ),
     );
   }
-  return requestJson<LoginResponse>(
-    buildApiUrl('/api/auth/login'),
-    {
-      method: 'POST',
-      body: JSON.stringify({ username, password }),
-    },
-    '登录失败',
-    parseLoginResponse,
+  return parseLoginResponse(
+    readData(await apiClient.POST('/api/auth/login', { body: { username, password } })),
   );
 }
 
@@ -85,19 +83,9 @@ export async function registerUser(
   inviteCode: string,
   email = '',
 ): Promise<void> {
-  await requestJson<unknown>(
-    buildApiUrl('/api/auth/register'),
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        username,
-        password,
-        invite_code: inviteCode,
-        ...(email ? { email } : {}),
-      }),
-    },
-    '注册失败',
-  );
+  await apiClient.POST('/api/auth/register', {
+    body: { username, password, invite_code: inviteCode, ...(email ? { email } : {}) },
+  });
 }
 
 /**
@@ -105,7 +93,7 @@ export async function registerUser(
  *
  * The host opens the browser, waits for the callback, exchanges the one-time code, and keeps
  * the issued token; only the exchange response without the token reaches this function. The
- * shared request timeout does not apply because the browser step may take minutes.
+ * shared request timeout does not apply to the browser step, which may take minutes.
  *
  * @param signal - Cancellation signal that stops waiting for the browser.
  * @returns Login response.
@@ -116,12 +104,13 @@ export async function loginWithNativeOidc(signal: AbortSignal): Promise<LoginRes
     throw new Error('客户端单点登录仅适用于桌面和移动客户端');
   }
   const response = await nativeSession.loginWithOidc(signal);
-  return requestJsonVia<LoginResponse>(
-    () => Promise.resolve(response),
-    buildApiUrl('/api/auth/oidc/native/exchange'),
-    { method: 'POST', signal },
-    '单点登录失败',
-    parseLoginResponse,
+  return parseLoginResponse(
+    readData(
+      await nativeSessionClient.POST('/api/auth/oidc/native/exchange', {
+        fetch: createServerFetch(() => Promise.resolve(response)),
+        signal,
+      }),
+    ),
   );
 }
 
@@ -133,19 +122,13 @@ export async function loginWithNativeOidc(signal: AbortSignal): Promise<LoginRes
 export async function logoutUser(): Promise<void> {
   const nativeSession = CLIENT_PLATFORM.nativeSession;
   try {
-    if (nativeSession) {
-      await requestJsonVia<unknown>(
-        (_url, init) => nativeSession.logout(init.signal ?? null),
-        buildApiUrl('/api/auth/logout'),
-        { method: 'POST' },
-        '服务端会话撤销未确认',
-      );
-      return;
-    }
-    await requestJson<unknown>(
-      buildApiUrl('/api/auth/logout'),
-      { method: 'POST' },
-      '服务端会话撤销未确认',
+    await apiClient.POST(
+      '/api/auth/logout',
+      nativeSession
+        ? {
+            fetch: createServerFetch((_url, init) => nativeSession.logout(init.signal ?? null)),
+          }
+        : {},
     );
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
@@ -161,38 +144,7 @@ export async function logoutUser(): Promise<void> {
  * @returns Empty promise after durable revocation is confirmed.
  */
 export async function logoutAllSessions(): Promise<void> {
-  await requestJson<unknown>(
-    buildApiUrl('/api/auth/logout-all'),
-    { method: 'POST' },
-    '撤销全部会话失败',
-  );
-}
-
-/**
- * Check whether registration currently requires an invite code.
- *
- * @returns Invite requirement.
- */
-export function getInviteRequirement(): Promise<InviteRequirement> {
-  return requestJson<InviteRequirement>(
-    buildApiUrl('/api/auth/invite-required'),
-    undefined,
-    '获取邀请码状态失败',
-    parseInviteRequirement,
-  );
-}
-/**
- * Fetch the sign-in providers enabled on this server.
- *
- * @returns Single sign-on availability and display name.
- */
-export function getAuthProviders(): Promise<AuthProviders> {
-  return requestJson<AuthProviders>(
-    buildApiUrl('/api/auth/providers'),
-    undefined,
-    '获取登录方式失败',
-    parseAuthProviders,
-  );
+  await apiClient.POST('/api/auth/logout-all');
 }
 
 /**
@@ -202,7 +154,9 @@ export function getAuthProviders(): Promise<AuthProviders> {
  * @returns Absolute OIDC login start URL.
  */
 export function buildOidcLoginUrl(nextPath: string): string {
-  return buildApiUrl('/api/auth/oidc/login', new URLSearchParams({ next: nextPath }));
+  const url = new URL('/api/auth/oidc/login', resolveApiBase());
+  url.searchParams.set('next', nextPath);
+  return url.toString();
 }
 
 /**
@@ -211,13 +165,8 @@ export function buildOidcLoginUrl(nextPath: string): string {
  * @param email - New email, or null to clear it.
  * @returns Updated user.
  */
-export function updateAccountEmail(email: string | null): Promise<AuthUser> {
-  return requestJson<AuthUser>(
-    buildApiUrl('/api/auth/email'),
-    { method: 'PUT', body: JSON.stringify({ email }) },
-    '更新邮箱失败',
-    parseAuthUser,
-  );
+export async function updateAccountEmail(email: string | null): Promise<AuthUser> {
+  return parseAuthUser(readData(await apiClient.PUT('/api/auth/email', { body: { email } })));
 }
 
 /**
@@ -225,13 +174,8 @@ export function updateAccountEmail(email: string | null): Promise<AuthUser> {
  *
  * @returns Provider authorization URL the browser must navigate to.
  */
-export function startOidcLink(): Promise<OidcLinkStart> {
-  return requestJson<OidcLinkStart>(
-    buildApiUrl('/api/auth/oidc/link'),
-    { method: 'POST' },
-    '发起单点登录绑定失败',
-    parseOidcLinkStart,
-  );
+export async function startOidcLink(): Promise<OidcLinkStart> {
+  return parseOidcLinkStart(readData(await apiClient.POST('/api/auth/oidc/link')));
 }
 
 /**
@@ -239,35 +183,8 @@ export function startOidcLink(): Promise<OidcLinkStart> {
  *
  * @returns Updated user.
  */
-export function unlinkOidc(): Promise<AuthUser> {
-  return requestJson<AuthUser>(
-    buildApiUrl('/api/auth/oidc/link'),
-    { method: 'DELETE' },
-    '解除单点登录绑定失败',
-    parseAuthUser,
-  );
-}
-
-/**
- * Fetch current user access tokens.
- *
- * @returns Access tokens.
- */
-export function getAccessTokens(): Promise<AccessToken[]> {
-  return requestJson<AccessToken[]>(buildApiUrl('/api/auth/tokens'), undefined, '获取访问令牌失败');
-}
-
-/**
- * Fetch current user's Zhejiang Library CNKI session status.
- *
- * @returns Safe CNKI session status.
- */
-export function getCnkiSession(): Promise<CnkiSessionStatus> {
-  return requestJson<CnkiSessionStatus>(
-    buildApiUrl('/api/cnki/session'),
-    undefined,
-    '获取知网登录状态失败',
-  );
+export async function unlinkOidc(): Promise<AuthUser> {
+  return parseAuthUser(readData(await apiClient.DELETE('/api/auth/oidc/link')));
 }
 
 /**
@@ -275,12 +192,8 @@ export function getCnkiSession(): Promise<CnkiSessionStatus> {
  *
  * @returns QR login challenge.
  */
-export function startCnkiLogin(): Promise<CnkiLoginStartResponse> {
-  return requestJson<CnkiLoginStartResponse>(
-    buildApiUrl('/api/cnki/login/start'),
-    { method: 'POST' },
-    '启动知网登录失败',
-  );
+export async function startCnkiLogin(): Promise<CnkiLoginStartResponse> {
+  return readData(await apiClient.POST('/api/cnki/login/start'));
 }
 
 /**
@@ -290,20 +203,14 @@ export function startCnkiLogin(): Promise<CnkiLoginStartResponse> {
  * @param intervalSeconds - Polling interval.
  * @returns QR login poll result.
  */
-export function pollCnkiLogin(
+export async function pollCnkiLogin(
   timeoutSeconds: number,
   intervalSeconds: number,
 ): Promise<CnkiLoginPollResponse> {
-  return requestJson<CnkiLoginPollResponse>(
-    buildApiUrl('/api/cnki/login/poll'),
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        timeout_seconds: timeoutSeconds,
-        interval_seconds: intervalSeconds,
-      }),
-    },
-    '确认知网登录失败',
+  return readData(
+    await apiClient.POST('/api/cnki/login/poll', {
+      body: { timeout_seconds: timeoutSeconds, interval_seconds: intervalSeconds },
+    }),
   );
 }
 
@@ -312,12 +219,8 @@ export function pollCnkiLogin(
  *
  * @returns Safe empty CNKI session status.
  */
-export function clearCnkiSession(): Promise<CnkiSessionStatus> {
-  return requestJson<CnkiSessionStatus>(
-    buildApiUrl('/api/cnki/session'),
-    { method: 'DELETE' },
-    '清除知网登录失败',
-  );
+export async function clearCnkiSession(): Promise<CnkiSessionStatus> {
+  return readData(await apiClient.DELETE('/api/cnki/session'));
 }
 
 /**
@@ -327,18 +230,8 @@ export function clearCnkiSession(): Promise<CnkiSessionStatus> {
  * @param ttl - Time to live in seconds.
  * @returns Created token response.
  */
-export function createAccessToken(
-  name: string,
-  ttl: number,
-): Promise<{ id: number; token: string; name: string; expires_at: number }> {
-  return requestJson<{ id: number; token: string; name: string; expires_at: number }>(
-    buildApiUrl('/api/auth/tokens'),
-    {
-      method: 'POST',
-      body: JSON.stringify({ name, ttl }),
-    },
-    '创建访问令牌失败',
-  );
+export async function createAccessToken(name: string, ttl: number): Promise<CreatedAccessToken> {
+  return readData(await apiClient.POST('/api/auth/tokens', { body: { name, ttl } }));
 }
 
 /**
@@ -347,11 +240,9 @@ export function createAccessToken(
  * @param tokenId - Access token id.
  */
 export async function revokeAccessToken(tokenId: number): Promise<void> {
-  await requestJson<unknown>(
-    buildApiUrl(`/api/auth/tokens/${tokenId}`),
-    { method: 'DELETE' },
-    '撤销访问令牌失败',
-  );
+  await apiClient.DELETE('/api/auth/tokens/{token_id}', {
+    params: { path: { token_id: tokenId } },
+  });
 }
 
 /**
@@ -361,27 +252,9 @@ export async function revokeAccessToken(tokenId: number): Promise<void> {
  * @param newPassword - New password.
  */
 export async function changePassword(oldPassword: string, newPassword: string): Promise<void> {
-  await requestJson<unknown>(
-    buildApiUrl('/api/auth/change-password'),
-    {
-      method: 'POST',
-      body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
-    },
-    '修改密码失败',
-  );
-}
-
-/**
- * Fetch the current user's invite code.
- *
- * @returns Invite code or null.
- */
-export function getInviteCode(): Promise<InviteCode | null> {
-  return requestJson<InviteCode | null>(
-    buildApiUrl('/api/auth/invite-code'),
-    undefined,
-    '获取邀请码失败',
-  );
+  await apiClient.POST('/api/auth/change-password', {
+    body: { old_password: oldPassword, new_password: newPassword },
+  });
 }
 
 /**
@@ -389,12 +262,8 @@ export function getInviteCode(): Promise<InviteCode | null> {
  *
  * @returns Generated invite code.
  */
-export function generateInviteCode(): Promise<InviteCode> {
-  return requestJson<InviteCode>(
-    buildApiUrl('/api/auth/invite-code'),
-    { method: 'POST' },
-    '生成邀请码失败',
-  );
+export async function generateInviteCode(): Promise<InviteCode> {
+  return readData(await apiClient.POST('/api/auth/invite-code'));
 }
 
 /**
@@ -402,21 +271,70 @@ export function generateInviteCode(): Promise<InviteCode> {
  *
  * @returns Newly issued replacement invite code.
  */
-export function rotateInviteCode(): Promise<InviteCode> {
-  return requestJson<InviteCode>(
-    buildApiUrl('/api/auth/invite-code/rotate'),
-    { method: 'POST' },
-    '轮换邀请码失败',
-  );
+export async function rotateInviteCode(): Promise<InviteCode> {
+  return readData(await apiClient.POST('/api/auth/invite-code/rotate'));
 }
 
 /**
  * Irreversibly revoke the current user's invite code.
  */
 export async function revokeInviteCode(): Promise<void> {
-  await requestJson<unknown>(
-    buildApiUrl('/api/auth/invite-code'),
-    { method: 'DELETE' },
-    '撤销邀请码失败',
+  await apiClient.DELETE('/api/auth/invite-code');
+}
+
+/**
+ * Query of the signed-in user, contract-validated.
+ *
+ * @returns Query options.
+ */
+export function currentUserQuery() {
+  return validatedApiQuery($api.queryOptions('get', '/api/auth/me'), parseAuthUser);
+}
+
+/**
+ * Query of the sign-in providers enabled on this server, contract-validated.
+ *
+ * @returns Query options.
+ */
+export function authProvidersQuery() {
+  return validatedApiQuery($api.queryOptions('get', '/api/auth/providers'), parseAuthProviders);
+}
+
+/**
+ * Query of whether registration requires an invite code, contract-validated.
+ *
+ * @returns Query options.
+ */
+export function inviteRequirementQuery() {
+  return validatedApiQuery(
+    $api.queryOptions('get', '/api/auth/invite-required'),
+    parseInviteRequirement,
   );
+}
+
+/**
+ * Query of the current user's access tokens.
+ *
+ * @returns Query options.
+ */
+export function accessTokensQuery() {
+  return apiQuery($api.queryOptions('get', '/api/auth/tokens'));
+}
+
+/**
+ * Query of the current user's Zhejiang Library CNKI session status.
+ *
+ * @returns Query options.
+ */
+export function cnkiSessionQuery() {
+  return apiQuery($api.queryOptions('get', '/api/cnki/session'));
+}
+
+/**
+ * Query of the current user's invite code.
+ *
+ * @returns Query options.
+ */
+export function inviteCodeQuery() {
+  return apiQuery($api.queryOptions('get', '/api/auth/invite-code'));
 }

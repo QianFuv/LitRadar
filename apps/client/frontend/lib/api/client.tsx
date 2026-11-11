@@ -1,7 +1,9 @@
 /**
- * Shared API transport, error, URL, and database-selection helpers.
+ * Shared openapi-fetch client, RFC 9457 error parsing, and database-selection helpers.
  */
 
+import createFetchClient, { type Middleware } from 'openapi-fetch';
+import createQueryHooks from 'openapi-react-query';
 import { z } from 'zod';
 
 import {
@@ -9,7 +11,8 @@ import {
   removeLocalStorageValue,
   writeLocalStorageValue,
 } from '@/lib/browser-storage';
-import type { ContractParser } from '@/lib/api-contract';
+import { ENDPOINT_FAILURE_MESSAGES } from '@/lib/api/endpoint-messages';
+import type { paths } from '@/lib/generated/api-schema';
 import { CLIENT_PLATFORM } from '@/lib/platform';
 
 /** Problem type of a request attempt that exceeded {@link REQUEST_TIMEOUT_MS}. */
@@ -57,14 +60,6 @@ export type ApiErrorInit = {
   /** Server-provided retry delay in seconds. */
   retryAfterSeconds?: number | null;
 };
-
-/** Completed browser download response. */
-export interface ApiDownload {
-  /** Response body retained as a browser Blob. */
-  blob: Blob;
-  /** Safe server-provided filename when available. */
-  filename: string | null;
-}
 
 /**
  * Error raised for non-2xx API responses and failed request attempts.
@@ -134,9 +129,6 @@ const MAX_LISTED_VALIDATION_ERRORS = 3;
 
 const RETRY_AFTER_STATUSES = new Set([429, 503]);
 
-/** Transport that performs one request. */
-export type RequestTransport = (url: string, init: RequestInit) => Promise<Response>;
-
 /**
  * Resolve the backend base URL from the active client platform.
  *
@@ -172,37 +164,6 @@ export function readSelectedDatabase(): string {
 export function storeSelectedDatabase(dbName: string): void {
   writeLocalStorageValue(SELECTED_DATABASE_KEY, dbName);
   removeLocalStorageValue(LEGACY_SELECTED_DATABASE_KEY);
-}
-
-/**
- * Build an absolute URL from a backend path.
- *
- * @param path - API path.
- * @param params - Query parameters to append.
- * @returns Absolute URL.
- */
-export function buildApiUrl(path: string, params?: URLSearchParams): string {
-  const url = new URL(path, resolveApiBase());
-  params?.forEach((value, key) => {
-    url.searchParams.append(key, value);
-  });
-  return url.toString();
-}
-
-/**
- * Build an absolute URL for a database-backed API path.
- *
- * @param path - API path.
- * @param dbName - Database name.
- * @param params - Query parameters to append.
- * @returns Absolute URL.
- */
-export function buildDatabaseUrl(path: string, dbName: string, params?: URLSearchParams): string {
-  const url = new URL(buildApiUrl(path, params));
-  if (!url.searchParams.has('db')) {
-    url.searchParams.set('db', dbName);
-  }
-  return url.toString();
 }
 
 /**
@@ -291,56 +252,12 @@ async function createApiError(response: Response, fallback: string): Promise<Api
 }
 
 /**
- * Build request options with the shared JSON content type and caller headers.
- *
- * @param init - Caller request options.
- * @returns Request options passed to the platform transport.
- */
-function buildRequestInit(init?: RequestInit): RequestInit {
-  const headers = new Headers(init?.headers);
-  if (init?.body !== undefined && !headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
-  }
-  return { ...init, headers };
-}
-
-/**
  * Create the typed error raised when one request exceeds its time budget.
  *
  * @returns Retryable timeout API error.
  */
 function createTimeoutError(): ApiError {
   return new ApiError('请求超时，请稍后重试', 0, { type: REQUEST_TIMEOUT_TYPE, retryable: true });
-}
-
-/**
- * Send one request through a transport with a timeout that also covers reading the response
- * body, propagating caller cancellation unchanged. Retries belong to TanStack Query.
- *
- * @param transport - Transport that performs the request.
- * @param url - Absolute endpoint URL.
- * @param init - Caller request options, including an optional cancellation signal.
- * @param consume - Response reader that returns the result or throws a typed API error.
- * @returns Consumed response result.
- */
-async function executeRequest<T>(
-  transport: RequestTransport,
-  url: string,
-  init: RequestInit | undefined,
-  consume: (response: Response) => Promise<T>,
-): Promise<T> {
-  const requestInit = buildRequestInit(init);
-  const callerSignal = requestInit.signal;
-  const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-  const signal = callerSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : timeoutSignal;
-  try {
-    return await consume(await transport(url, { ...requestInit, signal }));
-  } catch (error) {
-    if (timeoutSignal.aborted && !callerSignal?.aborted) {
-      throw createTimeoutError();
-    }
-    throw error;
-  }
 }
 
 /**
@@ -354,97 +271,121 @@ function parseDownloadFilename(contentDisposition: string | null): string | null
   return match?.[1] ?? null;
 }
 
-/**
- * Parse a fetch response as JSON and raise a typed error on failure.
- *
- * @param response - Fetch response.
- * @param fallback - Fallback error message.
- * @param parser - Optional runtime contract parser for control-plane responses.
- * @returns Parsed response body.
- */
-async function parseJson<T>(
-  response: Response,
-  fallback: string,
-  parser?: ContractParser<T>,
-): Promise<T> {
-  if (response.ok) {
-    const payload: unknown = await response.json();
-    return parser ? parser(payload) : (payload as T);
-  }
-  throw await createApiError(response, fallback);
-}
+/** Origin of the URLs openapi-fetch builds; the platform transport swaps in the server origin. */
+const API_PLACEHOLDER_ORIGIN = 'http://litradar.api';
+
+/** Statuses whose responses cannot carry a body. */
+const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
+
+/** Error message used when an endpoint has no specific message and the problem has no detail. */
+const DEFAULT_FAILURE_MESSAGE = '请求失败';
+
+/** Transport that sends one request to the LitRadar server, such as the platform `send`. */
+export type ServerTransport = (url: string, init: RequestInit) => Promise<Response>;
 
 /**
- * Send one request through the active client platform.
+ * Create the `fetch` used by openapi-fetch: it targets the current server origin, sends through a
+ * platform transport, and bounds the request, including reading the body, by one timeout.
  *
- * @param url - Absolute endpoint URL.
- * @param init - Request options.
- * @returns Raw server response.
+ * The body is buffered inside the time budget, so a stalled body becomes a timeout error rather
+ * than an unbounded read, and caller cancellation propagates unchanged.
+ *
+ * @param transport - Transport that performs the request.
+ * @returns Fetch function for openapi-fetch.
  */
-function sendThroughPlatform(url: string, init: RequestInit): Promise<Response> {
-  return CLIENT_PLATFORM.send(url, init);
+export function createServerFetch(transport: ServerTransport) {
+  return async function serverFetch(request: Request): Promise<Response> {
+    const requestUrl = new URL(request.url);
+    const url = new URL(`${requestUrl.pathname}${requestUrl.search}`, resolveApiBase()).toString();
+    const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const signal = AbortSignal.any([request.signal, timeoutSignal]);
+    const body = request.body === null ? undefined : await request.text();
+    try {
+      const response = await transport(url, {
+        method: request.method,
+        headers: request.headers,
+        body,
+        signal,
+      });
+      const bytes = NULL_BODY_STATUSES.has(response.status) ? null : await response.arrayBuffer();
+      return new Response(bytes, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    } catch (error) {
+      if (timeoutSignal.aborted && !request.signal.aborted) {
+        throw createTimeoutError();
+      }
+      throw error;
+    }
+  };
 }
 
-/**
- * Fetch JSON from an endpoint through the active client platform.
- *
- * @param url - Absolute endpoint URL.
- * @param init - Fetch options.
- * @param fallback - Fallback error message.
- * @param parser - Optional runtime contract parser for control-plane responses.
- * @returns Parsed response body.
- */
-export async function requestJson<T>(
-  url: string,
-  init?: RequestInit,
-  fallback = '请求失败',
-  parser?: ContractParser<T>,
-): Promise<T> {
-  return requestJsonVia(sendThroughPlatform, url, init, fallback, parser);
-}
-
-/**
- * Fetch JSON through a specific transport with the shared timeout, retry, and error handling.
- *
- * @param transport - Transport that performs each attempt, such as a native session call.
- * @param url - Absolute endpoint URL the transport targets.
- * @param init - Request options.
- * @param fallback - Fallback error message.
- * @param parser - Optional runtime contract parser for control-plane responses.
- * @returns Parsed response body.
- */
-export async function requestJsonVia<T>(
-  transport: RequestTransport,
-  url: string,
-  init?: RequestInit,
-  fallback = '请求失败',
-  parser?: ContractParser<T>,
-): Promise<T> {
-  return executeRequest(transport, url, init, (response) =>
-    parseJson<T>(response, fallback, parser),
-  );
-}
-
-/**
- * Fetch a download while reusing the shared API error parser.
- *
- * @param url - Absolute endpoint URL.
- * @param init - Fetch options.
- * @param fallback - Fallback error message.
- * @returns Download Blob and optional safe server filename.
- */
-export async function requestDownload(
-  url: string,
-  init?: RequestInit,
-  fallback = '下载失败',
-): Promise<ApiDownload> {
-  return executeRequest(sendThroughPlatform, url, init, async (response) => {
+/** Raise every non-2xx response as an {@link ApiError} with its endpoint's failure message. */
+const API_ERROR_MIDDLEWARE: Middleware = {
+  async onResponse({ request, response, schemaPath }) {
     if (!response.ok) {
+      const fallback =
+        ENDPOINT_FAILURE_MESSAGES.get(`${request.method} ${schemaPath}`) ?? DEFAULT_FAILURE_MESSAGE;
       throw await createApiError(response, fallback);
     }
-    return {
-      blob: await response.blob(),
-      filename: parseDownloadFilename(response.headers.get('Content-Disposition')),
-    };
-  });
+    return undefined;
+  },
+};
+
+/**
+ * Typed LitRadar API client. Every request goes through the active client platform, and every
+ * non-2xx response rejects with an {@link ApiError}, so callers only see successful data.
+ */
+export const apiClient = createFetchClient<paths>({
+  baseUrl: API_PLACEHOLDER_ORIGIN,
+  fetch: createServerFetch((url, init) => CLIENT_PLATFORM.send(url, init)),
+});
+apiClient.use(API_ERROR_MIDDLEWARE);
+
+/** Native sign-in endpoints whose request the host builds in Go from its own credentials. */
+type NativeSessionPath = '/api/auth/native/login' | '/api/auth/oidc/native/exchange';
+
+/** Native sign-in operations as JavaScript sees them: no request body, the server's response. */
+type NativeSessionPaths = {
+  [Path in NativeSessionPath]: Omit<paths[Path], 'post'> & {
+    post: Omit<NonNullable<paths[Path]['post']>, 'requestBody'> & { requestBody?: never };
+  };
+};
+
+/**
+ * Client for native sign-in calls. Each call passes a `fetch` that runs the host bridge, which
+ * sends the real request; responses still get the shared timeout and {@link ApiError} handling.
+ */
+export const nativeSessionClient = createFetchClient<NativeSessionPaths>({
+  baseUrl: API_PLACEHOLDER_ORIGIN,
+  fetch: createServerFetch((url, init) => CLIENT_PLATFORM.send(url, init)),
+});
+nativeSessionClient.use(API_ERROR_MIDDLEWARE);
+
+/** TanStack Query bindings for {@link apiClient}; query keys are `[method, path, init]`. */
+export const $api = createQueryHooks(apiClient);
+
+/**
+ * Read the body of a successful response, which the error middleware guarantees.
+ *
+ * @param result - openapi-fetch result.
+ * @returns Response data.
+ */
+export function readData<T>(result: { data?: T }): T {
+  if (result.data === undefined) {
+    throw new ApiError(DEFAULT_FAILURE_MESSAGE, 0);
+  }
+  return result.data;
+}
+
+/**
+ * Read a safe quoted attachment filename from a download response.
+ *
+ * @param response - Download response.
+ * @returns Safe ASCII basename or null.
+ */
+export function readDownloadFilename(response: Response): string | null {
+  return parseDownloadFilename(response.headers.get('Content-Disposition'));
 }

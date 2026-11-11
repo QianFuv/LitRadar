@@ -21,7 +21,7 @@ import {
   parseMonthRange,
   resolveMonthRangeForYears,
 } from '@/lib/article-filters';
-import { readSelectedDatabase } from '@/lib/api';
+import { journalOptionsQuery, readSelectedDatabase } from '@/lib/api';
 import { useUpdateWorkspaceSearch } from '@/lib/search-params';
 import { setSelectedDatabase } from '@/lib/selected-database';
 import { createAuthUserScenario } from '@/tests/mocks/scenarios';
@@ -613,13 +613,11 @@ async function defersClosedJournalOptions(): Promise<void> {
     { url: '/' },
   );
   await waitFor(() =>
-    expect(view.queryClient.getQueryData(['meta', 'journals', 'fixture.sqlite'])).toHaveLength(100),
+    expect(
+      view.queryClient.getQueryData(journalOptionsQuery('fixture.sqlite').queryKey),
+    ).toHaveLength(100),
   );
-  const options = view.queryClient.getQueryData<{ journal_id: string; title: string }[]>([
-    'meta',
-    'journals',
-    'fixture.sqlite',
-  ])!;
+  const options = view.queryClient.getQueryData(journalOptionsQuery('fixture.sqlite').queryKey)!;
   const mapOptions = vi.spyOn(options, 'map');
   view.rerender(
     <AuthProvider>
@@ -688,7 +686,9 @@ async function indexesSelectedJournalMembership(): Promise<void> {
     { url: `/${searchParams}` },
   );
   await waitFor(() =>
-    expect(view.queryClient.getQueryData(['meta', 'journals', 'fixture.sqlite'])).toHaveLength(200),
+    expect(
+      view.queryClient.getQueryData(journalOptionsQuery('fixture.sqlite').queryKey),
+    ).toHaveLength(200),
   );
   const user = userEvent.setup();
   const includes = vi.spyOn(Array.prototype, 'includes');

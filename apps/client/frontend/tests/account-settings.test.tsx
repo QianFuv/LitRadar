@@ -97,7 +97,7 @@ function createActiveCnkiPoll(): CnkiLoginPollResponse {
  */
 async function renderCnkiSettings(): Promise<void> {
   await renderWithQuery(
-    <CnkiSettingsCard userId={21} copyFeedback={null} handleCopy={accountSettingsMocks.copy} />,
+    <CnkiSettingsCard copyFeedback={null} handleCopy={accountSettingsMocks.copy} />,
   );
 }
 

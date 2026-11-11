@@ -21,9 +21,10 @@ import {
 
 import {
   getArticleActionUrlForDatabase,
-  checkFavorite,
-  getArticleAccess,
-  getJournal,
+  favoriteCheckQuery,
+  articleAccessQuery,
+  journalQuery,
+  type ArticleAccessResponse,
   type Article,
   type JournalRecord,
 } from '@/lib/api';
@@ -179,8 +180,7 @@ function RelatedArticleFavoriteState({
 }) {
   const { user } = useAuth();
   const { data, isPending } = useQuery({
-    queryKey: ['fav-check', user?.id, dbName, article.article_id],
-    queryFn: () => checkFavorite(article.article_id, dbName),
+    ...favoriteCheckQuery(article.article_id, dbName),
     enabled: Boolean(user),
     staleTime: 5 * 60 * 1000,
   });
@@ -703,8 +703,7 @@ function useArticleDetailViewState({
     isError: isAccessError,
     error: accessError,
   } = useQuery({
-    queryKey: ['article-access', dbName, article.article_id],
-    queryFn: ({ signal }) => getArticleAccess(article.article_id, dbName, signal),
+    ...articleAccessQuery(article.article_id, dbName),
     enabled: isAccessQueryEnabled,
     staleTime: 0,
     refetchOnMount: 'always',
@@ -712,8 +711,7 @@ function useArticleDetailViewState({
 
   const journalId = article.journal_id ? String(article.journal_id) : '';
   const { data: journal } = useQuery({
-    queryKey: ['journal', dbName, journalId],
-    queryFn: ({ signal }) => getJournal(journalId, dbName, signal),
+    ...journalQuery(journalId, dbName),
     enabled: Boolean(dbName && journalId),
     staleTime: 30 * 60 * 1000,
     retry: false,
@@ -1089,7 +1087,7 @@ function getOptionalArticleInfoFields(article: ArticleDetailDialogArticle, doiUr
 function getArticleAccessPresentation(
   articleId: Article['article_id'],
   dbName: string,
-  access: Awaited<ReturnType<typeof getArticleAccess>> | undefined,
+  access: ArticleAccessResponse | undefined,
   isAccessQueryEnabled: boolean,
   isAccessPending: boolean,
   isAccessFetching: boolean,

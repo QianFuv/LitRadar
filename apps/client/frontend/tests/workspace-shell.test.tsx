@@ -35,9 +35,7 @@ vi.mock('@/components/feature/search-workspace-view', () => ({
 }));
 
 vi.mock('@/components/favorites/favorites-page-content', () => ({
-  FavoritesPageContent: ({ userId }: { userId: number }) => (
-    <section>收藏工作区用户 {userId}</section>
-  ),
+  FavoritesPageContent: () => <section>收藏工作区</section>,
 }));
 
 vi.mock('@/components/weekly/weekly-updates-view', () => ({
@@ -307,7 +305,7 @@ function renderHome(search = '') {
 async function dispatchesLegalWorkspaceViews(): Promise<void> {
   const { unmount } = await renderHome('?view=favorites');
   expect(
-    await screen.findByText('收藏工作区用户 21', {}, { timeout: LAZY_VIEW_TIMEOUT_MS }),
+    await screen.findByText('收藏工作区', {}, { timeout: LAZY_VIEW_TIMEOUT_MS }),
   ).toBeInTheDocument();
 
   unmount();

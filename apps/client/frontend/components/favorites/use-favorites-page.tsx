@@ -8,8 +8,8 @@ import {
   createFolder,
   deleteFolder,
   downloadFavoriteExport,
-  getFolderArticlePage,
-  getFolders,
+  folderArticlePagesQuery,
+  foldersQuery,
   renameFolder,
   setTrackingFolder,
   type ArticleId,
@@ -17,6 +17,7 @@ import {
   type FavoriteArticleItem,
   type FavoriteArticleRef,
   type Folder,
+  FOLDER_ARTICLES_QUERY_PREFIX,
 } from '@/lib/api';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
 import { invalidateFavoriteMemberships } from '@/components/feature/use-favorite-checks';
@@ -55,10 +56,9 @@ function toFavoriteArticleRef(favorite: FavoriteArticleItem): FavoriteArticleRef
 /**
  * Own favorite-folder URL state, infinite pages, selection, and mutations.
  *
- * @param userId - Authenticated user identifier used by folder query keys.
  * @returns Favorites page view model and actions.
  */
-export function useFavoritesPage(userId: number) {
+export function useFavoritesPage() {
   const queryClient = useQueryClient();
   const selectedFolderId = useSearch({
     from: WORKSPACE_ROUTE_ID,
@@ -101,15 +101,9 @@ export function useFavoritesPage(userId: number) {
     }
   }, [editingId]);
 
-  const { data: folders = [], isLoading } = useQuery({
-    queryKey: ['folders', userId],
-    queryFn: () => getFolders(),
-    enabled: true,
-  });
+  const { data: folders = [], isLoading } = useQuery(foldersQuery());
   const activeFolderId = getActiveFavoriteFolderId(folders, selectedFolderId);
   const selectedFolder = folders.find((folder) => folder.id === activeFolderId) || null;
-
-  const PAGE_SIZE = 50;
 
   const {
     data: favPages,
@@ -121,11 +115,7 @@ export function useFavoritesPage(userId: number) {
     error: favoritesError,
     refetch: refetchFavorites,
   } = useInfiniteQuery({
-    queryKey: ['folder-articles', activeFolderId, 'cursor', userId],
-    queryFn: ({ pageParam, signal }) =>
-      getFolderArticlePage(activeFolderId!, PAGE_SIZE, pageParam, signal),
-    getNextPageParam: (lastPage) => lastPage.page.next_cursor ?? undefined,
-    initialPageParam: null as string | null,
+    ...folderArticlePagesQuery(activeFolderId ?? 0),
     enabled: !!activeFolderId && !!selectedFolder,
   });
 
@@ -169,7 +159,7 @@ export function useFavoritesPage(userId: number) {
   const createMut = useMutation({
     mutationFn: (name: string) => createFolder(name),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['folders'] });
+      void queryClient.invalidateQueries({ queryKey: foldersQuery().queryKey });
       setNewFolderName('');
       setDialogOpen(false);
     },
@@ -178,12 +168,12 @@ export function useFavoritesPage(userId: number) {
   const deleteMut = useMutation({
     mutationFn: (id: number) => deleteFolder(id),
     onSuccess: async (_data, deletedFolderId) => {
-      await invalidateFavoriteMemberships(queryClient, userId);
+      await invalidateFavoriteMemberships(queryClient);
       setSelectedArticleKeys([]);
       setMoveTargetFolderId('');
       setBatchFeedback(null);
       setExportFeedback(null);
-      void queryClient.invalidateQueries({ queryKey: ['folders'] });
+      void queryClient.invalidateQueries({ queryKey: foldersQuery().queryKey });
       if (selectedFolderId === deletedFolderId) {
         setSelectedFolderId(null);
       }
@@ -193,15 +183,15 @@ export function useFavoritesPage(userId: number) {
   const renameMut = useMutation({
     mutationFn: ({ id, name }: { id: number; name: string }) => renameFolder(id, name),
     onSuccess: async () => {
-      await invalidateFavoriteMemberships(queryClient, userId);
-      void queryClient.invalidateQueries({ queryKey: ['folders'] });
+      await invalidateFavoriteMemberships(queryClient);
+      void queryClient.invalidateQueries({ queryKey: foldersQuery().queryKey });
       setEditingId(null);
     },
   });
 
   const trackMut = useMutation({
     mutationFn: (folderId: number) => setTrackingFolder(folderId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['folders'] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: foldersQuery().queryKey }),
   });
 
   const exportMut = useMutation({
@@ -227,15 +217,15 @@ export function useFavoritesPage(userId: number) {
   const bulkRemoveMut = useMutation({
     mutationFn: (articles: FavoriteArticleRef[]) => bulkRemoveFavorites(activeFolderId!, articles),
     onSuccess: async (count) => {
-      await invalidateFavoriteMemberships(queryClient, userId);
+      await invalidateFavoriteMemberships(queryClient);
       setBulkRemoveTarget(null);
       setSelectedArticleKeys([]);
       setBatchFeedback({
         tone: 'success',
         message: `已从当前收藏夹移除 ${count} 篇文章。`,
       });
-      void queryClient.invalidateQueries({ queryKey: ['folder-articles'] });
-      void queryClient.invalidateQueries({ queryKey: ['folders'] });
+      void queryClient.invalidateQueries({ queryKey: FOLDER_ARTICLES_QUERY_PREFIX });
+      void queryClient.invalidateQueries({ queryKey: foldersQuery().queryKey });
     },
     onError: (error) => {
       setBatchFeedback({
@@ -254,7 +244,7 @@ export function useFavoritesPage(userId: number) {
       articles: FavoriteArticleRef[];
     }) => bulkMoveFavorites(activeFolderId!, targetFolderId, articles),
     onSuccess: async (count) => {
-      await invalidateFavoriteMemberships(queryClient, userId);
+      await invalidateFavoriteMemberships(queryClient);
       const targetFolderName = moveTargetFolders.find(
         (folder) => folder.id === Number(moveTargetFolderId),
       )?.name;
@@ -266,8 +256,8 @@ export function useFavoritesPage(userId: number) {
           ? `已将 ${count} 篇文章移动到“${targetFolderName}”。`
           : `已移动 ${count} 篇文章。`,
       });
-      void queryClient.invalidateQueries({ queryKey: ['folder-articles'] });
-      void queryClient.invalidateQueries({ queryKey: ['folders'] });
+      void queryClient.invalidateQueries({ queryKey: FOLDER_ARTICLES_QUERY_PREFIX });
+      void queryClient.invalidateQueries({ queryKey: foldersQuery().queryKey });
     },
     onError: (error) => {
       setBatchFeedback({

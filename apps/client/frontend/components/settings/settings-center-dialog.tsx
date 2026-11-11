@@ -217,16 +217,13 @@ function SettingsCategoryContent({
   if (isTrackingSettingsSection(activeSection)) {
     return (
       <TrackingSettingsContent
-        userId={user.id}
         section={activeSection}
         onControllerChange={onTrackingControllerChange}
       />
     );
   }
   if (activeSection === 'data-sources') {
-    return (
-      <CnkiSettingsCard userId={user.id} copyFeedback={copyFeedback} handleCopy={handleCopy} />
-    );
+    return <CnkiSettingsCard copyFeedback={copyFeedback} handleCopy={handleCopy} />;
   }
   if (activeSection === 'account') {
     return (

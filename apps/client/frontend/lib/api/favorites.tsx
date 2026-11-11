@@ -2,13 +2,13 @@
  * Favorite folder, membership, export, and tracking-folder API operations.
  */
 
-import { buildApiUrl, requestDownload, requestJson } from '@/lib/api/client';
+import { $api, apiClient, readData, readDownloadFilename } from '@/lib/api/client';
+import { apiCursorQuery, apiPathKey, apiQuery } from '@/lib/api/query';
 import type {
   ArticleId,
   CitationFormat,
   FavoriteArticlePage,
   FavoriteArticleRef,
-  FavoriteBatchCheckItem,
   FavoriteCheck,
   FavoriteItem,
   Folder,
@@ -37,8 +37,8 @@ export interface FavoriteExportDownload {
  *
  * @returns Folders.
  */
-export function getFolders(): Promise<Folder[]> {
-  return requestJson<Folder[]>(buildApiUrl('/api/favorites/folders'), undefined, '获取收藏夹失败');
+export async function getFolders(): Promise<Folder[]> {
+  return readData(await apiClient.GET('/api/favorites/folders'));
 }
 
 /**
@@ -48,14 +48,9 @@ export function getFolders(): Promise<Folder[]> {
  * @param isTracking - Whether the folder is the tracking folder.
  * @returns Created folder.
  */
-export function createFolder(name: string, isTracking = false): Promise<Folder> {
-  return requestJson<Folder>(
-    buildApiUrl('/api/favorites/folders'),
-    {
-      method: 'POST',
-      body: JSON.stringify({ name, is_tracking: isTracking }),
-    },
-    '创建收藏夹失败',
+export async function createFolder(name: string, isTracking = false): Promise<Folder> {
+  return readData(
+    await apiClient.POST('/api/favorites/folders', { body: { name, is_tracking: isTracking } }),
   );
 }
 
@@ -66,14 +61,10 @@ export function createFolder(name: string, isTracking = false): Promise<Folder> 
  * @param name - New name.
  */
 export async function renameFolder(folderId: number, name: string): Promise<void> {
-  await requestJson<unknown>(
-    buildApiUrl(`/api/favorites/folders/${folderId}`),
-    {
-      method: 'PUT',
-      body: JSON.stringify({ name }),
-    },
-    '重命名收藏夹失败',
-  );
+  await apiClient.PUT('/api/favorites/folders/{folder_id}', {
+    params: { path: { folder_id: folderId } },
+    body: { name },
+  });
 }
 
 /**
@@ -82,11 +73,9 @@ export async function renameFolder(folderId: number, name: string): Promise<void
  * @param folderId - Folder id.
  */
 export async function deleteFolder(folderId: number): Promise<void> {
-  await requestJson<unknown>(
-    buildApiUrl(`/api/favorites/folders/${folderId}`),
-    { method: 'DELETE' },
-    '删除收藏夹失败',
-  );
+  await apiClient.DELETE('/api/favorites/folders/{folder_id}', {
+    params: { path: { folder_id: folderId } },
+  });
 }
 
 /**
@@ -98,20 +87,20 @@ export async function deleteFolder(folderId: number): Promise<void> {
  * @param signal - Optional cancellation signal for an obsolete page request.
  * @returns Favorite rows and the next cursor.
  */
-export function getFolderArticlePage(
+export async function getFolderArticlePage(
   folderId: number,
   limit: number,
   cursor: string | null = null,
   signal?: AbortSignal,
 ): Promise<FavoriteArticlePage> {
-  const params = new URLSearchParams({ limit: String(limit) });
-  if (cursor !== null) {
-    params.set('cursor', cursor);
-  }
-  return requestJson<FavoriteArticlePage>(
-    buildApiUrl(`/api/favorites/folders/${folderId}/articles/page`, params),
-    { signal },
-    '获取收藏文章失败',
+  return readData(
+    await apiClient.GET('/api/favorites/folders/{folder_id}/articles/page', {
+      params: {
+        path: { folder_id: folderId },
+        query: { limit, ...(cursor !== null ? { cursor } : {}) },
+      },
+      signal,
+    }),
   );
 }
 
@@ -123,18 +112,16 @@ export function getFolderArticlePage(
  * @param dbName - Database name.
  * @returns Favorite item.
  */
-export function addFavorite(
+export async function addFavorite(
   folderId: number,
   articleId: ArticleId,
   dbName: string,
 ): Promise<FavoriteItem> {
-  return requestJson<FavoriteItem>(
-    buildApiUrl(`/api/favorites/folders/${folderId}/articles`),
-    {
-      method: 'POST',
-      body: JSON.stringify({ article_id: articleId, db_name: dbName, note: '' }),
-    },
-    '添加收藏失败',
+  return readData(
+    await apiClient.POST('/api/favorites/folders/{folder_id}/articles', {
+      params: { path: { folder_id: folderId } },
+      body: { article_id: articleId, db_name: dbName, note: '' },
+    }),
   );
 }
 
@@ -150,12 +137,12 @@ export async function removeFavorite(
   articleId: ArticleId,
   dbName: string,
 ): Promise<void> {
-  const params = new URLSearchParams({ db_name: dbName });
-  await requestJson<unknown>(
-    buildApiUrl(`/api/favorites/folders/${folderId}/articles/${articleId}`, params),
-    { method: 'DELETE' },
-    '移除收藏失败',
-  );
+  await apiClient.DELETE('/api/favorites/folders/{folder_id}/articles/{article_id}', {
+    params: {
+      path: { folder_id: folderId, article_id: Number(articleId) },
+      query: { db_name: dbName },
+    },
+  });
 }
 
 /**
@@ -169,13 +156,11 @@ export async function bulkRemoveFavorites(
   folderId: number,
   articles: FavoriteArticleRef[],
 ): Promise<number> {
-  const data = await requestJson<{ count: number }>(
-    buildApiUrl(`/api/favorites/folders/${folderId}/articles/bulk-remove`),
-    {
-      method: 'POST',
-      body: JSON.stringify({ articles }),
-    },
-    '批量移除收藏失败',
+  const data = readData(
+    await apiClient.POST('/api/favorites/folders/{folder_id}/articles/bulk-remove', {
+      params: { path: { folder_id: folderId } },
+      body: { articles },
+    }),
   );
   return data.count;
 }
@@ -193,13 +178,11 @@ export async function bulkMoveFavorites(
   targetFolderId: number,
   articles: FavoriteArticleRef[],
 ): Promise<number> {
-  const data = await requestJson<{ count: number }>(
-    buildApiUrl(`/api/favorites/folders/${folderId}/articles/bulk-move`),
-    {
-      method: 'POST',
-      body: JSON.stringify({ target_folder_id: targetFolderId, articles }),
-    },
-    '批量移动收藏失败',
+  const data = readData(
+    await apiClient.POST('/api/favorites/folders/{folder_id}/articles/bulk-move', {
+      params: { path: { folder_id: folderId } },
+      body: { target_folder_id: targetFolderId, articles },
+    }),
   );
   return data.count;
 }
@@ -215,15 +198,14 @@ export async function downloadFavoriteExport(
   folderId: number,
   format: CitationFormat,
 ): Promise<FavoriteExportDownload> {
-  const params = new URLSearchParams({ format });
-  const download = await requestDownload(
-    buildApiUrl(`/api/favorites/folders/${folderId}/export`, params),
-    undefined,
-    '导出引用失败',
-  );
+  const result = await apiClient.GET('/api/favorites/folders/{folder_id}/export', {
+    params: { path: { folder_id: folderId }, query: { format } },
+    parseAs: 'blob',
+  });
   return {
-    blob: download.blob,
-    filename: download.filename ?? `favorites.${CITATION_EXPORT_EXTENSIONS[format]}`,
+    blob: readData(result),
+    filename:
+      readDownloadFilename(result.response) ?? `favorites.${CITATION_EXPORT_EXTENSIONS[format]}`,
   };
 }
 
@@ -234,12 +216,14 @@ export async function downloadFavoriteExport(
  * @param dbName - Database name.
  * @returns Favorite checks.
  */
-export function checkFavorite(articleId: ArticleId, dbName: string): Promise<FavoriteCheck[]> {
-  const params = new URLSearchParams({ article_id: articleId, db_name: dbName });
-  return requestJson<FavoriteCheck[]>(
-    buildApiUrl('/api/favorites/check', params),
-    undefined,
-    '获取收藏状态失败',
+export async function checkFavorite(
+  articleId: ArticleId,
+  dbName: string,
+): Promise<FavoriteCheck[]> {
+  return readData(
+    await apiClient.GET('/api/favorites/check', {
+      params: { query: { article_id: Number(articleId), db_name: dbName } },
+    }),
   );
 }
 
@@ -257,10 +241,11 @@ export async function checkFavoritesBatch(
   signal?: AbortSignal,
 ): Promise<Record<ArticleId, FavoriteCheck[]>> {
   if (articleIds.length === 0) return {};
-  const data = await requestJson<FavoriteBatchCheckItem[]>(
-    buildApiUrl('/api/favorites/check/batch'),
-    { method: 'POST', body: JSON.stringify({ article_ids: articleIds, db_name: dbName }), signal },
-    '获取收藏状态失败',
+  const data = readData(
+    await apiClient.POST('/api/favorites/check/batch', {
+      body: { article_ids: articleIds, db_name: dbName },
+      signal,
+    }),
   );
   return Object.fromEntries(data.map((item) => [item.article_id, item.folders]));
 }
@@ -271,14 +256,7 @@ export async function checkFavoritesBatch(
  * @param folderId - Folder id.
  */
 export async function setTrackingFolder(folderId: number): Promise<void> {
-  await requestJson<unknown>(
-    buildApiUrl('/api/favorites/tracking'),
-    {
-      method: 'PUT',
-      body: JSON.stringify({ folder_id: folderId }),
-    },
-    '设置追踪文件夹失败',
-  );
+  await apiClient.PUT('/api/favorites/tracking', { body: { folder_id: folderId } });
 }
 
 /**
@@ -289,37 +267,16 @@ export async function setTrackingFolder(folderId: number): Promise<void> {
  * @param signal - Optional abort signal.
  * @returns Saved graph summaries and the next cursor.
  */
-export function getRelationGraphFavoritePage(
+async function getRelationGraphFavoritePage(
   limit: number,
   cursor: string | null = null,
   signal?: AbortSignal,
 ): Promise<RelationGraphFavoritePage> {
-  const params = new URLSearchParams({ limit: String(limit) });
-  if (cursor !== null) {
-    params.set('cursor', cursor);
-  }
-  return requestJson<RelationGraphFavoritePage>(
-    buildApiUrl('/api/favorites/graphs', params),
-    { signal },
-    '获取收藏的关系图失败',
-  );
-}
-
-/**
- * Fetch one saved relation graph with its snapshot.
- *
- * @param graphId - Saved graph id.
- * @param signal - Optional abort signal.
- * @returns Saved graph.
- */
-export function getRelationGraphFavorite(
-  graphId: number,
-  signal?: AbortSignal,
-): Promise<RelationGraphFavorite> {
-  return requestJson<RelationGraphFavorite>(
-    buildApiUrl(`/api/favorites/graphs/${graphId}`),
-    { signal },
-    '获取收藏的关系图失败',
+  return readData(
+    await apiClient.GET('/api/favorites/graphs', {
+      params: { query: { limit, ...(cursor !== null ? { cursor } : {}) } },
+      signal,
+    }),
   );
 }
 
@@ -329,14 +286,10 @@ export function getRelationGraphFavorite(
  * @param input - Title, database, root article, node count, and snapshot.
  * @returns Saved graph.
  */
-export function createRelationGraphFavorite(
+export async function createRelationGraphFavorite(
   input: RelationGraphFavoriteCreate,
 ): Promise<RelationGraphFavorite> {
-  return requestJson<RelationGraphFavorite>(
-    buildApiUrl('/api/favorites/graphs'),
-    { method: 'POST', body: JSON.stringify(input) },
-    '收藏关系图失败',
-  );
+  return readData(await apiClient.POST('/api/favorites/graphs', { body: input }));
 }
 
 /**
@@ -346,14 +299,15 @@ export function createRelationGraphFavorite(
  * @param input - New title, or a new snapshot with its node count, or both.
  * @returns Updated saved graph.
  */
-export function updateRelationGraphFavorite(
+export async function updateRelationGraphFavorite(
   graphId: number,
   input: RelationGraphFavoriteUpdate,
 ): Promise<RelationGraphFavorite> {
-  return requestJson<RelationGraphFavorite>(
-    buildApiUrl(`/api/favorites/graphs/${graphId}`),
-    { method: 'PUT', body: JSON.stringify(input) },
-    '更新收藏的关系图失败',
+  return readData(
+    await apiClient.PUT('/api/favorites/graphs/{graph_id}', {
+      params: { path: { graph_id: graphId } },
+      body: input,
+    }),
   );
 }
 
@@ -363,9 +317,110 @@ export function updateRelationGraphFavorite(
  * @param graphId - Saved graph id.
  */
 export async function deleteRelationGraphFavorite(graphId: number): Promise<void> {
-  await requestJson<unknown>(
-    buildApiUrl(`/api/favorites/graphs/${graphId}`),
-    { method: 'DELETE' },
-    '删除收藏的关系图失败',
+  await apiClient.DELETE('/api/favorites/graphs/{graph_id}', {
+    params: { path: { graph_id: graphId } },
+  });
+}
+
+/**
+ * Query of the current user's favorite folders.
+ *
+ * @returns Query options.
+ */
+export function foldersQuery() {
+  return apiQuery($api.queryOptions('get', '/api/favorites/folders'));
+}
+
+/** Rows per favorite folder page. */
+const FAVORITE_FOLDER_PAGE_SIZE = 50;
+
+/**
+ * Cursor-paged query of one folder's favorite articles.
+ *
+ * @param folderId - Owned favorite folder.
+ * @returns Infinite query options.
+ */
+export function folderArticlePagesQuery(folderId: number) {
+  const queryKey = $api.queryOptions('get', '/api/favorites/folders/{folder_id}/articles/page', {
+    params: { path: { folder_id: folderId }, query: { limit: FAVORITE_FOLDER_PAGE_SIZE } },
+  }).queryKey;
+  return apiCursorQuery(
+    queryKey,
+    (cursor, signal) => getFolderArticlePage(folderId, FAVORITE_FOLDER_PAGE_SIZE, cursor, signal),
+    (page) => page.page.next_cursor,
+  );
+}
+
+/** Key prefix shared by every folder article page query. */
+export const FOLDER_ARTICLES_QUERY_PREFIX = apiPathKey(
+  'get',
+  '/api/favorites/folders/{folder_id}/articles/page',
+);
+
+/**
+ * Query of the folders that contain one article.
+ *
+ * @param articleId - Article id.
+ * @param dbName - Database name.
+ * @returns Query options.
+ */
+export function favoriteCheckQuery(articleId: ArticleId, dbName: string) {
+  return apiQuery(
+    $api.queryOptions('get', '/api/favorites/check', {
+      params: { query: { article_id: Number(articleId), db_name: dbName } },
+    }),
+  );
+}
+
+/** Key prefix shared by every single-article favorite check. */
+export const FAVORITE_CHECK_QUERY_PREFIX = apiPathKey('get', '/api/favorites/check');
+
+/**
+ * Key of one batch favorite lookup for a set of articles.
+ *
+ * @param articleIds - Sorted unique article ids.
+ * @param dbName - Database name.
+ * @returns openapi-react-query key of the batch request.
+ */
+export function favoriteCheckBatchQueryKey(articleIds: ArticleId[], dbName: string) {
+  return $api.queryOptions('post', '/api/favorites/check/batch', {
+    body: { article_ids: articleIds, db_name: dbName },
+  }).queryKey;
+}
+
+/** Key prefix shared by every batch favorite lookup. */
+export const FAVORITE_CHECK_BATCH_QUERY_PREFIX = apiPathKey('post', '/api/favorites/check/batch');
+
+/**
+ * Cursor-paged query of the current user's saved relation graphs.
+ *
+ * @param limit - Page size.
+ * @returns Infinite query options.
+ */
+export function relationGraphFavoritePagesQuery(limit: number) {
+  const queryKey = $api.queryOptions('get', '/api/favorites/graphs', {
+    params: { query: { limit } },
+  }).queryKey;
+  return apiCursorQuery(
+    queryKey,
+    (cursor, signal) => getRelationGraphFavoritePage(limit, cursor, signal),
+    (page) => page.next_cursor,
+  );
+}
+
+/** Key prefix shared by every saved relation graph page query. */
+export const RELATION_GRAPH_FAVORITES_QUERY_PREFIX = apiPathKey('get', '/api/favorites/graphs');
+
+/**
+ * Query of one saved relation graph with its snapshot.
+ *
+ * @param graphId - Saved graph id.
+ * @returns Query options.
+ */
+export function relationGraphFavoriteQuery(graphId: number) {
+  return apiQuery(
+    $api.queryOptions('get', '/api/favorites/graphs/{graph_id}', {
+      params: { path: { graph_id: graphId } },
+    }),
   );
 }

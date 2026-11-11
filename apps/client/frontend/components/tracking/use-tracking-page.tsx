@@ -5,12 +5,12 @@ import {
   acknowledgeUnknownPushWeeklyRun,
   cancelPushWeeklyRun,
   createFolder,
-  getAiEndpoints,
-  getDatabases,
-  getFolders,
-  getNotificationSettings,
-  getPushWeeklyStatus,
-  getTrackingStatus,
+  aiEndpointsQuery,
+  databasesQuery,
+  foldersQuery,
+  notificationSettingsQuery,
+  pushWeeklyStatusQuery,
+  trackingStatusQuery,
   pushWeeklyToTracking,
   setTrackingFolder,
   updateNotificationSettings,
@@ -61,10 +61,9 @@ function manualPushFallbackMessage(status: ManualPushState, pushed: number): str
 /**
  * Own tracking queries, draft state, push polling, and cache invalidation.
  *
- * @param userId - Authenticated user identifier used by stable query keys.
  * @returns Tracking page view model and actions.
  */
-export function useTrackingPage(userId: number) {
+export function useTrackingPage() {
   const queryClient = useQueryClient();
   const [newFolderName, setNewFolderName] = useState('');
   const [draftSettings, setDraftSettings] = useState<NotificationSettingsUpdate | null>(null);
@@ -73,41 +72,21 @@ export function useTrackingPage(userId: number) {
   const [settingsSaved, setSettingsSaved] = useTransientState(false, SETTINGS_SAVED_NOTICE_MS);
   const [databaseSelectionNotice, setDatabaseSelectionNotice] = useState<string | null>(null);
 
-  const { data: status, isPending: isStatusLoading } = useQuery({
-    queryKey: ['tracking-status'],
-    queryFn: () => getTrackingStatus(),
-    enabled: true,
-  });
+  const { data: status, isPending: isStatusLoading } = useQuery(trackingStatusQuery());
 
-  const databasesQuery = useQuery({
-    queryKey: ['databases'],
-    queryFn: () => getDatabases(),
-    enabled: true,
-  });
-  const availableDatabases = databasesQuery.data ?? EMPTY_DATABASES;
+  const databasesResult = useQuery(databasesQuery());
+  const availableDatabases = databasesResult.data ?? EMPTY_DATABASES;
 
   const { data: folders = [], isPending: isFoldersLoading } = useQuery({
-    queryKey: ['folders', userId],
-    queryFn: () => getFolders(),
-    enabled: true,
+    ...foldersQuery(),
   });
 
-  const notificationSettingsQuery = useQuery({
-    queryKey: ['notification-settings', userId],
-    queryFn: () => getNotificationSettings(),
-    enabled: true,
-  });
-  const notifySettings = notificationSettingsQuery.data;
-  const aiEndpointsQuery = useQuery({
-    queryKey: ['ai-endpoints', userId],
-    queryFn: () => getAiEndpoints(),
-    enabled: true,
-  });
-  const availableAiEndpoints = aiEndpointsQuery.data ?? EMPTY_AI_ENDPOINTS;
+  const notificationSettingsResult = useQuery(notificationSettingsQuery());
+  const notifySettings = notificationSettingsResult.data;
+  const aiEndpointsResult = useQuery(aiEndpointsQuery());
+  const availableAiEndpoints = aiEndpointsResult.data ?? EMPTY_AI_ENDPOINTS;
   const manualPushQuery = useQuery({
-    queryKey: ['manual-push', userId],
-    queryFn: () => getPushWeeklyStatus(),
-    enabled: true,
+    ...pushWeeklyStatusQuery(),
     retry: false,
     refetchInterval: (query) => {
       const pushStatus = query.state.data?.status;
@@ -162,8 +141,8 @@ export function useTrackingPage(userId: number) {
   const setTrackMut = useMutation({
     mutationFn: (folderId: number) => setTrackingFolder(folderId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['tracking-status'] });
-      void queryClient.invalidateQueries({ queryKey: ['folders'] });
+      void queryClient.invalidateQueries({ queryKey: trackingStatusQuery().queryKey });
+      void queryClient.invalidateQueries({ queryKey: foldersQuery().queryKey });
     },
   });
 
@@ -173,8 +152,8 @@ export function useTrackingPage(userId: number) {
       return folder;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['tracking-status'] });
-      void queryClient.invalidateQueries({ queryKey: ['folders'] });
+      void queryClient.invalidateQueries({ queryKey: trackingStatusQuery().queryKey });
+      void queryClient.invalidateQueries({ queryKey: foldersQuery().queryKey });
       setNewFolderName('');
     },
   });
@@ -182,25 +161,25 @@ export function useTrackingPage(userId: number) {
   const pushMut = useMutation({
     mutationFn: () => pushWeeklyToTracking(),
     onSuccess: (data) => {
-      queryClient.setQueryData(['manual-push', userId], data);
+      queryClient.setQueryData(pushWeeklyStatusQuery().queryKey, data);
     },
   });
   const cancelPushMut = useMutation({
     mutationFn: (jobId: string) => cancelPushWeeklyRun(jobId),
     onSuccess: (data) => {
-      queryClient.setQueryData(['manual-push', userId], data);
+      queryClient.setQueryData(pushWeeklyStatusQuery().queryKey, data);
     },
   });
   const acknowledgeUnknownPushMut = useMutation({
     mutationFn: (jobId: string) => acknowledgeUnknownPushWeeklyRun(jobId),
     onSuccess: (data) => {
-      queryClient.setQueryData(['manual-push', userId], data);
+      queryClient.setQueryData(pushWeeklyStatusQuery().queryKey, data);
     },
   });
   const requiresTrackingFolder = deliveryMethod === 'folder' || syncToTrackingFolder;
   const effectiveSelectedDatabases = Array.from(new Set(selectedDatabases));
   const unavailableSelectedDatabases = getUnavailableTrackingDatabases(
-    databasesQuery.isSuccess,
+    databasesResult.isSuccess,
     effectiveSelectedDatabases,
     availableDatabases,
   );
@@ -237,8 +216,8 @@ export function useTrackingPage(userId: number) {
     ) {
       return;
     }
-    void queryClient.invalidateQueries({ queryKey: ['tracking-status'] });
-    void queryClient.invalidateQueries({ queryKey: ['folders'] });
+    void queryClient.invalidateQueries({ queryKey: trackingStatusQuery().queryKey });
+    void queryClient.invalidateQueries({ queryKey: foldersQuery().queryKey });
   }, [manualPushStatus, queryClient]);
 
   const saveSettingsMut = useMutation({
@@ -247,21 +226,21 @@ export function useTrackingPage(userId: number) {
         ...formSettings,
         selected_databases: effectiveSelectedDatabases,
         ai_base_url:
-          aiEndpointsQuery.isSuccess && !availableAiEndpoints.includes(formSettings.ai_base_url)
+          aiEndpointsResult.isSuccess && !availableAiEndpoints.includes(formSettings.ai_base_url)
             ? ''
             : formSettings.ai_base_url,
         ai_backup_base_url:
-          aiEndpointsQuery.isSuccess &&
+          aiEndpointsResult.isSuccess &&
           !availableAiEndpoints.includes(formSettings.ai_backup_base_url)
             ? ''
             : formSettings.ai_backup_base_url,
       }),
     onSuccess: (savedSettings) => {
-      queryClient.setQueryData(['notification-settings', userId], savedSettings);
+      queryClient.setQueryData(notificationSettingsQuery().queryKey, savedSettings);
       setDraftSettings(null);
       setDatabaseSelectionNotice(null);
-      void queryClient.invalidateQueries({ queryKey: ['notification-settings', userId] });
-      void queryClient.invalidateQueries({ queryKey: ['tracking-status'] });
+      void queryClient.invalidateQueries({ queryKey: notificationSettingsQuery().queryKey });
+      void queryClient.invalidateQueries({ queryKey: trackingStatusQuery().queryKey });
       setSettingsSaved(true);
     },
   });
@@ -380,7 +359,7 @@ export function useTrackingPage(userId: number) {
         retryAttempts: aiRetryAttempts,
         endpoints: {
           available: availableAiEndpoints,
-          query: aiEndpointsQuery,
+          query: aiEndpointsResult,
         },
       },
       databaseSelection: {
@@ -389,7 +368,7 @@ export function useTrackingPage(userId: number) {
         effectiveSelected: effectiveSelectedDatabases,
         unavailable: unavailableSelectedDatabases,
         notice: databaseSelectionNotice,
-        query: databasesQuery,
+        query: databasesResult,
         selectAll: selectAllDatabases,
         setSelected: setDatabaseSelected,
       },
@@ -405,7 +384,7 @@ export function useTrackingPage(userId: number) {
       },
       enabled: notifyEnabled,
       hasDraft: draftSettings !== null,
-      notificationQuery: notificationSettingsQuery,
+      notificationQuery: notificationSettingsResult,
       preferences: {
         directions: {
           add: addDirection,
