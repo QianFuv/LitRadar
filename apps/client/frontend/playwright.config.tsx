@@ -44,7 +44,7 @@ export default defineConfig({
           'pnpm exec vp build && pnpm exec vp preview --host 127.0.0.1 --port 3100 --strictPort',
         url: MANAGED_BASE_URL,
         reuseExistingServer: !IS_CI,
-        timeout: 120_000,
+        timeout: 300_000,
         stdout: 'ignore',
         stderr: 'pipe',
       },
