@@ -6,6 +6,7 @@ run:
 linters:
   default: none
   enable:
+    - errcheck
     - govet
     - ineffassign
     - staticcheck
@@ -14,3 +15,11 @@ linters:
     staticcheck:
       checks:
         - SA*
+  exclusions:
+    # Generated sqlc output is checked through its source queries and sqlc diff.
+    generated: strict
+    rules:
+      # Terminal diagnostics have no recoverable output channel if the terminal fails.
+      - linters: [errcheck]
+        text: 'Error return value of `fmt\.Fprint(f|ln)?` is not checked'
+        source: 'fmt\.Fprint(f|ln)?\(os\.(Stdout|Stderr),'
