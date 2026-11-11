@@ -1,6 +1,22 @@
 -- name: Users :many
 SELECT u.id,u.username,u.email,u.auth_kind,EXISTS(SELECT 1 FROM user_identities WHERE user_id=u.id),u.is_admin,u.created_at,u.updated_at,(SELECT COUNT(*) FROM folders f WHERE f.user_id=u.id),(SELECT COUNT(*) FROM favorites fv WHERE fv.user_id=u.id),(SELECT COUNT(*) FROM notification_settings ns WHERE ns.user_id=u.id AND ns.enabled=1) FROM users u ORDER BY u.id;
 
+-- name: DeleteExpiredTokens :exec
+DELETE FROM access_tokens WHERE expires_at<=?;
+
+-- name: AdministratorStats :one
+SELECT
+ (SELECT COUNT(*) FROM users) AS total_users,
+ (SELECT COUNT(*) FROM users WHERE is_admin=1) AS admin_count,
+ (SELECT COUNT(*) FROM folders) AS total_folders,
+ (SELECT COUNT(*) FROM favorites) AS total_favorites,
+ (SELECT COUNT(*) FROM invite_codes) AS total_invite_codes,
+ (SELECT COUNT(*) FROM invite_codes WHERE use_count>0) AS used_invite_codes,
+ (SELECT COUNT(*) FROM access_tokens token WHERE token.expires_at>?) AS active_tokens,
+ (SELECT COUNT(*) FROM notification_settings WHERE enabled=1) AS notification_subscribers,
+ (SELECT COUNT(*) FROM scheduled_tasks) AS scheduled_tasks,
+ (SELECT COUNT(*) FROM announcements WHERE enabled=1) AS active_announcements;
+
 -- name: Invites :many
 SELECT ic.id,ic.code,ic.created_by,ic.used_by,ic.used_at,ic.created_at,uc.username,uu.username,ic.expires_at,ic.revoked_at,ic.max_uses,ic.use_count FROM invite_codes ic LEFT JOIN users uc ON ic.created_by=uc.id LEFT JOIN users uu ON ic.used_by=uu.id ORDER BY ic.created_at DESC;
 

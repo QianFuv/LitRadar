@@ -11,6 +11,8 @@ import (
 
 	storageauth "github.com/QianFuv/LitRadar/apps/server/internal/storage/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/authdb"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/querydb"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 	"github.com/QianFuv/LitRadar/apps/server/internal/transport"
 )
@@ -53,40 +55,20 @@ type adminStats struct {
 	Push  []pushStats `json:"push" nullable:"false"`
 }
 
+// readAdminStats loads generated counters and per-database projections.
 func readAdminStats(ctx context.Context, repository *storageauth.Repository, configuration config.Config) (adminStats, error) {
 	result := adminStats{Index: indexStats{Databases: []indexDatabaseStats{}}, Push: []pushStats{}}
 	err := repository.WithConnection(ctx, func(connection *sql.Conn) error {
 		now := currentTimestamp()
-		if _, err := connection.ExecContext(ctx, "DELETE FROM access_tokens WHERE expires_at<=?", now); err != nil {
+		queries := authdb.Queries{}
+		if err := queries.DeleteExpiredTokens(ctx, connection, authdb.DeleteExpiredTokensParams{ExpiresAt: now}); err != nil {
 			return err
 		}
-		for _, counter := range []struct {
-			query  string
-			target *int64
-		}{
-			{"SELECT COUNT(*) FROM users", &result.Auth.TotalUsers}, {"SELECT COUNT(*) FROM users WHERE is_admin=1", &result.Auth.AdminCount},
-			{"SELECT COUNT(*) FROM folders", &result.Auth.TotalFolders}, {"SELECT COUNT(*) FROM favorites", &result.Auth.TotalFavorites},
-			{"SELECT COUNT(*) FROM invite_codes", &result.Auth.TotalInviteCodes}, {"SELECT COUNT(*) FROM invite_codes WHERE use_count>0", &result.Auth.UsedInviteCodes},
-		} {
-			if err := connection.QueryRowContext(ctx, counter.query).Scan(counter.target); err != nil {
-				return err
-			}
-		}
-		result.Auth.UnusedInviteCodes = result.Auth.TotalInviteCodes - result.Auth.UsedInviteCodes
-		if err := connection.QueryRowContext(ctx, "SELECT COUNT(*) FROM access_tokens WHERE expires_at>?", now).Scan(&result.Auth.ActiveTokens); err != nil {
+		row, err := queries.AdministratorStats(ctx, connection, authdb.AdministratorStatsParams{ExpiresAt: now})
+		if err != nil {
 			return err
 		}
-		for _, counter := range []struct {
-			query  string
-			target *int64
-		}{
-			{"SELECT COUNT(*) FROM notification_settings WHERE enabled=1", &result.Auth.NotificationSubscribers},
-			{"SELECT COUNT(*) FROM scheduled_tasks", &result.Auth.ScheduledTasks}, {"SELECT COUNT(*) FROM announcements WHERE enabled=1", &result.Auth.ActiveAnnouncements},
-		} {
-			if err := connection.QueryRowContext(ctx, counter.query).Scan(counter.target); err != nil {
-				return err
-			}
-		}
+		result.Auth = authStats{TotalUsers: row.TotalUsers, AdminCount: row.AdminCount, TotalFolders: row.TotalFolders, TotalFavorites: row.TotalFavorites, TotalInviteCodes: row.TotalInviteCodes, UsedInviteCodes: row.UsedInviteCodes, UnusedInviteCodes: row.TotalInviteCodes - row.UsedInviteCodes, ActiveTokens: row.ActiveTokens, NotificationSubscribers: row.NotificationSubscribers, ScheduledTasks: row.ScheduledTasks, ActiveAnnouncements: row.ActiveAnnouncements}
 		return nil
 	})
 	if err != nil {
@@ -114,6 +96,7 @@ func readAdminStats(ctx context.Context, repository *storageauth.Repository, con
 	return result, nil
 }
 
+// readIndexDatabaseStats preserves optional issue-count failures in legacy databases.
 func readIndexDatabaseStats(ctx context.Context, path string) (resultValue1 indexDatabaseStats, resultError error) {
 	result := indexDatabaseStats{DbName: filepath.Base(path)}
 	database, err := sqlite.OpenPlain(path)
@@ -125,13 +108,16 @@ func readIndexDatabaseStats(ctx context.Context, path string) (resultValue1 inde
 			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
 		}
 	}()
-	if err = database.QueryRowContext(ctx, "SELECT COUNT(*) FROM articles").Scan(&result.Articles); err != nil {
+	queries := querydb.Queries{}
+	result.Articles, err = queries.CountArticles(ctx, database)
+	if err != nil {
 		return result, err
 	}
-	if err = database.QueryRowContext(ctx, "SELECT COUNT(*) FROM journals").Scan(&result.Journals); err != nil {
+	result.Journals, err = queries.CountJournals(ctx, database)
+	if err != nil {
 		return result, err
 	}
-	_ = database.QueryRowContext(ctx, "SELECT COUNT(*) FROM issues").Scan(&result.Issues)
+	result.Issues, _ = queries.CountIssues(ctx, database)
 	return result, nil
 }
 

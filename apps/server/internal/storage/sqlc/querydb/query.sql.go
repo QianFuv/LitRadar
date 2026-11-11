@@ -43,6 +43,87 @@ func (q *Queries) Areas(ctx context.Context, db DBTX) ([]AreasRow, error) {
 	return items, nil
 }
 
+const ArticleLocator = `-- name: ArticleLocator :one
+SELECT a.article_id,j.catalog_id,j.title AS journal_title,j.issns_json,a.title,a.publication_year,a.date,a.authors_json,i.volume,i.number AS issue_number,a.start_page,a.end_page,a.doi,a.pmid
+FROM articles a JOIN journals j ON j.journal_id=a.journal_id LEFT JOIN issues i ON i.issue_id=a.issue_id WHERE a.article_id=?
+`
+
+type ArticleLocatorParams struct {
+	ArticleID sqlite.Integer
+}
+
+type ArticleLocatorRow struct {
+	ArticleID       sqlite.Integer
+	CatalogID       sqlite.Text
+	JournalTitle    sqlite.Text
+	IssnsJSON       sqlite.Text
+	Title           sqlite.Text
+	PublicationYear *sqlite.Integer
+	Date            *sqlite.Text
+	AuthorsJSON     sqlite.Text
+	Volume          *sqlite.Text
+	IssueNumber     *sqlite.Text
+	StartPage       *sqlite.Text
+	EndPage         *sqlite.Text
+	DOI             *sqlite.Text
+	PMID            *sqlite.Text
+}
+
+func (q *Queries) ArticleLocator(ctx context.Context, db DBTX, arg ArticleLocatorParams) (ArticleLocatorRow, error) {
+	row := db.QueryRowContext(ctx, ArticleLocator, arg.ArticleID)
+	var i ArticleLocatorRow
+	err := row.Scan(
+		&i.ArticleID,
+		&i.CatalogID,
+		&i.JournalTitle,
+		&i.IssnsJSON,
+		&i.Title,
+		&i.PublicationYear,
+		&i.Date,
+		&i.AuthorsJSON,
+		&i.Volume,
+		&i.IssueNumber,
+		&i.StartPage,
+		&i.EndPage,
+		&i.DOI,
+		&i.PMID,
+	)
+	return i, err
+}
+
+const CountArticles = `-- name: CountArticles :one
+SELECT COUNT(*) FROM articles
+`
+
+func (q *Queries) CountArticles(ctx context.Context, db DBTX) (int64, error) {
+	row := db.QueryRowContext(ctx, CountArticles)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const CountIssues = `-- name: CountIssues :one
+SELECT COUNT(*) FROM issues
+`
+
+func (q *Queries) CountIssues(ctx context.Context, db DBTX) (int64, error) {
+	row := db.QueryRowContext(ctx, CountIssues)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const CountJournals = `-- name: CountJournals :one
+SELECT COUNT(*) FROM journals
+`
+
+func (q *Queries) CountJournals(ctx context.Context, db DBTX) (int64, error) {
+	row := db.QueryRowContext(ctx, CountJournals)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const HasJournal = `-- name: HasJournal :one
 SELECT EXISTS(SELECT 1 FROM journals WHERE journal_id=?)
 `

@@ -51,6 +51,55 @@ func (q *Queries) AdministratorCount(ctx context.Context, db DBTX) (int64, error
 	return count, err
 }
 
+const administratorStats = `-- name: AdministratorStats :one
+SELECT
+ (SELECT COUNT(*) FROM users) AS total_users,
+ (SELECT COUNT(*) FROM users WHERE is_admin=1) AS admin_count,
+ (SELECT COUNT(*) FROM folders) AS total_folders,
+ (SELECT COUNT(*) FROM favorites) AS total_favorites,
+ (SELECT COUNT(*) FROM invite_codes) AS total_invite_codes,
+ (SELECT COUNT(*) FROM invite_codes WHERE use_count>0) AS used_invite_codes,
+ (SELECT COUNT(*) FROM access_tokens token WHERE token.expires_at>?) AS active_tokens,
+ (SELECT COUNT(*) FROM notification_settings WHERE enabled=1) AS notification_subscribers,
+ (SELECT COUNT(*) FROM scheduled_tasks) AS scheduled_tasks,
+ (SELECT COUNT(*) FROM announcements WHERE enabled=1) AS active_announcements
+`
+
+type AdministratorStatsParams struct {
+	ExpiresAt float64
+}
+
+type AdministratorStatsRow struct {
+	TotalUsers              int64
+	AdminCount              int64
+	TotalFolders            int64
+	TotalFavorites          int64
+	TotalInviteCodes        int64
+	UsedInviteCodes         int64
+	ActiveTokens            int64
+	NotificationSubscribers int64
+	ScheduledTasks          int64
+	ActiveAnnouncements     int64
+}
+
+func (q *Queries) AdministratorStats(ctx context.Context, db DBTX, arg AdministratorStatsParams) (AdministratorStatsRow, error) {
+	row := db.QueryRowContext(ctx, administratorStats, arg.ExpiresAt)
+	var i AdministratorStatsRow
+	err := row.Scan(
+		&i.TotalUsers,
+		&i.AdminCount,
+		&i.TotalFolders,
+		&i.TotalFavorites,
+		&i.TotalInviteCodes,
+		&i.UsedInviteCodes,
+		&i.ActiveTokens,
+		&i.NotificationSubscribers,
+		&i.ScheduledTasks,
+		&i.ActiveAnnouncements,
+	)
+	return i, err
+}
+
 const advanceTokenGeneration = `-- name: AdvanceTokenGeneration :execresult
 UPDATE users SET token_generation=token_generation+1 WHERE id=?
 `
@@ -471,6 +520,19 @@ func (q *Queries) CredentialsByName(ctx context.Context, db DBTX, arg Credential
 		&i.Exists,
 	)
 	return i, err
+}
+
+const deleteExpiredTokens = `-- name: DeleteExpiredTokens :exec
+DELETE FROM access_tokens WHERE expires_at<=?
+`
+
+type DeleteExpiredTokensParams struct {
+	ExpiresAt float64
+}
+
+func (q *Queries) DeleteExpiredTokens(ctx context.Context, db DBTX, arg DeleteExpiredTokensParams) error {
+	_, err := db.ExecContext(ctx, deleteExpiredTokens, arg.ExpiresAt)
+	return err
 }
 
 const deleteIdentity = `-- name: DeleteIdentity :execresult
