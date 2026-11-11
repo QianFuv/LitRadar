@@ -2,6 +2,15 @@
  * Shared article month-range parsing, display, and API-bound conversion helpers.
  */
 
+import {
+  addMonthsToMonthKey,
+  compareMonthKeys,
+  currentMonthKey,
+  lastDateOfMonthKey,
+  monthKey,
+  monthKeyYear,
+} from '@/lib/date';
+
 const MONTH_KEY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 const MONTH_RANGE_SEPARATOR = '..';
 
@@ -28,14 +37,14 @@ export type YearBounds = {
 };
 
 /**
- * Build a stable YYYY-MM key.
+ * Order two month keys chronologically.
  *
- * @param year - Four-digit year.
- * @param month - One-based month number.
- * @returns Month key.
+ * @param first - One month endpoint.
+ * @param second - The other month endpoint.
+ * @returns Earlier and later month.
  */
-export function buildMonthKey(year: number, month: number): string {
-  return `${year}-${String(month).padStart(2, '0')}`;
+function orderMonthKeys(first: string, second: string): MonthRange {
+  return compareMonthKeys(first, second) <= 0 ? [first, second] : [second, first];
 }
 
 /**
@@ -61,7 +70,7 @@ export function parseMonthRange(value: string | null | undefined): MonthRange | 
   if (extraParts.length > 0 || !isMonthKey(startMonth) || !isMonthKey(endMonth)) {
     return null;
   }
-  return startMonth <= endMonth ? [startMonth, endMonth] : [endMonth, startMonth];
+  return orderMonthKeys(startMonth, endMonth);
 }
 
 /**
@@ -72,8 +81,7 @@ export function parseMonthRange(value: string | null | undefined): MonthRange | 
  * @returns Ordered YYYY-MM..YYYY-MM query value.
  */
 export function buildMonthRange(startMonth: string, endMonth: string): string {
-  const orderedRange = startMonth <= endMonth ? [startMonth, endMonth] : [endMonth, startMonth];
-  return orderedRange.join(MONTH_RANGE_SEPARATOR);
+  return orderMonthKeys(startMonth, endMonth).join(MONTH_RANGE_SEPARATOR);
 }
 
 /**
@@ -85,12 +93,12 @@ export function buildMonthRange(startMonth: string, endMonth: string): string {
  * @returns Original or boundary month key.
  */
 function clampMonthKeyToYears(value: string, minYear: number, maxYear: number): string {
-  const year = Number(value.slice(0, 4));
+  const year = monthKeyYear(value);
   if (year < minYear) {
-    return buildMonthKey(minYear, 1);
+    return monthKey(minYear, 1);
   }
   if (year > maxYear) {
-    return buildMonthKey(maxYear, 12);
+    return monthKey(maxYear, 12);
   }
   return value;
 }
@@ -110,17 +118,14 @@ export function resolveMonthRangeForYears(
 ): MonthRange {
   const orderedMinYear = Math.min(minYear, maxYear);
   const orderedMaxYear = Math.max(minYear, maxYear);
-  const fullRange: MonthRange = [
-    buildMonthKey(orderedMinYear, 1),
-    buildMonthKey(orderedMaxYear, 12),
-  ];
+  const fullRange: MonthRange = [monthKey(orderedMinYear, 1), monthKey(orderedMaxYear, 12)];
   const parsedRange = parseMonthRange(value);
   if (!parsedRange) {
     return fullRange;
   }
   const startMonth = clampMonthKeyToYears(parsedRange[0], orderedMinYear, orderedMaxYear);
   const endMonth = clampMonthKeyToYears(parsedRange[1], orderedMinYear, orderedMaxYear);
-  return startMonth <= endMonth ? [startMonth, endMonth] : [endMonth, startMonth];
+  return orderMonthKeys(startMonth, endMonth);
 }
 
 /**
@@ -140,13 +145,7 @@ function monthKeyToDateFrom(value: string | null | undefined): string | null {
  * @returns Last-day ISO date, or null when invalid.
  */
 function monthKeyToDateTo(value: string | null | undefined): string | null {
-  if (!isMonthKey(value)) {
-    return null;
-  }
-  const year = Number(value.slice(0, 4));
-  const month = Number(value.slice(5, 7));
-  const lastDay = new Date(year, month, 0).getDate();
-  return `${value}-${String(lastDay).padStart(2, '0')}`;
+  return isMonthKey(value) ? lastDateOfMonthKey(value) : null;
 }
 
 /**
@@ -220,40 +219,25 @@ export function buildYearOptions(bounds: YearBounds): string[] {
 }
 
 /**
- * Convert a zero-based absolute month index into a month key.
- *
- * @param value - Absolute month index.
- * @returns Month key.
- */
-function monthIndexToKey(value: number): string {
-  const year = Math.floor(value / 12);
-  const month = (value % 12) + 1;
-  return buildMonthKey(year, month);
-}
-
-/**
  * Build an inclusive recent-year shortcut within available metadata bounds.
  *
  * @param yearCount - Number of trailing twelve-month intervals.
  * @param minYear - Earliest available year.
  * @param maxYear - Latest available year.
- * @param currentDate - Clock value used when the latest year is current.
+ * @param currentMonth - Local month key used when the latest year is current.
  * @returns Clamped recent month range.
  */
 export function buildRecentMonthRange(
   yearCount: number,
   minYear: number,
   maxYear: number,
-  currentDate = new Date(),
+  currentMonth = currentMonthKey(),
 ): MonthRange {
-  const bounds = {
-    max: Math.max(minYear, maxYear),
-    min: Math.min(minYear, maxYear),
-  };
-  const endMonth = bounds.max === currentDate.getFullYear() ? currentDate.getMonth() + 1 : 12;
-  const endIndex = bounds.max * 12 + endMonth - 1;
-  const minIndex = bounds.min * 12;
+  const latestYear = Math.max(minYear, maxYear);
+  const earliestMonth = monthKey(Math.min(minYear, maxYear), 1);
+  const endMonth =
+    latestYear === monthKeyYear(currentMonth) ? currentMonth : monthKey(latestYear, 12);
   const monthCount = Math.max(1, Math.floor(yearCount)) * 12;
-  const startIndex = Math.max(minIndex, endIndex - monthCount + 1);
-  return [monthIndexToKey(startIndex), monthIndexToKey(endIndex)];
+  const startMonth = addMonthsToMonthKey(endMonth, 1 - monthCount);
+  return [compareMonthKeys(startMonth, earliestMonth) < 0 ? earliestMonth : startMonth, endMonth];
 }

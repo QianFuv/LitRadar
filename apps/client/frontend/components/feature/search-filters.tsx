@@ -2,11 +2,12 @@
  * Search facets rendered as a row of filter pills with popover or bottom-sheet panels.
  */
 
+import { monthKey } from '@/lib/date';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, X } from '@/components/ui/animated-icons';
 import { useSearch } from '@tanstack/react-router';
 import { useVirtualizer, type Virtualizer } from '@tanstack/react-virtual';
-import { useEffect, useImperativeHandle, useMemo, useRef, useState, type RefObject } from 'react';
+import { useEffect, useImperativeHandle, useRef, useState, type RefObject } from 'react';
 
 import {
   DatabasePill,
@@ -58,7 +59,6 @@ import {
 } from '@/lib/api';
 import { getAreaDisplayName } from '@/lib/area-labels';
 import {
-  buildMonthKey,
   buildMonthRange,
   buildRecentMonthRange,
   buildYearOptions,
@@ -241,7 +241,7 @@ function useSearchFilterState() {
     }));
   };
 
-  const yearBounds = useMemo(() => getYearBounds(yearData ?? []), [yearData]);
+  const yearBounds = getYearBounds(yearData ?? []);
   const monthValues = getFilterMonthValues(yearBounds, monthRange);
   const { defaultStartMonth, defaultEndMonth } = monthValues;
 
@@ -277,13 +277,10 @@ function useSearchFilterState() {
     setMonthRange(buildMonthRange(startMonth, endMonth));
   };
 
-  const journalLabelMap = useMemo(() => {
-    const map = new Map<string, string>();
-    journalOptions?.forEach((option) => {
-      map.set(String(option.journal_id), option.title ?? String(option.journal_id));
-    });
-    return map;
-  }, [journalOptions]);
+  const journalLabelMap = new Map<string, string>();
+  journalOptions?.forEach((option) => {
+    journalLabelMap.set(String(option.journal_id), option.title ?? String(option.journal_id));
+  });
 
   const selectedJournalLabels = journalIds.map((id) => journalLabelMap.get(id) ?? id);
   const ratingSelectionCount = JOURNAL_RATING_SYSTEMS.reduce(
@@ -744,17 +741,15 @@ function JournalFacet({ state }: { state: SearchFilterState }) {
   } = state;
   const [isOpen, setIsOpen] = useState(false);
   const virtualizerRef = useRef<JournalOptionVirtualizer | null>(null);
-  const orderedJournalIds = useMemo(() => {
-    if (!isOpen || !journalOptions) {
-      return NO_OPTION_IDS;
-    }
-    const ids = journalOptions.map((option) => String(option.journal_id));
-    const selectedIds = new Set(journalIds);
-    return [
-      ...ids.filter((id) => selectedIds.has(id)),
-      ...ids.filter((id) => !selectedIds.has(id)),
-    ];
-  }, [isOpen, journalIds, journalOptions]);
+  const optionIds =
+    isOpen && journalOptions
+      ? journalOptions.map((option) => String(option.journal_id))
+      : NO_OPTION_IDS;
+  const selectedIds = new Set(journalIds);
+  const orderedJournalIds = [
+    ...optionIds.filter((id) => selectedIds.has(id)),
+    ...optionIds.filter((id) => !selectedIds.has(id)),
+  ];
   const isActive = journalIds.length > 0;
   const { visibleText, accessibleName } = getFilterPillText(
     '期刊',
@@ -833,14 +828,8 @@ function matchesArea(area: string, query: string): boolean {
  */
 function AreaFacet({ state }: { state: SearchFilterState }) {
   const { areas, areaOptions, loadingAreas, handleAreasChange, handleClearAreas } = state;
-  const areaCounts = useMemo(
-    () => new Map((areaOptions ?? []).map((option) => [option.value, option.count])),
-    [areaOptions],
-  );
-  const areaValues = useMemo(
-    () => (areaOptions ?? []).map((option) => option.value),
-    [areaOptions],
-  );
+  const areaCounts = new Map((areaOptions ?? []).map((option) => [option.value, option.count]));
+  const areaValues = (areaOptions ?? []).map((option) => option.value);
   const isActive = areas.length > 0;
   const { visibleText, accessibleName } = getFilterPillText(
     '领域',
@@ -942,8 +931,8 @@ function getFilterMonthValues(
   yearBounds: ReturnType<typeof getYearBounds>,
   monthRange: string | null,
 ) {
-  const defaultStartMonth = yearBounds ? buildMonthKey(yearBounds.min, 1) : null;
-  const defaultEndMonth = yearBounds ? buildMonthKey(yearBounds.max, 12) : null;
+  const defaultStartMonth = yearBounds ? monthKey(yearBounds.min, 1) : null;
+  const defaultEndMonth = yearBounds ? monthKey(yearBounds.max, 12) : null;
   const selectedMonthRange = yearBounds
     ? resolveMonthRangeForYears(monthRange, yearBounds.min, yearBounds.max)
     : null;

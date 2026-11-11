@@ -10,6 +10,7 @@ import type { CfpNoticeView, CfpState } from '@/lib/api';
 import { CFP_DATE_LABELS, CFP_KIND_LABELS } from '@/lib/cfp-display';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
+import { utcCalendarDate } from '@/lib/date';
 
 const STATE_LABELS: Readonly<Record<CfpState, string>> = {
   open: '征稿中',
@@ -20,16 +21,16 @@ const STATE_LABELS: Readonly<Record<CfpState, string>> = {
   undated: '截止时间待确认',
   uncertain: '投稿时间待确认',
 };
-const DATE_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
+/** Year, two-digit month, and two-digit day. */
+const DATE_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
   year: 'numeric',
   month: '2-digit',
   day: '2-digit',
-  timeZone: 'UTC',
-});
+};
 
 /** Format a server-validated calendar date without applying the browser timezone. */
 function formatDate(value: string): string {
-  return DATE_FORMATTER.format(new Date(`${value}T00:00:00Z`));
+  return utcCalendarDate(value)?.toLocaleString('zh-CN', DATE_FORMAT_OPTIONS) ?? value;
 }
 
 /** Keep verification metadata and the original-source action on consistent card gutters. */

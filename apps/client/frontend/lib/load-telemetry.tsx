@@ -2,6 +2,7 @@
  * Pure shaping helpers for the administrator load-telemetry section.
  */
 
+import { hourStartsBetween, timestampEpochMs } from '@/lib/date';
 import type {
   TelemetryHour,
   TelemetryKind,
@@ -12,8 +13,6 @@ import type {
 
 /** Interface kinds in their fixed display order. */
 const TELEMETRY_KINDS = ['http', 'mcp', 'search'] as const satisfies readonly TelemetryKind[];
-
-const HOUR_MS = 3_600_000;
 
 /** Search-shape features in display order; hits are rendered per hit-count basis instead. */
 const SEARCH_SHAPE_FEATURES = [
@@ -116,21 +115,17 @@ export function buildKindTrends(
   response: Pick<TelemetryResponse, 'from' | 'hourly' | 'to'>,
   kind: TelemetryKind | null,
 ): KindTrend[] {
-  const fromMs = Date.parse(response.from);
-  const toMs = Date.parse(response.to);
-  const hourCount = Math.max(0, Math.round((toMs - fromMs) / HOUR_MS));
+  const hourStarts = hourStartsBetween(response.from, response.to);
   const observed = new Map<string, TelemetryHour>();
   for (const row of response.hourly) {
-    observed.set(`${row.kind}|${Date.parse(row.hour)}`, row);
+    observed.set(`${row.kind}|${timestampEpochMs(row.hour)}`, row);
   }
   const kinds = kind ? [kind] : TELEMETRY_KINDS;
   return kinds.map((trendKind) => {
-    const hours: TrendHour[] = [];
-    for (let index = 0; index < hourCount; index += 1) {
-      const hourMs = fromMs + index * HOUR_MS;
+    const hours: TrendHour[] = hourStarts.map((hourMs) => {
       const row = observed.get(`${trendKind}|${hourMs}`);
-      hours.push({ calls: row?.calls ?? 0, errors: row?.errors ?? 0, hourMs });
-    }
+      return { calls: row?.calls ?? 0, errors: row?.errors ?? 0, hourMs };
+    });
     return {
       hours,
       kind: trendKind,

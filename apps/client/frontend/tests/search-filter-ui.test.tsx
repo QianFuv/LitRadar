@@ -93,14 +93,8 @@ function normalizesMonthRanges(): void {
   });
   expect(formatMonthRangeLabel('2024-02..2024-12')).toBe('2024年02月 - 2024年12月');
   expect(buildMonthRange('2024-02', '2024-12')).toBe('2024-02..2024-12');
-  expect(buildRecentMonthRange(1, 2020, 2026, new Date(2026, 6, 15))).toEqual([
-    '2025-08',
-    '2026-07',
-  ]);
-  expect(buildRecentMonthRange(5, 2024, 2026, new Date(2026, 6, 15))).toEqual([
-    '2024-01',
-    '2026-07',
-  ]);
+  expect(buildRecentMonthRange(1, 2020, 2026, '2026-07')).toEqual(['2025-08', '2026-07']);
+  expect(buildRecentMonthRange(5, 2024, 2026, '2026-07')).toEqual(['2024-01', '2026-07']);
   expect(getYearBounds([])).toBeNull();
   expect(getYearBounds([{ year: 2025 }, { year: 2021 }, { year: 2023 }])).toEqual({
     max: 2025,

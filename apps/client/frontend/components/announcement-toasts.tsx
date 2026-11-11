@@ -2,6 +2,7 @@
  * Unread system announcements shown as stacked toasts in the bottom-right corner.
  */
 
+import { endOfLocalDayEpochMs, epochMsAfterDays } from '@/lib/date';
 import { Toast } from '@animate-ui/react/primitives/base-ui/toast';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
@@ -33,8 +34,8 @@ const PRIORITY_STACK_ORDER = { low: 0, normal: 1, high: 2 } as const;
 /** How long normal and low priority announcements stay before closing, in milliseconds. */
 const ANNOUNCEMENT_TIMEOUT_MS = 8000;
 
-/** Length of the seven-day dismissal window, in milliseconds. */
-const SEVEN_DAYS_MS = 7 * 24 * 3600 * 1000;
+/** Length of the short dismissal window, in 24-hour days. */
+const DISMISSAL_DAYS = 7;
 
 type AnnouncementToastData = { announcement: AnnouncementInfo };
 
@@ -95,17 +96,6 @@ function isDismissed(announcement: AnnouncementInfo): boolean {
 }
 
 /**
- * Read the last millisecond of the current local day.
- *
- * @returns End-of-day timestamp.
- */
-function getEndOfTodayTimestamp(): number {
-  const endOfDay = new Date();
-  endOfDay.setHours(23, 59, 59, 999);
-  return endOfDay.getTime();
-}
-
-/**
  * Render one announcement toast with its dismissal choices.
  *
  * @param props - Toast object carrying the announcement.
@@ -142,17 +132,13 @@ function AnnouncementToast({ toast }: { toast: Toast.Root.ToastObject<Announceme
         </div>
         <Toast.Description {...stylex.props(styles.announcementToastToastDescription)} />
         <div {...stylex.props(styles.announcementToastDiv2)}>
-          <Button
-            size="xs"
-            variant="outline"
-            onClick={() => dismissUntil(getEndOfTodayTimestamp())}
-          >
+          <Button size="xs" variant="outline" onClick={() => dismissUntil(endOfLocalDayEpochMs())}>
             今日不再提示
           </Button>
           <Button
             size="xs"
             variant="outline"
-            onClick={() => dismissUntil(Date.now() + SEVEN_DAYS_MS)}
+            onClick={() => dismissUntil(epochMsAfterDays(DISMISSAL_DAYS))}
           >
             7天内不再提示
           </Button>

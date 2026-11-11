@@ -50,13 +50,14 @@ import { useFavoriteChecks } from '@/components/feature/use-favorite-checks';
 import { LoadingText } from '@/components/ui/loading-text';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
+import { utcCalendarDate } from '@/lib/date';
 
-const DATE_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
+/** Year, two-digit month, and two-digit day. */
+const DATE_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
   year: 'numeric',
   month: '2-digit',
   day: '2-digit',
-  timeZone: 'UTC',
-});
+};
 const WEEKLY_ARTICLE_PAGE_SIZE = 50;
 const WEEKLY_PREFETCH_THRESHOLD = 25;
 
@@ -70,11 +71,7 @@ function formatDate(value?: string): string {
   if (!value) {
     return '未知日期';
   }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return DATE_FORMATTER.format(date);
+  return utcCalendarDate(value)?.toLocaleString('zh-CN', DATE_FORMAT_OPTIONS) ?? value;
 }
 
 /**
@@ -161,6 +158,9 @@ function getNextWeeklyArticlePageParam(
   }
   return nextCursor;
 }
+
+/** Shared empty page list, so the page list keeps its identity before data loads. */
+const NO_WEEKLY_PAGES: WeeklyArticlePage[] = [];
 
 /**
  * Flatten visible server pages while protecting the list from duplicate boundary rows.
@@ -439,58 +439,22 @@ function useWeeklyViewState() {
     staleTime: 10 * 60 * 1000,
   });
 
-  const dbMap = useMemo(() => {
-    const map = new Map<string, WeeklyDatabaseSummary>();
-    for (const item of weeklySummary?.databases ?? []) {
-      map.set(item.db_name, item);
-    }
-    return map;
-  }, [weeklySummary]);
-
-  const availableDatabases = useMemo(() => {
-    if (!databaseOptions || databaseOptions.length === 0) {
-      return Array.from(dbMap.keys());
-    }
-    const merged = new Set<string>();
-    for (const item of databaseOptions) {
-      merged.add(item);
-    }
-    for (const item of dbMap.keys()) {
-      merged.add(item);
-    }
-    return Array.from(merged);
-  }, [databaseOptions, dbMap]);
-
-  const effectiveSelectedDb = useMemo(
-    () =>
-      selectDefaultDatabase(
-        availableDatabases,
-        selectedDb,
-        weeklySummary?.databases[0]?.db_name ?? '',
-      ),
-    [availableDatabases, selectedDb, weeklySummary],
+  const dbMap = new Map<string, WeeklyDatabaseSummary>(
+    (weeklySummary?.databases ?? []).map((item) => [item.db_name, item]),
   );
-
-  const selectedDbData = useMemo(() => {
-    if (!effectiveSelectedDb) {
-      return null;
-    }
-    return dbMap.get(effectiveSelectedDb) ?? null;
-  }, [dbMap, effectiveSelectedDb]);
-
-  const journals = useMemo(() => selectedDbData?.journals ?? [], [selectedDbData]);
-
-  const effectiveSelectedJournalId = useMemo(
-    () => selectDefaultJournal(journals, selectedJournalId),
-    [journals, selectedJournalId],
+  const availableDatabases = Array.from(new Set([...(databaseOptions ?? []), ...dbMap.keys()]));
+  const effectiveSelectedDb = selectDefaultDatabase(
+    availableDatabases,
+    selectedDb,
+    weeklySummary?.databases[0]?.db_name ?? '',
   );
-
-  const selectedJournal = useMemo(() => {
-    if (effectiveSelectedJournalId === null) {
-      return null;
-    }
-    return journals.find((item) => item.journal_id === effectiveSelectedJournalId) ?? null;
-  }, [journals, effectiveSelectedJournalId]);
+  const selectedDbData = effectiveSelectedDb ? (dbMap.get(effectiveSelectedDb) ?? null) : null;
+  const journals = selectedDbData?.journals ?? [];
+  const effectiveSelectedJournalId = selectDefaultJournal(journals, selectedJournalId);
+  const selectedJournal =
+    effectiveSelectedJournalId === null
+      ? null
+      : (journals.find((item) => item.journal_id === effectiveSelectedJournalId) ?? null);
 
   const weeklyArticleRequest = {
     dbName: effectiveSelectedDb,
@@ -517,7 +481,7 @@ function useWeeklyViewState() {
     staleTime: 60 * 1000,
   });
 
-  const articlePages = useMemo(() => weeklyArticleData?.pages ?? [], [weeklyArticleData]);
+  const articlePages = weeklyArticleData?.pages ?? NO_WEEKLY_PAGES;
   const articleListKey = getWeeklyArticleListKey(
     effectiveSelectedDb,
     effectiveSelectedJournalId,
@@ -537,6 +501,7 @@ function useWeeklyViewState() {
     scrollContainerId: 'results-scroll-container',
   });
   const visiblePageCount = Math.min(visiblePages, articlePages.length);
+  // ponytail: the compiler cannot memoize values between two hook calls; keep identity for favorite checks.
   const renderedArticles = useMemo(
     () => flattenWeeklyArticlePages(articlePages, visiblePageCount),
     [articlePages, visiblePageCount],
@@ -554,12 +519,8 @@ function useWeeklyViewState() {
   } = useFavoriteChecks(renderedArticleIds, effectiveSelectedDb, user?.id);
 
   const totalDatabases = weeklySummary?.databases.length ?? 0;
-  const totalArticles = useMemo(() => {
-    if (!weeklySummary) {
-      return 0;
-    }
-    return weeklySummary.databases.reduce((sum, db) => sum + db.new_article_count, 0);
-  }, [weeklySummary]);
+  const totalArticles =
+    weeklySummary?.databases.reduce((sum, db) => sum + db.new_article_count, 0) ?? 0;
 
   const weeklyState = getWeeklyState(weeklyError, loadingWeekly, Boolean(weeklySummary));
   const articleState = getWeeklyArticleState(
