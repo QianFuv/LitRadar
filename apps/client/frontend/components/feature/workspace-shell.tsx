@@ -2,6 +2,7 @@
  * Two-pane reading workspace: a list column beside a docked reading desk.
  */
 
+import { useHotkey } from '@tanstack/react-hotkeys';
 import { X } from '@/components/ui/animated-icons';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
@@ -62,21 +63,15 @@ type WorkspaceShellProps = {
 };
 
 /**
- * Check whether a keyboard event originates from an editable or interactive text field.
- *
- * @param target - Event target.
- * @returns True when single-key shortcuts must be ignored.
+ * Single-key workspace shortcut options: skip keys a focused field or widget uses, keys another
+ * handler already claimed, and leave default prevention to the callback.
  */
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) {
-    return false;
-  }
-  return (
-    target.isContentEditable ||
-    ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) ||
-    target.closest('[role="dialog"], [role="menu"], [role="listbox"]') !== null
-  );
-}
+const WORKSPACE_HOTKEY_OPTIONS = {
+  ignoreDefaultPrevented: true,
+  ignoreInputs: true,
+  preventDefault: false,
+  stopPropagation: false,
+} as const;
 
 /**
  * Move keyboard focus to the next or previous list item and select it when docked.
@@ -143,43 +138,55 @@ export function WorkspaceShell({
     [isDocked, readerNode, selectedKey, select, release],
   );
 
-  useEffect(() => {
-    /**
-     * Handle slash and J/K shortcuts outside editable fields and overlays.
-     *
-     * @param event - Document keyboard event.
-     */
-    function handleKeyDown(event: KeyboardEvent): void {
-      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) {
-        return;
-      }
-      if (isEditableTarget(event.target) || document.querySelector('[role="dialog"]')) {
-        return;
-      }
-      const listElement = listRef.current;
-      if (!listElement) {
-        return;
-      }
-      if (event.key === '/') {
+  /**
+   * Run a list shortcut unless an overlay is open, claiming the key only when it acts.
+   *
+   * @param event - Keyboard event that matched the shortcut.
+   * @param action - Shortcut action; returns whether it handled the key.
+   */
+  function runListShortcut(
+    event: KeyboardEvent,
+    action: (listElement: HTMLElement) => boolean,
+  ): void {
+    const listElement = listRef.current;
+    if (!listElement || document.querySelector('[role="dialog"]')) {
+      return;
+    }
+    if (action(listElement)) {
+      event.preventDefault();
+    }
+  }
+
+  useHotkey(
+    '/',
+    (event) =>
+      runListShortcut(event, (listElement) => {
         const searchElement = listElement.querySelector<HTMLElement>(
           `[${WORKSPACE_SEARCH_ATTRIBUTE}]`,
         );
-        if (searchElement) {
-          event.preventDefault();
-          searchElement.focus();
-        }
-        return;
-      }
-      const key = event.key.toLowerCase();
-      if (key === 'j' || key === 'k') {
-        event.preventDefault();
-        moveReaderSelection(listElement, key === 'j' ? 1 : -1, isDocked);
-      }
-    }
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isDocked]);
+        searchElement?.focus();
+        return Boolean(searchElement);
+      }),
+    WORKSPACE_HOTKEY_OPTIONS,
+  );
+  useHotkey(
+    'J',
+    (event) =>
+      runListShortcut(event, (listElement) => {
+        moveReaderSelection(listElement, 1, isDocked);
+        return true;
+      }),
+    WORKSPACE_HOTKEY_OPTIONS,
+  );
+  useHotkey(
+    'K',
+    (event) =>
+      runListShortcut(event, (listElement) => {
+        moveReaderSelection(listElement, -1, isDocked);
+        return true;
+      }),
+    WORKSPACE_HOTKEY_OPTIONS,
+  );
 
   useEffect(() => {
     const listElement = listRef.current;
