@@ -181,9 +181,9 @@ async function rendersReportAndRequestsFilters(): Promise<void> {
   expect(within(table).getByRole('columnheader', { name: 'P95 ≈ ms' })).toBeInTheDocument();
   expect(rows[1]).toHaveTextContent('8.19');
 
-  expect(screen.getByRole('figure', { name: /HTTP 接口每小时调用趋势/ })).toHaveAccessibleName(
-    /共 40 次调用 · 0 次错误 · 峰值 30 次\/小时/,
-  );
+  const httpTrend = screen.getByRole('figure', { name: /HTTP 接口每小时调用趋势/ });
+  expect(httpTrend).toHaveAccessibleName(/共 40 次调用 · 0 次错误 · 峰值 30 次\/小时/);
+  expect(within(httpTrend).getByLabelText('HTTP 接口每小时调用与错误柱状图')).toBeInTheDocument();
   expect(screen.getByRole('figure', { name: /MCP 工具每小时调用趋势/ })).toBeInTheDocument();
   expect(screen.getByRole('table', { name: /HTTP 接口每小时调用与错误/ })).toBeInTheDocument();
   expect(screen.getByRole('region', { name: '命中量级 · 总命中数' })).toBeInTheDocument();

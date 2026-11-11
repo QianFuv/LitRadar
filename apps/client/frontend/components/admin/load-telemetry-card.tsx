@@ -2,6 +2,11 @@
  * Administrator load section: interface load, latency, hourly trends, and search shape.
  */
 
+import { barY, defineChart } from '@tanstack/charts';
+import { Chart } from '@tanstack/charts/react';
+import { scaleBand } from '@tanstack/charts/scales/band';
+import { scaleLinear } from '@tanstack/charts/scales/linear';
+import { tooltip } from '@tanstack/charts/tooltip';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 
@@ -444,8 +449,15 @@ function TrendSection({ kind, report }: { kind: TelemetryKind | null; report: Te
   );
 }
 
+/** Height of each hourly trend chart, in pixels. */
+const TREND_CHART_HEIGHT = 96;
+
+/** Chart width before the container is measured, in pixels. */
+const TREND_CHART_INITIAL_WIDTH = 480;
+
 /**
- * Render one kind's hourly bars with a native tooltip per hour and a data-table alternative.
+ * Render one kind's hourly call bars with errors overlaid, a tooltip per hour, and a data-table
+ * alternative.
  *
  * @param props - Zero-filled kind trend.
  * @returns Accessible bar chart figure.
@@ -453,9 +465,27 @@ function TrendSection({ kind, report }: { kind: TelemetryKind | null; report: Te
 function KindTrendChart({ trend }: { trend: KindTrend }) {
   const { hours, maxCalls } = trend;
   const label = KIND_LABELS[trend.kind];
-  const gap = hours.length <= 48 ? 0.2 : 0;
-  const scale = (value: number) =>
-    maxCalls > 0 && value > 0 ? Math.max((value / maxCalls) * 100, 2) : 0;
+  const definition = defineChart({
+    marks: [
+      barY(hours, { id: 'calls', x: 'hourMs', y: 'calls', fill: colors.primary }),
+      barY(hours, { id: 'errors', x: 'hourMs', y: 'errors', fill: colors.destructive }),
+    ],
+    scales: {
+      x: {
+        scale: () =>
+          scaleBand<number>()
+            .domain(hours.map((hour) => hour.hourMs))
+            .padding(hours.length <= 48 ? 0.2 : 0),
+        axis: false,
+      },
+      y: { scale: scaleLinear().domain([0, Math.max(maxCalls, 1)]), axis: false },
+    },
+    tooltip: {
+      use: tooltip,
+      format: (point) =>
+        `${formatHour(point.datum.hourMs)} · 调用 ${NUMBER_FORMATTER.format(point.datum.calls)} · 错误 ${NUMBER_FORMATTER.format(point.datum.errors)}`,
+    },
+  });
   const observedHours = hours.filter((hour) => hour.calls > 0 || hour.errors > 0);
   const summary = `共 ${NUMBER_FORMATTER.format(trend.totalCalls)} 次调用 · ${NUMBER_FORMATTER.format(trend.totalErrors)} 次错误 · 峰值 ${NUMBER_FORMATTER.format(maxCalls)} 次/小时`;
 
@@ -467,43 +497,13 @@ function KindTrendChart({ trend }: { trend: KindTrend }) {
         <span {...stylex.props(styles.kindTrendChartSpan)}>{label}</span>
         <span {...stylex.props(styles.kindTrendChartSpan2)}>{summary}</span>
       </figcaption>
-      <svg
-        aria-hidden="true"
-        viewBox={`0 0 ${Math.max(hours.length, 1)} 100`}
-        preserveAspectRatio="none"
+      <Chart
+        definition={definition}
+        ariaLabel={`${label}每小时调用与错误柱状图`}
+        height={TREND_CHART_HEIGHT}
+        initialWidth={TREND_CHART_INITIAL_WIDTH}
         {...stylex.props(styles.kindTrendChartFigureItem, styles.kindTrendChartSvg)}
-      >
-        {hours.map((hour, index) => {
-          const callsHeight = scale(hour.calls);
-          const errorsHeight = Math.min(scale(hour.errors), callsHeight);
-          return (
-            <g key={hour.hourMs}>
-              <title>{`${formatHour(hour.hourMs)} · 调用 ${NUMBER_FORMATTER.format(hour.calls)} · 错误 ${NUMBER_FORMATTER.format(hour.errors)}`}</title>
-              <rect
-                x={index}
-                y={0}
-                width={1}
-                height={100}
-                {...stylex.props(styles.kindTrendChartRect)}
-              />
-              <rect
-                x={index + gap / 2}
-                y={100 - callsHeight}
-                width={1 - gap}
-                height={callsHeight}
-                {...stylex.props(styles.kindTrendChartRect2)}
-              />
-              <rect
-                x={index + gap / 2}
-                y={100 - errorsHeight}
-                width={1 - gap}
-                height={errorsHeight}
-                {...stylex.props(styles.kindTrendChartRect3)}
-              />
-            </g>
-          );
-        })}
-      </svg>
+      />
       <div {...stylex.props(styles.kindTrendChartFigureItem, styles.kindTrendChartDiv)}>
         <span>{hours.length > 0 && formatHour(hours[0].hourMs)}</span>
         <span>{hours.length > 0 && formatHour(hours[hours.length - 1].hourMs)}</span>
@@ -864,19 +864,14 @@ const styles = stylex.create({
     fontVariantNumeric: 'tabular-nums',
   },
   kindTrendChartSvg: {
-    height: '6rem',
     width: '100%',
+    overflow: 'hidden',
     borderRadius: '6px',
     backgroundColor: `color-mix(in oklab, ${colors.muted} 50%, transparent)`,
-  },
-  kindTrendChartRect: {
-    fill: 'transparent',
-  },
-  kindTrendChartRect2: {
-    fill: colors.primary,
-  },
-  kindTrendChartRect3: {
-    fill: colors.destructive,
+    color: colors.foreground,
+    '--ts-chart-tooltip-background': colors.popover,
+    '--ts-chart-tooltip-color': colors.popoverForeground,
+    '--ts-chart-tooltip-border': `1px solid ${colors.border}`,
   },
   kindTrendChartDiv: {
     display: 'flex',
