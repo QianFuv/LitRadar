@@ -8,6 +8,27 @@ import {
   goCheckPlan,
 } from "../apps/server/scripts/go-check-plan.mjs";
 
+/** Require every shipped client Go variant to be linted after its embedded assets exist. */
+test("client lint covers web, native, smoke and Android after packaging", () => {
+  const workflow = fs.readFileSync(".github/workflows/client.yaml", "utf8");
+  const packageStep = workflow.indexOf("id: package");
+  const lintStep = workflow.indexOf("id: lint");
+  const lintEnd = workflow.indexOf("- name: Verify signed Android package", lintStep);
+  assert(packageStep >= 0 && lintStep > packageStep && lintEnd > lintStep);
+  const lint = workflow.slice(lintStep, lintEnd);
+  assert.match(lint, /matrix.target != 'android' \|\| steps.signing.outputs.build == 'true'/);
+  for (const tags of ["server,production", "production", "production,smoke", "android,production"]) {
+    assert(lint.includes(`--build-tags ${tags} ./apps/client/...`));
+  }
+  assert.match(lint, /CGO_ENABLED=1 GOOS=android GOARCH=arm64/);
+  const taskfile = fs.readFileSync("apps/client/Taskfile.yml", "utf8");
+  const minimumSdk = taskfile.match(/ANDROID_MIN_SDK: '(\d+)'/)[1];
+  assert(lint.includes(`aarch64-linux-android${minimumSdk}-clang`));
+  const backend = fs.readFileSync(".github/workflows/backend.yaml", "utf8");
+  const lintVersion = backend.match(/GOLANGCI_LINT_VERSION: (v[\d.]+)/)[1];
+  assert(workflow.includes(`GOLANGCI_LINT_VERSION: ${lintVersion}`));
+});
+
 test("regular and race lanes retain every root and replacement-module check", () => {
   const expected = [
     "environment",

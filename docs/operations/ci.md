@@ -55,6 +55,12 @@ tests, source-bound frontend verification or platform smoke acceptance.
   sqlc schema snapshot with `go run ./apps/server/cmd/sqlc-schema -check`, and runs
   `sqlc diff -f apps/server/sqlc.yaml`. Each writes a log under `test-results/go/`.
   The race lane does not install these tools.
+- Client jobs install the same pinned golangci-lint version and lint after their
+  frontend dist has been built. Web checks use `server,production`; Windows checks
+  use both `production` and `production,smoke`; Android checks use
+  `android,production` with the build's NDK compiler, arm64 target and cgo.
+  Reports are uploaded with client evidence. An intentionally omitted Android
+  release package also omits its target lint, matching the package's build gate.
 - The two existing `Backend / Go checks (<os>)` names remain aggregate gates. Each
   requires the entire four-job matrix to succeed; failure, cancellation or skip
   cannot become a passing release prerequisite.
