@@ -52,10 +52,10 @@ export function RelatedArticles({ article, dbName, onOpen }: RelatedArticlesProp
       <RevealItem
         isReady={!relatedQuery.isLoading}
         placeholder={
-          <output {...stylex.props(styles.statusOutput, styles.relatedArticlesDiv)}>
-            <span {...stylex.props(styles.relatedArticlesDivItem, styles.relatedArticlesSpan2)}>
+          <div {...stylex.props(styles.relatedArticlesDiv)}>
+            <output {...stylex.props(styles.relatedArticlesDivItem, styles.relatedArticlesSpan2)}>
               正在查找相关文章
-            </span>
+            </output>
             {[0, 1, 2].map((index) => (
               <div key={index} {...stylex.props(styles.relatedArticlesDivItem)}>
                 <Skeleton
@@ -66,7 +66,7 @@ export function RelatedArticles({ article, dbName, onOpen }: RelatedArticlesProp
                 />
               </div>
             ))}
-          </output>
+          </div>
         }
       >
         {relatedQuery.isError ? (
@@ -104,9 +104,6 @@ export function RelatedArticles({ article, dbName, onOpen }: RelatedArticlesProp
 }
 
 const styles = stylex.create({
-  statusOutput: {
-    display: 'block',
-  },
   relatedArticlesSection: {
     marginTop: '2rem',
   },

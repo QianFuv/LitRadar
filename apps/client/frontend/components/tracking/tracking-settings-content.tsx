@@ -108,12 +108,12 @@ export function TrackingSettingsContent({
  */
 function renderTrackingBlockPlaceholder(heightStyle: stylex.StyleXStyles) {
   return (
-    <output {...stylex.props(styles.statusOutput, styles.renderTrackingBlockPlaceholderDiv)}>
-      <span {...stylex.props(styles.renderTrackingBlockPlaceholderSpan)}>
+    <div {...stylex.props(styles.renderTrackingBlockPlaceholderDiv)}>
+      <output {...stylex.props(styles.renderTrackingBlockPlaceholderSpan)}>
         正在加载已保存的推荐配置…
-      </span>
+      </output>
       <Skeleton xstyle={[styles.trackingBlockSkeleton, heightStyle]} />
-    </output>
+    </div>
   );
 }
 
@@ -235,9 +235,6 @@ type TrackingSettingsViewState = {
 };
 
 const styles = stylex.create({
-  statusOutput: {
-    display: 'block',
-  },
   trackingBlockSkeleton: {
     width: '100%',
     borderRadius: '12px',

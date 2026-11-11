@@ -69,12 +69,12 @@ export const preloadAdminCenter = ADMIN_CENTER_DIALOG.preload;
  */
 export function WorkspaceViewFallback() {
   return (
-    <output {...stylex.props(styles.statusOutput, styles.workspaceViewFallbackDiv)}>
-      <span {...stylex.props(styles.workspaceViewFallbackSpan)}>加载中…</span>
+    <div {...stylex.props(styles.workspaceViewFallbackDiv)}>
+      <output {...stylex.props(styles.workspaceViewFallbackSpan)}>加载中…</output>
       <Skeleton aria-hidden="true" xstyle={styles.workspaceViewFallbackSkeleton} />
       <Skeleton aria-hidden="true" xstyle={styles.workspaceViewFallbackSkeleton2} />
       <Skeleton aria-hidden="true" xstyle={styles.workspaceViewFallbackSkeleton3} />
-    </output>
+    </div>
   );
 }
 

@@ -76,19 +76,19 @@ export function CfpTrackingView() {
               isReady={!state.isLoading}
               xstyle={[styles.cfpTrackingViewDivItem, styles.cfpTrackingViewRevealItem]}
               placeholder={
-                <output {...stylex.props(styles.statusOutput)}>
-                  <span
+                <div>
+                  <output
                     {...stylex.props(styles.cfpTrackingViewDivItem2, styles.cfpTrackingViewSpan)}
                   >
                     正在加载征稿期刊
-                  </span>
+                  </output>
                   <Skeleton
                     xstyle={[styles.cfpTrackingViewDivItem2, styles.cfpTrackingViewSkeleton]}
                   />
                   <Skeleton
                     xstyle={[styles.cfpTrackingViewDivItem2, styles.cfpTrackingViewSkeleton2]}
                   />
-                </output>
+                </div>
               }
             >
               {renderCfpWorkspace(state)}
@@ -346,10 +346,10 @@ function renderCfpNotices(
         isReady={!noticesQuery.isLoading}
         xstyle={[styles.renderCfpNoticesSectionItem, styles.renderCfpNoticesRevealItem]}
         placeholder={
-          <output {...stylex.props(styles.statusOutput)}>
-            <span {...stylex.props(styles.cfpTrackingViewSpan)}>正在加载征稿需求</span>
+          <div>
+            <output {...stylex.props(styles.cfpTrackingViewSpan)}>正在加载征稿需求</output>
             <Skeleton xstyle={styles.renderCfpNoticesSkeleton} />
-          </output>
+          </div>
         }
       >
         {renderCfpNoticeContent(state, selected)}
