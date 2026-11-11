@@ -1,6 +1,7 @@
 /** Collapsible journal groups with independent scrolling and server-owned availability. */
 
-import { useId, useState } from 'react';
+import { Collapsible } from '@base-ui/react/collapsible';
+import { useState } from 'react';
 import { ChevronDown } from '@/components/ui/animated-icons';
 
 import { READER_ITEM_ATTRIBUTE } from '@/components/feature/article-reader-context';
@@ -51,7 +52,6 @@ export function CfpJournalList({
   onIntent?: (catalogId: string) => void;
   onSelect: (catalogId: string) => void;
 }) {
-  const regionId = useId();
   const [expandedGroups, setExpandedGroups] = useState<Record<CfpJournalGroupId, boolean>>({
     current: true,
     inactive: isSearching,
@@ -66,11 +66,18 @@ export function CfpJournalList({
       )}
       {groups.map((group) => {
         const isExpanded = expandedGroups[group.id] && (!isSearching || group.journals.length > 0);
-        const panelId = `${regionId}-${group.id}`;
         return (
-          <section
+          <Collapsible.Root
             key={group.id}
+            open={isExpanded}
+            onOpenChange={(isOpen) => {
+              setExpandedGroups((previous) => ({ ...previous, [group.id]: isOpen }));
+              if (isOpen && !mountedGroups[group.id]) {
+                setMountedGroups((previous) => ({ ...previous, [group.id]: true }));
+              }
+            }}
             data-cfp-group={group.id}
+            render={<section />}
             {...stylex.props(
               styles.cfpJournalListSection,
               group.id === 'current' && styles.cfpJournalListSectionCurrent,
@@ -79,18 +86,7 @@ export function CfpJournalList({
                 : styles.cfpJournalListSectionNotExpanded,
             )}
           >
-            <button
-              type="button"
-              aria-expanded={isExpanded}
-              aria-controls={panelId}
-              onClick={() => {
-                setExpandedGroups((previous) => ({ ...previous, [group.id]: !isExpanded }));
-                if (!mountedGroups[group.id]) {
-                  setMountedGroups((previous) => ({ ...previous, [group.id]: true }));
-                }
-              }}
-              {...stylex.props(styles.cfpJournalListButton)}
-            >
+            <Collapsible.Trigger {...stylex.props(styles.cfpJournalListButton)}>
               <ChevronDown
                 xstyle={[
                   styles.cfpJournalListChevronDown,
@@ -100,11 +96,11 @@ export function CfpJournalList({
               />
               <span {...stylex.props(styles.cfpJournalListSpan)}>{group.label}</span>
               <span {...stylex.props(styles.cfpJournalListSpan2)}>{group.journals.length}</span>
-            </button>
-            <section
-              id={panelId}
+            </Collapsible.Trigger>
+            <Collapsible.Panel
+              keepMounted
+              render={<section />}
               aria-label={`${group.label}期刊`}
-              hidden={!isExpanded}
               data-slot="cfp-journal-list"
               {...stylex.props(styles.cfpJournalList)}
             >
@@ -171,8 +167,8 @@ export function CfpJournalList({
                     })}
                   </ul>
                 ))}
-            </section>
-          </section>
+            </Collapsible.Panel>
+          </Collapsible.Root>
         );
       })}
     </div>
