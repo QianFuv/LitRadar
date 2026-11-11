@@ -2,15 +2,15 @@
 
 本文档补充 OpenAPI 不便表达的认证方式、跨接口约定与业务边界。字段、请求体和响应 schema 以运行中的 OpenAPI 为准：
 
-- Swagger UI：`/docs/`
-- OpenAPI JSON：`/openapi.json`
+- API 文档页：`/docs`（huma 内置的 Stoplight Elements 页面，脚本和样式从 unpkg.com 加载；`/docs/` 重定向到 `/docs`）
+- OpenAPI JSON：`/openapi.json`（OpenAPI 3.1）
 - 前端生成基线：`apps/client/frontend/lib/generated/openapi.json`
 
-`apps/server/internal/openapi` 的契约构造代码是 REST schema 的实现来源。修改 REST 接口后，应重新生成前端基线；不要在本文重复维护完整 schema。
+OpenAPI 由 Go 类型生成：`apps/server/internal/api/` 用 huma 注册各操作的请求与响应类型，`apps/server/internal/openapi/` 负责操作 ID、共享 schema 注册和文档配置。修改 REST 接口后，应在 `apps/client/frontend/` 运行 `pnpm generate:api` 重新生成前端基线；不要在本文重复维护完整 schema。
 
 ## 地址与认证
 
-本地默认地址为 `http://localhost:8000`。同一 Go 监听器还提供 Web 根路径、`/docs/`、`/openapi.json` 和 `/mcp`，REST 路径统一以 `/api` 开头。支持两种认证方式：
+本地默认地址为 `http://localhost:8000`（开发时由 Vite 代理，部署时由 Caddy 网关同源转发）。Go 服务端提供 `/api`、`/health/*`、`/docs`、`/openapi.json` 和 `/mcp`，REST 路径统一以 `/api` 开头；网页由独立的 Web 客户端提供，服务端根路径返回 404。支持两种认证方式：
 
 | 使用场景                      | 凭据                                                  |
 | ----------------------------- | ----------------------------------------------------- |
@@ -81,7 +81,7 @@
 
 ### 错误
 
-Errors use Huma's default RFC 9457 `application/problem+json` representation:
+错误响应使用 huma 默认的 RFC 9457 `application/problem+json` 格式：
 
 ```json
 {
@@ -92,27 +92,30 @@ Errors use Huma's default RFC 9457 `application/problem+json` representation:
 }
 ```
 
-The model supports `type`, `title`, `status`, `detail`, `instance` and `errors`; optional properties are omitted when unset. The retired top-level `code` and `retryable` properties are no longer returned. Retryable `429` and `503` responses include `Retry-After`, expressed as nonnegative seconds. Clients use that header to decide whether to retry. Huma decodes and validates typed path, query, header and JSON-object inputs; validation failures normally return `422`, while malformed JSON returns `400`.
+模型包含 `type`、`title`、`status`、`detail`、`instance` 和 `errors`，未设置的可选成员会省略。响应不含顶层 `code` 或 `retryable`。可重试的 `429` 和 `503` 响应带 `Retry-After`（非负秒数），客户端据此决定是否重试。
 
-Classified workflow errors retain their machine-readable values as entries in `errors`, with the classification name in `location` and its value in `message`. The human-readable workflow message becomes `detail`.
+huma 在调用业务 handler 之前解码并按 OpenAPI schema 校验 typed path、query、header 和 JSON 对象请求体，因此 schema 校验失败返回 `422`，并先于认证检查；JSON 语法错误返回 `400`。`errors[].location` 指出失败位置，例如 `body.field`、`query.limit` 和 `path.article_id`。handler 内部的业务校验仍返回 `400`。
 
-| Workflow | Error locations |
-| --- | --- |
-| CNKI login, polling and warm-up | `code`, `phase` |
-| Article provider authentication | `code`, `action` |
-| Unconfirmed session revocation | `code`, `request_id` |
+分类的工作流错误把机器可读的值放进 `errors`：`location` 是分类名，`message` 是值；面向人的工作流消息放在 `detail`。
 
-For example, a CNKI login timeout includes `{"location":"code","message":"cnki_login_timeout"}` and `{"location":"phase","message":"login"}`. Huma validation diagnostics use locations such as `body.field`, `query.limit` and `path.article_id`.
+| 工作流                     | `errors[].location`  |
+| -------------------------- | -------------------- |
+| CNKI 登录、轮询和预热      | `code`、`phase`      |
+| 文章 Provider 认证         | `code`、`action`     |
+| 会话撤销未确认             | `code`、`request_id` |
+
+例如 CNKI 登录超时包含 `{"location":"code","message":"cnki_login_timeout"}` 和 `{"location":"phase","message":"login"}`。
 
 常见状态码：
 
 | 状态码 | 含义                                                            |
 | ------ | --------------------------------------------------------------- |
-| `400`  | 参数、数据库选择或业务输入无效                                  |
+| `400`  | JSON 语法错误，或数据库选择、业务输入无效                       |
 | `401`  | 缺少凭据、会话失效或 Bearer 格式错误                            |
 | `403`  | 当前用户没有管理员权限                                          |
 | `404`  | 数据库或记录不存在                                              |
 | `409`  | 用户名、文件夹名等唯一约束冲突                                  |
+| `422`  | 请求未通过 OpenAPI schema 校验（类型、必填、长度、范围、枚举）  |
 | `428`  | 所有可用在线 Provider 都要求先完成认证                          |
 | `429`  | 认证请求触发进程内限流；可重试并包含 `Retry-After`              |
 | `503`  | 内嵌调度尚未 ready 或服务暂时不可用；可重试并包含 `Retry-After` |
@@ -121,7 +124,7 @@ For example, a CNKI login timeout includes `{"location":"code","message":"cnki_l
 
 ## REST 端点目录
 
-本节只提供导航和职责边界。参数与响应字段请直接查看 Swagger UI。
+本节只提供导航和职责边界。参数与响应字段请直接查看 `/docs` 或 `/openapi.json`。
 
 ### 健康、公告与索引读取
 
@@ -183,11 +186,13 @@ For example, a CNKI login timeout includes `{"location":"code","message":"cnki_l
 
 ```json
 {
-  "detail": {
-    "code": "session_revocation_unconfirmed",
-    "message": "Session revocation could not be confirmed",
-    "request_id": "server-generated-request-id"
-  }
+  "title": "Service Unavailable",
+  "status": 503,
+  "detail": "Session revocation could not be confirmed",
+  "errors": [
+    { "location": "code", "message": "session_revocation_unconfirmed" },
+    { "location": "request_id", "message": "server-generated-request-id" }
+  ]
 }
 ```
 
@@ -199,20 +204,20 @@ CNKI 会话按 LitRadar 用户隔离；状态接口只返回安全元数据，�
 
 ### 访问令牌创建规则
 
-`POST /api/auth/tokens` 先认证当前用户，再按以下固定顺序处理新令牌请求：
+`POST /api/auth/tokens` 按以下固定顺序处理新令牌请求：
 
-1. 检查未裁剪 JSON `name` 的 Unicode code points 数，最多 100；OpenAPI `maxLength = 100` 约束同一个原始字符串。
-2. 裁剪首尾空白；空名称仍可创建未命名令牌，裁剪后精确等于 `login` 的名称保留给浏览器会话。
-3. 检查 `ttl` 是否处于 `3600..=31536000` 秒；越界值直接拒绝，不会再静默 clamp。
+1. 按 OpenAPI schema 校验请求体：未裁剪 JSON `name` 最多 100 个 Unicode code points（`maxLength = 100`），`ttl` 必须处于 `3600..=31536000` 秒（省略时为 `604800`）；越界值直接拒绝。这一步先于认证。
+2. 认证当前用户。
+3. 裁剪首尾空白；空名称仍可创建未命名令牌，裁剪后精确等于 `login` 的名称保留给浏览器会话。
 4. 在事务内检查当前用户的 active personal tokens；达到 50 个时拒绝新建。
 
 写入事务还会复核认证时观察到的用户令牌代际，以及发起请求的确切 Bearer/Cookie token 仍属于该用户且未过期。若并发的 `logout`、`logout-all`、改密、重置或单令牌吊销先提交，新令牌不会落库，接口返回 `401 Authentication state changed; authenticate again`；客户端重新认证后可显式重试。
 
-认证失败仍优先返回 `401`。其余失败只返回当前顺序中的第一项：
+失败只返回当前顺序中的第一项：
 
-- `400`：`Access token name must be at most 100 Unicode code points`
+- `422`：`name` 超长或 `ttl` 越界，`errors[].location` 为 `body.name` 或 `body.ttl`
+- `401`：认证失败
 - `400`：`Access token name "login" is reserved`
-- `400`：`Access token TTL must be between 3600 and 31536000 seconds`
 - `409`：`Active access token limit of 50 reached; revoke a token before creating another`
 
 第一方设置界面用 `Array.from(rawName).length` 计算原始名称的 Unicode code points，并有意省略原生 HTML `maxlength`，因为后者按 UTF-16 code units 计数；服务端仍是所有客户端的权威校验方。已有超过 50 个 active personal tokens 的账号不会被迁移或删除，仍可列出、使用和撤销现有令牌，但必须降到 50 以下才能创建新令牌。
@@ -243,7 +248,7 @@ CNKI 会话按 LitRadar 用户隔离；状态接口只返回安全元数据，�
 | `POST`           | `/api/tracking/push-weekly/runs/{run_id}/cancel`           | 请求取消 owner/admin 任务     |
 | `POST`           | `/api/tracking/push-weekly/runs/{run_id}/acknowledge`      | owner 确认 Unknown 并新建任务 |
 
-收藏文件夹名称按 Unicode scalar value 计数，最多 100 个字符；note 最多 2,000 个字符，`db_name` 最多 255 个字符。批量添加、删除、移动和检查每次最多提交 500 个 article item/ID；501 个及以上在构造 SQL 前返回 `400`。动态 `IN` 查询固定按 500 个 ID 分块，HTTP JSON body 超过框架的 2 MiB 上限仍返回 `413`。
+收藏文件夹名称按 Unicode scalar value 计数，最多 100 个字符；note 最多 2,000 个字符，`db_name` 最多 255 个字符。批量添加、删除、移动和检查每次最多提交 500 个 article item/ID；501 个及以上在 schema 校验阶段返回 `422`，不会构造 SQL。动态 `IN` 查询固定按 500 个 ID 分块，HTTP JSON body 超过框架的 2 MiB 上限仍返回 `413`。
 
 收藏文章列表的每一行都包含必填的 `metadata_status`：`available` 表示索引元数据已读取，`missing` 表示来源数据库或文章已不存在，`unavailable` 表示文件系统、SQLite 或作者 JSON 等操作性读取失败。后两种状态都保留收藏行及其移动、删除能力；`missing` 条目导出为空元数据引文，`unavailable` 条目按下述原子导出规则返回明确失败。服务端只以安全数据库标识和错误类别记录 unavailable 事件，不记录 note、abstract、绝对路径或原始数据库错误。
 
@@ -255,7 +260,7 @@ CNKI 会话按 LitRadar 用户隔离；状态接口只返回安全元数据，�
 
 SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户重复启动返回现有 job，不同用户可以同时排队或在实例有界池中并行。普通用户只能查询和取消自己的 run；管理员可按不可猜测的 job id 管理任意用户 run。`unknown` 表示外部结果可能已发生，`can_retry=false`，客户端不得把它当普通失败自动重放。普通启动在最新任务为 Unknown 时固定返回 `409`，不创建新行。owner 检查外部投递记录后，可对该最新任务调用 `POST /api/tracking/push-weekly/runs/{run_id}/acknowledge`；服务在一个 immediate transaction 中复核 ownership/latest/Unknown，写入 `manual_push_unknown_acknowledge` 安全审计并返回一个新 queued job。非 owner 或畸形 ID 返回 `404`，过期、重复或非 Unknown 确认返回 `409`。管理员不能代替 owner 确认。旧 run、item 和 Unknown/confirmed dedupe 保持不变，所以旧的不确定文章不会重发，后续 manifest 的新文章仍可处理。
 
-`PUT /api/tracking/notification-settings` 的 `ai_retry_attempts` 只接受 `1..=10`。超出范围时返回 `400`，且不会替换已有设置。历史或被手工修改的数据库值在读取时会归一到该范围，但服务不会因此自动改写数据库。
+`PUT /api/tracking/notification-settings` 的 `ai_retry_attempts` 只接受 `1..=10`。超出范围时返回 `422`，且不会替换已有设置。历史或被手工修改的数据库值在读取时会归一到该范围，但服务不会因此自动改写数据库。
 
 `delivery_method=pushplus` 要求事务内解析出的最终 `pushplus_token` 非空；同时启用 `sync_to_tracking_folder` 还要求该用户在同一事务快照中存在追踪文件夹。保存设置与 `DELETE /api/favorites/folders/{folder_id}` 都获取认证库的 immediate 写锁：若设置先提交，删除所依赖追踪文件夹返回 `400 A tracking folder is required before enabling PushPlus sync to tracking`；若删除或 token 清除先提交，后续设置保存返回相同的依赖错误或 `400 pushplus_token is required when delivery_method is 'pushplus'`，且不会部分覆盖其他字段。
 
@@ -304,7 +309,7 @@ SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户�
 | `period` | `24h`（默认）、`7d`、`30d`            | 分别对应恰好 24、168、720 个 UTC 小时桶        |
 | `kind`   | 省略（全部）、`http`、`mcp`、`search` | 同时过滤 `series`、`hourly` 和 `search_shapes` |
 
-其他取值返回 `400`。窗口按 UTC 整点对齐并包含当前未结束的小时：`from` 为闭区间起点，`to` 为下一个 UTC 整点（开区间）；不接受任意 `from`/`to` 参数。保留期短于所选时段时，更早的小时没有数据。
+其他取值返回 `422`。窗口按 UTC 整点对齐并包含当前未结束的小时：`from` 为闭区间起点，`to` 为下一个 UTC 整点（开区间）；不接受任意 `from`/`to` 参数。保留期短于所选时段时，更早的小时没有数据。
 
 响应字段：
 
@@ -345,7 +350,7 @@ SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户�
 
 ## 缓存与 CORS
 
-所有 HTML、REST、健康检查、Swagger/OpenAPI 和 MCP 响应都带有同一基线安全 Header：严格 CSP、`nosniff`、`Referrer-Policy: same-origin`、禁用敏感浏览器能力以及双重 frame denial。CSP 的 `script-src` 为同源外部脚本；Vite UI 由独立 Wails Web host 提供，不依赖 HTML 内联脚本哈希。hardened HTTPS 服务端发送一年 HSTS。
+所有 REST、健康检查、OpenAPI 和 MCP 响应都带有同一基线安全 Header：严格 CSP、`nosniff`、`Referrer-Policy: same-origin`、禁用敏感浏览器能力以及双重 frame denial。`/docs` 文档页例外地保留 huma 为它设置的 CSP，只额外允许从 unpkg.com 加载固定版本的 Stoplight Elements 脚本与样式，其余 Header 相同。CSP 的 `script-src` 为同源外部脚本；Vite UI 由独立 Wails Web host 提供，不依赖 HTML 内联脚本哈希。hardened HTTPS 服务端发送一年 HSTS。
 
 `/api/articles*`、`/api/meta*` 及其他受保护路由需要普通用户或管理员身份，不能作为匿名共享缓存内容。请求带有 `Authorization` 或 `litradar_session` 时，以及任何返回 `401 Unauthorized` 的响应，后端都会设置：
 

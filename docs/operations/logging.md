@@ -94,7 +94,7 @@ litradar openapi > openapi.json 2> litradar.log
 | `WARN`  | 客户端错误、限流、可恢复降级、fallback 和未终止进程的异常情况 |
 | `ERROR` | 5xx、工作流失败、组件失败、进程失败和 panic                   |
 
-成功的 `/health/live`、`/health/ready`、静态资源和前端文档请求不产生逐请求完成事件；非成功响应仍记录。该抑制避免健康检查和静态流量淹没有效信号。
+成功的 `/health/live`、`/health/ready` 请求不产生逐请求完成事件；非成功响应仍记录。该抑制避免健康检查淹没有效信号。服务端不托管静态 UI，`/docs` 文档页与 `/openapi.json` 请求按普通请求记录。
 
 ## 配置
 

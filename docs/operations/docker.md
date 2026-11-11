@@ -37,7 +37,7 @@ Wails Server Build 的 runtime 端点未经认证；Web host 不注册任何服�
 
 ## 镜像内容与源码构建
 
-服务端 Dockerfile 使用固定 Ubuntu digest、Go 归档校验和与 CA 包版本，不安装 Node.js，也不构建 UI。`apps/server` 以 `CGO_ENABLED=0` 编译为纯 Go 二进制，构建阶段不安装 C 编译器或交叉编译工具链。服务端镜像包含 Obscura v0.2.4、Poppler、不可变 Meta bundle、许可证和 Go 构建清单。服务端 `/` 与 UI 路径返回 404，`/docs/`、API、MCP、健康检查可用。
+服务端 Dockerfile 使用固定 Ubuntu digest、Go 归档校验和与 CA 包版本，不安装 Node.js，也不构建 UI。`apps/server` 以 `CGO_ENABLED=0` 编译为纯 Go 二进制，构建阶段不安装 C 编译器或交叉编译工具链。服务端镜像包含 Obscura v0.2.4、Poppler、不可变 Meta bundle、许可证和 Go 构建清单。服务端 `/` 与 UI 路径返回 404，`/docs`、`/openapi.json`、API、MCP、健康检查可用。
 
 客户端先在根目录构建 Vite，再由独立 Dockerfile 将 `frontend/dist` 嵌入 linux/amd64 Wails Web host，并放入 distroless 镜像。两个应用运行镜像均不需要 Node.js。
 
@@ -212,7 +212,7 @@ Docker bind mount 和 Kubernetes PVC 会遮蔽挂载点中的镜像层内容，�
 curl --fail http://localhost:8000/
 curl --fail http://localhost:8000/health/live
 curl --fail http://localhost:8000/health/ready
-curl --fail http://localhost:8000/docs/
+curl --fail http://localhost:8000/docs
 curl --fail http://localhost:8000/openapi.json
 docker compose ps
 ```
@@ -363,7 +363,7 @@ pwsh ./apps/server/tests/profiling/profile_docker_memory.ps1 `
   -OutputPath ./output/memory/final-scheduled-child.json
 ```
 
-五分钟预热后采集十分钟日常服务和轻流量；直接画像服务端时路径包含 `/health/live`、`/health/ready` 和 `/docs/`：
+五分钟预热后采集十分钟日常服务和轻流量；直接画像服务端时路径包含 `/health/live`、`/health/ready` 和 `/docs`：
 
 ```powershell
 pwsh ./apps/server/tests/profiling/profile_docker_memory.ps1 `
@@ -371,7 +371,7 @@ pwsh ./apps/server/tests/profiling/profile_docker_memory.ps1 `
   -DataPath ./data `
   -WarmupSeconds 300 `
   -DurationSeconds 600 `
-  -TrafficPath /health/live,/health/ready,/docs/ `
+  -TrafficPath /health/live,/health/ready,/docs `
   -OutputPath ./output/memory/final-warm-idle.json
 ```
 
@@ -410,7 +410,7 @@ pwsh ./apps/server/tests/profiling/profile_docker_memory.ps1 `
 docker compose config --quiet
 docker compose config --services
 curl --fail http://localhost:8000/health/ready
-curl --fail http://localhost:8000/docs/
+curl --fail http://localhost:8000/docs
 curl --fail http://localhost:8000/login
 # Expected: 404
 curl -o /dev/null -w '%{http_code}\n' http://localhost:8000/wails/runtime

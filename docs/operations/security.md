@@ -208,7 +208,7 @@ MCP 的 `Host` 防护与浏览器 CORS 分开：
 
 ### 响应安全策略
 
-Go 服务端只提供 API、MCP、Swagger/OpenAPI 和健康检查，页面返回 404。Web host 独立嵌入 Vite `dist`；两者均设置 `script-src 'self'`、`frame-ancestors 'none'`、`nosniff`、`Referrer-Policy: same-origin`、权限限制和 `X-Frame-Options: DENY`。Vite 使用外部脚本，不生成旧的 HTML/CSP 哈希清单。
+Go 服务端只提供 API、MCP、OpenAPI 文档和健康检查，页面返回 404。Web host 独立嵌入 Vite `dist`；两者均设置 `script-src 'self'`、`frame-ancestors 'none'`、`nosniff`、`Referrer-Policy: same-origin`、权限限制和 `X-Frame-Options: DENY`。Vite 使用外部脚本，不生成 HTML/CSP 哈希清单。唯一例外是服务端 `/docs`：该页是 huma 内置的 Stoplight Elements 文档页，保留 huma 设置的 CSP，只允许从 unpkg.com 加载固定版本的脚本和样式，因此查看者的浏览器需要能访问该 CDN；它不影响 API、MCP 或 Web UI 的 CSP。
 
 服务端使用 `--require-secure-cookies` 时要求 `secure_cookies=true`，并发送一年 HSTS。Web host 通过 `LITRADAR_CLIENT_HSTS_MAX_AGE` 单独启用 HSTS；只在外部入口始终为 HTTPS 后配置。认证响应始终 `Cache-Control: no-store`、`Pragma: no-cache`。客户端哈希资源可长期 immutable 缓存，SPA HTML 重新验证；UI 不包含数据或部署密钥。
 
@@ -245,7 +245,7 @@ AI 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retry-After` 
 
 - `127.0.0.1:8000:8000`
 
-该 Caddy 入口统一代理 UI、REST、Swagger/OpenAPI 和 MCP。容器内监听 `0.0.0.0` 只用于 Compose 网络通信。远程访问应经 TLS 反向代理，并同时配置 Secure Cookie、准确 CORS/MCP 白名单和共享限流。不要直接把宿主机端口改为所有网卡。
+该 Caddy 入口统一代理 UI、REST、OpenAPI 文档和 MCP。容器内监听 `0.0.0.0` 只用于 Compose 网络通信。远程访问应经 TLS 反向代理，并同时配置 Secure Cookie、准确 CORS/MCP 白名单和共享限流。不要直接把宿主机端口改为所有网卡。
 
 ## 容器边界
 
