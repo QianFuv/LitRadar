@@ -3,6 +3,7 @@ package scholarly
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -188,7 +189,7 @@ func (index *IndexProvider) fetchIndexHead(ctx context.Context, catalog domain.J
 }
 
 // recoverIndexWorkset reopens or recollects only an already-classified damaged continuation.
-func (index *IndexProvider) recoverIndexWorkset(catalog domain.JournalCatalogEntry, window indexWindow, state CrossrefCheckpoint) (domain.ProviderBatch, error) {
+func (index *IndexProvider) recoverIndexWorkset(catalog domain.JournalCatalogEntry, window indexWindow, state CrossrefCheckpoint) (resultValue1 domain.ProviderBatch, resultError error) {
 	scope, err := indexWorksetScope(catalog, window)
 	if err != nil {
 		return domain.ProviderBatch{}, err
@@ -197,7 +198,11 @@ func (index *IndexProvider) recoverIndexWorkset(catalog domain.JournalCatalogEnt
 	if err != nil {
 		return domain.ProviderBatch{}, err
 	}
-	defer cache.Close()
+	defer func() {
+		if closeError := cache.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close cache: %w", closeError))
+		}
+	}()
 	next := cache.Checkpoint()
 	if !recovered {
 		next, err = cache.Recollect()

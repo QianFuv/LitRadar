@@ -89,3 +89,24 @@ func TestResumeDuplicateDocumentsCountTowardBudget(t *testing.T) {
 		t.Fatal("duplicate restore stopped counting", err)
 	}
 }
+
+// TestRestoreDocumentSkipsInvalidFieldTypes rejects partially decoded saved document identities.
+func TestRestoreDocumentSkipsInvalidFieldTypes(t *testing.T) {
+	for _, field := range []string{"requestedUrl", "url", "text", "format"} {
+		t.Run(field, func(t *testing.T) {
+			fields := map[string]any{"requestedUrl": "requested", "url": "https://publisher.example/original", "text": "original", "format": "html"}
+			fields[field] = 7
+			encoded, err := json.Marshal(fields)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cache := newCaptureCache()
+			if err := cache.restoreDocument(encoded); err != nil {
+				t.Fatal(err)
+			}
+			if len(cache.documents) != 0 || cache.bytes != 0 {
+				t.Fatalf("malformed document retained: %d documents, %d bytes", len(cache.documents), cache.bytes)
+			}
+		})
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -98,7 +99,9 @@ func (transport *HttpTransport) connect(ctx context.Context, network, address st
 	}
 	secured := tls.Client(connection, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12, NextProtos: []string{"h2", "http/1.1"}})
 	if err = secured.HandshakeContext(ctx); err != nil {
-		connection.Close()
+		if err := connection.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "connection.Close", "error", err)
+		}
 		return nil, err
 	}
 	return secured, nil
@@ -128,7 +131,7 @@ func (transport *HttpTransport) FetchBytes(ctx context.Context, config SourceCon
 		if err != nil {
 			return HttpDocument{}, err
 		}
-		closeResponse := func() { response.Body.Close(); release() }
+		closeResponse := func() { _ = response.Body.Close(); release() }
 		if isRedirectStatus(response.StatusCode) {
 			location, err = redirectLocation(response, location, redirect, closeResponse)
 			if err != nil {

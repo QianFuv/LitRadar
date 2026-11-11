@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"math"
 	"net/url"
 	"os"
@@ -95,7 +96,9 @@ func connectWorkset(filename, mode string) (*CrossrefWorkset, error) {
 	database.SetMaxOpenConns(1)
 	connection, err := database.Conn(context.Background())
 	if err != nil {
-		database.Close()
+		if err := database.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "database.Close", "error", err)
+		}
 		return nil, worksetStorageError(err)
 	}
 	return &CrossrefWorkset{database: database, connection: connection}, nil
@@ -110,14 +113,13 @@ func (workset *CrossrefWorkset) row(query string, values ...any) *sql.Row {
 	return workset.connection.QueryRowContext(context.Background(), query, values...)
 }
 
-// Close releases the connection without deleting resumable files.
+// Close releases the connection without deleting resumable files and permits repeated cleanup calls.
 func (workset *CrossrefWorkset) Close() error {
-	connectionErr := workset.connection.Close()
-	databaseErr := workset.database.Close()
-	if connectionErr != nil {
-		return worksetStorageError(connectionErr)
+	connectionError := workset.connection.Close()
+	if errors.Is(connectionError, sql.ErrConnDone) {
+		connectionError = nil
 	}
-	return worksetStorageError(databaseErr)
+	return worksetStorageError(errors.Join(connectionError, workset.database.Close()))
 }
 
 // CreateCrossrefWorkset exclusively creates a manifest before initializing the bounded database.
@@ -150,7 +152,9 @@ func CreateCrossrefWorkset(root, scope string, state CrossrefCheckpoint) (*Cross
 	workset.root, workset.owner, workset.state = root, owner, state.Clone()
 	err = workset.initializeWorksetDatabase(state, encodedOwner)
 	if err != nil {
-		workset.Close()
+		if err := workset.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "workset.Close", "error", err)
+		}
 		return nil, err
 	}
 	return workset, nil
@@ -221,7 +225,9 @@ func openExistingWorkset(root string, owner worksetOwner, checkpoint CrossrefChe
 	}
 	defer func() {
 		if result == nil {
-			workset.Close()
+			if err := workset.Close(); err != nil {
+				slog.Warn("cleanup.failed", "operation", "workset.Close", "error", err)
+			}
 		}
 	}()
 	if err := workset.validateWorksetSchema(); err != nil {

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"math"
 	"strconv"
 	"strings"
@@ -86,7 +88,7 @@ func (workset *CrossrefWorkset) HasUnknownGroups() (bool, error) {
 }
 
 // Emit reads at most 225 works and 16 MiB, selecting whole issue groups by their maximum date.
-func (workset *CrossrefWorkset) Emit(upper string, lower *string, after *EmissionKey) (EmissionPage, error) {
+func (workset *CrossrefWorkset) Emit(upper string, lower *string, after *EmissionKey) (resultValue1 EmissionPage, resultError error) {
 	page := EmissionPage{Works: []any{}, After: clonePointer(after)}
 	rank, sortDate, key, err := workset.emissionStart(after)
 	if err != nil {
@@ -98,11 +100,17 @@ ORDER BY w.group_rank,w.sort_date,w.key LIMIT 226`, upper, lower, rank, sortDate
 	if err != nil {
 		return page, worksetStorageError(err)
 	}
-	defer rows.Close()
+	defer func() {
+		if closeError := rows.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close rows: %w", closeError))
+		}
+	}()
 	var lookup *sql.Stmt
 	defer func() {
 		if lookup != nil {
-			lookup.Close()
+			if err := lookup.Close(); err != nil {
+				slog.Warn("cleanup.failed", "operation", "lookup.Close", "error", err)
+			}
 		}
 	}()
 	bytes := 0

@@ -17,7 +17,9 @@ import (
 func TestQrCompleteAfterPollingDeadline(t *testing.T) {
 	live, _ := loopbackLive(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		time.Sleep(1100 * time.Millisecond)
-		fmt.Fprint(writer, `{"data":{"status":"COMPLETE","data":" "}}`)
+		if _, err := fmt.Fprint(writer, `{"data":{"status":"COMPLETE","data":" "}}`); err != nil {
+			t.Errorf("fmt.Fprint: %v", err)
+		}
 	}), DefaultLiveConfig(), time.Time{})
 	token, err := live.PollQrLogin(context.Background(), "qr", 1, 0.1)
 	if err != nil || token != " " {

@@ -14,7 +14,9 @@ func TestActualSourceFailureLogsRetainCorrelationWithoutRequestSecrets(t *testin
 	live, server := loopbackLive(t, func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		response.WriteHeader(400)
-		io.WriteString(response, `{"error":"`+sentinel+`"}`)
+		if _, err := io.WriteString(response, `{"error":"`+sentinel+`"}`); err != nil {
+			t.Errorf("io.WriteString: %v", err)
+		}
 	}, 1, 1)
 	live.config.CrossrefMailtos = []string{sentinel}
 	if _, err := live.Request(ctx, Request{Service: Crossref, Endpoint: "journal_works", Issn: sentinel}); err == nil {

@@ -183,7 +183,9 @@ func decodeWorksetSequence(body []byte, value reflect.Value, seen []bool) error 
 // decodeWorksetObject rejects unknown and duplicate fields before decoding values.
 func decodeWorksetObject(body []byte, value reflect.Value, names map[string]int, seen []bool) error {
 	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.Token()
+	if _, err := decoder.Token(); err != nil {
+		return errWorksetJson
+	}
 	for decoder.More() {
 		name, err := decoder.Token()
 		if err != nil {
@@ -209,7 +211,9 @@ func decodeWorksetObject(body []byte, value reflect.Value, names map[string]int,
 func worksetObjectKind(body []byte) (string, error) {
 	var kind string
 	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.Token()
+	if _, err := decoder.Token(); err != nil {
+		return "", errWorksetJson
+	}
 	hasKind := false
 	for decoder.More() {
 		name, _ := decoder.Token()

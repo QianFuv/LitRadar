@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"strings"
@@ -304,7 +305,9 @@ func (workset *CrossrefWorkset) prepareCollectionWorks(items []any, phase Crossr
 	var lookup *sql.Stmt
 	defer func() {
 		if lookup != nil {
-			lookup.Close()
+			if err := lookup.Close(); err != nil {
+				slog.Warn("cleanup.failed", "operation", "lookup.Close", "error", err)
+			}
 		}
 	}()
 	for _, work := range items {
@@ -322,7 +325,9 @@ func (workset *CrossrefWorkset) insertCollectionWorks(prepared []preparedWork, p
 	var insert *sql.Stmt
 	defer func() {
 		if insert != nil {
-			insert.Close()
+			if err := insert.Close(); err != nil {
+				slog.Warn("cleanup.failed", "operation", "insert.Close", "error", err)
+			}
 		}
 	}()
 	for _, work := range prepared {
@@ -375,7 +380,7 @@ func (workset *CrossrefWorkset) resumeCollectionPartition(partition, first, last
 }
 
 // buildCollectionGroups constructs deterministic group ranks before publishing the ready phase.
-func (workset *CrossrefWorkset) buildCollectionGroups() error {
+func (workset *CrossrefWorkset) buildCollectionGroups() (resultError error) {
 	if err := workset.exec("INSERT INTO groups(fingerprint,anchor,date,year,volume,issue) SELECT fingerprint,min(anchor),max(date),max(year),max(volume),max(issue) FROM works INDEXED BY works_order GROUP BY fingerprint;"); err != nil {
 		return err
 	}
@@ -383,7 +388,11 @@ func (workset *CrossrefWorkset) buildCollectionGroups() error {
 	if err != nil {
 		return worksetStorageError(err)
 	}
-	defer rows.Close()
+	defer func() {
+		if closeError := rows.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close rows: %w", closeError))
+		}
+	}()
 	var rank int64
 	for rows.Next() {
 		rank++

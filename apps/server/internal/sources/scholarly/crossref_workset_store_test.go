@@ -19,6 +19,14 @@ func worksetTestState() CrossrefCheckpoint {
 	return CrossrefCheckpoint{Token: "0123456789abcdef0123456789abcdef", Issn: "1234-5679", FrozenAt: 2, Phase: CrossrefPhase{Kind: "discover"}}
 }
 
+// TestCrossrefWorksetCloseAfterExplicitClose verifies deferred cleanup preserves a successful close.
+func TestCrossrefWorksetCloseAfterExplicitClose(t *testing.T) {
+	workset := createTestWorkset(t, worksetTestState())
+	if err := workset.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCrossrefWorksetFullDiskRollsBackAndConnectionRemainsUsable(t *testing.T) {
 	workset := createTestWorkset(t, worksetTestState())
 	var pages int
@@ -77,10 +85,14 @@ func TestCrossrefWorksetNegativeVersionAndFileOnlyUnlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := workset.root
-	workset.Close()
+	if err := workset.Close(); err != nil {
+		t.Fatalf("workset.Close: %v", err)
+	}
 	restored, _, err := OpenCrossrefWorkset(root, "catalog", initial)
 	if err == nil {
-		restored.Close()
+		if err := restored.Close(); err != nil {
+			t.Fatalf("restored.Close: %v", err)
+		}
 		t.Fatal("negative version accepted")
 	}
 	failure, ok := err.(*provider.Error)
@@ -127,7 +139,11 @@ func createTestWorkset(t testing.TB, state CrossrefCheckpoint) *CrossrefWorkset 
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { workset.Close() })
+	t.Cleanup(func() {
+		if err := workset.Close(); err != nil {
+			t.Errorf("workset.Close: %v", err)
+		}
+	})
 	return workset
 }
 
@@ -165,7 +181,11 @@ func TestCrossrefWorksetSingletonReplayAndCoreEmission(t *testing.T) {
 	if err != nil || !replay || !reflect.DeepEqual(workset.Checkpoint(), complete) {
 		t.Fatalf("reopen: %v %v", replay, err)
 	}
-	defer workset.Close()
+	defer func() {
+		if err := workset.Close(); err != nil {
+			t.Errorf("workset.Close: %v", err)
+		}
+	}()
 	sealed, page := assertSingletonWorksetEmission(t, workset)
 	if err := workset.Close(); err != nil {
 		t.Fatal(err)
@@ -272,7 +292,9 @@ func TestCrossrefWorksetOwnershipAndDamageBoundary(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			workset.Close()
+			if err := workset.Close(); err != nil {
+				t.Errorf("workset.Close: %v", err)
+			}
 			paths, _ := worksetPaths(root, initial.Token)
 			switch mutation {
 			case "missing database":
@@ -294,7 +316,11 @@ func TestCrossrefWorksetOwnershipAndDamageBoundary(t *testing.T) {
 				if err != nil || !replay {
 					t.Fatalf("rebuild: %v %v", replay, err)
 				}
-				defer restored.Close()
+				defer func() {
+					if err := restored.Close(); err != nil {
+						t.Errorf("restored.Close: %v", err)
+					}
+				}()
 				if restored.state.Token == initial.Token || restored.state.Sequence != 1 {
 					t.Fatal(restored.state)
 				}
@@ -303,7 +329,9 @@ func TestCrossrefWorksetOwnershipAndDamageBoundary(t *testing.T) {
 				}
 			} else {
 				if err == nil {
-					restored.Close()
+					if err := restored.Close(); err != nil {
+						t.Errorf("restored.Close: %v", err)
+					}
 					t.Fatal("foreign or malformed context was accepted")
 				}
 				if _, err := os.Lstat(paths[0]); err != nil {
@@ -334,10 +362,14 @@ func TestCrossrefWorksetPreviousIsExactAndWindowIncludesWholeGroup(t *testing.T)
 		t.Fatal(err)
 	}
 	root := workset.root
-	workset.Close()
+	if err := workset.Close(); err != nil {
+		t.Fatalf("workset.Close: %v", err)
+	}
 	restored, _, err := OpenCrossrefWorkset(root, "catalog", before)
 	if err == nil {
-		restored.Close()
+		if err := restored.Close(); err != nil {
+			t.Fatalf("restored.Close: %v", err)
+		}
 		t.Fatal("semantically equivalent previous bytes must not qualify for replay")
 	}
 }
@@ -446,7 +478,9 @@ func TestCrossrefWorksetLargeCollectionsHaveNoJournalSizeCutoff(t *testing.T) {
 func TestCrossrefWorksetRejectsLinkedOwnedFiles(t *testing.T) {
 	workset := createTestWorkset(t, worksetTestState())
 	root, owner := workset.root, workset.owner
-	workset.Close()
+	if err := workset.Close(); err != nil {
+		t.Fatalf("workset.Close: %v", err)
+	}
 	paths, _ := worksetPaths(root, owner.Token)
 	if runtime.GOOS != "windows" {
 		alias := filepath.Join(t.TempDir(), "hardlink")
@@ -497,14 +531,20 @@ func assertSingletonCoreEmissionReplay(t *testing.T, root string, complete, seal
 	if err != nil || !replay || !reflect.DeepEqual(recovered.Checkpoint(), sealed) {
 		t.Fatalf("seal replay: %v %v", replay, err)
 	}
-	recovered.Close()
+	if err := recovered.Close(); err != nil {
+		t.Fatalf("recovered.Close: %v", err)
+	}
 	sealed.Sequence++
 	sealed.Phase.After = page.After
 	recovered, replay, err = OpenCrossrefWorkset(root, "catalog", sealed)
 	if err != nil || replay {
 		t.Fatalf("core emission: %v %v", replay, err)
 	}
-	defer recovered.Close()
+	defer func() {
+		if err := recovered.Close(); err != nil {
+			t.Errorf("recovered.Close: %v", err)
+		}
+	}()
 	empty, err := recovered.Emit("9999-12-31", nil, page.After)
 	if err != nil || len(empty.Works) != 0 || !reflect.DeepEqual(empty.After, page.After) {
 		t.Fatalf("empty tail: %+v %v", empty, err)

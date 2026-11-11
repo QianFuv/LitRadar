@@ -106,7 +106,9 @@ func decodeFieldSequence(body []byte, names []string, hasDefaults bool, values m
 // decodeFieldObject validates every raw key before applying unknown and duplicate policy.
 func decodeFieldObject(body []byte, known map[string]bool, denyUnknown bool, values map[string]json.RawMessage) error {
 	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.Token()
+	if _, err := decoder.Token(); err != nil {
+		return errFixtureJson
+	}
 	for decoder.More() {
 		before := decoder.InputOffset()
 		key, err := decoder.Token()

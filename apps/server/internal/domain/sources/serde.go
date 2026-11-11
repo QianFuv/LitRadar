@@ -65,7 +65,9 @@ func decodeContractSequence(data []byte, value reflect.Value, seen []bool) error
 // decodeContractObject rejects unknown or duplicate names before decoding their values.
 func decodeContractObject(data []byte, value reflect.Value, fields map[string]int, seen []bool) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.Token()
+	if _, err := decoder.Token(); err != nil {
+		return errContractJson
+	}
 	for decoder.More() {
 		key, err := decoder.Token()
 		if err != nil {
@@ -245,7 +247,9 @@ func (value *IndexSyncMode) UnmarshalJSON(data []byte) error {
 	data = bytes.TrimSpace(data)
 	if data[0] == '{' {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.Token()
+		if _, err := decoder.Token(); err != nil {
+			return errContractJson
+		}
 		if !decoder.More() {
 			return errContractJson
 		}

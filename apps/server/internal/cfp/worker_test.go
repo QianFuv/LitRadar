@@ -63,7 +63,11 @@ func workerRepository(t *testing.T, seed string) *storage.Repository {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { repository.Close() })
+	t.Cleanup(func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	})
 	if seed != "" {
 		if _, err := repository.ImportSeed(context.Background(), "fixture", []byte(seed)); err != nil {
 			t.Fatal(err)

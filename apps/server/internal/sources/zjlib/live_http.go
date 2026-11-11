@@ -97,7 +97,7 @@ func (live *LiveTransport) send(ctx context.Context, method, location, body stri
 		cancel()
 		return nil, func() {}, err
 	}
-	finish := func() { response.Body.Close(); cancel() }
+	finish := func() { _ = response.Body.Close(); cancel() }
 	return response, finish, nil
 }
 func redactUrl(value string) string {

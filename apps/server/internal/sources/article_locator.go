@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
@@ -29,7 +30,7 @@ func (names *locatorNames) Scan(value any) error {
 }
 
 // GetArticleLocator reads only canonical access metadata in one consistent joined query.
-func GetArticleLocator(ctx context.Context, configuration config.Config, name *string, id identity.Id) (domain.ArticleLocator, error) {
+func GetArticleLocator(ctx context.Context, configuration config.Config, name *string, id identity.Id) (resultValue1 domain.ArticleLocator, resultError error) {
 	filename, err := configuration.ResolveIndexDbPath(name)
 	if err != nil {
 		return domain.ArticleLocator{}, err
@@ -38,7 +39,11 @@ func GetArticleLocator(ctx context.Context, configuration config.Config, name *s
 	if err != nil {
 		return domain.ArticleLocator{}, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	var articleId storage.Integer
 	var catalog, title, journal storage.Text
 	var issns, authors locatorNames

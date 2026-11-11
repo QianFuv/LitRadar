@@ -26,7 +26,11 @@ func locatorDatabase(t *testing.T) (config.Config, *sql.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { database.Close() })
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	})
 	_, err = database.Exec(`CREATE TABLE journals(journal_id INTEGER PRIMARY KEY,catalog_id TEXT,title TEXT,issns_json TEXT);CREATE TABLE issues(issue_id INTEGER PRIMARY KEY,volume TEXT,number TEXT);CREATE TABLE articles(article_id INTEGER PRIMARY KEY,journal_id INTEGER,issue_id INTEGER,title TEXT,publication_year INTEGER,date TEXT,authors_json TEXT,start_page TEXT,end_page TEXT,doi TEXT,pmid TEXT);INSERT INTO journals VALUES(1,'canonical','Journal','["1234-5679"]');INSERT INTO issues VALUES(2,'4','5');INSERT INTO articles VALUES(9007199254740993,1,2,'Article',2026,'2026-05','["Alice","Bob"]','10','20','10.1234/test',NULL)`)
 	if err != nil {
 		t.Fatal(err)

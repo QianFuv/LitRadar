@@ -139,9 +139,13 @@ func decodeProxyPolicy(policy string) (map[string]any, error) {
 func validateProxyPolicyValues(policy string) error {
 	decoder := json.NewDecoder(strings.NewReader(policy))
 	decoder.UseNumber()
-	decoder.Token()
+	if _, err := decoder.Token(); err != nil {
+		return ErrProxyPolicy
+	}
 	for decoder.More() {
-		decoder.Token()
+		if _, err := decoder.Token(); err != nil {
+			return ErrProxyPolicy
+		}
 		var value any
 		if err := decoder.Decode(&value); err != nil {
 			return ErrProxyPolicy

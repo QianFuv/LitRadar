@@ -131,14 +131,14 @@ func (live LiveTransport) LogValue() slog.Value { return slog.StringValue(live.S
 
 // Clone shares the current cookie client and captcha cooldown while copying attempt history.
 func (live *LiveTransport) Clone() *LiveTransport {
-	enter(context.Background(), live.state.gate)
+	_ = enter(context.Background(), live.state.gate)
 	defer leave(live.state.gate)
 	return &LiveTransport{state: &liveState{gate: make(chan struct{}, 1), client: live.state.client, config: cloneConfig(live.state.config), proxy: live.state.proxy, deadline: live.state.deadline, shared: live.state.shared, attempts: live.Attempts(), solver: live.state.solver}}
 }
 
 // Close releases idle connections without affecting an active clone's requests.
 func (live *LiveTransport) Close() {
-	enter(context.Background(), live.state.gate)
+	_ = enter(context.Background(), live.state.gate)
 	defer leave(live.state.gate)
 	live.state.client.CloseIdleConnections()
 }
@@ -272,7 +272,7 @@ func (live *LiveTransport) send(ctx context.Context, deadline time.Time, method,
 	})
 	if err != nil {
 		if response != nil && response.Body != nil {
-			response.Body.Close()
+			_ = response.Body.Close()
 		}
 		cancel()
 		return nil, func() {}, err
@@ -448,7 +448,7 @@ func (live *LiveTransport) solveCaptcha(ctx context.Context, text, url string, g
 		if err != nil {
 			return CaptchaPuzzle{}, err
 		}
-		response.Body.Close()
+		_ = response.Body.Close()
 		finish()
 		body, err := CaptchaGetRequestBody(challenge)
 		if err != nil {
@@ -480,17 +480,17 @@ func (live *LiveTransport) captchaRequest(ctx context.Context, deadline time.Tim
 		return nil, func() {}, &Error{Kind: "Request", Message: "domestic CNKI " + endpoint + " request failed"}
 	}
 	if _, isLimited := live.state.shared.publishRateLimit(uint16(response.StatusCode), response.Header, time.Second); isLimited {
-		response.Body.Close()
+		_ = response.Body.Close()
 		finish()
 		return nil, func() {}, httpStatusError(429)
 	}
 	if _, err := parseDomesticUrl(response.Request.URL.String()); err != nil {
-		response.Body.Close()
+		_ = response.Body.Close()
 		finish()
 		return nil, func() {}, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		response.Body.Close()
+		_ = response.Body.Close()
 		finish()
 		return nil, func() {}, httpStatusError(uint16(response.StatusCode))
 	}
@@ -631,13 +631,13 @@ func (live *LiveTransport) admitTextResponse(response *http.Response, finish fun
 	status := uint16(response.StatusCode)
 	didRetry := budget.didRetry()
 	if _, err := parseDomesticUrl(finalUrl); err != nil {
-		response.Body.Close()
+		_ = response.Body.Close()
 		finish()
 		live.record(endpoint, method, requestUrl, &status, false, didRetry, textPointer("redirect URL rejected"))
 		return false, &Error{Kind: "Request", Message: "domestic CNKI redirect URL is not allowed"}
 	}
 	if delay, isLimited := live.state.shared.publishRateLimit(status, response.Header, retryDelay(budget.ordinaryAttempts)); isLimited {
-		response.Body.Close()
+		_ = response.Body.Close()
 		finish()
 		live.record(endpoint, method, requestUrl, &status, false, didRetry, textPointer("HTTP status"))
 		if _, ok := budget.ordinaryRetryDelay(); ok && transport.CanWait(delay.Duration(), deadline) {

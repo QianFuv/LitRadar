@@ -133,14 +133,18 @@ func (cache *captureCache) resume(path, sourceKey string) error {
 		return err
 	}
 	var documents []json.RawMessage
-	json.Unmarshal(saved["documents"], &documents)
+	if err := json.Unmarshal(saved["documents"], &documents); err != nil {
+		documents = nil
+	}
 	for _, raw := range documents {
 		if err := cache.restoreDocument(raw); err != nil {
 			return err
 		}
 	}
 	var attempts []json.RawMessage
-	json.Unmarshal(saved["browserAttempts"], &attempts)
+	if err := json.Unmarshal(saved["browserAttempts"], &attempts); err != nil {
+		attempts = nil
+	}
 	for _, raw := range attempts {
 		var url *string
 		if json.Unmarshal(raw, &url) == nil && url != nil {
@@ -301,10 +305,18 @@ func (cache *captureCache) restoreDocument(raw json.RawMessage) error {
 		return nil
 	}
 	var requested, url, text, format *string
-	json.Unmarshal(fields["requestedUrl"], &requested)
-	json.Unmarshal(fields["url"], &url)
-	json.Unmarshal(fields["text"], &text)
-	json.Unmarshal(fields["format"], &format)
+	if err := json.Unmarshal(fields["requestedUrl"], &requested); err != nil {
+		return nil
+	}
+	if err := json.Unmarshal(fields["url"], &url); err != nil {
+		return nil
+	}
+	if err := json.Unmarshal(fields["text"], &text); err != nil {
+		return nil
+	}
+	if err := json.Unmarshal(fields["format"], &format); err != nil {
+		return nil
+	}
 	if requested == nil || url == nil || text == nil || format == nil {
 		return nil
 	}
@@ -417,11 +429,17 @@ func savedCaptureEnvelope(data []byte, sourceKey string) (map[string]json.RawMes
 		return nil, &storage.PayloadError{Cause: fmt.Errorf("invalid saved capture JSON")}
 	}
 	var saved map[string]json.RawMessage
-	json.Unmarshal(data, &saved)
+	if err := json.Unmarshal(data, &saved); err != nil {
+		return nil, &storage.InvalidError{Message: "Saved capture journal identity does not match"}
+	}
 	var result map[string]json.RawMessage
-	json.Unmarshal(saved["result"], &result)
+	if err := json.Unmarshal(saved["result"], &result); err != nil {
+		return nil, &storage.InvalidError{Message: "Saved capture journal identity does not match"}
+	}
 	var key *string
-	json.Unmarshal(result["sourceKey"], &key)
+	if err := json.Unmarshal(result["sourceKey"], &key); err != nil {
+		return nil, &storage.InvalidError{Message: "Saved capture journal identity does not match"}
+	}
 	if key == nil || *key != sourceKey {
 		return nil, &storage.InvalidError{Message: "Saved capture journal identity does not match"}
 	}

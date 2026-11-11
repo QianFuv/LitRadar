@@ -62,8 +62,12 @@ func TestHttpRedirectBoundariesAndWireBehavior(t *testing.T) {
 				}
 				writer.Header().Set("Content-Encoding", "gzip")
 				compressed := gzip.NewWriter(writer)
-				compressed.Write([]byte("complete publisher text"))
-				compressed.Close()
+				if _, err := compressed.Write([]byte("complete publisher text")); err != nil {
+					t.Errorf("compressed.Write: %v", err)
+				}
+				if err := compressed.Close(); err != nil {
+					t.Errorf("compressed.Close: %v", err)
+				}
 			})
 			document, err := transport.FetchBytes(context.Background(), config, config.DiscoveryUrl, time.Now().Add(3*time.Second))
 			if !errors.Is(err, scenario.expected) || int(calls.Load()) != scenario.calls {
@@ -87,7 +91,9 @@ func TestHttpBodyBoundsAndNoPartialRetry(t *testing.T) {
 					writer.Header().Set("Content-Length", fmt.Sprint(MaxPageBytes+1))
 				case "partial":
 					writer.Header().Set("Content-Length", "100")
-					io.WriteString(writer, "short")
+					if _, err := io.WriteString(writer, "short"); err != nil {
+						t.Errorf("io.WriteString: %v", err)
+					}
 				default:
 					writer.Header().Set("Content-Encoding", "gzip")
 					compressed := gzip.NewWriter(writer)
@@ -95,8 +101,12 @@ func TestHttpBodyBoundsAndNoPartialRetry(t *testing.T) {
 					if scenario == "decoded-overflow" {
 						length++
 					}
-					io.WriteString(compressed, strings.Repeat("a", length))
-					compressed.Close()
+					if _, err := io.WriteString(compressed, strings.Repeat("a", length)); err != nil {
+						t.Errorf("io.WriteString: %v", err)
+					}
+					if err := compressed.Close(); err != nil {
+						t.Errorf("compressed.Close: %v", err)
+					}
 				}
 			})
 			document, err := transport.FetchBytes(context.Background(), config, config.DiscoveryUrl, time.Now().Add(5*time.Second))
@@ -161,7 +171,9 @@ func TestHttpConnectionCancellationAndDualStack(t *testing.T) {
 		if address == "8.8.8.8:80" {
 			ipv4.Store(true)
 			first, second := net.Pipe()
-			second.Close()
+			if err := second.Close(); err != nil {
+				t.Errorf("second.Close: %v", err)
+			}
 			return first, nil
 		}
 		<-ctx.Done()
@@ -173,7 +185,9 @@ func TestHttpConnectionCancellationAndDualStack(t *testing.T) {
 	if err != nil || !ipv4.Load() {
 		t.Fatal("IPv6 black hole prevented IPv4", err)
 	}
-	connection.Close()
+	if err := connection.Close(); err != nil {
+		t.Fatalf("connection.Close: %v", err)
+	}
 	requestCtx, requestCancel := context.WithCancel(context.Background())
 	requestCancel()
 	dialCtx := context.WithValue(context.Background(), requestContextKey{}, requestCtx)

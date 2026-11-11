@@ -61,17 +61,23 @@ func TestLiveDomesticFormsAndCookieClone(t *testing.T) {
 				t.Error(request.Header)
 			}
 			http.SetCookie(writer, &http.Cookie{Name: "shared", Value: "cookie", Domain: "cnki.net", Path: "/", Secure: true})
-			io.WriteString(writer, `<div id="YearIssueTree"><a id="yq202501" value="opaque">No.1</a></div>`)
+			if _, err := io.WriteString(writer, `<div id="YearIssueTree"><a id="yq202501" value="opaque">No.1</a></div>`); err != nil {
+				t.Errorf("io.WriteString: %v", err)
+			}
 		case "/knavi/journals/J/papers":
 			if cookie, err := request.Cookie("shared"); err != nil || cookie.Value != "cookie" {
 				t.Error("cookie not shared")
 			}
-			io.WriteString(writer, `<input id="articleCount" value="0">`)
+			if _, err := io.WriteString(writer, `<input id="articleCount" value="0">`); err != nil {
+				t.Errorf("io.WriteString: %v", err)
+			}
 		default:
 			if cookie, err := request.Cookie("shared"); err != nil || cookie.Value != "cookie" {
 				t.Error("clone cookie not shared")
 			}
-			io.WriteString(writer, minimalArticle)
+			if _, err := io.WriteString(writer, minimalArticle); err != nil {
+				t.Errorf("io.WriteString: %v", err)
+			}
 		}
 	}, time.Time{})
 	journal := map[string]any{"pykm": "J", "time": "a b+~", "detail_url": NaviBase + "/knavi/detail?x=1"}
@@ -112,7 +118,9 @@ func TestLiveDomesticResponsePrecedence(t *testing.T) {
 					writer.Header().Set("Content-Length", fmt.Sprint(test.length))
 				}
 				writer.WriteHeader(test.status)
-				io.WriteString(writer, test.body)
+				if _, err := io.WriteString(writer, test.body); err != nil {
+					t.Errorf("io.WriteString: %v", err)
+				}
 			}, time.Now().Add(500*time.Millisecond))
 			_, err := live.ArticleDetail(context.Background(), KnsBase+"/a", nil)
 			if err == nil || err.Error() != test.want {
@@ -188,16 +196,22 @@ func TestLiveDomesticCaptchaReplayKeepsCookieAndRedactsAttempts(t *testing.T) {
 				if cookie, err := request.Cookie("captcha"); err != nil || cookie.Value != "ok" {
 					t.Error("captcha cookie not replayed")
 				}
-				io.WriteString(writer, minimalArticle)
+				if _, err := io.WriteString(writer, minimalArticle); err != nil {
+					t.Errorf("io.WriteString: %v", err)
+				}
 				return
 			}
-			io.WriteString(writer, `{"code":-403,"message":"https://kns.cnki.net/verify/home?captchaId=solved-private-id&ident=private-ident"}`)
+			if _, err := io.WriteString(writer, `{"code":-403,"message":"https://kns.cnki.net/verify/home?captchaId=solved-private-id&ident=private-ident"}`); err != nil {
+				t.Errorf("io.WriteString: %v", err)
+			}
 		case "/verify/home":
 			if request.Header.Get("User-Agent") != browserUserAgent {
 				t.Error("page UA")
 			}
 			http.SetCookie(writer, &http.Cookie{Name: "captcha", Value: "ok", Path: "/", Secure: true})
-			io.WriteString(writer, "page body intentionally unread")
+			if _, err := io.WriteString(writer, "page body intentionally unread"); err != nil {
+				t.Errorf("io.WriteString: %v", err)
+			}
 		case "/verify-api/get", "/verify-api/web/check":
 			serveCaptchaJson(t, writer, request)
 		default:
@@ -221,10 +235,14 @@ func TestLiveDomesticRetryThenSuccess(t *testing.T) {
 	var count atomic.Int32
 	live := loopbackLive(t, func(writer http.ResponseWriter, request *http.Request) {
 		if count.Add(1) == 1 {
-			io.WriteString(writer, "incomplete")
+			if _, err := io.WriteString(writer, "incomplete"); err != nil {
+				t.Errorf("io.WriteString: %v", err)
+			}
 			return
 		}
-		io.WriteString(writer, minimalArticle)
+		if _, err := io.WriteString(writer, minimalArticle); err != nil {
+			t.Errorf("io.WriteString: %v", err)
+		}
 	}, time.Now().Add(4*time.Second))
 	article, err := live.ArticleDetail(context.Background(), KnsBase+"/article", nil)
 	if err != nil || field(article, "title") != "Article" {
@@ -237,7 +255,11 @@ func TestLiveDomesticRetryThenSuccess(t *testing.T) {
 }
 
 func TestLiveDomesticResetLeavesCloneCookies(t *testing.T) {
-	live := loopbackLive(t, func(writer http.ResponseWriter, request *http.Request) { io.WriteString(writer, minimalArticle) }, time.Time{})
+	live := loopbackLive(t, func(writer http.ResponseWriter, request *http.Request) {
+		if _, err := io.WriteString(writer, minimalArticle); err != nil {
+			t.Errorf("io.WriteString: %v", err)
+		}
+	}, time.Time{})
 	location, _ := url.Parse(KnsBase)
 	live.state.client.Jar.SetCookies(location, []*http.Cookie{{Name: "session", Value: "old", Path: "/"}})
 	clone := live.Clone()
@@ -269,7 +291,9 @@ func TestLiveDomesticRedirectUpdatesReferer(t *testing.T) {
 			writer.Header().Set("Location", KnsBase+"/last")
 			writer.WriteHeader(302)
 		default:
-			io.WriteString(writer, "YearIssueTree")
+			if _, err := io.WriteString(writer, "YearIssueTree"); err != nil {
+				t.Errorf("io.WriteString: %v", err)
+			}
 		}
 	}, time.Time{})
 	_, err := live.YearIssues(context.Background(), map[string]any{"pykm": "J", "detail_url": NaviBase + "/detail"})
@@ -301,14 +325,20 @@ func TestLiveDomesticRedirectNormalization(t *testing.T) {
 					writer.WriteHeader(302)
 					return
 				}
-				io.WriteString(writer, "done")
+				if _, err := io.WriteString(writer, "done"); err != nil {
+					t.Errorf("io.WriteString: %v", err)
+				}
 			}, time.Time{})
 			response, cancel, err := live.send(context.Background(), time.Now().Add(3*time.Second), "GET", KnsBase+"/start", nil, http.Header{})
 			defer cancel()
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer response.Body.Close()
+			defer func() {
+				if err := response.Body.Close(); err != nil {
+					t.Errorf("response.Body.Close: %v", err)
+				}
+			}()
 			if response.StatusCode != test.status || response.Request.URL.String() != test.final || int(calls.Load()) != test.calls {
 				t.Fatalf("status=%d final=%s calls=%d", response.StatusCode, response.Request.URL, calls.Load())
 			}
@@ -323,7 +353,9 @@ func TestLiveDomesticConcurrentClonesReuseCaptchaGeneration(t *testing.T) {
 		switch request.URL.Path {
 		case "/article":
 			if request.URL.Query().Get("captchaId") == "shared-id" {
-				io.WriteString(writer, minimalArticle)
+				if _, err := io.WriteString(writer, minimalArticle); err != nil {
+					t.Errorf("io.WriteString: %v", err)
+				}
 				return
 			}
 			if challenges.Add(1) == 2 {
@@ -334,13 +366,19 @@ func TestLiveDomesticConcurrentClonesReuseCaptchaGeneration(t *testing.T) {
 			case <-request.Context().Done():
 				return
 			}
-			io.WriteString(writer, `{"message":"https://kns.cnki.net/verify/home?captchaId=shared-id"}`)
+			if _, err := io.WriteString(writer, `{"message":"https://kns.cnki.net/verify/home?captchaId=shared-id"}`); err != nil {
+				t.Errorf("io.WriteString: %v", err)
+			}
 		case "/verify/home":
 			fetches.Add(1)
 		case "/verify-api/get":
-			io.WriteString(writer, `{"originalImageBase64":"original","jigsawImageBase64":"jigsaw","secretKey":"0123456789abcdef","token":"token"}`)
+			if _, err := io.WriteString(writer, `{"originalImageBase64":"original","jigsawImageBase64":"jigsaw","secretKey":"0123456789abcdef","token":"token"}`); err != nil {
+				t.Errorf("io.WriteString: %v", err)
+			}
 		case "/verify-api/web/check":
-			io.WriteString(writer, `{"success":true}`)
+			if _, err := io.WriteString(writer, `{"success":true}`); err != nil {
+				t.Errorf("io.WriteString: %v", err)
+			}
 		}
 	}, time.Now().Add(3*time.Second))
 	live.state.config.CaptchaToken = textPointer("token")
@@ -455,7 +493,9 @@ func serveCaptchaJson(t *testing.T, writer http.ResponseWriter, request *http.Re
 		if body["captchaId"] != "solved-private-id" || body["ident"] != "private-ident" {
 			t.Error(body)
 		}
-		json.NewEncoder(writer).Encode(map[string]any{"data": map[string]any{"originalImageBase64": "original", "jigsawImageBase64": "jigsaw", "secretKey": "0123456789abcdef", "token": "private-token"}})
+		if err := json.NewEncoder(writer).Encode(map[string]any{"data": map[string]any{"originalImageBase64": "original", "jigsawImageBase64": "jigsaw", "secretKey": "0123456789abcdef", "token": "private-token"}}); err != nil {
+			t.Fatalf("(*encoding/json.Encoder).Encode: %v", err)
+		}
 	} else {
 		if _, exists := body["captchaId"]; exists {
 			t.Error("check leaked captchaId")
@@ -463,7 +503,9 @@ func serveCaptchaJson(t *testing.T, writer http.ResponseWriter, request *http.Re
 		if len(body) != 5 || body["token"] != "private-token" {
 			t.Error(body)
 		}
-		io.WriteString(writer, `{"success":true}`)
+		if _, err := io.WriteString(writer, `{"success":true}`); err != nil {
+			t.Fatalf("io.WriteString: %v", err)
+		}
 	}
 }
 

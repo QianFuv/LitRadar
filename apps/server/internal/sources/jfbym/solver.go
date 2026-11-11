@@ -146,7 +146,7 @@ func (solver *Live) SolveDualImage(ctx context.Context, slideImage, backgroundIm
 		return 0, failure(Request, "jfbym request failed")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		response.Body.Close()
+		_ = response.Body.Close()
 		return 0, failure(Request, fmt.Sprintf("jfbym HTTP status %d", response.StatusCode))
 	}
 	return recognitionDistance(response)

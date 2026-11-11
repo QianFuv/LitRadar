@@ -44,7 +44,7 @@ func (client *Client) leave() { <-client.state.gate }
 
 // LoadStateData replaces token, QR, warm-up state and cookies using the original permissive projection.
 func (client *Client) LoadStateData(value any) {
-	client.enter(context.Background())
+	_ = client.enter(context.Background())
 	defer client.leave()
 	client.state.token = textField(value, "bff_user_token")
 	client.state.qrUuid = textField(value, "qr_uuid")
@@ -63,7 +63,7 @@ func (client *Client) LoadStateData(value any) {
 
 // StateData explicitly exports private session state for encrypted persistence.
 func (client *Client) StateData() map[string]any {
-	client.enter(context.Background())
+	_ = client.enter(context.Background())
 	defer client.leave()
 	cookies := []any{}
 	for _, cookie := range client.state.transport.Cookies() {
@@ -128,7 +128,7 @@ func (client *Client) isFresh(now int64) bool {
 
 // HasFreshFulltextSession checks one-hour warmth, known JWT expiry and the proxy session cookie.
 func (client *Client) HasFreshFulltextSession(now *int64) bool {
-	client.enter(context.Background())
+	_ = client.enter(context.Background())
 	defer client.leave()
 	instant := client.state.now()
 	if now != nil {

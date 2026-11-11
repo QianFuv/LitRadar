@@ -48,13 +48,17 @@ func TestLiveRequestAndFailureBoundaries(t *testing.T) {
 					t.Error(err)
 				}
 				var payload map[string]string
-				json.Unmarshal(body, &payload)
+				if err := json.Unmarshal(body, &payload); err != nil {
+					t.Errorf("json.Unmarshal: %v", err)
+				}
 				if !reflect.DeepEqual(payload, map[string]string{"token": "secret-token", "type": "20111", "slide_image": "slide-image", "background_image": "background-image"}) {
 					t.Error("request body mismatch")
 				}
 				writer.Header().Set("Location", "http://127.0.0.1:9/must-not-follow")
 				writer.WriteHeader(test.status)
-				io.WriteString(writer, test.body)
+				if _, err := io.WriteString(writer, test.body); err != nil {
+					t.Errorf("io.WriteString: %v", err)
+				}
 			}))
 			defer server.Close()
 			solver, err := NewLive("secret-token", 2, transport.Proxy{}, time.Time{})
@@ -124,7 +128,9 @@ func TestLiveBodyCancellationAndTruncation(t *testing.T) {
 		t.Run(strconv.FormatBool(isTruncated), func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				writer.Header().Set("Content-Length", "100")
-				io.WriteString(writer, `{"code":`)
+				if _, err := io.WriteString(writer, `{"code":`); err != nil {
+					t.Errorf("io.WriteString: %v", err)
+				}
 				writer.(http.Flusher).Flush()
 				if !isTruncated {
 					<-request.Context().Done()

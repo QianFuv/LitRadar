@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -96,7 +97,9 @@ func RefreshSource(ctx context.Context, repository *storage.Repository, config S
 // publishAcquisition preserves publication failure even when recording that failure also fails.
 func publishAcquisition(databaseCtx context.Context, repository *storage.Repository, lease storage.RefreshLease, config SourceConfig, publication storage.Publication) (RefreshResult, error) {
 	if err := repository.PublishRefresh(databaseCtx, lease, publication, utcNow().Unix()); err != nil {
-		repository.FailRefresh(databaseCtx, lease, "Source publication failed or was superseded", false)
+		if err := repository.FailRefresh(databaseCtx, lease, "Source publication failed or was superseded", false); err != nil {
+			slog.Warn("cleanup.failed", "operation", "repository.FailRefresh", "error", err)
+		}
 		return RefreshResult{}, err
 	}
 	return RefreshResult{SourceKey: config.SourceKey, CatalogId: config.CatalogIds[0], Status: "success", Notices: uint64(len(publication.Sources))}, nil

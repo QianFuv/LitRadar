@@ -36,7 +36,11 @@ func TestOpenAlexVolumeErratumPreservesExistingIdentities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { connection.Close() })
+	t.Cleanup(func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("connection.Close: %v", err)
+		}
+	})
 	seed := domain.BatchFromArticles(catalog, []domain.ArticleDraft{first, second}, domain.ProviderProgress{State: domain.Complete})
 	if _, err := storage.WriteContentBatch(ctx, connection.Conn, catalog, seed, "seed", "epoch"); err != nil {
 		t.Fatal(err)
@@ -136,7 +140,9 @@ func snapshotErratumOwner(t *testing.T, connection *sql.Conn, id int64) map[stri
 		}
 		columns, err := rows.Columns()
 		if err != nil {
-			rows.Close()
+			if err := rows.Close(); err != nil {
+				t.Fatalf("rows.Close: %v", err)
+			}
 			t.Fatal(err)
 		}
 		for rows.Next() {
@@ -146,16 +152,22 @@ func snapshotErratumOwner(t *testing.T, connection *sql.Conn, id int64) map[stri
 				destinations[ordinal] = &record[ordinal]
 			}
 			if err := rows.Scan(destinations...); err != nil {
-				rows.Close()
+				if err := rows.Close(); err != nil {
+					t.Fatalf("rows.Close: %v", err)
+				}
 				t.Fatal(err)
 			}
 			result[table] = append(result[table], record)
 		}
 		if err := rows.Err(); err != nil {
-			rows.Close()
+			if err := rows.Close(); err != nil {
+				t.Fatalf("rows.Close: %v", err)
+			}
 			t.Fatal(err)
 		}
-		rows.Close()
+		if err := rows.Close(); err != nil {
+			t.Fatalf("rows.Close: %v", err)
+		}
 	}
 	return result
 }

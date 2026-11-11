@@ -25,7 +25,9 @@ func TestRealPackagedHelpers(t *testing.T) {
 	assertPackagedHardening(t)
 	directory := t.TempDir()
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		fmt.Fprint(writer, `<html><body><main id="result">before</main><script>document.getElementById('result').textContent='original rendered '+(2+2)</script></body></html>`)
+		if _, err := fmt.Fprint(writer, `<html><body><main id="result">before</main><script>document.getElementById('result').textContent='original rendered '+(2+2)</script></body></html>`); err != nil {
+			t.Errorf("fmt.Fprint: %v", err)
+		}
 	}))
 	defer server.Close()
 	config := SourceConfig{AllowedUrls: []UrlRule{{Host: "127.0.0.1", PathPrefix: "/"}}}
@@ -96,7 +98,11 @@ func assertPackagedHardening(t *testing.T) {
 func assertPackagedPdfExtraction(t *testing.T, transport *LiveTransport) {
 	t.Helper()
 	pdf := syntheticPdf("LitRadar 征稿原文")
-	httpTransport, publicConfig := publicFixture(t, func(writer http.ResponseWriter, request *http.Request) { writer.Write([]byte(pdf)) })
+	httpTransport, publicConfig := publicFixture(t, func(writer http.ResponseWriter, request *http.Request) {
+		if _, err := writer.Write([]byte(pdf)); err != nil {
+			t.Errorf("writer.Write: %v", err)
+		}
+	})
 	transport.http.Close()
 	transport.http = httpTransport
 	document, err := transport.httpDocument(context.Background(), publicConfig, publicConfig.DiscoveryUrl, time.Now().Add(15*time.Second))

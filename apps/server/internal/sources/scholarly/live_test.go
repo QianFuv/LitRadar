@@ -53,10 +53,14 @@ func TestLiveSourceWireQueriesAndCursorTermination(t *testing.T) {
 		}
 		received = append(received, request.URL.RequestURI())
 		if strings.Contains(request.URL.Path, "journals") {
-			io.WriteString(response, `{"message":{"total-results":0,"items":[],"next-cursor":null}}`)
+			if _, err := io.WriteString(response, `{"message":{"total-results":0,"items":[],"next-cursor":null}}`); err != nil {
+				t.Errorf("io.WriteString: %v", err)
+			}
 		} else {
 			response.Header().Set("x-ratelimit-remaining", "1000")
-			io.WriteString(response, `{"results":[{"id":"W1"}],"meta":{"next_cursor":"stale"}}`)
+			if _, err := io.WriteString(response, `{"results":[{"id":"W1"}],"meta":{"next_cursor":"stale"}}`); err != nil {
+				t.Errorf("io.WriteString: %v", err)
+			}
 		}
 	}, 1, 1)
 	client := NewClient(live, true)
@@ -91,9 +95,13 @@ func TestSemanticAuthenticationIsolationAndRequestBody(t *testing.T) {
 		}
 		if key == "s2-secret-0" {
 			response.WriteHeader(401)
-			io.WriteString(response, `{"error":"private upstream diagnostic"}`)
+			if _, err := io.WriteString(response, `{"error":"private upstream diagnostic"}`); err != nil {
+				t.Errorf("io.WriteString: %v", err)
+			}
 		} else {
-			io.WriteString(response, `[{"externalIds":{"DOI":"10.1/a"}}]`)
+			if _, err := io.WriteString(response, `[{"externalIds":{"DOI":"10.1/a"}}]`); err != nil {
+				t.Errorf("io.WriteString: %v", err)
+			}
 		}
 	}, 2, 1)
 	client := NewClient(live, true)
@@ -112,9 +120,13 @@ func TestSemanticInvalidJsonIgnoresRetryAfter(t *testing.T) {
 	live, _ := loopbackLive(t, func(response http.ResponseWriter, request *http.Request) {
 		if calls.Add(1) == 1 {
 			response.Header().Set("Retry-After", "18446744073709551615")
-			io.WriteString(response, "invalid JSON")
+			if _, err := io.WriteString(response, "invalid JSON"); err != nil {
+				t.Errorf("io.WriteString: %v", err)
+			}
 		} else {
-			io.WriteString(response, "[]")
+			if _, err := io.WriteString(response, "[]"); err != nil {
+				t.Errorf("io.WriteString: %v", err)
+			}
 		}
 	}, 2, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -177,7 +189,9 @@ func TestLiveRejectsRedirectCredentialForwarding(t *testing.T) {
 			live, _ := loopbackLive(t, func(response http.ResponseWriter, request *http.Request) {
 				response.Header().Set("Location", destination.URL)
 				response.WriteHeader(307)
-				io.WriteString(response, `{}`)
+				if _, err := io.WriteString(response, `{}`); err != nil {
+					t.Errorf("io.WriteString: %v", err)
+				}
 			}, 1, 1)
 			var err error
 			switch service {
@@ -208,7 +222,9 @@ func TestLiveMalformedRedirectRemainsTerminal(t *testing.T) {
 					calls.Add(1)
 					response.Header().Set("Location", location)
 					response.WriteHeader(302)
-					io.WriteString(response, `{}`)
+					if _, err := io.WriteString(response, `{}`); err != nil {
+						t.Errorf("io.WriteString: %v", err)
+					}
 				}, 1, 1)
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
@@ -235,7 +251,11 @@ func (wire *sourcePanicTransport) RoundTrip(request *http.Request) (*http.Respon
 }
 
 func TestOpenAlexWorkerPanicIsJoinedAndReleasesAdmission(t *testing.T) {
-	live, _ := loopbackLive(t, func(response http.ResponseWriter, request *http.Request) { io.WriteString(response, `{"results":[]}`) }, 2, 2)
+	live, _ := loopbackLive(t, func(response http.ResponseWriter, request *http.Request) {
+		if _, err := io.WriteString(response, `{"results":[]}`); err != nil {
+			t.Errorf("io.WriteString: %v", err)
+		}
+	}, 2, 2)
 	live.client.Transport = &sourcePanicTransport{delegate: live.client.Transport}
 	_, err := live.RequestOpenAlexDoiBatches(context.Background(), [][]string{{"10.1/a"}, {"10.1/b"}, {"10.1/c"}})
 	var failure *Error
@@ -266,7 +286,9 @@ func TestOpenAlexPublishesThrottleBeforeBody(t *testing.T) {
 		response.WriteHeader(429)
 		response.(http.Flusher).Flush()
 		<-release
-		io.WriteString(response, `{"error":"slow rate limit"}`)
+		if _, err := io.WriteString(response, `{"error":"slow rate limit"}`); err != nil {
+			t.Errorf("io.WriteString: %v", err)
+		}
 	}, 1, 1)
 	remaining := uint64(1000)
 	live.openAlex.state.Slots[0].Remaining = &remaining
@@ -323,7 +345,9 @@ func TestOpenAlexConcurrentBatchesReturnInputOrder(t *testing.T) {
 		}
 		doi := strings.TrimPrefix(request.URL.Query().Get("filter"), "doi:")
 		response.Header().Set("x-ratelimit-remaining", "1000")
-		fmt.Fprintf(response, `{"results":[{"doi":%q}]}`, doi)
+		if _, err := fmt.Fprintf(response, `{"results":[{"doi":%q}]}`, doi); err != nil {
+			t.Errorf("fmt.Fprintf: %v", err)
+		}
 	}, 1, 3)
 	remaining := uint64(1000)
 	live.openAlex.state.Slots[0].Remaining = &remaining
@@ -384,11 +408,15 @@ func TestOpenAlexFailureStopsNewBatchAdmissions(t *testing.T) {
 		}
 		if request.URL.Query().Get("filter") == "doi:first" {
 			response.WriteHeader(400)
-			io.WriteString(response, `{"error":"stop"}`)
+			if _, err := io.WriteString(response, `{"error":"stop"}`); err != nil {
+				t.Errorf("io.WriteString: %v", err)
+			}
 		} else {
 			<-secondRelease
 			response.Header().Set("x-ratelimit-remaining", "1000")
-			io.WriteString(response, `{"results":[]}`)
+			if _, err := io.WriteString(response, `{"results":[]}`); err != nil {
+				t.Errorf("io.WriteString: %v", err)
+			}
 		}
 	}, 1, 2)
 	remaining := uint64(1000)
@@ -422,7 +450,9 @@ func TestOpenAlexFailureStopsNewBatchAdmissions(t *testing.T) {
 func TestLiveCloneKeepsSemanticHealthIndependent(t *testing.T) {
 	live, _ := loopbackLive(t, func(response http.ResponseWriter, request *http.Request) {
 		response.WriteHeader(401)
-		io.WriteString(response, `{}`)
+		if _, err := io.WriteString(response, `{}`); err != nil {
+			t.Errorf("io.WriteString: %v", err)
+		}
 	}, 1, 1)
 	cloned := live.Clone()
 	_, err := NewClient(live, true).FetchSemanticScholarByDois(context.Background(), []string{"a"}, 1)

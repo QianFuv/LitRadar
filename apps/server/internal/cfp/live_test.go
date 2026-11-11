@@ -109,7 +109,9 @@ func TestHelperLifecycleAndWholeTreeOwnership(t *testing.T) {
 				}
 				connection, err := net.DialTimeout("tcp", string(address), time.Second)
 				if err == nil {
-					connection.Close()
+					if err := connection.Close(); err != nil {
+						t.Errorf("connection.Close: %v", err)
+					}
 					t.Fatal("successful leader left a live descendant")
 				}
 			}
@@ -149,7 +151,11 @@ func TestPdfHelperFaithfulTextAndArguments(t *testing.T) {
 	}{{"success", "first line\nsecond line\n", nil}, {"success", " \n", ErrUnrecognized}, {"invalid-utf8", "", ErrEncoding}} {
 		t.Run(scenario.mode+scenario.text, func(t *testing.T) {
 			path := helperExecutable(t, scenario.mode, scenario.text)
-			httpTransport, config := publicFixture(t, func(writer http.ResponseWriter, request *http.Request) { writer.Write([]byte("%PDF-fixture")) })
+			httpTransport, config := publicFixture(t, func(writer http.ResponseWriter, request *http.Request) {
+				if _, err := writer.Write([]byte("%PDF-fixture")); err != nil {
+					t.Errorf("writer.Write: %v", err)
+				}
+			})
 			transport := &LiveTransport{http: httpTransport, options: RefreshOptions{PdftotextPath: &path}}
 			document, err := transport.httpDocument(context.Background(), config, config.DiscoveryUrl, time.Now().Add(10*time.Second))
 			if !errors.Is(err, scenario.expected) {
@@ -191,7 +197,9 @@ func runDescendantFixture() {
 	if err != nil {
 		os.Exit(30)
 	}
-	os.WriteFile(os.Getenv("LITRADAR_CFP_MARKER"), []byte(listener.Addr().String()), 0600)
+	if err := os.WriteFile(os.Getenv("LITRADAR_CFP_MARKER"), []byte(listener.Addr().String()), 0600); err != nil {
+		os.Exit(99)
+	}
 	for {
 		time.Sleep(time.Second)
 	}
@@ -222,8 +230,12 @@ func runBlockingFixture(mode, output string) {
 	}
 	if mode == "overflow" {
 		file, _ := os.Create(output)
-		file.Truncate(MaxPageBytes + 1)
-		file.Close()
+		if err := file.Truncate(MaxPageBytes + 1); err != nil {
+			os.Exit(99)
+		}
+		if err := file.Close(); err != nil {
+			os.Exit(99)
+		}
 		for {
 			time.Sleep(time.Second)
 		}
@@ -260,7 +272,9 @@ func startFixtureDescendant() {
 func assertResumeEnvelopeIdentity(t *testing.T, path string) {
 	t.Helper()
 	for _, payload := range []string{`[]`, `1`, `null`, `"value"`} {
-		os.WriteFile(path, []byte(payload), 0600)
+		if err := os.WriteFile(path, []byte(payload), 0600); err != nil {
+			t.Fatalf("os.WriteFile: %v", err)
+		}
 		if err := newCaptureCache().resume(path, "journal:a"); err == nil || err.Error() != "Saved capture journal identity does not match" {
 			t.Fatal(payload, err)
 		}

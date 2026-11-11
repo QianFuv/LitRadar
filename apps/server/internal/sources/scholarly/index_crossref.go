@@ -3,6 +3,7 @@ package scholarly
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"reflect"
 	"slices"
@@ -10,7 +11,7 @@ import (
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
 )
 
-func (index *IndexProvider) startWorkset(catalog domain.JournalCatalogEntry, window indexWindow, issn string, frozen int64, createdFrom *int64) (domain.ProviderBatch, error) {
+func (index *IndexProvider) startWorkset(catalog domain.JournalCatalogEntry, window indexWindow, issn string, frozen int64, createdFrom *int64) (resultValue1 domain.ProviderBatch, resultError error) {
 	state, err := NewCrossrefCheckpoint(issn, frozen, indexWindowFilter(window, indexDate(frozen)))
 	if err != nil {
 		return domain.ProviderBatch{}, err
@@ -28,7 +29,11 @@ func (index *IndexProvider) startWorkset(catalog domain.JournalCatalogEntry, win
 	if err != nil {
 		return domain.ProviderBatch{}, err
 	}
-	defer workset.Close()
+	defer func() {
+		if closeError := workset.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close workset: %w", closeError))
+		}
+	}()
 	return continueIndexBatch(catalog, window, indexSource{Kind: "crossref_workset", State: new(workset.Checkpoint())}, nil)
 }
 
@@ -62,7 +67,7 @@ func (index *IndexProvider) nextJournalSource(ctx context.Context, catalog domai
 	return index.fetchOpenAlex(ctx, catalog, window, nil)
 }
 
-func (index *IndexProvider) fetchWorkset(ctx context.Context, catalog domain.JournalCatalogEntry, window indexWindow, state CrossrefCheckpoint) (domain.ProviderBatch, error) {
+func (index *IndexProvider) fetchWorkset(ctx context.Context, catalog domain.JournalCatalogEntry, window indexWindow, state CrossrefCheckpoint) (resultValue1 domain.ProviderBatch, resultError error) {
 	if !slices.Contains(domain.CatalogIssns(catalog), state.Issn) {
 		return domain.ProviderBatch{}, invalidWorkset("Crossref checkpoint ISSN does not belong to the catalog")
 	}
@@ -80,7 +85,11 @@ func (index *IndexProvider) fetchWorkset(ctx context.Context, catalog domain.Jou
 	if err != nil {
 		return domain.ProviderBatch{}, err
 	}
-	defer workset.Close()
+	defer func() {
+		if closeError := workset.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close workset: %w", closeError))
+		}
+	}()
 	if replay {
 		return replayedCrossrefBatch(catalog, window, workset.Checkpoint())
 	}

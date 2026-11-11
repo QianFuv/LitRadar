@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -78,7 +80,11 @@ func (transport *LiveTransport) httpDocument(ctx context.Context, config SourceC
 		if err != nil {
 			return Document{}, ErrHelper
 		}
-		defer os.RemoveAll(directory)
+		defer func() {
+			if err := os.RemoveAll(directory); err != nil {
+				slog.Warn("cleanup.failed", "operation", "os.RemoveAll", "error", err)
+			}
+		}()
 		input, output := filepath.Join(directory, "source.pdf"), filepath.Join(directory, "source.txt")
 		if os.WriteFile(input, response.Bytes, 0600) != nil {
 			return Document{}, ErrHelper
@@ -114,7 +120,11 @@ func (transport *LiveTransport) obscuraDocument(ctx context.Context, config Sour
 	if err != nil {
 		return Document{}, ErrHelper
 	}
-	defer os.RemoveAll(directory)
+	defer func() {
+		if err := os.RemoveAll(directory); err != nil {
+			slog.Warn("cleanup.failed", "operation", "os.RemoveAll", "error", err)
+		}
+	}()
 	output := filepath.Join(directory, "page.json")
 	seconds := strconv.FormatInt(max(1, min(40, int64(time.Until(deadline)/time.Second))), 10)
 	args := []string{"fetch", url, "--stealth", "--timeout", seconds, "--eval", obscuraEval, "--quiet", "--output", output}
@@ -195,7 +205,7 @@ func (transport *LiveTransport) Fetch(ctx context.Context, config SourceConfig, 
 }
 
 // runHelper retains tree ownership until cleanup, including after an apparently successful leader exit.
-func runHelper(ctx context.Context, config process.Config, deadline time.Time, output string) ([]byte, error) {
+func runHelper(ctx context.Context, config process.Config, deadline time.Time, output string) (resultValue1 []byte, resultError error) {
 	if err := check(ctx, deadline); err != nil {
 		return nil, err
 	}
@@ -203,8 +213,14 @@ func runHelper(ctx context.Context, config process.Config, deadline time.Time, o
 	if err != nil {
 		return nil, ErrHelper
 	}
-	child.Stdin.Close()
-	defer child.Close()
+	if err := child.Stdin.Close(); err != nil {
+		slog.Warn("cleanup.failed", "operation", "child.Stdin.Close", "error", err)
+	}
+	defer func() {
+		if closeError := child.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close child: %w", closeError))
+		}
+	}()
 	if err := waitForHelper(ctx, child, deadline, output); err != nil {
 		return nil, err
 	}
@@ -212,12 +228,16 @@ func runHelper(ctx context.Context, config process.Config, deadline time.Time, o
 }
 
 // readHelperOutput bounds file bytes before final deadline admission and closes the file.
-func readHelperOutput(output string, deadline time.Time) ([]byte, error) {
+func readHelperOutput(output string, deadline time.Time) (resultValue1 []byte, resultError error) {
 	file, err := os.Open(output)
 	if err != nil {
 		return nil, ErrHelper
 	}
-	defer file.Close()
+	defer func() {
+		if closeError := file.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close file: %w", closeError))
+		}
+	}()
 	data, err := io.ReadAll(io.LimitReader(file, MaxPageBytes+1))
 	if err != nil {
 		return nil, ErrHelper

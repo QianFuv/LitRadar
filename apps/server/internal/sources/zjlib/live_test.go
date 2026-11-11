@@ -108,7 +108,9 @@ func TestLiveQrResponseErrors(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			live, _ := loopbackLive(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 				writer.WriteHeader(test.status)
-				fmt.Fprint(writer, test.body)
+				if _, err := fmt.Fprint(writer, test.body); err != nil {
+					t.Errorf("fmt.Fprint: %v", err)
+				}
 			}), DefaultLiveConfig(), time.Time{})
 			_, err := live.StartQrLogin(context.Background())
 			if err == nil || err.(*Error).Kind != test.kind || !strings.HasPrefix(err.Error(), test.message) {
@@ -121,7 +123,9 @@ func TestLivePollTerminalAndTimeout(t *testing.T) {
 	for _, status := range []string{"EXPIRED", "CANCEL", "CANCELED", "FAIL", "FAILED", "COMPLETE", "WAITING_SCAN"} {
 		t.Run(status, func(t *testing.T) {
 			live, _ := loopbackLive(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-				fmt.Fprintf(writer, `{"data":{"status":%q}}`, status)
+				if _, err := fmt.Fprintf(writer, `{"data":{"status":%q}}`, status); err != nil {
+					t.Errorf("fmt.Fprintf: %v", err)
+				}
 			}), DefaultLiveConfig(), time.Time{})
 			_, err := live.PollQrLogin(context.Background(), "qr", 0, 0.1)
 			if err == nil {
@@ -165,7 +169,9 @@ func TestLiveDocumentBoundsAndRecognition(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			live, server := loopbackLive(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 				writer.Header().Set("Content-Type", test.contentType)
-				fmt.Fprint(writer, test.body)
+				if _, err := fmt.Fprint(writer, test.body); err != nil {
+					t.Errorf("fmt.Fprint: %v", err)
+				}
 			}), LiveConfig{TimeoutSeconds: 5, MaximumDocumentBytes: test.limit}, time.Time{})
 			pdf, err := live.DownloadPdf(context.Background(), server.URL+"/proxy/download.aspx?filetitle=Named+Article&token=private", nil, nil)
 			if (err == nil) != test.success {
@@ -234,7 +240,9 @@ func TestLiveRedirectAndTruncatedPdfClassification(t *testing.T) {
 				}
 				writer.Header().Set("Content-Type", "application/pdf")
 				writer.Header().Set("Content-Length", "40")
-				fmt.Fprint(writer, "%PDF-short")
+				if _, err := fmt.Fprint(writer, "%PDF-short"); err != nil {
+					t.Errorf("fmt.Fprint: %v", err)
+				}
 			}), DefaultLiveConfig(), time.Time{})
 			_, err := live.DownloadPdf(context.Background(), server.URL+"/proxy/download.aspx", nil, nil)
 			if err == nil || err.Error() != test.expected {
@@ -266,7 +274,9 @@ func TestLiveProxyLoginRetriesOnlyRecognizedLoop(t *testing.T) {
 				base := "http://" + request.Host
 				switch request.URL.Path {
 				case "/www/bff-api/portal-admin-service/open-api/build-and-share/ssoLoginUrl":
-					fmt.Fprintf(writer, `{"data":%q}`, base+"/share/sso")
+					if _, err := fmt.Fprintf(writer, `{"data":%q}`, base+"/share/sso"); err != nil {
+						t.Errorf("fmt.Fprintf: %v", err)
+					}
 				case "/share/sso", "/share/entry/area/35594/2120", "/share/engine2/header/user-info":
 				case "/share/sso/api/auth/library/vpn358":
 					attempts.Add(1)
@@ -278,7 +288,9 @@ func TestLiveProxyLoginRetriesOnlyRecognizedLoop(t *testing.T) {
 					case "foreign":
 						http.Redirect(writer, request, "https://example.com/private", 302)
 					case "wrong-host":
-						fmt.Fprint(writer, "login page")
+						if _, err := fmt.Fprint(writer, "login page"); err != nil {
+							t.Errorf("fmt.Fprint: %v", err)
+						}
 					case "missing-location":
 						writer.WriteHeader(302)
 					case "hop-limit":
@@ -337,7 +349,9 @@ func TestLiveSharedDeadlineStopsProxyRetrySleep(t *testing.T) {
 		base := "http://" + request.Host
 		switch request.URL.Path {
 		case "/www/bff-api/portal-admin-service/open-api/build-and-share/ssoLoginUrl":
-			fmt.Fprintf(writer, `{"data":%q}`, base+"/share/sso")
+			if _, err := fmt.Fprintf(writer, `{"data":%q}`, base+"/share/sso"); err != nil {
+				t.Errorf("fmt.Fprintf: %v", err)
+			}
 		case "/share/sso", "/share/entry/area/35594/2120", "/share/engine2/header/user-info":
 		case "/share/sso/api/auth/library/vpn358":
 			attempts.Add(1)
@@ -368,7 +382,9 @@ func TestLiveHttpRedirectNormalizesBeforeFamilyValidation(t *testing.T) {
 					writer.Header()["Location"] = []string{test.location}
 					writer.WriteHeader(302)
 				}
-				fmt.Fprint(writer, "%PDF")
+				if _, err := fmt.Fprint(writer, "%PDF"); err != nil {
+					t.Errorf("fmt.Fprint: %v", err)
+				}
 			}), DefaultLiveConfig(), time.Time{})
 			_, err := live.DownloadPdf(context.Background(), server.URL+"/proxy/start", nil, nil)
 			if err != nil || count.Load() != test.requests {
@@ -386,16 +402,22 @@ func serveLoginChallenge(t *testing.T, writer http.ResponseWriter, request *http
 		if request.Header.Get("Bff-Org-Id") != "1916318653650423810" {
 			t.Error("organization header missing")
 		}
-		fmt.Fprint(writer, `{"success":true,"data":{"uuid":"qr","qrCode":"image","status":"WAITING_SCAN"}}`)
+		if _, err := fmt.Fprint(writer, `{"success":true,"data":{"uuid":"qr","qrCode":"image","status":"WAITING_SCAN"}}`); err != nil {
+			t.Fatalf("fmt.Fprint: %v", err)
+		}
 	case "/www/bff-api/reader-sso-service/portal-pc-api/qr/status":
 		if request.URL.Query().Get("uuid") != "qr" {
 			t.Error("QR query missing")
 		}
 		(*polls)++
 		if *polls == 1 {
-			fmt.Fprint(writer, `{"data":{"status":"WAITING_SCAN"}}`)
+			if _, err := fmt.Fprint(writer, `{"data":{"status":"WAITING_SCAN"}}`); err != nil {
+				t.Fatalf("fmt.Fprint: %v", err)
+			}
 		} else {
-			fmt.Fprint(writer, `{"data":{"status":"COMPLETE","data":"private-token"}}`)
+			if _, err := fmt.Fprint(writer, `{"data":{"status":"COMPLETE","data":"private-token"}}`); err != nil {
+				t.Fatalf("fmt.Fprint: %v", err)
+			}
 		}
 	case "/www/bff-api/portal-admin-service/open-api/build-and-share/ssoLoginUrl":
 		if request.Header.Get("Bff-User-Token") != "private-token" || !strings.Contains(request.Header.Get("Cookie"), "userToken=private-token") {
@@ -404,7 +426,9 @@ func serveLoginChallenge(t *testing.T, writer http.ResponseWriter, request *http
 		if request.URL.Query().Get("referURL") != serverUrl+"/share/entry/area/35594/2120" {
 			t.Error("wrong SSO entry")
 		}
-		fmt.Fprintf(writer, `{"data":%q}`, serverUrl+"/share/protocolAuth")
+		if _, err := fmt.Fprintf(writer, `{"data":%q}`, serverUrl+"/share/protocolAuth"); err != nil {
+			t.Fatalf("fmt.Fprintf: %v", err)
+		}
 	default:
 		return false
 	}
@@ -416,9 +440,13 @@ func serveShareProtocol(t *testing.T, writer http.ResponseWriter, request *http.
 	t.Helper()
 	switch request.URL.Path {
 	case "/share/protocolAuth":
-		fmt.Fprintf(writer, `var sign='sync-sign';var url='/share/callback';var domainUrl='%s';var portalContextPath='/share/entry';sso-login/cookie/sync`, serverUrl)
+		if _, err := fmt.Fprintf(writer, `var sign='sync-sign';var url='/share/callback';var domainUrl='%s';var portalContextPath='/share/entry';sso-login/cookie/sync`, serverUrl); err != nil {
+			t.Fatalf("fmt.Fprintf: %v", err)
+		}
 	case "/share/entry/sso-login/cookie/sync":
-		request.ParseForm()
+		if err := request.ParseForm(); err != nil {
+			t.Fatalf("request.ParseForm: %v", err)
+		}
 		assertShareSyncForm(t, request, serverUrl)
 		http.SetCookie(writer, &http.Cookie{Name: "share", Value: "yes", Path: "/"})
 		http.Redirect(writer, request, "/share/synced", http.StatusFound)
@@ -466,16 +494,22 @@ func serveProxySearch(t *testing.T, writer http.ResponseWriter, request *http.Re
 	t.Helper()
 	switch request.URL.Path {
 	case "/proxy/kns55/brief/result.aspx":
-		request.ParseForm()
+		if err := request.ParseForm(); err != nil {
+			t.Fatalf("request.ParseForm: %v", err)
+		}
 		assertSearchResultForm(t, request, serverUrl)
 	case "/proxy/kns55/request/SearchHandler.ashx":
-		request.ParseForm()
+		if err := request.ParseForm(); err != nil {
+			t.Fatalf("request.ParseForm: %v", err)
+		}
 		assertSearchHandlerForm(t, request)
 	case "/proxy/kns55/brief/brief.aspx":
 		if request.URL.Query().Get("pagename") != "ASP.brief_result_aspx" {
 			t.Error("brief query mismatch")
 		}
-		fmt.Fprint(writer, `<tr><a href="/proxy/kns55/detail/detail.aspx?FileName=A">Study &amp; Methods</a><a href="/proxy/wrong-download.aspx">PDF</a></tr>`)
+		if _, err := fmt.Fprint(writer, `<tr><a href="/proxy/kns55/detail/detail.aspx?FileName=A">Study &amp; Methods</a><a href="/proxy/wrong-download.aspx">PDF</a></tr>`); err != nil {
+			t.Fatalf("fmt.Fprint: %v", err)
+		}
 	default:
 		return false
 	}
@@ -490,13 +524,17 @@ func serveFulltextDocument(t *testing.T, writer http.ResponseWriter, request *ht
 		if !strings.Contains(request.Header.Get("Referer"), "brief.aspx?") {
 			t.Error("last brief referer missing")
 		}
-		fmt.Fprint(writer, `<meta name="citation_title" content="Study &amp; Methods"><meta name="citation_author" content="Ada"><meta name="citation_journal_title" content="Journal"><a href="/proxy/download.aspx?dflag=pdfdown">PDF</a>`)
+		if _, err := fmt.Fprint(writer, `<meta name="citation_title" content="Study &amp; Methods"><meta name="citation_author" content="Ada"><meta name="citation_journal_title" content="Journal"><a href="/proxy/download.aspx?dflag=pdfdown">PDF</a>`); err != nil {
+			t.Fatalf("fmt.Fprint: %v", err)
+		}
 	case "/proxy/download.aspx":
 		if !strings.Contains(request.Header.Get("Referer"), "detail.aspx?") {
 			t.Error("detail referer missing")
 		}
 		writer.Header().Set("Content-Type", "application/octet-stream")
-		fmt.Fprint(writer, "%PDF-1.4\nfixture")
+		if _, err := fmt.Fprint(writer, "%PDF-1.4\nfixture"); err != nil {
+			t.Fatalf("fmt.Fprint: %v", err)
+		}
 	default:
 		return false
 	}

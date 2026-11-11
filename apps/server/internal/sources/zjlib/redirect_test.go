@@ -21,7 +21,9 @@ func TestLiveExplicitHttpProxyUsesAbsoluteRequestTarget(t *testing.T) {
 			t.Errorf("proxy request target/host mismatch: %s %s", request.RequestURI, request.Host)
 		}
 		writer.Header().Set("Content-Type", "application/pdf")
-		fmt.Fprint(writer, "%PDF")
+		if _, err := fmt.Fprint(writer, "%PDF"); err != nil {
+			t.Errorf("fmt.Fprint: %v", err)
+		}
 	}))
 	defer proxyServer.Close()
 	selection, err := transport.ExplicitProxy(proxyServer.URL)
@@ -44,7 +46,9 @@ func TestLiveTlsRequestRetainsAuthority(t *testing.T) {
 			t.Errorf("TLS request authority mismatch: %s %s", request.RequestURI, request.Host)
 		}
 		writer.Header().Set("Content-Type", "application/pdf")
-		fmt.Fprint(writer, "%PDF")
+		if _, err := fmt.Fprint(writer, "%PDF"); err != nil {
+			t.Errorf("fmt.Fprint: %v", err)
+		}
 	}))
 	defer server.Close()
 	allowed := endpoints{bases: [4]string{server.URL + "/www", server.URL + "/share", server.URL + "/login", server.URL + "/proxy"}}

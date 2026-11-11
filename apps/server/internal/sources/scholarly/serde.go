@@ -125,7 +125,9 @@ func decodeSourceSequence(body []byte, names []string, hasDefaults bool, values 
 // decodeSourceObject validates raw keys and rejects duplicate known fields while retaining unknown-field handling.
 func decodeSourceObject(body []byte, known map[string]bool, values map[string]json.RawMessage) error {
 	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.Token()
+	if _, err := decoder.Token(); err != nil {
+		return errSourceConfig
+	}
 	for decoder.More() {
 		before := decoder.InputOffset()
 		name, err := decoder.Token()

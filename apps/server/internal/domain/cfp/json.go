@@ -63,7 +63,9 @@ func decodeObject(data []byte, value reflect.Value, seen []bool, deniesUnknown b
 		fields[value.Type().Field(index).Tag.Get("json")] = index
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.Token()
+	if _, err := decoder.Token(); err != nil {
+		return errJson
+	}
 	for decoder.More() {
 		key, err := decoder.Token()
 		if err != nil {
@@ -168,7 +170,9 @@ func decodeEnum(data []byte, allowed []string) (string, error) {
 	var value string
 	if data[0] == '{' {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.Token()
+		if _, err := decoder.Token(); err != nil {
+			return "", errJson
+		}
 		if !decoder.More() {
 			return "", errJson
 		}

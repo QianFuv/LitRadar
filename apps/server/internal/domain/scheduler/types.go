@@ -324,7 +324,9 @@ func scheduledStateWireName(data []byte, invalid error) (string, error) {
 		}
 	} else if data[0] == '{' {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.Token()
+		if _, err := decoder.Token(); err != nil {
+			return "", invalid
+		}
 		if !decoder.More() {
 			return "", invalid
 		}
