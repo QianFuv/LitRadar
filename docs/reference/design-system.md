@@ -149,6 +149,10 @@ Card 只用于管理面板：每张卡片是一个透明的扁平分区，header
 
 Button、CopyButton、菜单项和 Select 通过 `IconStyleProvider` 给内部图标默认样式（16 px、不收缩、不响应指针；菜单项与 Select 再加 muted 颜色），图标自己的 `xstyle` 排在其后、可以覆盖。
 
+浮层的 Portal 容器统一使用 `components/ui/popup-layer.tsx` 的 `popupLayerStyle`（`z-index` 50 的层叠上下文）。Base UI 把 modal 浮层的外部点击遮罩渲染在定位器旁边而不是里面，没有这一层时，带 `z-index` 的应用区域（列表栏头部、导航轨）会盖在遮罩之上，继续响应悬停和点击。筛选栏的所有面板（数据库、发表时间、评级、期刊、领域）都是 modal：面板打开时只有它的胶囊和选项高亮，其他控件不响应指针，同一时刻只有一个高亮项。
+
+Animate UI `Highlight` 在 children 模式下只给高亮面设置 `position: absolute`，尺寸由调用方提供，样式必须包含 `inset: 0`（或明确的 inset 值），否则高亮面为零尺寸，依赖它作底色的选中项（如收藏夹标签的浅色文字）会看不见。
+
 Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制，避免 `content-visibility: auto` 的绘制裁剪截断边缘。
 
 ### Dialog 形态
