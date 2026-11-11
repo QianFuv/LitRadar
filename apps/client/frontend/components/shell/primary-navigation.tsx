@@ -232,6 +232,7 @@ const styles = stylex.create({
     gap: '0.375rem',
   },
   railNavigationHighlight: {
+    inset: 0,
     borderRadius: '12px',
     backgroundColor: colors.railHover,
   },

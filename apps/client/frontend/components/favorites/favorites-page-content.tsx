@@ -1125,6 +1125,7 @@ const styles = stylex.create({
     },
   },
   renderFolderTabsHighlight: {
+    inset: 0,
     borderRadius: 'calc(infinity * 1px)',
     backgroundColor: colors.foreground,
   },
