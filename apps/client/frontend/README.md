@@ -26,7 +26,7 @@ CI 与前端构建阶段使用：
 | StyleX            | 0.19.x（`@stylexjs/unplugin` 编译为原子 CSS，经 Lightning CSS 处理）                      |
 | Go                | 1.27.3；生成 OpenAPI、启动后端和 full-stack e2e 时需要，不需要 C 编译器                   |
 
-依赖由仓库根目录的 pnpm workspace `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Router（含按需加载的 `lazyRouteComponent`）、TanStack Query、openapi-fetch 与 openapi-react-query（业务 API 请求与查询 key）、TanStack Pacer（防抖与短暂提示的复位）、TanStack Hotkeys（工作区快捷键）、TanStack Store（跨组件共享的当前数据库）、Zod、next-themes、Base UI（经 Animate UI primitives 封装）、StyleX、Motion 和 lucide-react；元素可见性用原生 IntersectionObserver（`lib/use-in-view.tsx`）。根目录 `.gitattributes` 让 `apps/client/frontend/**` 在所有平台以 LF 换行签出，与 Oxfmt 的格式检查一致。样式写在各组件文件末尾的 `stylex.create`，颜色与阴影引用 `lib/theme.stylex.tsx` 的 token；接受样式覆盖的组件使用 `xstyle` 属性（类型为 `stylex.StyleXStyles`），不再接受 `className`。Motion 只通过 `components/ui/motion.tsx` 的 `LazyMotion` / `domAnimation` 封装进入业务代码；Base UI 浮层的进出场由 Animate UI primitives 内置的 Motion 过渡驱动。
+依赖由仓库根目录的 pnpm workspace `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Router（含按需加载的 `lazyRouteComponent`）、TanStack Query、openapi-fetch 与 openapi-react-query（业务 API 请求与查询 key）、TanStack Pacer（防抖与短暂提示的复位）、TanStack Hotkeys（工作区快捷键）、TanStack Store（跨组件共享的当前数据库）、TanStack Form（表单状态与校验）、TanStack Charts（统计图表）、Temporal（`@js-temporal/polyfill`，日期计算）、Zod、next-themes、Base UI（经 Animate UI primitives 封装）、StyleX、Motion 和 lucide-react；元素可见性用原生 IntersectionObserver（`lib/use-in-view.tsx`）。根目录 `.gitattributes` 让 `apps/client/frontend/**` 在所有平台以 LF 换行签出，与 Oxfmt 的格式检查一致。样式写在各组件文件末尾的 `stylex.create`，颜色与阴影引用 `lib/theme.stylex.tsx` 的 token；接受样式覆盖的组件使用 `xstyle` 属性（类型为 `stylex.StyleXStyles`），不再接受 `className`。Motion 只通过 `components/ui/motion.tsx` 的 `LazyMotion` / `domAnimation` 封装进入业务代码；Base UI 浮层的进出场由 Animate UI primitives 内置的 Motion 过渡驱动。
 
 ## 本地运行
 
@@ -136,6 +136,8 @@ apps/client/frontend/
 │   ├── api-contract.tsx   安全敏感响应的运行时校验
 │   ├── auth-context.tsx   Cookie 会话恢复与认证操作
 │   ├── browser-storage.tsx Web Storage helper 与 `parseStoredJson`
+│   ├── date.tsx           基于 Temporal 的日期与时区计算
+│   ├── form.tsx           TanStack Form 的 `useAppForm` 与字段组件
 │   ├── query-client.tsx   QueryClient 与唯一的查询重试策略
 │   ├── search-params.tsx  工作区与登录页 URL search 的 Zod schema
 │   ├── theme.stylex.tsx   StyleX 设计 token
@@ -161,11 +163,18 @@ apps/client/frontend/
 | 退出撤销未确认提示     | `localStorage: litradar:v1:logout_revocation_unconfirmed`                            |
 | 当前数据库             | `localStorage: litradar:v1:selected_database`                                        |
 | 搜索历史               | `localStorage: litradar:v1:search_history`                                           |
+| 表单草稿               | TanStack Form（`lib/form.tsx` 的 `useAppForm`，规则用 Zod schema）                   |
 | 主题                   | next-themes 的 `class` 属性与系统偏好                                                |
 
 浏览器 API 请求默认 `credentials: include`，登录令牌只存在后端设置的 `litradar_session` HttpOnly Cookie 中。设置中心创建的 Bearer 访问令牌用于外部客户端，不作为前端登录态存入 Web Storage。
 
 旧版搜索历史键 `search_history` 和数据库选择键 `selected_database` 会迁移到对应的新命名空间并删除；其他升级前的浏览器键不会被读取或复制。升级后用户需要重新登录。
+
+表单用 `useAppForm` 声明默认值、Zod 校验（`validators.onChange`）与 `onSubmit`，字段通过 `form.AppField` 渲染 `TextField`、`TextareaField` 或 `NumberField`。这些字段组件把 `Input`、`Textarea` 或 `NumberInput` 包在 Base UI `Field` 中，用户编辑过该字段或提交后显示第一条校验信息，并为控件设置 `aria-invalid`。表单是真实的 `<form>`，按 Enter 或点提交按钮提交；提交按钮订阅 `canSubmit`，校验未通过或提交中时禁用。数字输入使用 Base UI NumberField，空值为 `null`，不显示千位分隔。登录、改密和邮箱表单保留浏览器原生的 `required`、`minLength` 与 `type="email"` 校验。单输入框、搜索框、检索构建器、运行时设置的动态字段和文献追踪草稿不使用 TanStack Form。
+
+日期计算统一经 `lib/date.tsx`，它显式导入 `@js-temporal/polyfill`（兼容基线浏览器尚无原生 Temporal），不注册全局对象：本地日末、以 24 小时计的天数、`YYYY-MM` 月份键、IANA 时区校验、遥测的整点序列，以及服务端日期按 UTC 日历日显示。显示格式仍用 `Intl` / `toLocaleString`。
+
+统计图表用 TanStack Charts（`@tanstack/charts` 的 `defineChart` 与 `@tanstack/charts/react` 的 `Chart`）。负载遥测的每小时趋势把调用与错误画成重叠的柱，颜色取自主题 token，悬停或键盘聚焦时显示该小时的提示。`<details>` 中的数据表仍是读屏与精确数值的替代。
 
 Web Storage helper 会容忍 SSR、隐私模式和 quota 错误；调用方不应假定写入必然成功。读取的 JSON 值（搜索历史、退出撤销提示、检索构建器与关系图会话快照）经 `parseStoredJson` 用 Zod 校验，不符合的值按缺失处理。
 

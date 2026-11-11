@@ -138,7 +138,9 @@ Card 只用于管理面板：每张卡片是一个透明的扁平分区，header
 
 | 组件              | 实现约定                                                                         |
 | ----------------- | -------------------------------------------------------------------------------- |
-| Input             | 36 px 高、8 px 圆角、shadow ring、移动端 16 px 字号、3 px focus ring             |
+| Input             | Base UI Input；36 px 高、8 px 圆角、shadow ring、移动端 16 px 字号、3 px focus ring |
+| Field             | Base UI Field 关联控件与错误；错误为 12 px `destructive` 文字、`role="alert"`，控件带 `aria-invalid` |
+| NumberInput       | Base UI NumberField，与 Input 同样式；不显示千位分隔，空值为 `null`              |
 | Checkbox / Switch | Base UI 状态属性（`data-checked` / `data-unchecked`）驱动颜色、焦点和禁用态；Switch 为 20 × 36 px |
 | Select / Popover  | Base UI portal、12 px 圆角与 `shadows.overlay`；内容限制在可用高度内             |
 | DropdownMenu      | `components/ui/dropdown-menu.tsx` 统一菜单表面、菜单项与危险项样式               |
@@ -302,7 +304,7 @@ Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制�
 
 - 图标统一从 `components/ui/animated-icons.tsx` 引入：`AppIcon` 类型带 `canApplyXstyle` 标记，原始 lucide-react 图标（不接受 `xstyle`）不能放进图标位。
 - 可访问名称包含可见文字（WCAG 2.5.3）：文章卡片以视觉隐藏的「查看文章详情：」前缀加卡片内容命名，导航短标签与全称不同时名称为「短标签 全称」，设置/管理中心侧栏关闭按钮名为「返回」。
-- 状态文字用 `<output>`，分组用 `<fieldset>`，命名区域用 `<section>`，搜索表单外包 `<search>`，统计图表的 `<figure>` 以 `aria-label` 命名、内部 SVG 对辅助技术隐藏。
+- 状态文字用 `<output>`，分组用 `<fieldset>`，命名区域用 `<section>`，搜索表单外包 `<search>`，统计图表的 `<figure>` 以 `aria-label` 命名，内部由 TanStack Charts 绘制、带自身名称并支持键盘聚焦提示，`<details>` 数据表提供精确数值。
 
 - 交互控件使用可见的 ring；图标按钮使用 `aria-label` 或 `sr-only` 文本。
 - 加载、成功与错误反馈使用 `role="status"` / `role="alert"`。
