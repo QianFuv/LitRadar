@@ -20,12 +20,13 @@ CI 与前端构建阶段使用：
 | Vite+（`vp`）     | 1.5.x；内含 Vite 8、Vitest 5、Oxlint、Oxfmt，版本随 Vite+ 锁定          |
 | TanStack Router   | 1.x（代码式路由树，search 用 Zod 4 校验）                               |
 | React / React DOM | 19.2.3                                                                  |
-| Motion for React  | 13.1.1                                                                  |
+| React Compiler    | `babel-plugin-react-compiler` 1.x，经 `@rolldown/plugin-babel` 在 `vite.config.ts` 中启用 |
+| Motion for React  | 14.x                                                                    |
 | TypeScript        | 7.x                                                                     |
 | StyleX            | 0.19.x（`@stylexjs/unplugin` 编译为原子 CSS，经 Lightning CSS 处理）    |
 | Go                | 1.27.3；生成 OpenAPI、启动后端和 full-stack e2e 时需要，不需要 C 编译器 |
 
-依赖由仓库根目录的 pnpm workspace `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Router、TanStack Query、TanStack Pacer（防抖）、Zod、next-themes、Base UI（经 Animate UI primitives 封装）、StyleX、Motion 和 lucide-react；元素可见性用原生 IntersectionObserver（`lib/use-in-view.tsx`）。样式写在各组件文件末尾的 `stylex.create`，颜色与阴影引用 `lib/theme.stylex.tsx` 的 token；接受样式覆盖的组件使用 `xstyle` 属性（类型为 `stylex.StyleXStyles`），不再接受 `className`。Motion 只通过 `components/ui/motion.tsx` 的 `LazyMotion` / `domAnimation` 封装进入业务代码；Base UI 浮层的进出场由 Animate UI primitives 内置的 Motion 过渡驱动。
+依赖由仓库根目录的 pnpm workspace `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Router、TanStack Query、TanStack Pacer（防抖）、Zod、next-themes、Base UI（经 Animate UI primitives 封装）、StyleX、Motion 和 lucide-react；元素可见性用原生 IntersectionObserver（`lib/use-in-view.tsx`）。根目录 `.gitattributes` 让 `apps/client/frontend/**` 在所有平台以 LF 换行签出，与 Oxfmt 的格式检查一致。样式写在各组件文件末尾的 `stylex.create`，颜色与阴影引用 `lib/theme.stylex.tsx` 的 token；接受样式覆盖的组件使用 `xstyle` 属性（类型为 `stylex.StyleXStyles`），不再接受 `className`。Motion 只通过 `components/ui/motion.tsx` 的 `LazyMotion` / `domAnimation` 封装进入业务代码；Base UI 浮层的进出场由 Animate UI primitives 内置的 Motion 过渡驱动。
 
 ## 本地运行
 
@@ -55,7 +56,7 @@ pnpm --filter litradar-frontend dev
 
 - Web：`http://localhost:8000/`
 - REST API：`http://localhost:8000/api`
-- Swagger UI：`http://localhost:8000/docs/`
+- API 文档：`http://localhost:8000/docs`（huma 内置文档页，页面脚本从公共 CDN 加载）
 - OpenAPI JSON：`http://localhost:8000/openapi.json`
 - MCP：`http://localhost:8000/mcp`
 
@@ -127,12 +128,14 @@ apps/client/frontend/
 │   └── ui/                Base UI / Animate UI + StyleX 基础组件
 ├── lib/
 │   ├── api/               按 auth/index/favorites/tracking/admin 拆分的 facade 与共享 transport
-│   ├── platform/          ClientPlatform 接口与 Web 实现
+│   ├── platform/          ClientPlatform 接口、Web 实现与 Wails 原生实现（`--mode native` 构建）
 │   ├── generated/         OpenAPI JSON 与生成的 TypeScript schema
 │   ├── api.tsx            API facade 的公共导出
 │   ├── api-contract.tsx   安全敏感响应的运行时校验
 │   ├── auth-context.tsx   Cookie 会话恢复与认证操作
-│   ├── browser-storage.tsx
+│   ├── browser-storage.tsx Web Storage helper 与 `parseStoredJson`
+│   ├── search-params.tsx  工作区与登录页 URL search 的 Zod schema
+│   ├── theme.stylex.tsx   StyleX 设计 token
 │   └── client-logger.tsx  浏览器本地、隐私受限的错误事件
 └── tests/
     ├── *.test.tsx         Vitest/jsdom 与显式 MSW 场景
@@ -173,12 +176,12 @@ route/global Error Boundary、`window.error` 和 `unhandledrejection` 共用 `cl
 
 ## API 契约
 
-`internal/openapi` 的契约构造代码是 REST schema 的来源。前端生成物：
+REST schema 由 Go 类型生成：`apps/server/internal/api/` 用 huma 注册各操作的请求与响应类型，`apps/server/internal/openapi/` 负责文档配置、操作 ID 与共享 schema 注册，运行时据此输出 OpenAPI 3.1。前端生成物：
 
 - `lib/generated/openapi.json`
 - `lib/generated/api-schema.tsx`
 
-后端路由、DTO 或 OpenAPI 契约变化后运行：
+后端路由、请求/响应类型或 OpenAPI 配置变化后运行：
 
 ```bash
 pnpm generate:api
@@ -201,6 +204,7 @@ pnpm generate:api:check
 ```bash
 pnpm generate:api:check
 pnpm check
+pnpm knip
 pnpm test:unit
 pnpm exec playwright install --with-deps chromium
 pnpm test:browser-components

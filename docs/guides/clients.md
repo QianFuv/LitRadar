@@ -1,6 +1,6 @@
 # 客户端与登录
 
-`apps/server` 是 Go API 与任务服务端。`apps/client` 是独立 Wails v3 模块，所有客户端共享 `apps/client/frontend` 中唯一的 Vite 前端与根 `pnpm-lock.yaml`。
+`apps/server` 是 Go API 与任务服务端。`apps/client` 是与服务端共用根 Go 模块的 Wails v3 客户端，所有客户端共享 `apps/client/frontend` 中唯一的 Vite 前端与根 `pnpm-lock.yaml`。
 
 ## 发布平台
 
