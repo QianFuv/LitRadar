@@ -95,12 +95,20 @@ func TestHttpSearchTelemetryPrivacyStoredRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	rows, err := database.Query("SELECT dimensions,aggregate FROM hourly_load")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			t.Errorf("rows.Close: %v", err)
+		}
+	}()
 	count, hasSearch, hasTemplate := 0, false, false
 	for rows.Next() {
 		var labels, aggregate string
@@ -137,7 +145,9 @@ func TestAdminTelemetryUnavailableIsRetryable(t *testing.T) {
 	if _, err := database.Exec("DROP TABLE hourly_load"); err != nil {
 		t.Fatal(err)
 	}
-	database.Close()
+	if err := database.Close(); err != nil {
+		t.Fatalf("database.Close: %v", err)
+	}
 	handlers := adminHandlers{auth: auth, telemetry: collector}
 	response := authRequest(httpTelemetryHandler(&handlers), "GET", "/api/admin/telemetry", "", token)
 	if response.Code != 503 || response.Header().Get("Retry-After") == "" || !strings.Contains(response.Body.String(), "Load telemetry temporarily unavailable") {

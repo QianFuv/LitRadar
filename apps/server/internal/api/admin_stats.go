@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,13 +114,17 @@ func readAdminStats(ctx context.Context, repository *storageauth.Repository, con
 	return result, nil
 }
 
-func readIndexDatabaseStats(ctx context.Context, path string) (indexDatabaseStats, error) {
+func readIndexDatabaseStats(ctx context.Context, path string) (resultValue1 indexDatabaseStats, resultError error) {
 	result := indexDatabaseStats{DbName: filepath.Base(path)}
 	database, err := sqlite.OpenPlain(path)
 	if err != nil {
 		return result, err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	if err = database.QueryRowContext(ctx, "SELECT COUNT(*) FROM articles").Scan(&result.Articles); err != nil {
 		return result, err
 	}

@@ -32,7 +32,11 @@ func testService(t *testing.T) *Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { repository.Close() })
+	t.Cleanup(func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	})
 	service := New(repository, 2)
 	service.now = func() float64 { return 1700000000 }
 	return service
@@ -103,7 +107,9 @@ func TestUnknownUserPerformsDummyPasswordWorkThroughAdmission(t *testing.T) {
 	entered, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(finished)
-		admission.Run(context.Background(), service.passwordGate, func() (bool, error) { close(entered); <-release; return true, nil })
+		if _, err := admission.Run(context.Background(), service.passwordGate, func() (bool, error) { close(entered); <-release; return true, nil }); err != nil {
+			t.Errorf("admission.Run: %v", err)
+		}
 	}()
 	<-entered
 	defer func() { close(release); <-finished }()

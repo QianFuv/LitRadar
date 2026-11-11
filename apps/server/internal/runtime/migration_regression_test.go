@@ -39,7 +39,11 @@ func TestAuditRetentionImmediateBacklogErrorAndDailyDelay(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer prepared.Close()
+		defer func() {
+			if err := prepared.Close(); err != nil {
+				t.Errorf("prepared.Close: %v", err)
+			}
+		}()
 		var output migrationLogBuffer
 		previous := slog.Default()
 		slog.SetDefault(slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug})))
@@ -162,7 +166,9 @@ func TestManualDeadlineAndCancellationReapChildBeforeTerminalState(t *testing.T)
 				t.Fatal("stop did not reap promptly")
 			}
 			if connection, err := net.DialTimeout("tcp", address, 100*time.Millisecond); err == nil {
-				connection.Close()
+				if err := connection.Close(); err != nil {
+					t.Errorf("connection.Close: %v", err)
+				}
 				t.Fatal("terminal child remains alive")
 			}
 			stored, err := dispatcher.repository.LoadRun(ctx, run.Id)
@@ -188,7 +194,11 @@ func TestSchedulerImmediateTickAndInterruptibleLongDelay(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer prepared.Close()
+		defer func() {
+			if err := prepared.Close(); err != nil {
+				t.Errorf("prepared.Close: %v", err)
+			}
+		}()
 		var output migrationLogBuffer
 		previous := slog.Default()
 		slog.SetDefault(slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug})))

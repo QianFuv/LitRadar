@@ -151,7 +151,7 @@ func (oidc *Oidc) getJson(ctx context.Context, endpoint, bearer string, result a
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func(closeBody func() error) { _ = closeBody() }(response.Body.Close)
 	if response.StatusCode != http.StatusOK {
 		return OidcError("provider")
 	}

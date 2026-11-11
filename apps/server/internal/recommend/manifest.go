@@ -258,12 +258,16 @@ func snapshotRawFields(data []byte) map[string]json.RawMessage {
 	rawFields := map[string]json.RawMessage{}
 	if data[0] == '[' {
 		var values []json.RawMessage
-		json.Unmarshal(data, &values)
+		if err := json.Unmarshal(data, &values); err != nil {
+			return nil
+		}
 		for index, value := range values {
 			rawFields[[]string{"issue_article_counts", "inpress_article_counts"}[index]] = value
 		}
 	} else {
-		json.Unmarshal(data, &rawFields)
+		if err := json.Unmarshal(data, &rawFields); err != nil {
+			return nil
+		}
 	}
 	return rawFields
 }
@@ -271,7 +275,9 @@ func snapshotRawFields(data []byte) map[string]json.RawMessage {
 func decodeSnapshotCounts(raw json.RawMessage, target map[string]int64, invalid error) error {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
-	decoder.Token()
+	if _, err := decoder.Token(); err != nil {
+		return invalid
+	}
 	for decoder.More() {
 		key, err := decoder.Token()
 		if err != nil {

@@ -62,7 +62,11 @@ func (collector *Collector) flushBatch(ctx context.Context, batch map[bucketKey]
 	if err != nil {
 		return err
 	}
-	defer transaction.Rollback()
+	defer func() {
+		if err := transaction.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			slog.Error("storage.rollback.failed", "error", err)
+		}
+	}()
 	cutoff := now.UTC().AddDate(0, 0, -collector.retentionDays).Truncate(time.Hour).Unix()
 	for key, value := range batch {
 		if key.Hour < cutoff {

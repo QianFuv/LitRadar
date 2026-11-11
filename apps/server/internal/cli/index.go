@@ -236,7 +236,7 @@ func parseIndexInvocation(args *arguments) (indexInvocation, error) {
 }
 
 // executeIndexInvocation owns codecs and repositories through live execution and result output.
-func executeIndexInvocation(ctx context.Context, bundle string, invocation indexInvocation, key, executable string, output io.Writer) error {
+func executeIndexInvocation(ctx context.Context, bundle string, invocation indexInvocation, key, executable string, output io.Writer) (resultError error) {
 	storage, configuration := invocation.storage, invocation.options
 	if err := prepareIndexDeployment(ctx, storage, configuration.File, bundle); err != nil {
 		return err
@@ -250,7 +250,11 @@ func executeIndexInvocation(ctx context.Context, bundle string, invocation index
 	if err != nil {
 		return err
 	}
-	defer repository.Close()
+	defer func() {
+		if closeError := repository.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close repository: %w", closeError))
+		}
+	}()
 	stored, err := settings.New(repository, codec).Load(ctx)
 	if err != nil {
 		return err

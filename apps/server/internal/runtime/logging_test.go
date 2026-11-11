@@ -29,7 +29,9 @@ func TestHttpPanicsCloseConnectionWithoutPayloadOrStack(t *testing.T) {
 	server.Start()
 	response, err := server.Client().Get(server.URL)
 	if response != nil {
-		response.Body.Close()
+		if err := response.Body.Close(); err != nil {
+			t.Fatalf("response.Body.Close: %v", err)
+		}
 	}
 	server.Close()
 	guard.Shutdown()
@@ -87,7 +89,9 @@ func TestHttpAbortHandlerStaysSilent(t *testing.T) {
 	response, err := server.Client().Get(server.URL)
 	if response != nil {
 		_, _ = io.Copy(io.Discard, response.Body)
-		response.Body.Close()
+		if err := response.Body.Close(); err != nil {
+			t.Fatalf("response.Body.Close: %v", err)
+		}
 	}
 	server.Close()
 	if err == nil || output.Len() != 0 {

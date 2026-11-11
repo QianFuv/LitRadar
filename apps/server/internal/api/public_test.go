@@ -25,12 +25,20 @@ func TestPublicHealthAndAnnouncementsRemainUnauthenticated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer scheduler.Close()
+	defer func() {
+		if err := scheduler.Close(); err != nil {
+			t.Errorf("scheduler.Close: %v", err)
+		}
+	}()
 	repository, err := storageauth.Open(configuration.AuthDbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	}()
 	pool := executor.New(1, 30*time.Second)
 	defer pool.Close()
 	handlers := publicHandlers{configuration, pool, scheduler}

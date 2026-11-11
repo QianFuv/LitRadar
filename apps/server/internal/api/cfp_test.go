@@ -35,7 +35,11 @@ func cfpFixture(t *testing.T) (*cfpHandlers, *http.ServeMux, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { repository.Close() })
+	t.Cleanup(func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	})
 	codec, err := secrets.NewCodec(bytes.Repeat([]byte{42}, 32))
 	if err != nil {
 		t.Fatal(err)

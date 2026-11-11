@@ -37,7 +37,11 @@ func prepareRecoveredIndex(t *testing.T, ctx context.Context) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer batch.Close()
+	defer func() {
+		if err := batch.Close(); err != nil {
+			t.Errorf("batch.Close: %v", err)
+		}
+	}()
 	admission, err := storage.AdmitBatch(ctx, batch.Conn, request, true, "fixture-owner", time.Now().Unix())
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +53,11 @@ func prepareRecoveredIndex(t *testing.T, ctx context.Context) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer control.Close()
+	defer func() {
+		if err := control.Close(); err != nil {
+			t.Errorf("control.Close: %v", err)
+		}
+	}()
 	if err := storage.AcquireLease(ctx, control.Conn, "fixture", "scholarly", "fixture-run", time.Now().Unix()); err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +81,11 @@ func verifyRecoveredIndex(t *testing.T, root, stdout, stderr string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connection.Close()
+	defer func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("connection.Close: %v", err)
+		}
+	}()
 	var count int
 	if err := connection.QueryRowContext(context.Background(), "SELECT count(*) FROM articles").Scan(&count); err != nil || count != 2 {
 		t.Fatal("acknowledged content not durable", count, err)
@@ -83,13 +95,21 @@ func verifyRecoveredIndex(t *testing.T, root, stdout, stderr string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer batch.Close()
+	defer func() {
+		if err := batch.Close(); err != nil {
+			t.Errorf("batch.Close: %v", err)
+		}
+	}()
 	batchId := assertRecoveredBatchCompletion(t, batch, &count)
 	control, err := storage.OpenControl(context.Background(), filepath.Join(root, "data", "index-control", "fixture.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer control.Close()
+	defer func() {
+		if err := control.Close(); err != nil {
+			t.Errorf("control.Close: %v", err)
+		}
+	}()
 	assertRecoveredControlCompletion(t, control, batchId, &count)
 }
 
@@ -112,7 +132,9 @@ func prepareRecoveredIndexSettings(t *testing.T, ctx context.Context, root strin
 	if _, err := database.Exec(`INSERT INTO runtime_settings(key,value,updated_at) VALUES('index_provider_routes','{"fixture":"scholarly"}',1)`); err != nil {
 		t.Fatal(err)
 	}
-	database.Close()
+	if err := database.Close(); err != nil {
+		t.Fatalf("database.Close: %v", err)
+	}
 	var requests atomic.Int64
 	proxy := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) { requests.Add(1); writer.WriteHeader(503) }))
 	t.Cleanup(func() {
@@ -132,7 +154,9 @@ func prepareRecoveredIndexSettings(t *testing.T, ctx context.Context, root strin
 	proxyUrl, policy := proxy.URL, `{"scholarly":true}`
 	apiKey, mailto := "synthetic-offline-key", "fixture@example.invalid"
 	_, err = settings.New(repository, codec).Update(ctx, nil, map[string]*string{"provider_proxy_url": &proxyUrl, "provider_proxy_policy": &policy, "openalex_api_key_pool": &apiKey, "semantic_scholar_api_key_pool": &apiKey, "crossref_mailto_pool": &mailto}, nil, nil)
-	repository.Close()
+	if err := repository.Close(); err != nil {
+		t.Fatalf("repository.Close: %v", err)
+	}
 	codec.Close()
 	if err != nil {
 		t.Fatal(err)

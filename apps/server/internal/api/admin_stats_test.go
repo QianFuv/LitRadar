@@ -78,7 +78,9 @@ func preparePartialStatsStorage(t *testing.T, ctx context.Context, configuration
 		t.Fatal(err)
 	}
 	_, err = database.ExecContext(ctx, "CREATE TABLE articles(id INTEGER);INSERT INTO articles VALUES(1),(2);CREATE TABLE journals(id INTEGER);INSERT INTO journals VALUES(1)")
-	database.Close()
+	if err := database.Close(); err != nil {
+		t.Fatalf("database.Close: %v", err)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

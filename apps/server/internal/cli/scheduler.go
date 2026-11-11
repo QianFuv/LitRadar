@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"strconv"
@@ -139,7 +140,7 @@ func parseSchedulerInvocation(args arguments) (schedulerInvocation, error) {
 }
 
 // executeSchedulerInvocation owns preflight, key and repository through result output.
-func executeSchedulerInvocation(ctx context.Context, configuration config.Config, key, executable string, invocation schedulerInvocation, output io.Writer) error {
+func executeSchedulerInvocation(ctx context.Context, configuration config.Config, key, executable string, invocation schedulerInvocation, output io.Writer) (resultError error) {
 	if err := runtime.PreflightStorage(ctx, configuration); err != nil {
 		return err
 	}
@@ -152,7 +153,11 @@ func executeSchedulerInvocation(ctx context.Context, configuration config.Config
 	if err != nil {
 		return err
 	}
-	defer repository.Close()
+	defer func() {
+		if closeError := repository.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close repository: %w", closeError))
+		}
+	}()
 	if invocation.isValidate {
 		result, err := scheduler.LoadJobs(ctx, repository)
 		if err != nil {

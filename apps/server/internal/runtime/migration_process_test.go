@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -69,7 +70,9 @@ func awaitRuntimeChild(t *testing.T, directory, identity string) string {
 func requireRuntimeChildStopped(t *testing.T, address string) {
 	t.Helper()
 	if connection, err := net.DialTimeout("tcp", address, 100*time.Millisecond); err == nil {
-		connection.Close()
+		if err := connection.Close(); err != nil {
+			t.Fatalf("connection.Close: %v", err)
+		}
 		t.Fatal("runtime returned with live child", address)
 	}
 }
@@ -79,7 +82,11 @@ func TestManualDispatcherAppliesGlobalTwoChildLimitAcrossUsers(t *testing.T) {
 	directory := runtimeProcessFixture(t, prepared)
 	runs := admitManualRuntimeUsers(t, prepared, first)
 	dispatcher := manualDispatcher{configuration: prepared.configuration, repository: prepared.services.Delivery}
-	defer dispatcher.shutdown()
+	defer func() {
+		if err := dispatcher.shutdown(); err != nil {
+			t.Errorf("dispatcher.shutdown: %v", err)
+		}
+	}()
 	if err := dispatcher.dispatch(2); err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +116,11 @@ func TestSchedulerLoopScansWithActiveClaimsAndDrainsOnFailureOrCancellation(t *t
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer prepared.Close()
+			defer func() {
+				if err := prepared.Close(); err != nil {
+					t.Errorf("prepared.Close: %v", err)
+				}
+			}()
 			prepared.configuration.SchedulerIntervalSeconds = 1
 			directory := runtimeProcessFixture(t, prepared)
 			sqlExecute := func(statement string, args ...any) {
@@ -148,7 +159,10 @@ func TestSchedulerLoopScansWithActiveClaimsAndDrainsOnFailureOrCancellation(t *t
 				cancel()
 				if !isFinished {
 					select {
-					case <-finished:
+					case err := <-finished:
+						if err != nil && !errors.Is(err, context.Canceled) {
+							t.Error(err)
+						}
 					case <-time.After(10 * time.Second):
 						t.Error("scheduler cleanup timed out")
 					}
@@ -174,7 +188,9 @@ func TestSchedulerLoopScansWithActiveClaimsAndDrainsOnFailureOrCancellation(t *t
 				if err != nil {
 					t.Fatal("previous claim did not remain active", err)
 				}
-				connection.Close()
+				if err := connection.Close(); err != nil {
+					t.Errorf("connection.Close: %v", err)
+				}
 			}
 			if shouldFail {
 				sqlExecute(fmt.Sprintf("CREATE TRIGGER fixture_finish_failure BEFORE UPDATE OF status ON scheduled_task_runs WHEN NEW.id=%d AND NEW.status='success' BEGIN SELECT RAISE(ABORT,'private-fixture-sentinel'); END", first))
@@ -258,7 +274,9 @@ func executeRuntimeProcessFixture(directory, identity string) {
 	}
 	for {
 		if _, err := os.Stat(filepath.Join(directory, identity+".release")); err == nil {
-			listener.Close()
+			if err := listener.Close(); err != nil {
+				os.Exit(99)
+			}
 			os.Exit(0)
 		}
 		time.Sleep(10 * time.Millisecond)

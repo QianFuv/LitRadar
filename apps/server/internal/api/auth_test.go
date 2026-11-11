@@ -34,7 +34,11 @@ func authFixture(t *testing.T) (*authHandlers, *http.ServeMux, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { repository.Close() })
+	t.Cleanup(func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	})
 	service := auth.New(repository, 2)
 	user, err := service.Bootstrap(ctx, "api_fixture", "correct password long", nil)
 	if err != nil {

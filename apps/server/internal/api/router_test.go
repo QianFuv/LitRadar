@@ -133,24 +133,40 @@ func completeRouter(t *testing.T) (*Handler, *authHandlers, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { notices.Close() })
+	t.Cleanup(func() {
+		if err := notices.Close(); err != nil {
+			t.Errorf("notices.Close: %v", err)
+		}
+	})
 	push, err := delivery.Open(filename)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { push.Close() })
+	t.Cleanup(func() {
+		if err := push.Close(); err != nil {
+			t.Errorf("push.Close: %v", err)
+		}
+	})
 	tasks, err := scheduler.Open(filename)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { tasks.Close() })
+	t.Cleanup(func() {
+		if err := tasks.Close(); err != nil {
+			t.Errorf("tasks.Close: %v", err)
+		}
+	})
 	upstream := executor.New(4, 30*time.Second)
 	t.Cleanup(upstream.Close)
 	handler, err := New(Services{Storage: config.FromProjectRoot(t.TempDir()).WithAuthDbPath(filename), Auth: auth.repository, Cfp: notices, Delivery: push, Scheduler: tasks, Codec: codec, StoragePool: auth.pool, UpstreamPool: upstream, KdfPool: auth.kdfPool}, Options{ContentSecurityPolicy: fixtureCsp})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { handler.Close() })
+	t.Cleanup(func() {
+		if err := handler.Close(); err != nil {
+			t.Errorf("handler.Close: %v", err)
+		}
+	})
 	return handler, auth, token
 }
 
@@ -239,7 +255,11 @@ func TestCompleteRouterMcpAuthenticationAndStreaming(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer response.Body.Close()
+		defer func() {
+			if err := response.Body.Close(); err != nil {
+				t.Errorf("response.Body.Close: %v", err)
+			}
+		}()
 		if value := response.Header.Get("Mcp-Session-Id"); value != "" {
 			session = value
 		}
@@ -293,7 +313,11 @@ func TestMiddlewareFlushesBeforeStreamCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal("middleware buffered live stream", err)
 	}
-	defer response.Body.Close()
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			t.Errorf("response.Body.Close: %v", err)
+		}
+	}()
 	line, err := bufio.NewReader(response.Body).ReadString('\n')
 	if err != nil || line != "data: first\n" {
 		t.Fatal(line, err)

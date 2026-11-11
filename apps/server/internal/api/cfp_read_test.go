@@ -22,7 +22,11 @@ func TestCfpOptimizedResponsesMatchFullSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer baseline.Close()
+	defer func() {
+		if err := baseline.Close(); err != nil {
+			t.Errorf("baseline.Close: %v", err)
+		}
+	}()
 	snapshots, err := baseline.LoadJournals(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +121,11 @@ func TestCfpRoutesObserveExternalRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer writer.Close()
+	defer func() {
+		if err := writer.Close(); err != nil {
+			t.Errorf("writer.Close: %v", err)
+		}
+	}()
 	ctx := context.Background()
 	lease, err := writer.BeginRefresh(ctx, "journal:cfp-fixture", first.EvaluatedAt, 120)
 	if err != nil {

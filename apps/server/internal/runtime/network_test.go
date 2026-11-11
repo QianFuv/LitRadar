@@ -18,21 +18,35 @@ func TestDrainHttpForcesNetworkWhileHandlerCloseIsBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() {
+		if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("listener.Close: %v", err)
+		}
+	}()
 	handlerDone := make(chan struct{})
 	handlers := &networkHandlers{next: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		defer close(handlerDone)
-		io.Copy(io.Discard, request.Body)
+		if _, err := io.Copy(io.Discard, request.Body); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("io.Copy: %v", err)
+		}
 	})}
 	server := &http.Server{Handler: handlers}
 	served := make(chan error, 1)
 	go func() { served <- server.Serve(listener) }()
-	defer server.Close()
+	defer func() {
+		if err := server.Close(); err != nil {
+			t.Errorf("server.Close: %v", err)
+		}
+	}()
 	connection, err := net.Dial("tcp", listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connection.Close()
+	defer func() {
+		if err := connection.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("connection.Close: %v", err)
+		}
+	}()
 	awaitBlockedDrainRequest(t, connection)
 	handlers.stop()
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -48,8 +62,12 @@ func TestDrainHttpForcesNetworkWhileHandlerCloseIsBlocked(t *testing.T) {
 			t.Fatal("drain deadline was lost", err)
 		}
 	case <-time.After(time.Second):
-		connection.Close()
-		<-done
+		if err := connection.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("connection.Close: %v", err)
+		}
+		if err := <-done; err != nil && !errors.Is(err, context.DeadlineExceeded) {
+			t.Error(err)
+		}
 		t.Fatal("synchronous closer blocked forced network close")
 	}
 	select {
@@ -67,7 +85,11 @@ func TestHttpShutdownForcesUnfinishedPostWithinNetworkBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer prepared.Close()
+	defer func() {
+		if err := prepared.Close(); err != nil {
+			t.Errorf("prepared.Close: %v", err)
+		}
+	}()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
@@ -76,7 +98,11 @@ func TestHttpShutdownForcesUnfinishedPostWithinNetworkBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connection.Close()
+	defer func() {
+		if err := connection.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("connection.Close: %v", err)
+		}
+	}()
 	awaitUnfinishedLoginBody(t, connection)
 	started := time.Now()
 	cancel()
@@ -87,9 +113,14 @@ func TestHttpShutdownForcesUnfinishedPostWithinNetworkBudget(t *testing.T) {
 			t.Fatal(err)
 		}
 	case <-time.After(32 * time.Second):
-		connection.Close()
+		if err := connection.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("connection.Close: %v", err)
+		}
 		select {
-		case <-done:
+		case err := <-done:
+			if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+				t.Error(err)
+			}
 		case <-time.After(3 * time.Second):
 			t.Fatal("shutdown did not join after test socket release")
 		}
@@ -100,7 +131,9 @@ func TestHttpShutdownForcesUnfinishedPostWithinNetworkBudget(t *testing.T) {
 // awaitBlockedDrainRequest checks that the original incomplete POST started before draining.
 func awaitBlockedDrainRequest(t *testing.T, connection net.Conn) {
 	t.Helper()
-	connection.SetDeadline(time.Now().Add(3 * time.Second))
+	if err := connection.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatalf("connection.SetDeadline: %v", err)
+	}
 	if _, err := fmt.Fprint(connection, "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\nExpect: 100-continue\r\n\r\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +146,9 @@ func awaitBlockedDrainRequest(t *testing.T, connection net.Conn) {
 // awaitUnfinishedLoginBody checks the login body read started before cancellation timing.
 func awaitUnfinishedLoginBody(t *testing.T, connection net.Conn) {
 	t.Helper()
-	connection.SetDeadline(time.Now().Add(40 * time.Second))
+	if err := connection.SetDeadline(time.Now().Add(40 * time.Second)); err != nil {
+		t.Fatalf("connection.SetDeadline: %v", err)
+	}
 	if _, err := fmt.Fprintf(connection, "POST /api/auth/login HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 100\r\nExpect: 100-continue\r\n\r\n"); err != nil {
 		t.Fatal(err)
 	}

@@ -142,7 +142,11 @@ func cfpBenchmarkCatalog(t testing.TB) ([]sources.JournalCatalogEntry, []storage
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	}()
 	if _, err := repository.ImportSeed(ctx, assets.SeedId, assets.Seed()); err != nil {
 		t.Fatal(err)
 	}

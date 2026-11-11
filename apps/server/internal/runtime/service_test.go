@@ -42,7 +42,11 @@ func TestHeartbeatPersistsAndStopsWhilePublicWorkersAreOccupied(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer prepared.Close()
+	defer func() {
+		if err := prepared.Close(); err != nil {
+			t.Errorf("prepared.Close: %v", err)
+		}
+	}()
 	release, started, workers := make(chan struct{}), make(chan struct{}, 8), make(chan error, 8)
 	for range 8 {
 		go func() {
@@ -72,7 +76,10 @@ func TestHeartbeatPersistsAndStopsWhilePublicWorkersAreOccupied(t *testing.T) {
 		}
 		if !isJoined {
 			select {
-			case <-done:
+			case err := <-done:
+				if err != nil && !errors.Is(err, context.Canceled) {
+					t.Error(err)
+				}
 			case <-time.After(time.Second):
 				t.Error("heartbeat cleanup did not join")
 			}
@@ -99,16 +106,32 @@ func TestHeartbeatOperationBudgetWithNativeWriteLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer prepared.Close()
+	defer func() {
+		if err := prepared.Close(); err != nil {
+			t.Errorf("prepared.Close: %v", err)
+		}
+	}()
 	database, err := platform.Open(platform.Config{Filename: prepared.configuration.Storage.AuthDbPath, Mode: "rwc", MaxConnections: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	if _, err := database.Exec("BEGIN IMMEDIATE"); err != nil {
 		t.Fatal(err)
 	}
-	defer database.Exec("ROLLBACK")
+	hasTransaction := true
+	defer func() {
+		if !hasTransaction {
+			return
+		}
+		if _, err := database.Exec("ROLLBACK"); err != nil {
+			t.Errorf("database.Exec: %v", err)
+		}
+	}()
 	type result struct {
 		err     error
 		elapsed time.Duration
@@ -123,6 +146,7 @@ func TestHeartbeatOperationBudgetWithNativeWriteLock(t *testing.T) {
 	if _, err := database.Exec("ROLLBACK"); err != nil {
 		t.Fatal(err)
 	}
+	hasTransaction = false
 	select {
 	case outcome := <-done:
 		t.Logf("operation budget=5s, controlled lock release=%s, completion=%s", time.Since(started), outcome.elapsed)
@@ -139,7 +163,11 @@ func TestHeartbeatCancellationInterruptsExecutingSqlAndJoins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	started := make(chan struct{})
 	var once sync.Once
 	if err := database.Driver().(*sqlite3.Driver).RegisterScalarFunction("heartbeat_started", 0, func(_ *sqlite3.FunctionContext, _ []driver.Value) (driver.Value, error) {
@@ -152,7 +180,11 @@ func TestHeartbeatCancellationInterruptsExecutingSqlAndJoins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connection.Close()
+	defer func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("connection.Close: %v", err)
+		}
+	}()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
@@ -210,7 +242,11 @@ func TestHttpChildPanicStillJoinsAndReleasesHeartbeat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	}()
 	if err := repository.WithConnection(ctx, func(connection *sql.Conn) error {
 		var count int
 		if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM service_heartbeats WHERE service='api'").Scan(&count); err != nil {
@@ -247,7 +283,11 @@ func TestPrepareChecksRecoveryBeforeMigrationAndSecurityBeforeBinding(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() {
+		if err := listener.Close(); err != nil {
+			t.Errorf("listener.Close: %v", err)
+		}
+	}()
 	configuration.Port = uint16(listener.Addr().(*net.TCPAddr).Port)
 	if _, err := Prepare(context.Background(), configuration); err == nil || strings.Contains(err.Error(), "bind") {
 		t.Fatal("listener checked before secure-cookie policy", err)
@@ -300,7 +340,11 @@ func TestCloseWaitsForCancelledCallerWorkerBeforeClosingRepository(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer prepared.Close()
+	defer func() {
+		if err := prepared.Close(); err != nil {
+			t.Errorf("prepared.Close: %v", err)
+		}
+	}()
 	if err := prepared.services.Auth.WithConnection(context.Background(), func(connection *sql.Conn) error {
 		_, err := connection.ExecContext(context.Background(), "CREATE TABLE owned_write(value INTEGER)")
 		return err
@@ -347,7 +391,11 @@ func TestCloseWaitsForCancelledCallerWorkerBeforeClosingRepository(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	}()
 	if err := repository.WithConnection(context.Background(), func(connection *sql.Conn) error {
 		var value int
 		if err := connection.QueryRowContext(context.Background(), "SELECT value FROM owned_write").Scan(&value); err != nil {
@@ -388,7 +436,12 @@ func TestRunningServiceStopsAndDeletesOnlyOwnedApiHeartbeat(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- prepared.Run(ctx) }()
-	t.Cleanup(func() { cancel(); prepared.Close() })
+	t.Cleanup(func() {
+		cancel()
+		if err := prepared.Close(); err != nil {
+			t.Errorf("prepared.Close: %v", err)
+		}
+	})
 	client := &http.Client{Timeout: 5 * time.Second}
 	awaitRuntimeServiceReadiness(t, client, address)
 	cancel()
@@ -404,12 +457,18 @@ func TestRunningServiceStopsAndDeletesOnlyOwnedApiHeartbeat(t *testing.T) {
 	if err != nil {
 		t.Fatal("shutdown retained listener", err)
 	}
-	listener.Close()
+	if err := listener.Close(); err != nil {
+		t.Fatalf("listener.Close: %v", err)
+	}
 	repository, err := auth.Open(configuration.Storage.AuthDbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	}()
 	err = repository.WithConnection(context.Background(), func(connection *sql.Conn) error {
 		var count int
 		var instance string
@@ -464,8 +523,12 @@ func awaitRuntimeServiceReadiness(t *testing.T, client *http.Client, address str
 		if err != nil {
 			t.Fatal(err)
 		}
-		io.Copy(io.Discard, response.Body)
-		response.Body.Close()
+		if _, err := io.Copy(io.Discard, response.Body); err != nil {
+			t.Fatalf("io.Copy: %v", err)
+		}
+		if err := response.Body.Close(); err != nil {
+			t.Fatalf("response.Body.Close: %v", err)
+		}
 		if response.StatusCode == http.StatusOK {
 			break
 		}

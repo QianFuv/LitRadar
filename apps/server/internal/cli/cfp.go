@@ -65,7 +65,7 @@ func runCfp(ctx context.Context, values []string, output io.Writer) error {
 	return nil
 }
 
-func importCfp(ctx context.Context, configuration config.Config, args arguments) (store.ImportResult, error) {
+func importCfp(ctx context.Context, configuration config.Config, args arguments) (resultValue1 store.ImportResult, resultError error) {
 	var empty store.ImportResult
 	data, seed, err := readCfpImportSeed(args)
 	if err != nil {
@@ -78,7 +78,11 @@ func importCfp(ctx context.Context, configuration config.Config, args arguments)
 	if err != nil {
 		return empty, err
 	}
-	defer repository.Close()
+	defer func() {
+		if closeError := repository.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close repository: %w", closeError))
+		}
+	}()
 	identity := assets.SeedId
 	if !bytes.Equal(data, assets.Seed()) {
 		if _, err := cfp.EnsureSeed(ctx, repository); err != nil {
@@ -89,7 +93,7 @@ func importCfp(ctx context.Context, configuration config.Config, args arguments)
 	return repository.ImportPrepared(ctx, identity, seed)
 }
 
-func refreshCfp(ctx context.Context, configuration config.Config, args arguments) (any, bool, error) {
+func refreshCfp(ctx context.Context, configuration config.Config, args arguments) (resultValue1 any, resultValue2 bool, resultError error) {
 	invocation, err := parseCfpRefresh(args)
 	if err != nil {
 		return nil, false, err
@@ -105,7 +109,11 @@ func refreshCfp(ctx context.Context, configuration config.Config, args arguments
 	if err != nil {
 		return nil, false, err
 	}
-	defer repository.Close()
+	defer func() {
+		if closeError := repository.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close repository: %w", closeError))
+		}
+	}()
 	if invocation.isFullText {
 		results, err := cfp.RefreshFullTexts(ctx, repository, sources, invocation.options, invocation.capture, invocation.shouldResume)
 		if err != nil {

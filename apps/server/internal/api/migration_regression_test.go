@@ -45,7 +45,11 @@ func TestAcceptedHttpConnectionWaitsForDelayedRequestBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connection.Close()
+	defer func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("connection.Close: %v", err)
+		}
+	}()
 	if err := connection.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +64,11 @@ func TestAcceptedHttpConnectionWaitsForDelayedRequestBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			t.Errorf("response.Body.Close: %v", err)
+		}
+	}()
 	body, err := io.ReadAll(response.Body)
 	if err != nil || response.StatusCode != 200 || string(body) != `{"status":"ok"}` {
 		t.Fatal(response.StatusCode, string(body), err)

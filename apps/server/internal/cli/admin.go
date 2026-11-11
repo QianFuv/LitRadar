@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"path/filepath"
 	"slices"
@@ -158,7 +159,7 @@ func projectPath(root, selected string) string {
 }
 
 // adminBootstrap retains migration before password admission and repository-owned bootstrap.
-func adminBootstrap(ctx context.Context, args arguments, filename string, input io.Reader) (any, error) {
+func adminBootstrap(ctx context.Context, args arguments, filename string, input io.Reader) (resultValue1 any, resultError error) {
 	username, err := args.take("--username")
 	if err != nil {
 		return nil, err
@@ -178,7 +179,11 @@ func adminBootstrap(ctx context.Context, args arguments, filename string, input 
 	if err != nil {
 		return nil, err
 	}
-	defer repository.Close()
+	defer func() {
+		if closeError := repository.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close repository: %w", closeError))
+		}
+	}()
 	user, err := auth.New(repository, 2).Bootstrap(ctx, strings.TrimSpace(*username), password, nil)
 	if err != nil {
 		return nil, err

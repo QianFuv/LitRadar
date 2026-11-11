@@ -45,7 +45,11 @@ func adminFixture(t *testing.T) (*authHandlers, *http.ServeMux, string, domain.U
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { tasks.Close() })
+	t.Cleanup(func() {
+		if err := tasks.Close(); err != nil {
+			t.Errorf("tasks.Close: %v", err)
+		}
+	})
 	codec, err := secrets.NewCodec(bytes.Repeat([]byte{42}, 32))
 	if err != nil {
 		t.Fatal(err)

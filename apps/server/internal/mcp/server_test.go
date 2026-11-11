@@ -53,7 +53,11 @@ func (client *wireClient) post(token string, body any) (int, map[string]any) {
 	if err != nil {
 		client.testing.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			client.testing.Error(err)
+		}
+	}()
 	client.headers = response.Header.Clone()
 	wire, err := io.ReadAll(response.Body)
 	if err != nil {
@@ -121,7 +125,11 @@ func TestAuthenticatedToolsEnforceCurrentIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	}()
 	service := auth.New(repository, 2)
 	actors := authenticatedToolActors(t, ctx, service)
 	folders := favorites.New(repository)
@@ -136,7 +144,11 @@ func TestAuthenticatedToolsEnforceCurrentIdentity(t *testing.T) {
 	handler := mcpcompat.New(server, authenticator.McpAuthorize)
 	listener := httptest.NewServer(handler)
 	defer listener.Close()
-	defer handler.Close()
+	defer func() {
+		if err := handler.Close(); err != nil {
+			t.Errorf("handler.Close: %v", err)
+		}
+	}()
 	client := wireClient{testing: t, endpoint: listener.URL, client: &http.Client{Timeout: 10 * time.Second}}
 	assertAuthenticatedToolInventory(t, &client, actors.adminToken.Token)
 	assertAuthenticatedToolInputErrors(t, &client, actors.adminToken.Token)

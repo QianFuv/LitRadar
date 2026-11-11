@@ -45,7 +45,9 @@ func TestInternalChildLeavesIdleSidecarsForParent(t *testing.T) {
 	if _, err := database.Exec("CREATE TABLE item(id INTEGER PRIMARY KEY); INSERT INTO item DEFAULT VALUES"); err != nil {
 		t.Fatal(err)
 	}
-	database.Close()
+	if err := database.Close(); err != nil {
+		t.Fatalf("database.Close: %v", err)
+	}
 	reader, err := sqlite.Open(filename, true, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +56,9 @@ func TestInternalChildLeavesIdleSidecarsForParent(t *testing.T) {
 	if err := reader.QueryRow("SELECT count(*) FROM item").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	reader.Close()
+	if err := reader.Close(); err != nil {
+		t.Fatalf("reader.Close: %v", err)
+	}
 	for _, marker := range []string{"--litradar-parent-run-id", "--live-worker-request"} {
 		CleanupAfterProcess([]string{"--project-root", root, "--auth-db", filename, marker})
 		if _, err := os.Stat(filename + "-wal"); err != nil {

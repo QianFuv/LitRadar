@@ -74,7 +74,11 @@ func TestDisabledTelemetryDoesNotCreateDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer prepared.Close()
+	defer func() {
+		if err := prepared.Close(); err != nil {
+			t.Errorf("prepared.Close: %v", err)
+		}
+	}()
 	if prepared.services.Telemetry != nil {
 		t.Fatal("disabled collector opened")
 	}
@@ -93,7 +97,11 @@ func TestTelemetryOpenFailureDoesNotFailService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer prepared.Close()
+	defer func() {
+		if err := prepared.Close(); err != nil {
+			t.Errorf("prepared.Close: %v", err)
+		}
+	}()
 	if prepared.services.Telemetry != nil || prepared.handler == nil {
 		t.Fatal("telemetry storage failure affected service admission")
 	}

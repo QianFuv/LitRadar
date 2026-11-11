@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -41,14 +42,28 @@ func TestServerProductionWithoutUI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer logfile.Close()
+	defer func() {
+		if err := logfile.Close(); err != nil {
+			t.Errorf("logfile.Close: %v", err)
+		}
+	}()
 	working := t.TempDir()
 	command := exec.CommandContext(ctx, binary, "serve", "--host", "127.0.0.1", "--port", "0", "--secret-key-file", key, "--project-root", root)
 	command.Dir, command.Stdout, command.Stderr = working, logfile, logfile
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { command.Process.Kill(); command.Wait() }()
+	defer func() {
+		if err := command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			t.Errorf("command.Process.Kill: %v", err)
+		}
+		if err := command.Wait(); err != nil {
+			var exitError *exec.ExitError
+			if !errors.As(err, &exitError) {
+				t.Error(err)
+			}
+		}
+	}()
 	deadline := time.Now().Add(60 * time.Second)
 	port := readServiceListenerPort(logfile, deadline)
 	if port == 0 {
@@ -70,7 +85,9 @@ func TestServerProductionWithoutUI(t *testing.T) {
 			t.Fatal(err)
 		}
 		body, err := io.ReadAll(response.Body)
-		response.Body.Close()
+		if err := response.Body.Close(); err != nil {
+			t.Fatalf("response.Body.Close: %v", err)
+		}
 		if err != nil || response.StatusCode != scenario.status || response.Header.Get("Content-Security-Policy") == "" {
 			t.Fatal(scenario.path, response.StatusCode, response.Header, err)
 		}
@@ -82,7 +99,9 @@ func TestServerProductionWithoutUI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	login.Body.Close()
+	if err := login.Body.Close(); err != nil {
+		t.Fatalf("login.Body.Close: %v", err)
+	}
 	if login.StatusCode != 200 || len(login.Cookies()) != 1 {
 		t.Fatal("production cookie login failed", login.StatusCode)
 	}
@@ -100,7 +119,9 @@ func TestServerProductionWithoutUI(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		response.Body.Close()
+		if err := response.Body.Close(); err != nil {
+			t.Fatalf("response.Body.Close: %v", err)
+		}
 		expected := 401
 		if isAuthenticated {
 			expected = 200
@@ -177,7 +198,11 @@ func verifyServiceSignal(t *testing.T, ctx context.Context, binary, working, roo
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer logfile.Close()
+	defer func() {
+		if err := logfile.Close(); err != nil {
+			t.Errorf("logfile.Close: %v", err)
+		}
+	}()
 	command := exec.CommandContext(ctx, binary, "serve", "--development", "--host", "127.0.0.1", "--port", "0", "--secret-key-file", key, "--project-root", root)
 	command.Dir = working
 	command.Stderr = logfile
@@ -317,7 +342,9 @@ func assertPersistedProcessLogging(t *testing.T, root string, invoke processInvo
 	if _, err := database.Exec("INSERT INTO runtime_settings(key,value,updated_at) VALUES('log_format','compact',1),('log_filter','info',1)"); err != nil {
 		t.Fatal(err)
 	}
-	database.Close()
+	if err := database.Close(); err != nil {
+		t.Fatalf("database.Close: %v", err)
+	}
 	_, stderr := invoke(t, "", 0, "admin", "--help", "--project-root", root)
 	if !strings.Contains(stderr, `process:cli.command: litradar_cli:`) || strings.Contains(stderr, `process{`) {
 		t.Fatal("persisted compact logging ignored", stderr)
@@ -329,7 +356,9 @@ func assertPersistedProcessLogging(t *testing.T, root string, invoke processInvo
 	if _, err := database.Exec("UPDATE runtime_settings SET value='synthetic-invalid-log-format' WHERE key='log_format'"); err != nil {
 		t.Fatal(err)
 	}
-	database.Close()
+	if err := database.Close(); err != nil {
+		t.Fatalf("database.Close: %v", err)
+	}
 	stdout, stderr := invoke(t, "", 1, "--help", "--project-root", root)
 	if stdout != "" || stderr != "invalid LitRadar log format\n" {
 		t.Fatal("invalid logging did not fail closed with a fixed diagnostic", stdout, stderr)
@@ -357,17 +386,39 @@ func verifyBlockedSignalTrial(t *testing.T, ctx context.Context, binary, working
 	isStarted := awaitBlockedBootstrapStart(logfile.Name())
 	time.Sleep(100 * time.Millisecond)
 	if !isStarted {
-		command.Process.Kill()
-		<-finished
-		input.Close()
-		logfile.Close()
+		if err := command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			t.Fatalf("command.Process.Kill: %v", err)
+		}
+		if err := <-finished; err != nil {
+			var exitError *exec.ExitError
+			if !errors.As(err, &exitError) {
+				t.Error(err)
+			}
+		}
+		if err := input.Close(); err != nil {
+			t.Fatalf("input.Close: %v", err)
+		}
+		if err := logfile.Close(); err != nil {
+			t.Fatalf("logfile.Close: %v", err)
+		}
 		t.Fatal("bootstrap did not start")
 	}
 	if err := command.Process.Signal(termination); err != nil {
-		command.Process.Kill()
-		<-finished
-		input.Close()
-		logfile.Close()
+		if err := command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			t.Fatalf("command.Process.Kill: %v", err)
+		}
+		if err := <-finished; err != nil {
+			var exitError *exec.ExitError
+			if !errors.As(err, &exitError) {
+				t.Error(err)
+			}
+		}
+		if err := input.Close(); err != nil {
+			t.Fatalf("input.Close: %v", err)
+		}
+		if err := logfile.Close(); err != nil {
+			t.Fatalf("logfile.Close: %v", err)
+		}
 		t.Fatal(err)
 	}
 	select {
@@ -377,12 +428,23 @@ func verifyBlockedSignalTrial(t *testing.T, ctx context.Context, binary, working
 			t.Errorf("bootstrap did not retain default %v termination: %v", termination, err)
 		}
 	case <-time.After(2 * time.Second):
-		command.Process.Kill()
-		<-finished
+		if err := command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			t.Fatalf("command.Process.Kill: %v", err)
+		}
+		if err := <-finished; err != nil {
+			var exitError *exec.ExitError
+			if !errors.As(err, &exitError) {
+				t.Error(err)
+			}
+		}
 		t.Errorf("bootstrap swallowed %v while blocked on stdin", termination)
 	}
-	input.Close()
-	logfile.Close()
+	if err := input.Close(); err != nil {
+		t.Fatalf("input.Close: %v", err)
+	}
+	if err := logfile.Close(); err != nil {
+		t.Fatalf("logfile.Close: %v", err)
+	}
 }
 
 // awaitBlockedBootstrapStart waits for the command admission event.
@@ -431,7 +493,9 @@ func awaitServiceReadiness(t *testing.T, logfile *os.File, port int, deadline ti
 			t.Fatal(err)
 		}
 		_, _ = io.Copy(io.Discard, response.Body)
-		response.Body.Close()
+		if err := response.Body.Close(); err != nil {
+			t.Fatalf("response.Body.Close: %v", err)
+		}
 		if response.StatusCode == http.StatusOK {
 			break
 		}
@@ -456,7 +520,11 @@ func assertJoinedServiceShutdown(t *testing.T, logfile *os.File, root string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	var count int
 	if err := database.QueryRow("SELECT count(*) FROM service_heartbeats WHERE service='api'").Scan(&count); err != nil || count != 0 {
 		t.Fatal("signal left an API heartbeat", count, err)

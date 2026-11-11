@@ -168,7 +168,9 @@ func TestPolicyLargeStringHttpResponse(t *testing.T) {
 				t.Fatal(err)
 			}
 			body, readError := io.ReadAll(response.Body)
-			response.Body.Close()
+			if err := response.Body.Close(); err != nil {
+				t.Fatalf("response.Body.Close: %v", err)
+			}
 			if readError != nil || response.StatusCode != 200 || response.Header.Get("Content-Security-Policy") != fixtureCsp ||
 				method == "GET" && string(body) != expected || method == "HEAD" && (len(body) != 0 || response.ContentLength != int64(len(expected))) {
 				server.Close()
@@ -207,7 +209,9 @@ func TestPolicyOversizedDeclaredString(t *testing.T) {
 				t.Fatal(err)
 			}
 			body, _ := io.ReadAll(response.Body)
-			response.Body.Close()
+			if err := response.Body.Close(); err != nil {
+				t.Errorf("response.Body.Close: %v", err)
+			}
 			result := <-completed
 			if result.count != 0 || !errors.Is(result.err, http.ErrContentLength) || len(body) != 0 {
 				t.Fatal("oversized declared write was partially published", result.count, result.err, len(body))

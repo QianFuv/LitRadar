@@ -22,7 +22,11 @@ func TestReadToolCancellationStopsActualQueryWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	if _, err := database.Exec(`PRAGMA busy_timeout=1; CREATE TABLE marker(value INTEGER); INSERT INTO marker VALUES(0); CREATE VIEW journals AS WITH RECURSIVE numbers(value) AS (SELECT value FROM marker UNION ALL SELECT value+1 FROM numbers WHERE value<20000000) SELECT 'area' AS area FROM numbers`); err != nil {
 		t.Fatal(err)
 	}

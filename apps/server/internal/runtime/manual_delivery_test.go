@@ -22,7 +22,11 @@ func manualFixture(t *testing.T) (*Prepared, *delivery.RunRecord) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { prepared.Close() })
+	t.Cleanup(func() {
+		if err := prepared.Close(); err != nil {
+			t.Errorf("prepared.Close: %v", err)
+		}
+	})
 	user, err := prepared.services.Auth.Bootstrap(context.Background(), "fixture", "hash", "salt", unixTime(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -144,7 +148,9 @@ func TestManualRuntimeChild(t *testing.T) {
 		if err != nil {
 			os.Exit(9)
 		}
-		connection.Close()
+		if err := connection.Close(); err != nil {
+			t.Fatalf("connection.Close: %v", err)
+		}
 	}
 }
 
@@ -166,7 +172,11 @@ func runtimeChild(t *testing.T) (*process.Child, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { child.Close() })
+	t.Cleanup(func() {
+		if err := child.Close(); err != nil {
+			t.Errorf("child.Close: %v", err)
+		}
+	})
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if address, err := os.ReadFile(filename); err == nil {
@@ -193,7 +203,9 @@ func TestManualShutdownReapsChildBeforeQuarantiningOwnedRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	if connection, err := net.DialTimeout("tcp", address, 100*time.Millisecond); err == nil {
-		connection.Close()
+		if err := connection.Close(); err != nil {
+			t.Fatalf("connection.Close: %v", err)
+		}
 		t.Fatal("dispatcher released a live child")
 	}
 	stored, err := dispatcher.repository.LoadRun(context.Background(), run.Id)
