@@ -27,7 +27,7 @@ server 镜像在 0.5.0 之后由 `ghcr.io/qianfuv/litradar` 更名为 `ghcr.io/q
 
 | 路径 | 目标 |
 | --- | --- |
-| `/api`、`/api/*`、`/mcp`、`/mcp/*`、`/docs`、`/docs/*`、`/openapi.json`、`/health/*` | server |
+| `/api`、`/api/*`、`/mcp`、`/mcp/*`、`/docs`、`/docs/*`、`/openapi.json`、`/openapi.yaml`、`/health/*` | server |
 | `/wails`、`/wails/*` | 网关直接返回 404 |
 | 其他，包括 `/`、`/login` | client-web 的 SPA |
 

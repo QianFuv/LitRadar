@@ -91,6 +91,7 @@ function createBackendProxy(target: string) {
     '^/mcp(?:/|$)': backend,
     '^/docs(?:/|$)': backend,
     '^/openapi\\.json$': backend,
+    '^/openapi\\.yaml$': backend,
     '^/health(?:/|$)': backend,
   };
 }

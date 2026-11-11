@@ -1,6 +1,6 @@
 # LitRadar 前端包
 
-`apps/client/frontend/` 是 LitRadar 的 Vite + React 单页客户端源码，负责登录、检索、收藏、每周更新、征稿追踪、聚合设置中心和管理后台。发布构建输出静态 `dist/`，由 `apps/client` 的 Wails v3 Server Build 嵌入并提供（SPA 回退与安全响应头）；Go API 服务不再托管网页，生产环境由外部反向代理把 `/api*`、`/mcp*`、`/docs*`、`/openapi.json`、`/health/*` 转发到 Go 服务、其余路径转发到 Web 客户端。本页只说明前端包的开发边界：
+`apps/client/frontend/` 是 LitRadar 的 Vite + React 单页客户端源码，负责登录、检索、收藏、每周更新、征稿追踪、聚合设置中心和管理后台。发布构建输出静态 `dist/`，由 `apps/client` 的 Wails v3 Server Build 嵌入并提供（SPA 回退与安全响应头）；Go API 服务不再托管网页，生产环境由外部反向代理把 `/api*`、`/mcp*`、`/docs*`、`/openapi.json`、`/openapi.yaml`、`/health/*` 转发到 Go 服务、其余路径转发到 Web 客户端。本页只说明前端包的开发边界：
 
 - 系统进程与数据流见[系统架构](../../../docs/architecture/README.md)。
 - REST 契约与认证方式见[API 参考](../../../docs/reference/api.md)。
@@ -52,7 +52,7 @@ pnpm install --frozen-lockfile
 pnpm --filter litradar-frontend dev
 ```
 
-默认浏览器入口统一为 `http://localhost:8000`。Vite 开发服务器保留 HMR，并把 `/api`、`/mcp`（含 SSE）、`/docs`、`/openapi.json` 和 `/health` 代理到内部 Go 地址 `http://127.0.0.1:8001`（可用 `LITRADAR_BACKEND_URL` 覆盖）；`pnpm preview` 使用同一代理。浏览器不需要访问第二个端口。
+默认浏览器入口统一为 `http://localhost:8000`。Vite 开发服务器保留 HMR，并把 `/api`、`/mcp`（含 SSE）、`/docs`、`/openapi.json`、`/openapi.yaml` 和 `/health` 代理到内部 Go 地址 `http://127.0.0.1:8001`（可用 `LITRADAR_BACKEND_URL` 覆盖）；`pnpm preview` 使用同一代理。浏览器不需要访问第二个端口。
 
 - Web：`http://localhost:8000/`
 - REST API：`http://localhost:8000/api`

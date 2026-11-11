@@ -24,6 +24,6 @@
 
 ## Web 部署
 
-浏览器经 Caddy 访问页面与 API。`/api`、`/mcp`、`/docs` 及子路径、`/openapi.json`、`/health/*` 交给服务端，其他页面由 Web host 的 SPA 提供。`/wails` 和 `/wails/*` 直接返回 404：Wails Server Build 的 runtime 端点没有认证，Web host 不注册服务，不能将 runtime 端点作为公开 API。
+浏览器经 Caddy 访问页面与 API。`/api`、`/mcp`、`/docs` 及子路径、`/openapi.json`、`/openapi.yaml`、`/health/*` 交给服务端，其他页面由 Web host 的 SPA 提供。`/wails` 和 `/wails/*` 直接返回 404：Wails Server Build 的 runtime 端点没有认证，Web host 不注册服务，不能将 runtime 端点作为公开 API。
 
 Web host 只在内部网络监听 8080，不挂载业务数据或部署密钥。公开域名、Cookie、可信代理和 MCP 设置见 [Docker 部署](../operations/docker.md)；构建任务、Windows 未签名状态及 Android 签名 secrets 见[发布说明](../operations/releases.md)。

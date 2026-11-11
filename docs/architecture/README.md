@@ -50,7 +50,7 @@ Caddy gateway -> client-web (Wails Server Build + Vite SPA)
 | `litradar admin`     | 按需、本机 | 初始化管理员、维护密文、备份和离线恢复                      |
 | `litradar openapi`   | 按需       | 把由 Go 类型生成的 OpenAPI 3.1 输出到 stdout 或文件         |
 
-Docker Compose 运行 `server`、`client-web` 和 `gateway`。只有 `server` 挂载数据与密钥；`client-web` 只连接内部前端网络。Caddy 把 `/api`、`/api/*`、`/mcp`、`/mcp/*`、`/docs`、`/docs/*`、`/openapi.json`、`/health/*` 转发到 `server`，其他页面交给客户端；`/wails` 与 `/wails/*` 直接返回 404，因为 Wails Server Build 的运行时端点没有认证，Web host 不注册任何服务。MCP 使用 `flush_interval -1`。服务端子任务仍通过同一 `litradar` 可执行文件运行，辅助程序仍为 Obscura 和 `pdftotext`。
+Docker Compose 运行 `server`、`client-web` 和 `gateway`。只有 `server` 挂载数据与密钥；`client-web` 只连接内部前端网络。Caddy 把 `/api`、`/api/*`、`/mcp`、`/mcp/*`、`/docs`、`/docs/*`、`/openapi.json`、`/openapi.yaml`、`/health/*` 转发到 `server`，其他页面交给客户端；`/wails` 与 `/wails/*` 直接返回 404，因为 Wails Server Build 的运行时端点没有认证，Web host 不注册任何服务。MCP 使用 `flush_interval -1`。服务端子任务仍通过同一 `litradar` 可执行文件运行，辅助程序仍为 Obscura 和 `pdftotext`。
 
 SIGINT 或 SIGTERM 会同时通知 HTTP 与调度组件。若计划任务子进程正在运行，调度器先终止并等待该子进程，将运行状态持久化为 `cancelled`，且不再启动剩余步骤。HTTP、心跳或调度组件意外退出时，组合根会关闭另一组件并以非零状态退出，避免半可用进程继续运行。
 

@@ -10,7 +10,7 @@ OpenAPI 由 Go 类型生成：`apps/server/internal/api/` 用 huma 注册各操�
 
 ## 地址与认证
 
-本地默认地址为 `http://localhost:8000`（开发时由 Vite 代理，部署时由 Caddy 网关同源转发）。Go 服务端提供 `/api`、`/health/*`、`/docs`、`/openapi.json` 和 `/mcp`，REST 路径统一以 `/api` 开头；网页由独立的 Web 客户端提供，服务端根路径返回 404。支持两种认证方式：
+本地默认地址为 `http://localhost:8000`（开发时由 Vite 代理，部署时由 Caddy 网关同源转发）。Go 服务端提供 `/api`、`/health/*`、`/docs`、`/openapi.json`、`/openapi.yaml`（`/docs` 页面读取它）和 `/mcp`，REST 路径统一以 `/api` 开头；网页由独立的 Web 客户端提供，服务端根路径返回 404。支持两种认证方式：
 
 | 使用场景                      | 凭据                                                  |
 | ----------------------------- | ----------------------------------------------------- |

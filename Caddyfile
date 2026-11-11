@@ -10,7 +10,7 @@
 		respond 404
 	}
 
-	@server path /api /api/* /mcp /mcp/* /docs /docs/* /openapi.json /health/*
+	@server path /api /api/* /mcp /mcp/* /docs /docs/* /openapi.json /openapi.yaml /health/*
 	handle @server {
 		reverse_proxy server:8000 {
 			flush_interval -1

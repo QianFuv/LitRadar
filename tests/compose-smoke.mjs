@@ -117,7 +117,7 @@ try {
   const loginPage = await fetch(`${origin}/login`);
   assert.equal(loginPage.status, 200);
   assert.equal(await loginPage.text(), html);
-  for (const route of ["/health/ready", "/docs", "/docs/", "/openapi.json"]) {
+  for (const route of ["/health/ready", "/docs", "/docs/", "/openapi.json", "/openapi.yaml"]) {
     assert.equal(
       (await fetch(`${origin}${route}`, { signal: AbortSignal.timeout(10000) }))
         .status,
