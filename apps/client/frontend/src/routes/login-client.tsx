@@ -3,9 +3,10 @@
  */
 
 import { Eye, EyeOff, Megaphone, Search, Radar } from '@/components/ui/animated-icons';
+import { useStore } from '@tanstack/react-form';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
-import { useEffect, useRef, useState, type ComponentType, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type ComponentType } from 'react';
 import { Shine } from '@animate-ui/react/primitives/effects/shine';
 import { SplittingText } from '@animate-ui/react/primitives/texts/splitting';
 import { Button } from '@/components/ui/button';
@@ -30,6 +31,7 @@ import {
   type AuthFormMode,
 } from '@/lib/auth-error';
 import { useAuth } from '@/lib/auth-context';
+import { useAppForm } from '@/lib/form';
 import { CLIENT_PLATFORM } from '@/lib/platform';
 import { LoadingText } from '@/components/ui/loading-text';
 import { useServerConnection } from '@/lib/server-connection';
@@ -216,15 +218,41 @@ function useLoginViewState() {
   const pendingNativeOidcRef = useRef<AbortController | null>(null);
   const oidcError = oidcErrorCode === null ? nativeOidcError : getOidcErrorMessage(oidcErrorCode);
 
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [inviteCode, setInviteCode] = useState('');
-  const [email, setEmail] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [mode, setMode] = useState<AuthFormMode>('login');
   const [isRecoveryComplete, setIsRecoveryComplete] = useState(false);
+  const form = useAppForm({
+    defaultValues: { email: '', inviteCode: '', password: '', username: '' },
+    onSubmit: async ({ value }) => {
+      setError(null);
+      setIsRecoveryComplete(false);
+      if (!isLogoutRecovery) {
+        preloadWorkspaceRoutes();
+      }
+      try {
+        if (isLogoutRecovery) {
+          await recoverLogout(value.username.trim(), value.password);
+          setIsRecoveryComplete(true);
+        } else if (mode === 'register') {
+          await register(
+            value.username.trim(),
+            value.password,
+            value.inviteCode.trim(),
+            value.email.trim(),
+          );
+        } else {
+          await login(value.username.trim(), value.password);
+        }
+        if (!isLogoutRecovery) {
+          void navigate({ href: nextPath, replace: true });
+        }
+      } catch (err) {
+        setError(getAuthErrorMessage(err, mode));
+      }
+    },
+  });
+  const isSubmitting = useStore(form.store, (formState) => formState.isSubmitting);
   const authModeKey = isLogoutRecovery ? 'recovery' : mode;
   const title = getLoginTitle(isLogoutRecovery, mode);
   const description = getLoginDescription(isLogoutRecovery, mode);
@@ -291,48 +319,13 @@ function useLoginViewState() {
     pendingNativeOidcRef.current?.abort();
   };
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setError(null);
-    setIsSubmitting(true);
-    setIsRecoveryComplete(false);
-    if (!isLogoutRecovery) {
-      preloadWorkspaceRoutes();
-    }
-
-    try {
-      if (isLogoutRecovery) {
-        await recoverLogout(username.trim(), password);
-        setIsRecoveryComplete(true);
-      } else if (mode === 'register') {
-        await register(username.trim(), password, inviteCode.trim(), email.trim());
-      } else {
-        await login(username.trim(), password);
-      }
-      if (!isLogoutRecovery) {
-        void navigate({ href: nextPath, replace: true });
-      }
-    } catch (err) {
-      setError(getAuthErrorMessage(err, mode));
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   return {
     loading,
     logoutWarning,
     user,
     isLogoutRecovery,
-    username,
-    setUsername,
-    password,
-    setPassword,
+    form,
     serverConnection,
-    inviteCode,
-    setInviteCode,
-    email,
-    setEmail,
     authProviders,
     nextPath,
     oidcError,
@@ -353,7 +346,6 @@ function useLoginViewState() {
     title,
     description,
     submitLabel,
-    handleSubmit,
   };
 }
 type LoginViewState = ReturnType<typeof useLoginViewState>;
@@ -392,7 +384,7 @@ function renderLoginPage(state: LoginViewState) {
 
 /** Retain password bytes, autocomplete, registration minimum and visibility toggle. */
 function renderLoginPassword(state: LoginViewState) {
-  const { password, setPassword, error, isPasswordVisible, setIsPasswordVisible, mode } = state;
+  const { form, error, isPasswordVisible, setIsPasswordVisible, mode } = state;
 
   return (
     <div>
@@ -400,20 +392,25 @@ function renderLoginPassword(state: LoginViewState) {
         密码
       </Label>
       <div {...stylex.props(styles.renderLoginPasswordDivItem, styles.renderLoginPasswordDiv)}>
-        <Input
-          id="password"
-          name="password"
-          type={isPasswordVisible ? 'text' : 'password'}
-          value={password}
-          autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
-          onChange={(event) => setPassword(event.target.value)}
-          placeholder={mode === 'register' ? '至少12位' : '输入当前密码'}
-          minLength={mode === 'register' ? 12 : undefined}
-          xstyle={styles.renderLoginPasswordInput}
-          aria-invalid={Boolean(error)}
-          aria-describedby={error ? 'login-error' : undefined}
-          required
-        />
+        <form.Field name="password">
+          {(field) => (
+            <Input
+              id="password"
+              name="password"
+              type={isPasswordVisible ? 'text' : 'password'}
+              value={field.state.value}
+              autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+              onValueChange={(value) => field.handleChange(value)}
+              onBlur={field.handleBlur}
+              placeholder={mode === 'register' ? '至少12位' : '输入当前密码'}
+              minLength={mode === 'register' ? 12 : undefined}
+              xstyle={styles.renderLoginPasswordInput}
+              aria-invalid={Boolean(error)}
+              aria-describedby={error ? 'login-error' : undefined}
+              required
+            />
+          )}
+        </form.Field>
         <Button
           type="button"
           variant="ghost"
@@ -436,7 +433,7 @@ function renderLoginPassword(state: LoginViewState) {
 
 /** Retain conditional invite field and captured value. */
 function renderLoginInvite(state: LoginViewState) {
-  const { isLogoutRecovery, inviteCode, setInviteCode, error, mode, inviteRequired } = state;
+  const { isLogoutRecovery, form, error, mode, inviteRequired } = state;
 
   return (
     !isLogoutRecovery &&
@@ -455,20 +452,25 @@ function renderLoginInvite(state: LoginViewState) {
           <Label xstyle={styles.renderLoginPasswordDivItem} htmlFor="invite-code">
             邀请码
           </Label>
-          <Input
-            xstyle={styles.renderLoginPasswordDivItem}
-            id="invite-code"
-            name="invite_code"
-            type="text"
-            value={inviteCode}
-            autoComplete="one-time-code"
-            spellCheck={false}
-            onChange={(event) => setInviteCode(event.target.value)}
-            placeholder="输入邀请码"
-            aria-invalid={Boolean(error)}
-            aria-describedby={error ? 'login-error' : undefined}
-            required
-          />
+          <form.Field name="inviteCode">
+            {(field) => (
+              <Input
+                xstyle={styles.renderLoginPasswordDivItem}
+                id="invite-code"
+                name="invite_code"
+                type="text"
+                value={field.state.value}
+                autoComplete="one-time-code"
+                spellCheck={false}
+                onValueChange={(value) => field.handleChange(value)}
+                onBlur={field.handleBlur}
+                placeholder="输入邀请码"
+                aria-invalid={Boolean(error)}
+                aria-describedby={error ? 'login-error' : undefined}
+                required
+              />
+            )}
+          </form.Field>
         </div>
       </MotionDiv>
     )
@@ -482,7 +484,7 @@ function renderLoginInvite(state: LoginViewState) {
  * @returns Animated email field in registration mode, otherwise false.
  */
 function renderLoginEmail(state: LoginViewState) {
-  const { isLogoutRecovery, email, setEmail, error, mode } = state;
+  const { isLogoutRecovery, form, error, mode } = state;
 
   return (
     !isLogoutRecovery &&
@@ -500,19 +502,24 @@ function renderLoginEmail(state: LoginViewState) {
           <Label xstyle={styles.renderLoginPasswordDivItem} htmlFor="email">
             邮箱（可选）
           </Label>
-          <Input
-            xstyle={styles.renderLoginPasswordDivItem}
-            id="email"
-            name="email"
-            type="email"
-            value={email}
-            autoComplete="email"
-            spellCheck={false}
-            onChange={(event) => setEmail(event.target.value)}
-            placeholder="可用于登录"
-            aria-invalid={Boolean(error)}
-            aria-describedby={error ? 'login-error' : undefined}
-          />
+          <form.Field name="email">
+            {(field) => (
+              <Input
+                xstyle={styles.renderLoginPasswordDivItem}
+                id="email"
+                name="email"
+                type="email"
+                value={field.state.value}
+                autoComplete="email"
+                spellCheck={false}
+                onValueChange={(value) => field.handleChange(value)}
+                onBlur={field.handleBlur}
+                placeholder="可用于登录"
+                aria-invalid={Boolean(error)}
+                aria-describedby={error ? 'login-error' : undefined}
+              />
+            )}
+          </form.Field>
         </div>
       </MotionDiv>
     )
@@ -823,7 +830,7 @@ function renderLoginSubmit(state: LoginViewState) {
 
 /** Retain the stable auth-form element and input identity across mode switches. */
 function renderLoginForm(state: LoginViewState) {
-  const { isLogoutRecovery, username, setUsername, error, handleSubmit, mode } = state;
+  const { isLogoutRecovery, form, error, mode } = state;
   const isRegistering = !isLogoutRecovery && mode === 'register';
 
   return (
@@ -831,7 +838,10 @@ function renderLoginForm(state: LoginViewState) {
       key="auth-form"
       data-auth-state="form"
       aria-label={isLogoutRecovery ? '会话撤销表单' : '身份验证表单'}
-      onSubmit={handleSubmit}
+      onSubmit={(event) => {
+        event.preventDefault();
+        void form.handleSubmit();
+      }}
       {...stylex.props(styles.renderLoginFormMotionForm)}
       aria-describedby={error ? 'login-error' : undefined}
       variants={PANEL_VARIANTS}
@@ -843,21 +853,26 @@ function renderLoginForm(state: LoginViewState) {
         <Label xstyle={styles.renderLoginPasswordDivItem} htmlFor="username">
           {isRegistering ? '用户名' : '用户名或邮箱'}
         </Label>
-        <Input
-          xstyle={styles.renderLoginPasswordDivItem}
-          id="username"
-          name="username"
-          type="text"
-          value={username}
-          autoComplete="username"
-          autoFocus
-          spellCheck={false}
-          onChange={(event) => setUsername(event.target.value)}
-          placeholder={isRegistering ? '3-32位字母数字下划线' : '输入用户名或邮箱'}
-          aria-invalid={Boolean(error)}
-          aria-describedby={error ? 'login-error' : undefined}
-          required
-        />
+        <form.Field name="username">
+          {(field) => (
+            <Input
+              xstyle={styles.renderLoginPasswordDivItem}
+              id="username"
+              name="username"
+              type="text"
+              value={field.state.value}
+              autoComplete="username"
+              autoFocus
+              spellCheck={false}
+              onValueChange={(value) => field.handleChange(value)}
+              onBlur={field.handleBlur}
+              placeholder={isRegistering ? '3-32位字母数字下划线' : '输入用户名或邮箱'}
+              aria-invalid={Boolean(error)}
+              aria-describedby={error ? 'login-error' : undefined}
+              required
+            />
+          )}
+        </form.Field>
       </div>
       {renderLoginPassword(state)}
       <MotionPresence>{renderLoginEmail(state)}</MotionPresence>

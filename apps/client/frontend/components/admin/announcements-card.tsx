@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
+import { z } from 'zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BellRing, Megaphone, Pencil, Plus, Trash2 } from '@/components/ui/animated-icons';
 
@@ -24,7 +25,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -44,6 +44,7 @@ import { Switch } from '@/components/ui/switch';
 import { RevealItem } from '@/components/ui/reveal';
 import { LoadingText } from '@/components/ui/loading-text';
 import * as stylex from '@stylexjs/stylex';
+import { requiredText, useAppForm } from '@/lib/form';
 import { colors, lineHeights } from '@/lib/theme.stylex';
 
 type AnnouncementFormState = {
@@ -72,6 +73,14 @@ const PRIORITY_ITEMS = [
   { value: 'normal', label: PRIORITY_LABELS.normal },
   { value: 'low', label: PRIORITY_LABELS.low },
 ] as const;
+
+/** Title and message must have content; priority and visibility are always set. */
+const ANNOUNCEMENT_FORM_SCHEMA = z.object({
+  enabled: z.boolean(),
+  message: requiredText('请输入公告内容。'),
+  priority: z.enum(['high', 'normal', 'low']),
+  title: requiredText('请输入公告标题。'),
+});
 
 const PRIORITY_TONES = {
   high: 'danger',
@@ -140,7 +149,6 @@ function useAnnouncementsViewState() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingAnnouncement, setEditingAnnouncement] = useState<AnnouncementInfo | null>(null);
   const [announcementToDelete, setAnnouncementToDelete] = useState<AnnouncementInfo | null>(null);
-  const [form, setForm] = useState<AnnouncementFormState>(DEFAULT_FORM);
 
   const {
     data: announcements = [],
@@ -151,11 +159,11 @@ function useAnnouncementsViewState() {
   });
 
   const saveMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (values: AnnouncementFormState) => {
       if (editingAnnouncement) {
-        return adminUpdateAnnouncement(editingAnnouncement.id, form);
+        return adminUpdateAnnouncement(editingAnnouncement.id, values);
       }
-      return adminCreateAnnouncement(form);
+      return adminCreateAnnouncement(values);
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: adminAnnouncementsQuery().queryKey });
@@ -163,7 +171,6 @@ function useAnnouncementsViewState() {
       void queryClient.invalidateQueries({ queryKey: adminStatsQuery().queryKey });
       setDialogOpen(false);
       setEditingAnnouncement(null);
-      setForm(DEFAULT_FORM);
     },
   });
 
@@ -187,33 +194,34 @@ function useAnnouncementsViewState() {
     },
   });
 
-  const mutationError = useMemo(() => {
-    if (saveMutation.error instanceof Error) {
-      return saveMutation.error.message;
-    }
-    if (toggleMutation.error instanceof Error) {
-      return toggleMutation.error.message;
-    }
-    if (deleteMutation.error instanceof Error) {
-      return deleteMutation.error.message;
-    }
-    return '';
-  }, [deleteMutation.error, saveMutation.error, toggleMutation.error]);
+  const form = useAppForm({
+    defaultValues: DEFAULT_FORM,
+    validators: { onChange: ANNOUNCEMENT_FORM_SCHEMA },
+    onSubmit: ({ value }) => saveMutation.mutate(value),
+  });
+
+  const mutationError =
+    [saveMutation.error, toggleMutation.error, deleteMutation.error].find(
+      (mutationFailure) => mutationFailure instanceof Error,
+    )?.message ?? '';
 
   const openCreateDialog = () => {
     setEditingAnnouncement(null);
-    setForm(DEFAULT_FORM);
+    form.reset(DEFAULT_FORM, { keepDefaultValues: true });
     setDialogOpen(true);
   };
 
   const openEditDialog = (announcement: AnnouncementInfo) => {
     setEditingAnnouncement(announcement);
-    setForm({
-      enabled: announcement.enabled,
-      message: announcement.message,
-      priority: announcement.priority,
-      title: announcement.title,
-    });
+    form.reset(
+      {
+        enabled: announcement.enabled,
+        message: announcement.message,
+        priority: announcement.priority,
+        title: announcement.title,
+      },
+      { keepDefaultValues: true },
+    );
     setDialogOpen(true);
   };
 
@@ -224,7 +232,6 @@ function useAnnouncementsViewState() {
     announcementToDelete,
     setAnnouncementToDelete,
     form,
-    setForm,
     announcements,
     error,
     isLoading,
@@ -245,7 +252,6 @@ function renderAnnouncementEditor(state: AnnouncementsViewState) {
     setDialogOpen,
     editingAnnouncement,
     form,
-    setForm,
     saveMutation,
     mutationError,
     openCreateDialog,
@@ -262,75 +268,88 @@ function renderAnnouncementEditor(state: AnnouncementsViewState) {
           <DialogTitle>{editingAnnouncement ? '编辑公告' : '新建公告'}</DialogTitle>
           <DialogDescription>公告会在首页顶部轮询显示，用户可单独关闭。</DialogDescription>
         </DialogHeader>
-        <div {...stylex.props(styles.renderAnnouncementEditorDiv)}>
+        <form
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            void form.handleSubmit();
+          }}
+          {...stylex.props(styles.renderAnnouncementEditorDiv)}
+        >
           <div>
             <Label xstyle={styles.renderAnnouncementEditorDivItem} htmlFor="announcement-title">
               公告标题
             </Label>
-            <Input
-              xstyle={styles.renderAnnouncementEditorDivItem}
-              id="announcement-title"
-              name="announcement_title"
-              autoComplete="off"
-              value={form.title}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, title: event.target.value }))
-              }
-              placeholder="公告标题"
-            />
+            <form.AppField name="title">
+              {(field) => (
+                <field.TextField
+                  xstyle={styles.renderAnnouncementEditorDivItem}
+                  id="announcement-title"
+                  name="announcement_title"
+                  autoComplete="off"
+                  placeholder="公告标题"
+                />
+              )}
+            </form.AppField>
           </div>
           <div {...stylex.props(styles.renderAnnouncementEditorDiv2)}>
             <Label htmlFor="announcement-priority">优先级</Label>
-            <Select
-              value={form.priority}
-              items={PRIORITY_ITEMS}
-              onValueChange={(value) => setForm((current) => ({ ...current, priority: value }))}
-            >
-              <SelectTrigger
-                id="announcement-priority"
-                xstyle={styles.renderAnnouncementEditorSelectTrigger}
-              >
-                <SelectValue placeholder="选择优先级" />
-              </SelectTrigger>
-              <SelectContent>
-                {PRIORITY_ITEMS.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <form.Field name="priority">
+              {(field) => (
+                <Select
+                  value={field.state.value}
+                  items={PRIORITY_ITEMS}
+                  onValueChange={(value) => field.handleChange(value)}
+                >
+                  <SelectTrigger
+                    id="announcement-priority"
+                    xstyle={styles.renderAnnouncementEditorSelectTrigger}
+                  >
+                    <SelectValue placeholder="选择优先级" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PRIORITY_ITEMS.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </form.Field>
           </div>
           <div>
             <Label xstyle={styles.renderAnnouncementEditorDivItem} htmlFor="announcement-message">
               公告内容
             </Label>
-            <textarea
-              id="announcement-message"
-              name="announcement_message"
-              autoComplete="off"
-              value={form.message}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, message: event.target.value }))
-              }
-              placeholder="公告内容"
-              {...stylex.props(
-                styles.renderAnnouncementEditorDivItem,
-                styles.renderAnnouncementEditorTextarea,
+            <form.AppField name="message">
+              {(field) => (
+                <field.TextareaField
+                  id="announcement-message"
+                  name="announcement_message"
+                  autoComplete="off"
+                  placeholder="公告内容"
+                  xstyle={[
+                    styles.renderAnnouncementEditorDivItem,
+                    styles.renderAnnouncementEditorTextarea,
+                  ]}
+                />
               )}
-            />
+            </form.AppField>
           </div>
           <div {...stylex.props(styles.renderAnnouncementEditorDiv3)}>
             <Label htmlFor="announcement-enabled" xstyle={styles.renderAnnouncementEditorLabel}>
               启用公告
             </Label>
-            <Switch
-              id="announcement-enabled"
-              checked={form.enabled}
-              onCheckedChange={(checked: boolean) =>
-                setForm((current) => ({ ...current, enabled: checked }))
-              }
-            />
+            <form.Field name="enabled">
+              {(field) => (
+                <Switch
+                  id="announcement-enabled"
+                  checked={field.state.value}
+                  onCheckedChange={(checked: boolean) => field.handleChange(checked)}
+                />
+              )}
+            </form.Field>
           </div>
           <MotionPresence>
             {mutationError && (
@@ -350,21 +369,26 @@ function renderAnnouncementEditor(state: AnnouncementsViewState) {
           </MotionPresence>
           <div {...stylex.props(styles.renderAnnouncementEditorDiv4)}>
             <Button
+              type="button"
               variant="outline"
               xstyle={styles.renderAnnouncementEditorButton}
               onClick={() => setDialogOpen(false)}
             >
               取消
             </Button>
-            <Button
-              xstyle={styles.renderAnnouncementEditorButton}
-              disabled={!form.title.trim() || !form.message.trim() || saveMutation.isPending}
-              onClick={() => saveMutation.mutate()}
-            >
-              {editingAnnouncement ? '保存' : '创建'}
-            </Button>
+            <form.Subscribe selector={(formState) => formState.canSubmit}>
+              {(canSubmit) => (
+                <Button
+                  type="submit"
+                  xstyle={styles.renderAnnouncementEditorButton}
+                  disabled={!canSubmit || saveMutation.isPending}
+                >
+                  {editingAnnouncement ? '保存' : '创建'}
+                </Button>
+              )}
+            </form.Subscribe>
           </div>
-        </div>
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -603,27 +627,6 @@ const styles = stylex.create({
   },
   renderAnnouncementEditorTextarea: {
     minHeight: '8rem',
-    width: '100%',
-    borderRadius: '8px',
-    borderStyle: 'solid',
-    borderWidth: '1px',
-    borderColor: {
-      default: colors.input,
-      ':focus-visible': colors.ring,
-    },
-    backgroundColor: 'transparent',
-    paddingInline: '0.75rem',
-    paddingBlock: '0.5rem',
-    fontSize: '0.875rem',
-    lineHeight: lineHeights.textSm,
-    outlineStyle: 'none',
-    boxShadow: {
-      default: null,
-      ':focus-visible': `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent)`,
-    },
-    '::placeholder': {
-      color: colors.mutedForeground,
-    },
   },
   renderAnnouncementEditorDiv3: {
     display: 'flex',

@@ -609,14 +609,65 @@ async function reusesInviteDatesDuringFormEdits(): Promise<void> {
     });
     await waitFor(() => expect(screen.getAllByText(expiryLabel)).toHaveLength(1));
     expect(screen.getByText(creationLabel)).toBeInTheDocument();
-    expect(screen.getByLabelText('有效天数')).toHaveValue(30);
-    expect(screen.getByLabelText('最多使用次数')).toHaveValue(12);
+    expect(screen.getByLabelText('有效天数')).toHaveValue('30');
+    expect(screen.getByLabelText('最多使用次数')).toHaveValue('12');
   } finally {
     formatDate.mockRestore();
   }
 }
 
+/**
+ * Verify invalid scheduled-task fields report on the field and block submission until corrected.
+ */
+async function rejectsInvalidScheduledTaskFields(): Promise<void> {
+  isTaskDeleted = true;
+  createdTask = undefined;
+  server.use(
+    http.get('http://localhost/api/admin/scheduled-tasks', scheduledTaskListResponse),
+    http.get('http://localhost/api/admin/scheduler/status', schedulerStatusResponse),
+    http.post('http://localhost/api/admin/scheduled-tasks', createScheduledTaskResponse),
+  );
+  const user = userEvent.setup();
+  await renderWithQuery(<ScheduledTasksCard />);
+
+  await user.click(await screen.findByRole('button', { name: '新建任务' }));
+  const dialog = screen.getByRole('dialog', { name: '新建定时任务' });
+  const createButton = within(dialog).getByRole('button', { name: '创建' });
+  await user.click(createButton);
+  expect(await within(dialog).findByText('请输入任务名称。')).toBeInTheDocument();
+  expect(createButton).toBeDisabled();
+
+  await user.type(within(dialog).getByLabelText('任务名称'), 'Checked task');
+  const timezoneInput = within(dialog).getByLabelText('IANA 时区');
+  await user.clear(timezoneInput);
+  await user.type(timezoneInput, 'Mars/Base');
+  expect(within(dialog).getByLabelText('IANA 时区')).toHaveAttribute('aria-invalid', 'true');
+  expect(
+    within(dialog).getByText('请输入有效的 IANA 时区，例如 Asia/Shanghai。'),
+  ).toBeInTheDocument();
+  await user.clear(within(dialog).getByLabelText('超时秒数'));
+  expect(within(dialog).getByText('超时必须为 1 到 86400 秒的整数。')).toBeInTheDocument();
+  expect(createButton).toBeDisabled();
+
+  await user.clear(timezoneInput);
+  await user.type(timezoneInput, 'Asia/Shanghai');
+  await user.type(within(dialog).getByLabelText('超时秒数'), '60');
+  await user.click(createButton);
+  await waitFor(() =>
+    expect(createdTask).toMatchObject({
+      name: 'Checked task',
+      timeout_seconds: 60,
+      timezone: 'Asia/Shanghai',
+    }),
+  );
+}
+
 describe('administrator mutation flow', () => {
+  test(
+    'rejects invalid scheduled-task fields before submission',
+    rejectsInvalidScheduledTaskFields,
+    10_000,
+  );
   test(
     'reuses invite history dates while editing creation limits',
     reusesInviteDatesDuringFormEdits,

@@ -1,4 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useStore } from '@tanstack/react-form';
+import { useState } from 'react';
+import { z } from 'zod';
+import { isTimeZoneId, localTimeZoneId } from '@/lib/date';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Clock3, Pencil, Plus, Trash2, Clock } from '@/components/ui/animated-icons';
 
@@ -32,7 +35,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -53,19 +55,8 @@ import { Switch } from '@/components/ui/switch';
 import { RevealItem } from '@/components/ui/reveal';
 import { LoadingText } from '@/components/ui/loading-text';
 import * as stylex from '@stylexjs/stylex';
+import { requiredText, useAppForm } from '@/lib/form';
 import { colors, lineHeights } from '@/lib/theme.stylex';
-
-type TaskFormState = {
-  coalesce: boolean;
-  cron: string;
-  database: string;
-  enabled: boolean;
-  maxCandidates: string;
-  metadataFile: string;
-  name: string;
-  timeoutSeconds: string;
-  timezone: string;
-};
 
 type JobPresetId =
   | 'index-update'
@@ -84,19 +75,34 @@ const JOB_PRESETS: { label: string; value: JobPresetId }[] = [
   { value: 'external-only', label: '仅外部推送' },
 ];
 
-const DEFAULT_FORM: TaskFormState = {
+const DEFAULT_PRESET: JobPresetId = 'index-update-external';
+
+/** Editable task fields; the job arguments that apply depend on the preset. */
+type TaskFormValues = {
+  coalesce: boolean;
+  cron: string;
+  database: string;
+  enabled: boolean;
+  jobPreset: JobPresetId;
+  maxCandidates: number | null;
+  metadataFile: string;
+  name: string;
+  timeoutSeconds: number | null;
+  timezone: string;
+};
+
+const DEFAULT_FORM: TaskFormValues = {
   coalesce: true,
   cron: '0 8 * * *',
   database: '',
   enabled: true,
-  maxCandidates: '',
+  jobPreset: DEFAULT_PRESET,
+  maxCandidates: null,
   metadataFile: '',
   name: '',
-  timeoutSeconds: '3600',
+  timeoutSeconds: 3600,
   timezone: 'UTC',
 };
-
-const DEFAULT_PRESET: JobPresetId = 'index-update-external';
 
 /**
  * Resolve the browser's IANA time zone for new task defaults.
@@ -104,7 +110,7 @@ const DEFAULT_PRESET: JobPresetId = 'index-update-external';
  * @returns Browser time zone, or UTC when the runtime does not expose one.
  */
 function getBrowserTimeZone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  return localTimeZoneId() || 'UTC';
 }
 
 /**
@@ -148,13 +154,13 @@ function getPresetForJob(job: ScheduledJobSpec | null): JobPresetId {
 /**
  * Build the allowlisted job payload represented by the form.
  *
- * @param form - Structured task form values.
- * @param preset - Selected job preset.
+ * @param values - Structured task form values.
  * @returns Generated API job specification.
  */
-function buildScheduledJob(form: TaskFormState, preset: JobPresetId): ScheduledJobSpec {
+function buildScheduledJob(values: TaskFormValues): ScheduledJobSpec {
+  const preset = values.jobPreset;
   if (isIndexPreset(preset)) {
-    const metadataFile = form.metadataFile.trim();
+    const metadataFile = values.metadataFile.trim();
     return {
       kind: 'index',
       notify: preset === 'index-update-external' || preset === 'index-update-both',
@@ -163,12 +169,11 @@ function buildScheduledJob(form: TaskFormState, preset: JobPresetId): ScheduledJ
     };
   }
 
-  const database = form.database.trim();
-  const maxCandidates = form.maxCandidates.trim();
+  const database = values.database.trim();
   return {
     kind: preset === 'folder-only' ? 'push' : 'notify',
     ...(database ? { database } : {}),
-    ...(maxCandidates ? { max_candidates: Number(maxCandidates) } : {}),
+    ...(values.maxCandidates !== null ? { max_candidates: values.maxCandidates } : {}),
   };
 }
 
@@ -191,28 +196,6 @@ function isSafeBasename(value: string, extension: '.csv' | '.sqlite'): boolean {
 }
 
 /**
- * Return whether all structured job arguments are valid.
- *
- * @param form - Structured task form values.
- * @param preset - Selected job preset.
- * @returns Whether the form can be submitted.
- */
-function isJobFormValid(form: TaskFormState, preset: JobPresetId): boolean {
-  if (isIndexPreset(preset)) {
-    return isSafeBasename(form.metadataFile, '.csv');
-  }
-  const maxCandidates = form.maxCandidates.trim();
-  const parsedMaxCandidates = Number(maxCandidates);
-  return (
-    isSafeBasename(form.database, '.sqlite') &&
-    (!maxCandidates ||
-      (Number.isInteger(parsedMaxCandidates) &&
-        parsedMaxCandidates >= 1 &&
-        parsedMaxCandidates <= 1000))
-  );
-}
-
-/**
  * Return whether a scheduler time zone can be resolved by the browser runtime.
  *
  * @param value - Candidate IANA time-zone name.
@@ -220,27 +203,70 @@ function isJobFormValid(form: TaskFormState, preset: JobPresetId): boolean {
  */
 function isValidTimeZone(value: string): boolean {
   const timezone = value.trim();
-  if (!timezone) {
-    return false;
-  }
-  try {
-    Intl.DateTimeFormat('en-US', { timeZone: timezone }).format();
-    return true;
-  } catch {
-    return false;
-  }
+  return timezone.length > 0 && isTimeZoneId(timezone);
 }
 
+/** Message for a missing or out-of-range scheduler timeout. */
+const TIMEOUT_MESSAGE = '超时必须为 1 到 86400 秒的整数。';
+
 /**
- * Return whether a scheduler timeout is a whole number within the backend limit.
- *
- * @param value - Timeout input in seconds.
- * @returns Whether the timeout can be submitted.
+ * Task form rules. Required fields always apply; the preset decides whether the CSV file or the
+ * delivery database and candidate limit are checked, and each issue is reported on its field.
  */
-function isValidTimeout(value: string): boolean {
-  const timeoutSeconds = Number(value);
-  return Number.isInteger(timeoutSeconds) && timeoutSeconds >= 1 && timeoutSeconds <= 86_400;
-}
+const TASK_FORM_SCHEMA = z
+  .object({
+    coalesce: z.boolean(),
+    cron: requiredText('请输入 Cron 表达式。'),
+    database: z.string(),
+    enabled: z.boolean(),
+    jobPreset: z.enum([
+      'index-update',
+      'index-update-folder',
+      'index-update-external',
+      'index-update-both',
+      'folder-only',
+      'external-only',
+    ]),
+    maxCandidates: z.number().nullable(),
+    metadataFile: z.string(),
+    name: requiredText('请输入任务名称。'),
+    timeoutSeconds: z
+      .number(TIMEOUT_MESSAGE)
+      .int(TIMEOUT_MESSAGE)
+      .min(1, TIMEOUT_MESSAGE)
+      .max(86_400, TIMEOUT_MESSAGE),
+    timezone: z.string().refine(isValidTimeZone, '请输入有效的 IANA 时区，例如 Asia/Shanghai。'),
+  })
+  .superRefine((values, context) => {
+    if (isIndexPreset(values.jobPreset)) {
+      if (!isSafeBasename(values.metadataFile, '.csv')) {
+        context.addIssue({
+          code: 'custom',
+          path: ['metadataFile'],
+          message: '请输入不含路径或特殊符号的 .csv 文件名。',
+        });
+      }
+      return;
+    }
+    if (!isSafeBasename(values.database, '.sqlite')) {
+      context.addIssue({
+        code: 'custom',
+        path: ['database'],
+        message: '请输入不含路径或特殊符号的 .sqlite 文件名。',
+      });
+    }
+    const { maxCandidates } = values;
+    if (
+      maxCandidates !== null &&
+      (!Number.isInteger(maxCandidates) || maxCandidates < 1 || maxCandidates > 1000)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['maxCandidates'],
+        message: '候选上限必须为 1 到 1000 的整数。',
+      });
+    }
+  });
 
 /**
  * Format a typed job for administrator review.
@@ -353,8 +379,6 @@ function useSchedulerViewState(isActive: boolean) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<ScheduledTaskInfo | null>(null);
   const [taskToDelete, setTaskToDelete] = useState<ScheduledTaskInfo | null>(null);
-  const [form, setForm] = useState<TaskFormState>(DEFAULT_FORM);
-  const [jobPreset, setJobPreset] = useState<JobPresetId>(DEFAULT_PRESET);
 
   const {
     data: tasks = [],
@@ -375,15 +399,15 @@ function useSchedulerViewState(isActive: boolean) {
   });
 
   const saveMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (values: z.output<typeof TASK_FORM_SCHEMA>) => {
       const payload: ScheduledTaskCreate = {
-        coalesce: form.coalesce,
-        cron: form.cron,
-        enabled: form.enabled,
-        job: buildScheduledJob(form, jobPreset),
-        name: form.name,
-        timeout_seconds: Number(form.timeoutSeconds),
-        timezone: form.timezone.trim(),
+        coalesce: values.coalesce,
+        cron: values.cron,
+        enabled: values.enabled,
+        job: buildScheduledJob(values),
+        name: values.name,
+        timeout_seconds: values.timeoutSeconds,
+        timezone: values.timezone.trim(),
       };
       if (editingTask) {
         return adminUpdateScheduledTask(editingTask.id, payload);
@@ -396,8 +420,6 @@ function useSchedulerViewState(isActive: boolean) {
       void queryClient.invalidateQueries({ queryKey: schedulerStatusQuery().queryKey });
       setDialogOpen(false);
       setEditingTask(null);
-      setForm(DEFAULT_FORM);
-      setJobPreset(DEFAULT_PRESET);
     },
   });
 
@@ -421,40 +443,30 @@ function useSchedulerViewState(isActive: boolean) {
     },
   });
 
-  const mutationError = useMemo(() => {
-    if (saveMutation.error instanceof Error) {
-      return saveMutation.error.message;
-    }
-    if (toggleMutation.error instanceof Error) {
-      return toggleMutation.error.message;
-    }
-    if (deleteMutation.error instanceof Error) {
-      return deleteMutation.error.message;
-    }
-    return '';
-  }, [deleteMutation.error, saveMutation.error, toggleMutation.error]);
+  const form = useAppForm({
+    defaultValues: DEFAULT_FORM,
+    validators: { onChange: TASK_FORM_SCHEMA },
+    onSubmit: ({ value }) => saveMutation.mutate(TASK_FORM_SCHEMA.parse(value)),
+  });
+  const jobPreset = useStore(form.store, (formState) => formState.values.jobPreset);
+
+  const mutationError =
+    [saveMutation.error, toggleMutation.error, deleteMutation.error].find(
+      (mutationFailure) => mutationFailure instanceof Error,
+    )?.message ?? '';
 
   const openCreateDialog = () => {
     setEditingTask(null);
-    setForm({ ...DEFAULT_FORM, timezone: getBrowserTimeZone() });
-    setJobPreset(DEFAULT_PRESET);
+    form.reset({ ...DEFAULT_FORM, timezone: getBrowserTimeZone() }, { keepDefaultValues: true });
     setDialogOpen(true);
   };
 
   const openEditDialog = (task: ScheduledTaskInfo) => {
-    const preset = getPresetForJob(task.job);
     setEditingTask(task);
-    setForm(getScheduledTaskForm(task));
-    setJobPreset(preset);
+    form.reset(getScheduledTaskForm(task), { keepDefaultValues: true });
     setDialogOpen(true);
   };
 
-  const isFormValid =
-    Boolean(form.name.trim()) &&
-    Boolean(form.cron.trim()) &&
-    isValidTimeZone(form.timezone) &&
-    isValidTimeout(form.timeoutSeconds) &&
-    isJobFormValid(form, jobPreset);
   const healthyWorkerCount =
     schedulerStatus?.workers.filter((worker) => worker.is_healthy).length ?? 0;
   const isIndexJobPreset = isIndexPreset(jobPreset);
@@ -472,9 +484,6 @@ function useSchedulerViewState(isActive: boolean) {
     taskToDelete,
     setTaskToDelete,
     form,
-    setForm,
-    jobPreset,
-    setJobPreset,
     tasks,
     error,
     isLoading,
@@ -487,7 +496,6 @@ function useSchedulerViewState(isActive: boolean) {
     mutationError,
     openCreateDialog,
     openEditDialog,
-    isFormValid,
     healthyWorkerCount,
     isIndexJobPreset,
     schedulerStatusKey,
@@ -496,10 +504,8 @@ function useSchedulerViewState(isActive: boolean) {
 type SchedulerViewState = ReturnType<typeof useSchedulerViewState>;
 
 /** Keep hidden index arguments mounted with identical inert and motion guards. */
-function renderSchedulerIndexFields(
-  state: Pick<SchedulerViewState, 'form' | 'setForm' | 'isIndexJobPreset'>,
-) {
-  const { form, setForm, isIndexJobPreset } = state;
+function renderSchedulerIndexFields(state: Pick<SchedulerViewState, 'form' | 'isIndexJobPreset'>) {
+  const { form, isIndexJobPreset } = state;
 
   return (
     <MotionDiv
@@ -518,26 +524,18 @@ function renderSchedulerIndexFields(
         <Label xstyle={styles.renderSchedulerIndexFieldsDivItem} htmlFor="scheduled-task-metadata">
           元数据 CSV 文件名（可选）
         </Label>
-        <Input
-          xstyle={styles.renderSchedulerIndexFieldsDivItem}
-          id="scheduled-task-metadata"
-          name="scheduled_task_metadata_file"
-          autoComplete="off"
-          spellCheck={false}
-          value={form.metadataFile}
-          onChange={(event) =>
-            setForm((current) => ({ ...current, metadataFile: event.target.value }))
-          }
-          placeholder="journals.csv"
-        />
-        {!isSafeBasename(form.metadataFile, '.csv') && (
-          <p
-            role="alert"
-            {...stylex.props(styles.renderSchedulerIndexFieldsDivItem, styles.scheduledTasksCardP)}
-          >
-            请输入不含路径或特殊符号的 .csv 文件名。
-          </p>
-        )}
+        <form.AppField name="metadataFile">
+          {(field) => (
+            <field.TextField
+              xstyle={styles.renderSchedulerIndexFieldsDivItem}
+              id="scheduled-task-metadata"
+              name="scheduled_task_metadata_file"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="journals.csv"
+            />
+          )}
+        </form.AppField>
       </div>
     </MotionDiv>
   );
@@ -545,9 +543,9 @@ function renderSchedulerIndexFields(
 
 /** Keep hidden delivery arguments mounted with identical inert and validation guards. */
 function renderSchedulerDeliveryFields(
-  state: Pick<SchedulerViewState, 'form' | 'setForm' | 'isIndexJobPreset'>,
+  state: Pick<SchedulerViewState, 'form' | 'isIndexJobPreset'>,
 ) {
-  const { form, setForm, isIndexJobPreset } = state;
+  const { form, isIndexJobPreset } = state;
 
   return (
     <MotionDiv
@@ -570,29 +568,18 @@ function renderSchedulerDeliveryFields(
           >
             索引数据库（可选）
           </Label>
-          <Input
-            xstyle={styles.renderSchedulerIndexFieldsDivItem}
-            id="scheduled-task-database"
-            name="scheduled_task_database"
-            autoComplete="off"
-            spellCheck={false}
-            value={form.database}
-            onChange={(event) =>
-              setForm((current) => ({ ...current, database: event.target.value }))
-            }
-            placeholder="journals.sqlite"
-          />
-          {!isSafeBasename(form.database, '.sqlite') && (
-            <p
-              role="alert"
-              {...stylex.props(
-                styles.renderSchedulerIndexFieldsDivItem,
-                styles.scheduledTasksCardP,
-              )}
-            >
-              请输入不含路径或特殊符号的 .sqlite 文件名。
-            </p>
-          )}
+          <form.AppField name="database">
+            {(field) => (
+              <field.TextField
+                xstyle={styles.renderSchedulerIndexFieldsDivItem}
+                id="scheduled-task-database"
+                name="scheduled_task_database"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="journals.sqlite"
+              />
+            )}
+          </form.AppField>
         </div>
         <div>
           <Label
@@ -601,20 +588,19 @@ function renderSchedulerDeliveryFields(
           >
             候选上限（可选）
           </Label>
-          <Input
-            xstyle={styles.renderSchedulerIndexFieldsDivItem}
-            id="scheduled-task-candidates"
-            name="scheduled_task_max_candidates"
-            type="number"
-            min={1}
-            max={1000}
-            step={1}
-            value={form.maxCandidates}
-            onChange={(event) =>
-              setForm((current) => ({ ...current, maxCandidates: event.target.value }))
-            }
-            placeholder="100"
-          />
+          <form.AppField name="maxCandidates">
+            {(field) => (
+              <field.NumberField
+                xstyle={styles.renderSchedulerIndexFieldsDivItem}
+                id="scheduled-task-candidates"
+                name="scheduled_task_max_candidates"
+                min={1}
+                max={1000}
+                step={1}
+                placeholder="100"
+              />
+            )}
+          </form.AppField>
         </div>
       </div>
     </MotionDiv>
@@ -628,13 +614,9 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
     setDialogOpen,
     editingTask,
     form,
-    setForm,
-    jobPreset,
-    setJobPreset,
     saveMutation,
     mutationError,
     openCreateDialog,
-    isFormValid,
   } = state;
 
   return (
@@ -650,7 +632,14 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
             使用五段 crontab 表达式和明确的 IANA 时区，例如 `0 8 * * *` 与 `Asia/Shanghai`。
           </DialogDescription>
         </DialogHeader>
-        <div {...stylex.props(styles.renderScheduledTaskEditorDiv)}>
+        <form
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            void form.handleSubmit();
+          }}
+          {...stylex.props(styles.renderScheduledTaskEditorDiv)}
+        >
           {editingTask?.job === null && (
             <div role="alert" {...stylex.props(styles.renderScheduledTaskEditorDiv2)}>
               <div
@@ -684,30 +673,34 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
             <Label xstyle={styles.renderSchedulerIndexFieldsDivItem} htmlFor="scheduled-task-name">
               任务名称
             </Label>
-            <Input
-              xstyle={styles.renderSchedulerIndexFieldsDivItem}
-              id="scheduled-task-name"
-              name="scheduled_task_name"
-              autoComplete="off"
-              value={form.name}
-              onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-              placeholder="任务名称"
-            />
+            <form.AppField name="name">
+              {(field) => (
+                <field.TextField
+                  xstyle={styles.renderSchedulerIndexFieldsDivItem}
+                  id="scheduled-task-name"
+                  name="scheduled_task_name"
+                  autoComplete="off"
+                  placeholder="任务名称"
+                />
+              )}
+            </form.AppField>
           </div>
           <div>
             <Label xstyle={styles.renderSchedulerIndexFieldsDivItem} htmlFor="scheduled-task-cron">
               Cron 表达式
             </Label>
-            <Input
-              xstyle={styles.renderSchedulerIndexFieldsDivItem}
-              id="scheduled-task-cron"
-              name="scheduled_task_cron"
-              autoComplete="off"
-              spellCheck={false}
-              value={form.cron}
-              onChange={(event) => setForm((current) => ({ ...current, cron: event.target.value }))}
-              placeholder="Cron 表达式"
-            />
+            <form.AppField name="cron">
+              {(field) => (
+                <field.TextField
+                  xstyle={styles.renderSchedulerIndexFieldsDivItem}
+                  id="scheduled-task-cron"
+                  name="scheduled_task_cron"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="Cron 表达式"
+                />
+              )}
+            </form.AppField>
           </div>
           <div {...stylex.props(styles.renderSchedulerDeliveryFieldsDiv)}>
             <div>
@@ -717,29 +710,18 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
               >
                 IANA 时区
               </Label>
-              <Input
-                xstyle={styles.renderSchedulerIndexFieldsDivItem}
-                id="scheduled-task-timezone"
-                name="scheduled_task_timezone"
-                autoComplete="off"
-                spellCheck={false}
-                value={form.timezone}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, timezone: event.target.value }))
-                }
-                placeholder="Asia/Shanghai"
-              />
-              {!isValidTimeZone(form.timezone) && (
-                <p
-                  role="alert"
-                  {...stylex.props(
-                    styles.renderSchedulerIndexFieldsDivItem,
-                    styles.scheduledTasksCardP,
-                  )}
-                >
-                  请输入有效的 IANA 时区，例如 Asia/Shanghai。
-                </p>
-              )}
+              <form.AppField name="timezone">
+                {(field) => (
+                  <field.TextField
+                    xstyle={styles.renderSchedulerIndexFieldsDivItem}
+                    id="scheduled-task-timezone"
+                    name="scheduled_task_timezone"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="Asia/Shanghai"
+                  />
+                )}
+              </form.AppField>
             </div>
             <div>
               <Label
@@ -748,68 +730,70 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
               >
                 超时秒数
               </Label>
-              <Input
-                xstyle={styles.renderSchedulerIndexFieldsDivItem}
-                id="scheduled-task-timeout"
-                name="scheduled_task_timeout_seconds"
-                type="number"
-                min={1}
-                max={86_400}
-                step={1}
-                value={form.timeoutSeconds}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, timeoutSeconds: event.target.value }))
-                }
-              />
-              {!isValidTimeout(form.timeoutSeconds) && (
-                <p
-                  role="alert"
-                  {...stylex.props(
-                    styles.renderSchedulerIndexFieldsDivItem,
-                    styles.scheduledTasksCardP,
-                  )}
-                >
-                  超时必须为 1 到 86400 秒的整数。
-                </p>
-              )}
+              <form.AppField name="timeoutSeconds">
+                {(field) => (
+                  <field.NumberField
+                    xstyle={styles.renderSchedulerIndexFieldsDivItem}
+                    id="scheduled-task-timeout"
+                    name="scheduled_task_timeout_seconds"
+                    min={1}
+                    max={86_400}
+                    step={1}
+                  />
+                )}
+              </form.AppField>
             </div>
           </div>
           <div {...stylex.props(styles.renderScheduledTaskEditorDiv5)}>
             <Label htmlFor="scheduled-task-preset">任务预设</Label>
-            <Select value={jobPreset} items={JOB_PRESETS} onValueChange={setJobPreset}>
-              <SelectTrigger
-                id="scheduled-task-preset"
-                xstyle={styles.renderScheduledTaskEditorSelectTrigger}
-              >
-                <SelectValue placeholder="选择任务预设" />
-              </SelectTrigger>
-              <SelectContent>
-                {JOB_PRESETS.map((preset) => (
-                  <SelectItem key={preset.value} value={preset.value}>
-                    {preset.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <form.Field name="jobPreset">
+              {(field) => (
+                <Select
+                  value={field.state.value}
+                  items={JOB_PRESETS}
+                  onValueChange={(preset: JobPresetId) => field.handleChange(preset)}
+                >
+                  <SelectTrigger
+                    id="scheduled-task-preset"
+                    xstyle={styles.renderScheduledTaskEditorSelectTrigger}
+                  >
+                    <SelectValue placeholder="选择任务预设" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {JOB_PRESETS.map((preset) => (
+                      <SelectItem key={preset.value} value={preset.value}>
+                        {preset.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </form.Field>
           </div>
           <div>
             {renderSchedulerIndexFields(state)}
             {renderSchedulerDeliveryFields(state)}
           </div>
-          <div {...stylex.props(styles.renderScheduledTaskEditorDiv6)}>
-            将执行：{describeJob(buildScheduledJob(form, jobPreset))}
-          </div>
+          <form.Subscribe selector={(formState) => formState.values}>
+            {(values) => (
+              <div {...stylex.props(styles.renderScheduledTaskEditorDiv6)}>
+                将执行：{describeJob(buildScheduledJob(values))}
+              </div>
+            )}
+          </form.Subscribe>
           <div {...stylex.props(styles.renderScheduledTaskEditorDiv7)}>
             <Label htmlFor="scheduled-task-enabled" xstyle={styles.renderScheduledTaskEditorLabel}>
               启用任务
             </Label>
-            <Switch
-              id="scheduled-task-enabled"
-              checked={form.enabled}
-              onCheckedChange={(checked: boolean) =>
-                setForm((current) => ({ ...current, enabled: checked }))
-              }
-            />
+            <form.Field name="enabled">
+              {(field) => (
+                <Switch
+                  id="scheduled-task-enabled"
+                  checked={field.state.value}
+                  onCheckedChange={(checked: boolean) => field.handleChange(checked)}
+                />
+              )}
+            </form.Field>
           </div>
           <div {...stylex.props(styles.renderScheduledTaskEditorDiv7)}>
             <div>
@@ -831,13 +815,15 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
                 worker 离线后仅补跑最近一次错过的执行。
               </p>
             </div>
-            <Switch
-              id="scheduled-task-coalesce"
-              checked={form.coalesce}
-              onCheckedChange={(checked: boolean) =>
-                setForm((current) => ({ ...current, coalesce: checked }))
-              }
-            />
+            <form.Field name="coalesce">
+              {(field) => (
+                <Switch
+                  id="scheduled-task-coalesce"
+                  checked={field.state.value}
+                  onCheckedChange={(checked: boolean) => field.handleChange(checked)}
+                />
+              )}
+            </form.Field>
           </div>
           <MotionPresence>
             {mutationError && (
@@ -857,21 +843,26 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
           </MotionPresence>
           <div {...stylex.props(styles.renderScheduledTaskEditorDiv8)}>
             <Button
+              type="button"
               variant="outline"
               xstyle={styles.renderScheduledTaskEditorButton}
               onClick={() => setDialogOpen(false)}
             >
               取消
             </Button>
-            <Button
-              xstyle={styles.renderScheduledTaskEditorButton}
-              disabled={!isFormValid || saveMutation.isPending}
-              onClick={() => saveMutation.mutate()}
-            >
-              {editingTask ? '保存' : '创建'}
-            </Button>
+            <form.Subscribe selector={(formState) => formState.canSubmit}>
+              {(canSubmit) => (
+                <Button
+                  type="submit"
+                  xstyle={styles.renderScheduledTaskEditorButton}
+                  disabled={!canSubmit || saveMutation.isPending}
+                >
+                  {editingTask ? '保存' : '创建'}
+                </Button>
+              )}
+            </form.Subscribe>
           </div>
-        </div>
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -1229,23 +1220,24 @@ function getScheduledTaskDatabase(task: ScheduledTaskInfo): string {
 }
 
 /** Restore the original maxCandidates field only for delivery jobs. */
-function getScheduledTaskCandidates(task: ScheduledTaskInfo): string {
+function getScheduledTaskCandidates(task: ScheduledTaskInfo): number | null {
   return task.job?.kind === 'notify' || task.job?.kind === 'push'
-    ? (task.job.max_candidates?.toString() ?? '')
-    : '';
+    ? (task.job.max_candidates ?? null)
+    : null;
 }
 
 /** Restore edit fields in their original order without executing legacy commands. */
-function getScheduledTaskForm(task: ScheduledTaskInfo): TaskFormState {
+function getScheduledTaskForm(task: ScheduledTaskInfo): TaskFormValues {
   return {
     coalesce: task.coalesce,
     cron: task.cron,
     database: getScheduledTaskDatabase(task),
     enabled: task.enabled,
+    jobPreset: getPresetForJob(task.job),
     maxCandidates: getScheduledTaskCandidates(task),
     metadataFile: task.job?.kind === 'index' ? (task.job.metadata_file ?? '') : '',
     name: task.name,
-    timeoutSeconds: task.timeout_seconds.toString(),
+    timeoutSeconds: task.timeout_seconds,
     timezone: task.timezone,
   };
 }

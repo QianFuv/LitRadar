@@ -1,16 +1,21 @@
 /** Shared single-line input with theme-aware pointer and keyboard feedback. */
 
-import * as React from 'react';
+import { Input as BaseInput } from '@base-ui/react/input';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
-/** Render an input while preserving native fields, sizing, and invalid states. */
+/**
+ * Render a Base UI input, which joins an enclosing `Field` for labelling and validity, while
+ * preserving native attributes, sizing, and invalid states.
+ *
+ * @param props - Base UI input props and optional styles.
+ * @returns Styled input element.
+ */
 function Input({
   xstyle,
-  type,
   ...props
-}: Omit<React.ComponentProps<'input'>, 'className'> & { xstyle?: stylex.StyleXStyles }) {
-  return <input type={type} data-slot="input" {...stylex.props(styles.input, xstyle)} {...props} />;
+}: Omit<BaseInput.Props, 'className' | 'style'> & { xstyle?: stylex.StyleXStyles }) {
+  return <BaseInput data-slot="input" {...stylex.props(styles.input, xstyle)} {...props} />;
 }
 
 export { Input };
@@ -96,3 +101,6 @@ const styles = stylex.create({
     },
   },
 });
+
+/** Input styles shared with number fields so every text control matches. */
+export const inputStyle = styles.input;

@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MotionParagraph, MotionPresence, REVEAL_VARIANTS } from '@/components/ui/motion';
 import { KeyRound } from '@/components/ui/animated-icons';
+import { useAppForm } from '@/lib/form';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
 
@@ -26,16 +27,22 @@ import { colors, lineHeights } from '@/lib/theme.stylex';
  */
 export function PasswordCard() {
   const { logout } = useAuth();
-  const [oldPwd, setOldPwd] = useState('');
-  const [newPwd, setNewPwd] = useState('');
   const [pwdMsg, setPwdMsg] = useState<string | null>(null);
   const changePwdMut = useMutation({
-    mutationFn: () => changePassword(oldPwd, newPwd),
+    mutationFn: (passwords: { oldPassword: string; newPassword: string }) =>
+      changePassword(passwords.oldPassword, passwords.newPassword),
     onSuccess: () => {
       setPwdMsg('密码修改成功，请重新登录');
       setTimeout(() => void logout(), 1500);
     },
     onError: (err) => setPwdMsg(err instanceof Error ? err.message : '修改失败'),
+  });
+  const passwordForm = useAppForm({
+    defaultValues: { oldPassword: '', newPassword: '' },
+    onSubmit: ({ value }) => {
+      setPwdMsg(null);
+      changePwdMut.mutate(value);
+    },
   });
 
   return (
@@ -47,40 +54,49 @@ export function PasswordCard() {
         </SettingsSectionDescription>
       </SettingsSectionHeader>
       <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          setPwdMsg(null);
-          changePwdMut.mutate();
+        onSubmit={(event) => {
+          event.preventDefault();
+          void passwordForm.handleSubmit();
         }}
       >
         <SettingsGroup>
           <SettingsRow title="原密码" htmlFor="old-password">
-            <Input
-              id="old-password"
-              name="old_password"
-              type="password"
-              autoComplete="current-password"
-              value={oldPwd}
-              onChange={(e) => setOldPwd(e.target.value)}
-              aria-invalid={changePwdMut.isError}
-              xstyle={styles.passwordCardInput}
-              required
-            />
+            <passwordForm.Field name="oldPassword">
+              {(field) => (
+                <Input
+                  id="old-password"
+                  name="old_password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={field.state.value}
+                  onValueChange={(value) => field.handleChange(value)}
+                  onBlur={field.handleBlur}
+                  aria-invalid={changePwdMut.isError}
+                  xstyle={styles.passwordCardInput}
+                  required
+                />
+              )}
+            </passwordForm.Field>
           </SettingsRow>
           <SettingsRow title="新密码" htmlFor="new-password">
-            <Input
-              id="new-password"
-              name="new_password"
-              type="password"
-              autoComplete="new-password"
-              value={newPwd}
-              onChange={(e) => setNewPwd(e.target.value)}
-              placeholder="至少12位"
-              minLength={12}
-              aria-invalid={changePwdMut.isError}
-              xstyle={styles.passwordCardInput}
-              required
-            />
+            <passwordForm.Field name="newPassword">
+              {(field) => (
+                <Input
+                  id="new-password"
+                  name="new_password"
+                  type="password"
+                  autoComplete="new-password"
+                  value={field.state.value}
+                  onValueChange={(value) => field.handleChange(value)}
+                  onBlur={field.handleBlur}
+                  placeholder="至少12位"
+                  minLength={12}
+                  aria-invalid={changePwdMut.isError}
+                  xstyle={styles.passwordCardInput}
+                  required
+                />
+              )}
+            </passwordForm.Field>
           </SettingsRow>
           <div {...stylex.props(settingsGroupItemStyle, styles.passwordCardDiv)}>
             <div {...stylex.props(styles.passwordCardDiv2)}>

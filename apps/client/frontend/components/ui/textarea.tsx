@@ -2,21 +2,34 @@
  * Shared multiline text input primitive.
  */
 
-import * as React from 'react';
+import { Input as BaseInput } from '@base-ui/react/input';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
 /**
- * Render a multiline input with the same states and responsive text sizing as Input.
+ * Render a multiline Base UI input, which joins an enclosing `Field` like Input does, with the
+ * same states and responsive text sizing. Base UI has no textarea part, so the input renders as
+ * a `textarea` element.
  *
- * @param props - Native textarea props and optional styles.
+ * @param props - Base UI input props, the visible row count, and optional styles.
  * @returns Styled textarea element.
  */
 function Textarea({
   xstyle,
+  rows,
   ...props
-}: Omit<React.ComponentProps<'textarea'>, 'className'> & { xstyle?: stylex.StyleXStyles }) {
-  return <textarea data-slot="textarea" {...stylex.props(styles.textarea, xstyle)} {...props} />;
+}: Omit<BaseInput.Props, 'className' | 'style' | 'render'> & {
+  rows?: number;
+  xstyle?: stylex.StyleXStyles;
+}) {
+  return (
+    <BaseInput
+      data-slot="textarea"
+      render={<textarea rows={rows} />}
+      {...stylex.props(styles.textarea, xstyle)}
+      {...props}
+    />
+  );
 }
 
 export { Textarea };

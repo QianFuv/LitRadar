@@ -1,4 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
+import { z } from 'zod';
+import { epochMsAfterDays } from '@/lib/date';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CircleX, Gift, Plus } from '@/components/ui/animated-icons';
 
@@ -22,7 +24,6 @@ import { IconTooltip } from '@/components/ui/tooltip';
 import { CopyButton } from '@/components/ui/copy-button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { Input } from '@/components/ui/input';
 import {
   DISCLOSURE_VARIANTS,
   MotionDiv,
@@ -35,6 +36,7 @@ import { RevealItem } from '@/components/ui/reveal';
 import { LoadingText } from '@/components/ui/loading-text';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
+import { useAppForm } from '@/lib/form';
 import { useTransientState } from '@/lib/use-transient-state';
 
 /** Time copy feedback stays visible after the last copy. */
@@ -45,6 +47,28 @@ const INVITE_STATUS_LABELS: Record<InviteCodeStatus, string> = {
   expired: '已过期',
   revoked: '已撤销',
   exhausted: '已用尽',
+};
+
+/** Invite policy limits: whole days of validity and registrations per code. */
+const INVITE_POLICY_SCHEMA = z.object({
+  validDays: z
+    .number('有效天数必须为 1 到 365 的整数。')
+    .int('有效天数必须为 1 到 365 的整数。')
+    .min(1, '有效天数必须为 1 到 365 的整数。')
+    .max(365, '有效天数必须为 1 到 365 的整数。'),
+  maxUses: z
+    .number('使用次数必须为 1 到 1000 的整数。')
+    .int('使用次数必须为 1 到 1000 的整数。')
+    .min(1, '使用次数必须为 1 到 1000 的整数。')
+    .max(1000, '使用次数必须为 1 到 1000 的整数。'),
+});
+
+/** Draft invite policy; an emptied number field is null until it is filled again. */
+type InvitePolicyDraft = { validDays: number | null; maxUses: number | null };
+
+const DEFAULT_INVITE_POLICY: InvitePolicyDraft = {
+  validDays: 7,
+  maxUses: 1,
 };
 
 /**
@@ -65,16 +89,7 @@ function formatDate(timestamp: number): string {
  */
 export function AdminInviteCodesCard(props: { isEnabled: boolean }) {
   const state = useAdminInviteViewState(props);
-  const {
-    validDays,
-    setValidDays,
-    maxUses,
-    setMaxUses,
-    isPolicyValid,
-    inviteCodesError,
-    isLoading,
-    createCodeMut,
-  } = state;
+  const { policyForm, inviteCodesError, isLoading, createCodeMut } = state;
   return (
     <Card>
       <CardHeader>
@@ -96,54 +111,74 @@ export function AdminInviteCodesCard(props: { isEnabled: boolean }) {
                 <p {...stylex.props(styles.adminInviteCodesCardP2)}>设置有效期与可注册次数</p>
               </div>
             </div>
-            <div {...stylex.props(styles.adminInviteCodesCardDiv3)}>
-              <label htmlFor="invite-valid-days">
-                <span
+            <form
+              noValidate
+              aria-label="生成新邀请码"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void policyForm.handleSubmit();
+              }}
+              {...stylex.props(styles.adminInviteCodesCardDiv3)}
+            >
+              <div>
+                <label
+                  htmlFor="invite-valid-days"
                   {...stylex.props(
                     styles.adminInviteCodesCardLabelItem,
                     styles.adminInviteCodesCardSpan2,
                   )}
                 >
                   有效天数
-                </span>
-                <Input
-                  id="invite-valid-days"
-                  type="number"
-                  min={1}
-                  max={365}
-                  xstyle={[styles.adminInviteCodesCardLabelItem, styles.adminInviteCodesCardInput]}
-                  value={validDays}
-                  onChange={(event) => setValidDays(event.target.value)}
-                />
-              </label>
-              <label htmlFor="invite-max-uses">
-                <span
+                </label>
+                <policyForm.AppField name="validDays">
+                  {(field) => (
+                    <field.NumberField
+                      id="invite-valid-days"
+                      min={1}
+                      max={365}
+                      step={1}
+                      fieldXstyle={styles.adminInviteCodesCardField}
+                      xstyle={styles.adminInviteCodesCardInput}
+                    />
+                  )}
+                </policyForm.AppField>
+              </div>
+              <div>
+                <label
+                  htmlFor="invite-max-uses"
                   {...stylex.props(
                     styles.adminInviteCodesCardLabelItem,
                     styles.adminInviteCodesCardSpan2,
                   )}
                 >
                   最多使用次数
-                </span>
-                <Input
-                  id="invite-max-uses"
-                  type="number"
-                  min={1}
-                  max={1000}
-                  xstyle={[styles.adminInviteCodesCardLabelItem, styles.adminInviteCodesCardInput]}
-                  value={maxUses}
-                  onChange={(event) => setMaxUses(event.target.value)}
-                />
-              </label>
-              <Button
-                xstyle={styles.adminInviteCodesCardButton}
-                onClick={() => createCodeMut.mutate()}
-                disabled={createCodeMut.isPending || !isPolicyValid}
-              >
-                <Plus xstyle={styles.adminInviteCodesCardPlus} />
-                生成邀请码
-              </Button>
-            </div>
+                </label>
+                <policyForm.AppField name="maxUses">
+                  {(field) => (
+                    <field.NumberField
+                      id="invite-max-uses"
+                      min={1}
+                      max={1000}
+                      step={1}
+                      fieldXstyle={styles.adminInviteCodesCardField}
+                      xstyle={styles.adminInviteCodesCardInput}
+                    />
+                  )}
+                </policyForm.AppField>
+              </div>
+              <policyForm.Subscribe selector={(formState) => formState.canSubmit}>
+                {(canSubmit) => (
+                  <Button
+                    type="submit"
+                    xstyle={styles.adminInviteCodesCardButton}
+                    disabled={createCodeMut.isPending || !canSubmit}
+                  >
+                    <Plus xstyle={styles.adminInviteCodesCardPlus} />
+                    生成邀请码
+                  </Button>
+                )}
+              </policyForm.Subscribe>
+            </form>
           </div>
         </SettingsGroup>
         {inviteCodesError instanceof Error && (
@@ -194,17 +229,6 @@ export function AdminInviteCodesCard(props: { isEnabled: boolean }) {
 /** Own the original hooks, draft stores and exact completion/cache order. */
 function useAdminInviteViewState({ isEnabled }: { isEnabled: boolean }) {
   const queryClient = useQueryClient();
-  const [validDays, setValidDays] = useState('7');
-  const [maxUses, setMaxUses] = useState('1');
-  const validDaysValue = Number(validDays);
-  const maxUsesValue = Number(maxUses);
-  const isPolicyValid =
-    Number.isInteger(validDaysValue) &&
-    validDaysValue >= 1 &&
-    validDaysValue <= 365 &&
-    Number.isInteger(maxUsesValue) &&
-    maxUsesValue >= 1 &&
-    maxUsesValue <= 1000;
   const [copyFeedback, setCopyFeedback] = useTransientState<{
     code: string;
     message: string;
@@ -219,20 +243,16 @@ function useAdminInviteViewState({ isEnabled }: { isEnabled: boolean }) {
     ...adminInviteCodesQuery(),
     enabled: isEnabled,
   });
-  const inviteRows = useMemo(
-    () =>
-      (inviteCodes ?? []).map((inviteCode) => ({
-        inviteCode,
-        expiresAtLabel: formatDate(inviteCode.expires_at),
-        createdAtLabel: formatDate(inviteCode.created_at),
-      })),
-    [inviteCodes],
-  );
+  const inviteRows = (inviteCodes ?? []).map((inviteCode) => ({
+    inviteCode,
+    expiresAtLabel: formatDate(inviteCode.expires_at),
+    createdAtLabel: formatDate(inviteCode.created_at),
+  }));
   const createCodeMut = useMutation({
-    mutationFn: () =>
+    mutationFn: (policy: z.output<typeof INVITE_POLICY_SCHEMA>) =>
       adminCreateInviteCode({
-        expires_at: Date.now() / 1000 + validDaysValue * 24 * 60 * 60,
-        max_uses: maxUsesValue,
+        expires_at: epochMsAfterDays(policy.validDays) / 1000,
+        max_uses: policy.maxUses,
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: adminInviteCodesQuery().queryKey });
@@ -248,6 +268,12 @@ function useAdminInviteViewState({ isEnabled }: { isEnabled: boolean }) {
     },
   });
 
+  const policyForm = useAppForm({
+    defaultValues: DEFAULT_INVITE_POLICY,
+    validators: { onChange: INVITE_POLICY_SCHEMA },
+    onSubmit: ({ value }) => createCodeMut.mutate(INVITE_POLICY_SCHEMA.parse(value)),
+  });
+
   /** Copy an invite code and surface deterministic feedback. */
   const handleCopyInviteCode = async (code: string) => {
     try {
@@ -259,11 +285,7 @@ function useAdminInviteViewState({ isEnabled }: { isEnabled: boolean }) {
   };
 
   return {
-    validDays,
-    setValidDays,
-    maxUses,
-    setMaxUses,
-    isPolicyValid,
+    policyForm,
     copyFeedback,
     inviteCodeToRevoke,
     setInviteCodeToRevoke,
@@ -553,8 +575,10 @@ const styles = stylex.create({
     lineHeight: lineHeights.textXs,
     color: colors.mutedForeground,
   },
-  adminInviteCodesCardInput: {
+  adminInviteCodesCardField: {
     width: '6rem',
+  },
+  adminInviteCodesCardInput: {
     fontVariantNumeric: 'tabular-nums',
   },
   adminInviteCodesCardButton: {

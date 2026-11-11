@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { z } from 'zod';
+import { daysUntilEpochSeconds } from '@/lib/date';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Key, KeyRound, Plus, Trash2 } from '@/components/ui/animated-icons';
 
@@ -29,7 +31,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   DISCLOSURE_VARIANTS,
@@ -48,6 +49,7 @@ import { RevealItem } from '@/components/ui/reveal';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import * as stylex from '@stylexjs/stylex';
+import { useAppForm } from '@/lib/form';
 import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
 const TTL_OPTIONS = [
@@ -58,6 +60,27 @@ const TTL_OPTIONS = [
 ];
 const ACCESS_TOKEN_NAME_MAX_CODE_POINTS = 100;
 const ACCESS_TOKEN_NAME_LENGTH_DETAIL = 'Access token name must be at most 100 Unicode code points';
+
+/**
+ * Count the Unicode code points of a token name, the unit the server limits.
+ *
+ * @param name - Token name.
+ * @returns Code point count.
+ */
+function countCodePoints(name: string): number {
+  return Array.from(name).length;
+}
+
+/** Token creation fields; the name may be empty but not longer than the server allows. */
+const ACCESS_TOKEN_FORM_SCHEMA = z.object({
+  name: z
+    .string()
+    .refine(
+      (name) => countCodePoints(name) <= ACCESS_TOKEN_NAME_MAX_CODE_POINTS,
+      ACCESS_TOKEN_NAME_LENGTH_DETAIL,
+    ),
+  ttl: z.number(),
+});
 
 /**
  * Format an access-token expiry timestamp.
@@ -143,28 +166,27 @@ function useAccessTokenViewState({
   handleCopy: (value: string, successMessage: string, scope: SettingsCopyScope) => Promise<void>;
 }) {
   const queryClient = useQueryClient();
-  const [tokenName, setTokenName] = useState('');
-  const [tokenTtl, setTokenTtl] = useState(TTL_OPTIONS[0].value);
   const [newTokenValue, setNewTokenValue] = useState<string | null>(null);
   const [tokenToRevoke, setTokenToRevoke] = useState<AccessToken | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const tokenNameCodePointCount = Array.from(tokenName).length;
-  const tokenNameError =
-    tokenNameCodePointCount > ACCESS_TOKEN_NAME_MAX_CODE_POINTS
-      ? ACCESS_TOKEN_NAME_LENGTH_DETAIL
-      : null;
   const { data: tokens = [], isPending: isTokensLoading } = useQuery({
     ...accessTokensQuery(),
   });
   const createTokenMut = useMutation({
-    mutationFn: () => createAccessToken(tokenName, tokenTtl),
+    mutationFn: (values: z.output<typeof ACCESS_TOKEN_FORM_SCHEMA>) =>
+      createAccessToken(values.name, values.ttl),
     onSuccess: (data) => {
       setNewTokenValue(data.token);
       void queryClient.invalidateQueries({ queryKey: accessTokensQuery().queryKey });
-      setTokenName('');
+      tokenForm.resetField('name');
     },
   });
-  const creationError = tokenNameError ?? createTokenMut.error?.message ?? null;
+  const tokenForm = useAppForm({
+    defaultValues: { name: '', ttl: TTL_OPTIONS[0].value },
+    validators: { onChange: ACCESS_TOKEN_FORM_SCHEMA },
+    onSubmit: ({ value }) => createTokenMut.mutate(ACCESS_TOKEN_FORM_SCHEMA.parse(value)),
+  });
+  const creationError = createTokenMut.error?.message ?? null;
   const revokeMut = useMutation({
     mutationFn: (id: number) => revokeAccessToken(id),
     onSuccess: (_data, tokenId) => {
@@ -177,18 +199,13 @@ function useAccessTokenViewState({
     copyFeedback,
     handleCopy,
     isTokensLoading,
-    tokenName,
-    setTokenName,
-    tokenTtl,
-    setTokenTtl,
+    tokenForm,
     newTokenValue,
     setNewTokenValue,
     tokenToRevoke,
     setTokenToRevoke,
     dialogOpen,
     setDialogOpen,
-    tokenNameCodePointCount,
-    tokenNameError,
     tokens,
     createTokenMut,
     creationError,
@@ -256,25 +273,16 @@ function renderCreatedAccessToken(
 
 /** Retain the raw name, Unicode limit, TTL selection and submit admission guard. */
 function renderAccessTokenForm(state: AccessTokenViewState) {
-  const {
-    tokenName,
-    setTokenName,
-    tokenTtl,
-    setTokenTtl,
-    tokenNameCodePointCount,
-    tokenNameError,
-    createTokenMut,
-    creationError,
-  } = state;
+  const { tokenForm, createTokenMut, creationError } = state;
 
   return (
     <MotionForm
       key="token-form"
       data-motion-token-dialog-state="form"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (tokenNameError) return;
-        createTokenMut.mutate();
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        void tokenForm.handleSubmit();
       }}
       {...stylex.props(styles.renderAccessTokenFormMotionForm)}
       initial="hidden"
@@ -286,20 +294,27 @@ function renderAccessTokenForm(state: AccessTokenViewState) {
         <Label xstyle={styles.renderAccessTokenFormDivItem} htmlFor="access-token-name">
           名称
         </Label>
-        <Input
-          xstyle={styles.renderAccessTokenFormDivItem}
-          id="access-token-name"
-          name="access_token_name"
-          autoComplete="off"
-          spellCheck={false}
-          value={tokenName}
-          onChange={(e) => setTokenName(e.target.value)}
-          aria-invalid={creationError ? true : undefined}
-          placeholder="例如：接口集成"
-        />
-        <p {...stylex.props(styles.renderAccessTokenFormDivItem, styles.renderAccessTokenFormP)}>
-          {tokenNameCodePointCount}/{ACCESS_TOKEN_NAME_MAX_CODE_POINTS} Unicode code points
-        </p>
+        <tokenForm.AppField name="name">
+          {(field) => (
+            <field.TextField
+              xstyle={styles.renderAccessTokenFormDivItem}
+              id="access-token-name"
+              name="access_token_name"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="例如：接口集成"
+            />
+          )}
+        </tokenForm.AppField>
+        <tokenForm.Subscribe selector={(formState) => countCodePoints(formState.values.name)}>
+          {(codePointCount) => (
+            <p
+              {...stylex.props(styles.renderAccessTokenFormDivItem, styles.renderAccessTokenFormP)}
+            >
+              {codePointCount}/{ACCESS_TOKEN_NAME_MAX_CODE_POINTS} Unicode code points
+            </p>
+          )}
+        </tokenForm.Subscribe>
       </div>
       <div>
         <div
@@ -307,22 +322,29 @@ function renderAccessTokenForm(state: AccessTokenViewState) {
         >
           有效期
         </div>
-        <ToggleGroup
-          aria-label="访问令牌有效期"
-          xstyle={[styles.renderAccessTokenFormDivItem, styles.renderAccessTokenFormToggleGroup]}
-          value={String(tokenTtl)}
-          onValueChange={(value) => setTokenTtl(Number(value))}
-        >
-          {TTL_OPTIONS.map((opt) => (
-            <ToggleGroupItem
-              key={opt.value}
-              value={String(opt.value)}
-              xstyle={styles.renderAccessTokenFormToggleGroupItem}
+        <tokenForm.Field name="ttl">
+          {(field) => (
+            <ToggleGroup
+              aria-label="访问令牌有效期"
+              xstyle={[
+                styles.renderAccessTokenFormDivItem,
+                styles.renderAccessTokenFormToggleGroup,
+              ]}
+              value={String(field.state.value)}
+              onValueChange={(value) => field.handleChange(Number(value))}
             >
-              {opt.label}
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
+              {TTL_OPTIONS.map((opt) => (
+                <ToggleGroupItem
+                  key={opt.value}
+                  value={String(opt.value)}
+                  xstyle={styles.renderAccessTokenFormToggleGroupItem}
+                >
+                  {opt.label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          )}
+        </tokenForm.Field>
       </div>
       <MotionPresence>
         {creationError && (
@@ -340,13 +362,17 @@ function renderAccessTokenForm(state: AccessTokenViewState) {
           </MotionParagraph>
         )}
       </MotionPresence>
-      <Button
-        type="submit"
-        xstyle={styles.renderAccessTokenFormButton}
-        disabled={createTokenMut.isPending || tokenNameError !== null}
-      >
-        创建
-      </Button>
+      <tokenForm.Subscribe selector={(formState) => formState.canSubmit}>
+        {(canSubmit) => (
+          <Button
+            type="submit"
+            xstyle={styles.renderAccessTokenFormButton}
+            disabled={createTokenMut.isPending || !canSubmit}
+          >
+            创建
+          </Button>
+        )}
+      </tokenForm.Subscribe>
     </MotionForm>
   );
 }
@@ -357,7 +383,6 @@ function renderAccessTokenList(
 ) {
   const { setTokenToRevoke, tokens, revokeMut } = state;
 
-  const nowSeconds = Date.now() / 1000;
   return (
     <MotionPresence>
       {tokens.length === 0 ? (
@@ -381,7 +406,7 @@ function renderAccessTokenList(
         </MotionDiv>
       ) : (
         tokens.map((t) => {
-          const remainingDays = Math.max(0, Math.ceil((t.expires_at - nowSeconds) / 86400));
+          const remainingDays = daysUntilEpochSeconds(t.expires_at);
           return (
             <MotionDiv
               key={t.id}

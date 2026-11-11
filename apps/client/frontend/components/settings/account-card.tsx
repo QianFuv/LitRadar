@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useStore } from '@tanstack/react-form';
 import { useMutation, useQuery } from '@tanstack/react-query';
 
 import { UserAvatar } from '@/components/shell/user-avatar';
@@ -27,6 +28,7 @@ import {
 import { useAuth } from '@/lib/auth-context';
 import { getAccountErrorMessage, getOidcErrorMessage } from '@/lib/auth-error';
 import { CLIENT_PLATFORM } from '@/lib/platform';
+import { useAppForm } from '@/lib/form';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
 
@@ -100,7 +102,6 @@ function describeOidcLinkResult(
  */
 export function AccountSignInCard({ oidcLinkResult }: { oidcLinkResult: string | null }) {
   const { updateUser, user } = useAuth();
-  const [emailDraft, setEmailDraft] = useState(user?.email ?? '');
   const [feedback, setFeedback] = useState<AccountFeedback | null>(null);
   const [isUnlinkDialogOpen, setIsUnlinkDialogOpen] = useState(false);
   const isLocalAccount = user?.auth_kind === 'local';
@@ -113,7 +114,7 @@ export function AccountSignInCard({ oidcLinkResult }: { oidcLinkResult: string |
     mutationFn: (email: string | null) => updateAccountEmail(email),
     onSuccess: (updatedUser) => {
       updateUser(updatedUser);
-      setEmailDraft(updatedUser.email ?? '');
+      emailForm.setFieldValue('email', updatedUser.email ?? '');
       setFeedback({
         isError: false,
         message: updatedUser.email ? '邮箱已更新' : '邮箱已清除',
@@ -121,6 +122,14 @@ export function AccountSignInCard({ oidcLinkResult }: { oidcLinkResult: string |
     },
     onError: (error) => setFeedback({ isError: true, message: getAccountErrorMessage(error) }),
   });
+  const emailForm = useAppForm({
+    defaultValues: { email: user?.email ?? '' },
+    onSubmit: ({ value }) => {
+      setFeedback(null);
+      emailMutation.mutate(value.email.trim() || null);
+    },
+  });
+  const emailDraft = useStore(emailForm.store, (formState) => formState.values.email);
   const linkMutation = useMutation({
     mutationFn: startOidcLink,
     onSuccess: ({ authorization_url: authorizationUrl }) => {
@@ -142,8 +151,7 @@ export function AccountSignInCard({ oidcLinkResult }: { oidcLinkResult: string |
   }
 
   const visibleFeedback = feedback ?? describeOidcLinkResult(oidcLinkResult, displayName);
-  const normalizedDraft = emailDraft.trim();
-  const isEmailUnchanged = normalizedDraft === (user.email ?? '');
+  const isEmailUnchanged = emailDraft.trim() === (user.email ?? '');
   const isOidcEnabled = providers?.oidc_enabled === true;
 
   return (
@@ -162,23 +170,27 @@ export function AccountSignInCard({ oidcLinkResult }: { oidcLinkResult: string |
             {...stylex.props(settingsGroupItemStyle)}
             onSubmit={(event) => {
               event.preventDefault();
-              setFeedback(null);
-              emailMutation.mutate(normalizedDraft || null);
+              void emailForm.handleSubmit();
             }}
           >
             <SettingsRow title="邮箱" htmlFor="account-email" description="留空保存即可清除邮箱">
-              <Input
-                id="account-email"
-                name="email"
-                type="email"
-                autoComplete="email"
-                spellCheck={false}
-                value={emailDraft}
-                onChange={(event) => setEmailDraft(event.target.value)}
-                placeholder="未设置"
-                aria-invalid={emailMutation.isError}
-                xstyle={styles.accountSignInCardInput}
-              />
+              <emailForm.Field name="email">
+                {(field) => (
+                  <Input
+                    id="account-email"
+                    name="email"
+                    type="email"
+                    autoComplete="email"
+                    spellCheck={false}
+                    value={field.state.value}
+                    onValueChange={(value) => field.handleChange(value)}
+                    onBlur={field.handleBlur}
+                    placeholder="未设置"
+                    aria-invalid={emailMutation.isError}
+                    xstyle={styles.accountSignInCardInput}
+                  />
+                )}
+              </emailForm.Field>
               <Button
                 type="submit"
                 size="sm"

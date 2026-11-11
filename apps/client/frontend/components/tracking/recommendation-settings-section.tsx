@@ -19,6 +19,7 @@ import {
 import type { TrackingPageViewModel } from '@/components/tracking/use-tracking-page';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { NumberInput } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { CHIP_VARIANTS, MotionPresence, MotionSpan } from '@/components/ui/motion';
@@ -609,19 +610,17 @@ function renderPrimaryAiSettings(
           htmlFor="ai-retry-attempts"
           description="单次筛选失败后的重试上限（1–10）"
         >
-          <Input
+          <NumberInput
             id="ai-retry-attempts"
             name="ai_retry_attempts"
-            type="number"
-            autoComplete="off"
-            inputMode="numeric"
             min={1}
             max={10}
+            step={1}
             value={retryAttempts}
-            onChange={(event) =>
+            onValueChange={(value) =>
               model.updateSettings((current) => ({
                 ...current,
-                ai_retry_attempts: Math.max(1, Math.min(10, Number(event.target.value) || 1)),
+                ai_retry_attempts: Math.max(1, Math.min(10, Math.round(value ?? 1))),
               }))
             }
             xstyle={styles.renderPrimaryAiSettingsInput}
