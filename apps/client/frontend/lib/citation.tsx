@@ -19,12 +19,8 @@ export function getSafeHttpUrl(value: string | null | undefined): string | null 
   if (!normalizedValue) {
     return null;
   }
-  try {
-    const url = new URL(normalizedValue);
-    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : null;
-  } catch {
-    return null;
-  }
+  const url = URL.parse(normalizedValue);
+  return url?.protocol === 'http:' || url?.protocol === 'https:' ? url.toString() : null;
 }
 
 /**
@@ -77,5 +73,5 @@ export function getDoiUrl(value: string | null | undefined): string | null {
   }
 
   const doi = normalizeDoiValue(normalizedValue);
-  return doi ? `https://doi.org/${doi}` : null;
+  return doi ? `https://doi.org/${doi.split('/').map(encodeURIComponent).join('/')}` : null;
 }

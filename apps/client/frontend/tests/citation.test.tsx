@@ -20,6 +20,10 @@ function validatesExternalDestinations(): void {
   expect(getDoiUrl('doi:10.1000/example')).toBe('https://doi.org/10.1000/example');
   expect(getDoiUrl('https://doi.org/10.1000/example')).toBe('https://doi.org/10.1000/example');
   expect(getDoiUrl('javascript:alert(1)')).toBeNull();
+  expect(getDoiUrl('10.1002/(SICI)1097-4571#5?x')).toBe(
+    'https://doi.org/10.1002/(SICI)1097-4571%235%3Fx',
+  );
+  expect(getDoiUrl('10.1000/50%off')).toBe('https://doi.org/10.1000/50%25off');
 }
 
 describe('article external links', () => {
