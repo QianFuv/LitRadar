@@ -376,7 +376,7 @@ func (bridge *Bridge) do(ctx context.Context, method, target string, headers map
 		}
 		return Response{}, newBridgeError(CodeServerUnreachable, describeTransportError(err))
 	}
-	defer response.Body.Close()
+	defer func(closeBody func() error) { _ = closeBody() }(response.Body.Close)
 	content, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 	if err != nil {
 		if ctx.Err() != nil {
