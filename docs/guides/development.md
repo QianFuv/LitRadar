@@ -19,6 +19,37 @@ Go 命令固定使用 `CGO_ENABLED=0`、`GOWORK=off`、`GOENV=off`、`GOFLAGS=""
 
 pnpm 会转发已有的 `NODE_OPTIONS`，并为子进程关闭 Node.js 实验性 Web Storage，使测试中的 jsdom 浏览器存储与 Node.js 宿主存储隔离。
 
+### 后端开发工具
+
+后端检查工具的固定版本与 `.github/workflows/backend.yaml` 一致：
+
+| 工具          | 版本   | 配置                    |
+| ------------- | ------ | ----------------------- |
+| golangci-lint | 2.15.0 | 根目录 `.golangci.yml`  |
+| sqlc          | 1.31.1 | `apps/server/sqlc.yaml` |
+
+使用 `go install` 安装到 `GOPATH/bin`，并确保该目录在 `PATH` 中。这些工具不加入 `go.mod` 的 `tool` 指令，也不是应用运行时依赖：
+
+```bash
+go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
+export PATH="$(go env GOPATH)/bin:$PATH"
+golangci-lint version
+sqlc version
+```
+
+从仓库根目录执行：
+
+```bash
+golangci-lint run ./...
+go run ./apps/server/cmd/sqlc-schema -check -output apps/server/internal/storage/sqlc/schema
+sqlc diff -f apps/server/sqlc.yaml
+```
+
+`sqlc-schema -check` 验证快照与真实 migration 一致，`sqlc diff` 验证 Go 产物与 schema、查询及生成配置一致，两者都不会改写生成文件。完整流程为「改 migration → 更新 schema 快照 → 写查询 → 生成」，具体命令和手写 SQL 边界见[数据库参考](../reference/database.md#sqlc-查询生成)。全模块 Go 检查也会读取客户端的 `frontend/dist` 嵌入资源，需要先按下文的客户端构建流程准备这些产物。
+
+Backend CI 在现有 regular lane 中运行服务端 lint 和上述两项生成检查；工具二进制缓存按操作系统、架构、Go 版本及工具版本隔离，沿用既有模块缓存和按 lane/source 隔离的编译缓存。race lane 保留原有检查，不重复安装这些工具。
+
 ## 初始准备
 
 以下 Bash 命令在仓库根目录执行，除非步骤明确要求进入 `apps/client/frontend/`。Windows 可使用 WSL Bash，或把命令改为当前 PowerShell 的等价语法；标为 PowerShell 的画像命令需要 PowerShell 7。

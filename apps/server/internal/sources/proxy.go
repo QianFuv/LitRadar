@@ -21,10 +21,10 @@ const (
 
 // CapabilityInfo exposes aggregate built-in capabilities without network or secret state.
 type CapabilityInfo struct {
-	Name            string `json:"name"`
-	IndexContent    bool   `json:"index_content"`
-	ArticleAbstract bool   `json:"article_abstract"`
-	ArticleFullText bool   `json:"article_full_text"`
+	Name            string `json:"name" nullable:"false"`
+	IndexContent    bool   `json:"index_content" nullable:"false"`
+	ArticleAbstract bool   `json:"article_abstract" nullable:"false"`
+	ArticleFullText bool   `json:"article_full_text" nullable:"false"`
 }
 
 // BuiltInCapabilities returns the original deterministic logical provider catalog.

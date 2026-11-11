@@ -7,12 +7,22 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/batchdb"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
+var batchQueries batchdb.Queries
+
 func loadBatch(ctx context.Context, connection *sql.Conn, id, owner string, didResume bool) (IndexBatch, error) {
 	var started sqlite.Integer
-	err := connection.QueryRowContext(ctx, `SELECT started_at FROM index_batches WHERE batch_id=?1`, id).Scan(&started)
+	err := func() error {
+		queryResult, err := batchQueries.BatchStart(ctx, connection, batchdb.BatchStartParams{BatchID: sqlite.Text(id)})
+		if err != nil {
+			return err
+		}
+		started = queryResult
+		return nil
+	}()
 	if errors.Is(err, sql.ErrNoRows) {
 		return IndexBatch{}, batchState("batch row is missing")
 	}
@@ -61,7 +71,14 @@ func readCatalogPhase(ctx context.Context, connection *sql.Conn, id string, ordi
 		return "", err
 	}
 	var phase sqlite.Text
-	err = connection.QueryRowContext(ctx, `SELECT phase FROM index_batch_catalogs WHERE batch_id=?1 AND ordinal=?2`, id, count).Scan(&phase)
+	err = func() error {
+		queryResult, err := batchQueries.CatalogPhase(ctx, connection, batchdb.CatalogPhaseParams{BatchID: sqlite.Text(id), Ordinal: sqlite.Integer(count)})
+		if err != nil {
+			return err
+		}
+		phase = queryResult
+		return nil
+	}()
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", batchState("batch catalog row is missing")
 	}
@@ -98,7 +115,47 @@ func readManifestIntent(ctx context.Context, connection *sql.Conn, id string, or
 	var payload optionalBatchBlob
 	var digest, path, run, generated sqlite.OptionalText
 	var through sqlite.OptionalInteger
-	err = connection.QueryRowContext(ctx, `SELECT manifest_payload,manifest_sha256,manifest_through_event_id,manifest_path,manifest_run_id,manifest_generated_at FROM index_batch_catalogs WHERE batch_id=?1 AND ordinal=?2`, id, count).Scan(&payload, &digest, &through, &path, &run, &generated)
+	err = func() error {
+		queryResult, err := batchQueries.ManifestIntent(ctx, connection, batchdb.ManifestIntentParams{BatchID: sqlite.Text(id), Ordinal: sqlite.Integer(count)})
+		if err != nil {
+			return err
+		}
+		if queryResult.ManifestPayload == nil {
+			if err := (&payload).Scan(nil); err != nil {
+				return err
+			}
+		} else {
+			if err := (&payload).Scan([]byte(queryResult.ManifestPayload)); err != nil {
+				return err
+			}
+		}
+		if queryResult.ManifestSHA256 == nil {
+			digest.Value = nil
+		} else {
+			digest.Value = new(string(*queryResult.ManifestSHA256))
+		}
+		if queryResult.ManifestThroughEventID == nil {
+			through.Value = nil
+		} else {
+			through.Value = new(int64(*queryResult.ManifestThroughEventID))
+		}
+		if queryResult.ManifestPath == nil {
+			path.Value = nil
+		} else {
+			path.Value = new(string(*queryResult.ManifestPath))
+		}
+		if queryResult.ManifestRunID == nil {
+			run.Value = nil
+		} else {
+			run.Value = new(string(*queryResult.ManifestRunID))
+		}
+		if queryResult.ManifestGeneratedAt == nil {
+			generated.Value = nil
+		} else {
+			generated.Value = new(string(*queryResult.ManifestGeneratedAt))
+		}
+		return nil
+	}()
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +170,34 @@ func readCatalogOutcome(ctx context.Context, connection *sql.Conn, id string, or
 	var run, path sqlite.OptionalText
 	var journals sqlite.Integer
 	var written, attempts sqlite.OptionalInteger
-	err = connection.QueryRowContext(ctx, `SELECT run_id,journal_count,written_article_count,source_attempt_count,outcome_manifest_path FROM index_batch_catalogs WHERE batch_id=?1 AND ordinal=?2`, id, count).Scan(&run, &journals, &written, &attempts, &path)
+	err = func() error {
+		queryResult, err := batchQueries.CatalogOutcome(ctx, connection, batchdb.CatalogOutcomeParams{BatchID: sqlite.Text(id), Ordinal: sqlite.Integer(count)})
+		if err != nil {
+			return err
+		}
+		if queryResult.RunID == nil {
+			run.Value = nil
+		} else {
+			run.Value = new(string(*queryResult.RunID))
+		}
+		journals = queryResult.JournalCount
+		if queryResult.WrittenArticleCount == nil {
+			written.Value = nil
+		} else {
+			written.Value = new(int64(*queryResult.WrittenArticleCount))
+		}
+		if queryResult.SourceAttemptCount == nil {
+			attempts.Value = nil
+		} else {
+			attempts.Value = new(int64(*queryResult.SourceAttemptCount))
+		}
+		if queryResult.OutcomeManifestPath == nil {
+			path.Value = nil
+		} else {
+			path.Value = new(string(*queryResult.OutcomeManifestPath))
+		}
+		return nil
+	}()
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +236,40 @@ func readNotifyHandoff(ctx context.Context, connection *sql.Conn, id string, ord
 	var attempt, status, ackAttempt sqlite.OptionalText
 	var exit optionalBatchExit
 	var ackTime sqlite.OptionalInteger
-	err = connection.QueryRowContext(ctx, `SELECT notify_attempt_id,notify_status,notify_exit_code,notify_unknown_acknowledged_attempt_id,notify_unknown_acknowledged_at FROM index_batch_catalogs WHERE batch_id=?1 AND ordinal=?2`, id, count).Scan(&attempt, &status, &exit, &ackAttempt, &ackTime)
+	err = func() error {
+		queryResult, err := batchQueries.NotifyHandoff(ctx, connection, batchdb.NotifyHandoffParams{BatchID: sqlite.Text(id), Ordinal: sqlite.Integer(count)})
+		if err != nil {
+			return err
+		}
+		if queryResult.NotifyAttemptID == nil {
+			attempt.Value = nil
+		} else {
+			attempt.Value = new(string(*queryResult.NotifyAttemptID))
+		}
+		if queryResult.NotifyStatus == nil {
+			status.Value = nil
+		} else {
+			status.Value = new(string(*queryResult.NotifyStatus))
+		}
+		if queryResult.NotifyExitCode == nil {
+			exit.value = nil
+		} else {
+			if err := (&exit).Scan(int64(*queryResult.NotifyExitCode)); err != nil {
+				return err
+			}
+		}
+		if queryResult.NotifyUnknownAcknowledgedAttemptID == nil {
+			ackAttempt.Value = nil
+		} else {
+			ackAttempt.Value = new(string(*queryResult.NotifyUnknownAcknowledgedAttemptID))
+		}
+		if queryResult.NotifyUnknownAcknowledgedAt == nil {
+			ackTime.Value = nil
+		} else {
+			ackTime.Value = new(int64(*queryResult.NotifyUnknownAcknowledgedAt))
+		}
+		return nil
+	}()
 	if err != nil {
 		var rangeError *batchExitRangeError
 		if errors.As(err, &rangeError) {
@@ -213,23 +330,13 @@ type rawBatchCatalog struct {
 }
 
 func readRawBatchCatalogs(ctx context.Context, connection *sql.Conn, id string) ([]rawBatchCatalog, error) {
-	rows, err := connection.QueryContext(ctx, `SELECT ordinal,file_name,catalog_name,provider_name,journal_count,phase FROM index_batch_catalogs WHERE batch_id=?1 ORDER BY ordinal`, id)
+	rows, err := batchQueries.BatchCatalogs(ctx, connection, batchdb.BatchCatalogsParams{BatchID: sqlite.Text(id)})
 	if err != nil {
 		return nil, err
 	}
 	var raw []rawBatchCatalog
-	for rows.Next() {
-		var value rawBatchCatalog
-		if err := rows.Scan(&value.ordinal, &value.file, &value.name, &value.provider, &value.count, &value.phase); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		raw = append(raw, value)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return nil, err
+	for _, row := range rows {
+		raw = append(raw, rawBatchCatalog{ordinal: row.Ordinal, count: row.JournalCount, file: row.FileName, name: row.CatalogName, provider: row.ProviderName, phase: row.Phase})
 	}
 	return raw, nil
 }

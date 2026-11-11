@@ -7,11 +7,12 @@ import (
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/authdb"
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
 func updateEmail(ctx context.Context, connection *sql.Conn, user identity.Id, email *string, now float64) error {
-	_, err := connection.ExecContext(ctx, "UPDATE users SET email=?,updated_at=? WHERE id=?", email, now, user)
+	_, err := queries.UpdateEmail(ctx, connection, authdb.UpdateEmailParams{Email: email, UpdatedAt: now, ID: int64(user)})
 	var failure interface{ Code() int }
 	if errors.As(err, &failure) && failure.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE {
 		return domain.ErrEmailExists
@@ -24,7 +25,7 @@ func (repository *Repository) UpdateEmail(ctx context.Context, user identity.Id,
 	var credentials *domain.Credentials
 	err := repository.Immediate(ctx, false, func(connection *sql.Conn) error {
 		var err error
-		credentials, err = scanCredentials(connection.QueryRowContext(ctx, credentialSelect+" WHERE id=?", user))
+		credentials, err = decodeCredentials(queries.CredentialsByID(ctx, connection, authdb.CredentialsByIDParams{ID: int64(user)}))
 		if err != nil {
 			return err
 		}
@@ -45,5 +46,3 @@ func (repository *Repository) UpdateEmail(ctx context.Context, user identity.Id,
 	}
 	return credentials.User, nil
 }
-
-const credentialSelect = "SELECT id,username,password_hash,salt,is_admin,created_at,token_generation,email,auth_kind,EXISTS(SELECT 1 FROM user_identities WHERE user_id=users.id) FROM users"

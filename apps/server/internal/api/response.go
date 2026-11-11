@@ -4,13 +4,16 @@ package api
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/admission"
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/httpwire"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/query"
+	"github.com/danielgtaylor/huma/v2"
 )
 
 type apiError struct {
@@ -18,10 +21,21 @@ type apiError struct {
 	detail     string
 	structured any
 	retryAfter *uint64
-	isPlain    bool
 }
 
-func (failure *apiError) Error() string  { return failure.detail }
+func (failure *apiError) Error() string { return failure.detail }
+
+func (failure *apiError) problem() error {
+	detail, details := failure.problemDetails()
+	model := huma.NewError(failure.status, detail, details...)
+	if failure.retryAfter != nil {
+		return huma.ErrorWithHeaders(model, http.Header{"Retry-After": {strconv.FormatUint(*failure.retryAfter, 10)}})
+	}
+	if failure.status == 503 || failure.status == 429 {
+		return huma.ErrorWithHeaders(model, http.Header{"Retry-After": {"5"}})
+	}
+	return model
+}
 func badRequest(detail string) *apiError { return &apiError{status: 400, detail: detail} }
 func internalError() *apiError           { return &apiError{status: 500, detail: "Internal Server Error"} }
 func serviceUnavailable() *apiError {
@@ -29,51 +43,52 @@ func serviceUnavailable() *apiError {
 	return &apiError{status: 503, detail: "Service temporarily unavailable", retryAfter: &retry}
 }
 
+// write emits Huma's default problem model for business and extraction failures.
 func (failure *apiError) write(writer http.ResponseWriter) {
-	if failure.isPlain {
-		writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		writer.WriteHeader(failure.status)
-		_, _ = writer.Write([]byte(failure.detail))
-		return
-	}
-	if failure.structured != nil {
-		_ = httpwire.JSON(writer, failure.status, map[string]any{"detail": failure.structured})
-		return
-	}
 	if failure.retryAfter != nil {
 		writer.Header().Set("Retry-After", strconv.FormatUint(*failure.retryAfter, 10))
+	} else if failure.status == http.StatusServiceUnavailable || failure.status == http.StatusTooManyRequests {
+		writer.Header().Set("Retry-After", "5")
 	}
-	_ = httpwire.JSON(writer, failure.status, httpwire.ErrorEnvelope{
-		Detail: failure.detail, Code: errorCode(failure.status), Retryable: failure.retryAfter != nil,
-	})
+	detail, details := failure.problemDetails()
+	model := huma.NewError(failure.status, detail, details...)
+	if err := httpwire.JSON(writer, failure.status, model); err != nil {
+		slog.Error("http.response.failed", "error_kind", "problem_write_failed")
+	}
 }
 
-// errorCode preserves the public rejection code for each supported status.
-func errorCode(status int) string {
-	switch status {
-	case 400:
-		return "bad_request"
-	case 401:
-		return "unauthorized"
-	case 403:
-		return "forbidden"
-	case 404:
-		return "not_found"
-	case 409:
-		return "conflict"
-	case 413:
-		return "payload_too_large"
-	case 429:
-		return "rate_limited"
-	case 502:
-		return "bad_gateway"
-	case 503:
-		return "service_unavailable"
-	case 500:
-		return "internal_server_error"
-	default:
-		return "request_failed"
+// problemDetails retains classified business diagnostics within the standard errors array.
+func (failure *apiError) problemDetails() (string, []error) {
+	fields := map[string]string{}
+	switch structured := failure.structured.(type) {
+	case map[string]string:
+		fields = structured
+	case map[string]any:
+		for name, value := range structured {
+			if text, ok := value.(string); ok {
+				fields[name] = text
+			}
+		}
 	}
+	detail := failure.detail
+	if message := fields["message"]; message != "" {
+		detail = message
+	}
+	if detail == "" {
+		detail = http.StatusText(failure.status)
+	}
+	names := make([]string, 0, len(fields))
+	for name := range fields {
+		if name != "message" {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	details := make([]error, 0, len(names))
+	for _, name := range names {
+		details = append(details, &huma.ErrorDetail{Location: name, Message: fields[name]})
+	}
+	return detail, details
 }
 
 func mapExecutorError(err error) *apiError {

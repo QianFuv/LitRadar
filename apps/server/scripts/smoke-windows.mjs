@@ -294,7 +294,7 @@ try {
     assert(Date.now() < deadline, "Windows service readiness timed out");
     await setTimeout(200);
   }
-  for (const endpoint of ["/docs/", "/openapi.json"])
+  for (const endpoint of ["/docs", "/openapi.json"])
     assert((await fetch(baseUrl + endpoint)).ok, endpoint);
   for (const endpoint of ["/", "/login", "/missing-page", "/page/"])
     assert.equal(
@@ -334,7 +334,7 @@ try {
     obscura,
     [
       "fetch",
-      baseUrl + "/docs/",
+      baseUrl + "/docs",
       "--stealth",
       "--timeout",
       "30",
@@ -352,8 +352,8 @@ try {
   );
   const page = JSON.parse(fs.readFileSync(captured, "utf8"));
   assert.equal(page.protocol, "litradar.cfp.page.v1");
-  assert.equal(page.finalUrl, baseUrl + "/docs/");
-  assert(page.html.includes("swagger"));
+  assert.equal(page.finalUrl, baseUrl + "/docs");
+  assert(page.html.includes("elements-api"));
 } finally {
   if (service.pid && service.exitCode === null)
     execFileSync(

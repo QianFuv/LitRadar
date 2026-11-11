@@ -5,42 +5,44 @@ import (
 	"encoding/json"
 	"sort"
 	"time"
+
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/telemetrydb"
 )
 
 // Summary merges a dimension's hourly histograms before estimating percentiles.
 type Summary struct {
 	Dimensions
-	Calls     uint64  `json:"calls"`
-	Errors    uint64  `json:"errors"`
-	ErrorRate float64 `json:"error_rate"`
-	P50Ms     float64 `json:"p50_ms"`
-	P95Ms     float64 `json:"p95_ms"`
-	P99Ms     float64 `json:"p99_ms"`
+	Calls     uint64  `json:"calls" nullable:"false" minimum:"0" format:"int64"`
+	Errors    uint64  `json:"errors" nullable:"false" minimum:"0" format:"int64"`
+	ErrorRate float64 `json:"error_rate" nullable:"false" minimum:"0" maximum:"1" format:"double"`
+	P50Ms     float64 `json:"p50_ms" nullable:"false" minimum:"0" format:"double"`
+	P95Ms     float64 `json:"p95_ms" nullable:"false" minimum:"0" format:"double"`
+	P99Ms     float64 `json:"p99_ms" nullable:"false" minimum:"0" format:"double"`
 }
 
 // Hour contains observed calls and errors for one UTC hour and kind.
 type Hour struct {
-	Hour   time.Time `json:"hour"`
-	Kind   string    `json:"kind"`
-	Calls  uint64    `json:"calls"`
-	Errors uint64    `json:"errors"`
+	Hour   time.Time `json:"hour" nullable:"false" format:"date-time"`
+	Kind   string    `json:"kind" nullable:"false" enum:"http,mcp,search"`
+	Calls  uint64    `json:"calls" nullable:"false" minimum:"0" format:"int64"`
+	Errors uint64    `json:"errors" nullable:"false" minimum:"0" format:"int64"`
 }
 
 // Distribution counts a search shape feature's calls in the selected range.
 type Distribution struct {
-	Feature string `json:"feature"`
-	Value   string `json:"value"`
-	Calls   uint64 `json:"calls"`
+	Feature string `json:"feature" nullable:"false" enum:"endpoint,mode,database,term_count,uses_prefix,uses_boolean,hits,hit_count_basis"`
+	Value   string `json:"value" nullable:"false"`
+	Calls   uint64 `json:"calls" nullable:"false" minimum:"0" format:"int64"`
 }
 
 // Report includes durable and pending observations; ranges are half-open UTC hours.
 type Report struct {
-	Enabled      bool           `json:"enabled"`
-	From         time.Time      `json:"from"`
-	To           time.Time      `json:"to"`
-	Series       []Summary      `json:"series"`
-	Hourly       []Hour         `json:"hourly"`
-	SearchShapes []Distribution `json:"search_shapes"`
+	Enabled      bool           `json:"enabled" nullable:"false"`
+	From         time.Time      `json:"from" nullable:"false" format:"date-time"`
+	To           time.Time      `json:"to" nullable:"false" format:"date-time"`
+	Series       []Summary      `json:"series" nullable:"false"`
+	Hourly       []Hour         `json:"hourly" nullable:"false"`
+	SearchShapes []Distribution `json:"search_shapes" nullable:"false"`
 }
 
 // Read takes a consistent persisted-plus-pending snapshot without blocking recorders on I/O.
@@ -53,18 +55,14 @@ func (collector *Collector) Read(ctx context.Context, from, to time.Time, kind s
 	defer collector.storeMutex.Unlock()
 	buckets := map[bucketKey]aggregate{}
 	if collector.store != nil {
-		rows, err := collector.store.database.QueryContext(ctx, "SELECT hour,dimensions,aggregate FROM hourly_load WHERE hour>=? AND hour<?", from.Unix(), to.Unix())
+		rows, err := storeQueries.InRange(ctx, collector.store.database, telemetrydb.InRangeParams{Hour: from.Unix(), Hour_2: to.Unix()})
 		if err != nil {
 			return report, err
 		}
-		defer rows.Close()
-		for rows.Next() {
-			var key bucketKey
-			var labels, encoded string
+		for _, row := range rows {
+			key := bucketKey{Hour: row.Hour}
+			labels, encoded := row.Dimensions, row.Aggregate
 			var value aggregate
-			if err := rows.Scan(&key.Hour, &labels, &encoded); err != nil {
-				return report, err
-			}
 			if err := json.Unmarshal([]byte(labels), &key.Dimensions); err != nil {
 				return report, err
 			}
@@ -72,9 +70,6 @@ func (collector *Collector) Read(ctx context.Context, from, to time.Time, kind s
 				return report, err
 			}
 			buckets[key] = value
-		}
-		if err := rows.Err(); err != nil {
-			return report, err
 		}
 	}
 	collector.mutex.Lock()

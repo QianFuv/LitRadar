@@ -3,6 +3,9 @@ package index
 import (
 	"context"
 	"database/sql"
+
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/batchdb"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
 // PrepareNotifyAttempt reuses running identity, blocks ambiguity and records explicit Unknown acknowledgement before retry.
@@ -133,6 +136,11 @@ func saveNotifyHandoff(ctx context.Context, connection *sql.Conn, id string, ord
 	if err != nil {
 		return err
 	}
-	changed, err := connection.ExecContext(ctx, `UPDATE index_batch_catalogs SET notify_attempt_id=?3,notify_status=?4,notify_exit_code=?5,notify_unknown_acknowledged_attempt_id=?6,notify_unknown_acknowledged_at=?7,updated_at=?8 WHERE batch_id=?1 AND ordinal=?2`, id, count, state.AttemptId, state.Status, state.ExitCode, state.UnknownAcknowledgedAttemptId, state.UnknownAcknowledgedAt, now)
+	changed, err := batchQueries.StoreNotifyHandoff(ctx, connection, batchdb.StoreNotifyHandoffParams{BatchID: sqlite.Text(id), Ordinal: sqlite.Integer(count), NotifyAttemptID: new(sqlite.Text(state.AttemptId)), NotifyStatus: new(sqlite.Text(state.Status)), NotifyExitCode: func() *sqlite.Integer {
+		if state.ExitCode == nil {
+			return nil
+		}
+		return new(sqlite.Integer(*state.ExitCode))
+	}(), NotifyUnknownAcknowledgedAttemptID: (*sqlite.Text)(state.UnknownAcknowledgedAttemptId), NotifyUnknownAcknowledgedAt: (*sqlite.Integer)(state.UnknownAcknowledgedAt), UpdatedAt: sqlite.Integer(now)})
 	return expectBatchChange(changed, err, "batch catalog row is missing")
 }

@@ -63,7 +63,7 @@ func TestServerProductionWithoutUI(t *testing.T) {
 		status int
 	}{
 		{"/", 404}, {"/login", 404}, {"/missing-page", 404}, {"/page/", 404}, {"/_next/static/asset.js", 404},
-		{"/health/ready", 200}, {"/docs", 303}, {"/docs/", 200}, {"/openapi.json", 200}, {"/api/auth/me", 401},
+		{"/health/ready", 200}, {"/docs", 200}, {"/docs/", 303}, {"/openapi.json", 200}, {"/api/auth/me", 401},
 	} {
 		response, err := client.Get(base + scenario.path)
 		if err != nil {
@@ -220,9 +220,9 @@ func buildProcessExecutable(t *testing.T, ctx context.Context) string {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	compiler := filepath.Join(runtime.GOROOT(), "bin", "go")
-	if runtime.GOOS == "windows" {
-		compiler += ".exe"
+	compiler, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal(err)
 	}
 	build := exec.CommandContext(ctx, compiler, "build", "-mod=readonly", "-o", binary, ".")
 	if output, err := build.CombinedOutput(); err != nil {

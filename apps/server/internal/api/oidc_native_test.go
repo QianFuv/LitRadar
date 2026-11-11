@@ -100,6 +100,7 @@ func completeApiOidc(t *testing.T, router http.Handler, provider *nativeTestProv
 	request.AddCookie(response.Result().Cookies()[0])
 	completed := httptest.NewRecorder()
 	router.ServeHTTP(completed, request)
+	observeResponse(request, completed)
 	if completed.Code != 302 {
 		t.Fatal(completed.Code, completed.Body.String())
 	}
@@ -151,9 +152,7 @@ func TestNativeOidcHttpFlow(t *testing.T) {
 				t.Fatal("device token unusable")
 			}
 			reused := authRequest(router, "POST", "/api/auth/oidc/native/exchange", string(body), "")
-			if reused.Code != 400 || reused.Body.String() != `{"detail":"invalid_grant","code":"bad_request","retryable":false}` {
-				t.Fatal(reused.Code, reused.Body.String())
-			}
+			requireProblem(t, reused, 400, "invalid_grant")
 			request := httptest.NewRequest("GET", "/api/auth/me", nil)
 			request.AddCookie(sessionCookie)
 			recorder := httptest.NewRecorder()
@@ -173,7 +172,7 @@ func TestNativeOidcHttpAdmission(t *testing.T) {
 		t.Fatal(response.Code, response.Body.String())
 	}
 	for _, path := range []string{"/api/auth/oidc/native/login", start + "&state=duplicate", strings.Replace(start, "litradar%3A%2F%2Foidc%2Fcallback", "https%3A%2F%2Fevil.example", 1)} {
-		if response := authRequest(router, "GET", path, "", ""); response.Code != 400 || response.Header().Get("Location") != "" {
+		if response := authRequest(router, "GET", path, "", ""); response.Code != map[bool]int{true: 400, false: 422}[strings.Contains(path, "evil.example")] || response.Header().Get("Location") != "" {
 			t.Fatal(response.Code, response.Header(), response.Body.String())
 		}
 	}
@@ -199,11 +198,9 @@ func TestNativeOidcHttpAdmission(t *testing.T) {
 			t.Fatal(response.Code, response.Header())
 		}
 	}
-	body := `{"code":"missing","code_verifier":"wrong","redirect_uri":"litradar://oidc/callback","device_name":"Android"}`
+	body := `{"code":"missing","code_verifier":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","redirect_uri":"litradar://oidc/callback","device_name":"Android"}`
 	response := authRequest(router, "POST", "/api/auth/oidc/native/exchange", body, "")
-	if response.Code != 400 || response.Body.String() != `{"detail":"invalid_grant","code":"bad_request","retryable":false}` {
-		t.Fatal(response.Code, response.Body.String())
-	}
+	requireProblem(t, response, 400, "invalid_grant")
 	policy := rateLimitTestPolicy()
 	policy.LoginIp.Capacity = 1
 	handlers.limiter = newAuthRateLimiter(policy)

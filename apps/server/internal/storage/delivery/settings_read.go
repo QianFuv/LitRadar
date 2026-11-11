@@ -4,18 +4,20 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/delivery"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/secrets"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/notificationdb"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
-
-const notificationColumns = `id,user_id,keywords,directions,selected_databases,delivery_method,pushplus_token,pushplus_template,pushplus_topic,pushplus_channel,sync_to_tracking_folder,ai_base_url,ai_api_key,ai_model,ai_system_prompt,ai_backup_base_url,ai_backup_api_key,ai_backup_model,ai_backup_system_prompt,ai_retry_attempts,enabled,created_at,updated_at`
 
 // GetNotificationSettings reads raw preferences and decrypted credentials, including disabled settings.
 func (repository *Repository) GetNotificationSettings(ctx context.Context, codec *secrets.Codec, userId int64) (*domain.NotificationSettings, error) {
-	return scanNotificationSettings(repository.database.QueryRowContext(ctx, "SELECT "+notificationColumns+" FROM notification_settings WHERE user_id=?", userId), codec)
+	row, err := notificationQueries.NotificationSettings(ctx, repository.database, notificationdb.NotificationSettingsParams{UserID: sqlite.Integer(userId)})
+	return decodeNotificationSettings(row, err, codec)
 }
-func scanNotificationSettings(scanner rowScanner, codec *secrets.Codec) (*domain.NotificationSettings, error) {
-	row := readNotificationRow(scanner, 23)
+func decodeNotificationSettings(record notificationdb.NotificationSetting, err error, codec *secrets.Codec) (*domain.NotificationSettings, error) {
+	row := &notificationRow{values: []any{record.ID, record.UserID, record.Keywords, record.Directions, record.SelectedDatabases, record.DeliveryMethod, record.PushplusToken, record.PushplusTemplate, record.PushplusTopic, record.PushplusChannel, record.SyncToTrackingFolder, record.AIBaseURL, record.AIAPIKey, record.AIModel, record.AISystemPrompt, record.AIBackupBaseURL, record.AIBackupAPIKey, record.AIBackupModel, record.AIBackupSystemPrompt, record.AIRetryAttempts, record.Enabled, record.CreatedAt, record.UpdatedAt}, err: err}
 	if errors.Is(row.err, sql.ErrNoRows) {
 		return nil, nil
 	}

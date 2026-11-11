@@ -3,6 +3,9 @@ package delivery
 import (
 	"context"
 	"database/sql"
+
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/deliverydb"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
 // LoadCheckpoint returns the existing workflow checkpoint without admitting work.
@@ -10,7 +13,7 @@ func (repository *Repository) LoadCheckpoint(ctx context.Context, workflow Workf
 	if err := validateDbName(dbName); err != nil {
 		return nil, err
 	}
-	return scanCheckpointRecord(repository.database.QueryRowContext(ctx, "SELECT "+checkpointColumns+" FROM delivery_checkpoints WHERE workflow=? AND db_name=?", workflow, dbName))
+	return decodeCheckpointRecord(queries.Checkpoint(ctx, repository.database, deliverydb.CheckpointParams{Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName)}))
 }
 
 // CompareAndSwapCheckpoint creates the first snapshot or replaces exactly its observed revision.
@@ -49,9 +52,9 @@ func writeCheckpoint(ctx context.Context, connection *sql.Conn, workflow Workflo
 	}
 	var err error
 	if expected == nil {
-		err = executeCas(ctx, connection, `INSERT INTO delivery_checkpoints(workflow,db_name,status,legacy_status,snapshot_json,last_completed_run_at,revision,legacy_source_hash,legacy_source_name,legacy_imported_at,created_at,updated_at) VALUES(?,?,?,NULL,?,?,0,NULL,NULL,NULL,?,?) ON CONFLICT(workflow,db_name) DO NOTHING`, workflow, dbName, update.Status, update.SnapshotJson, update.LastCompletedRunAt, update.UpdatedAt, update.UpdatedAt)
+		err = checkCAS(queries.CreateCheckpoint(ctx, connection, deliverydb.CreateCheckpointParams{Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName), Status: sqlite.Text(update.Status), SnapshotJSON: sqlite.Text(update.SnapshotJson), LastCompletedRunAt: (*sqlite.Text)(update.LastCompletedRunAt), CreatedAt: sqlite.Number(update.UpdatedAt), UpdatedAt: sqlite.Number(update.UpdatedAt)}))
 	} else {
-		err = executeCas(ctx, connection, `UPDATE delivery_checkpoints SET status=?,legacy_status=NULL,snapshot_json=?,last_completed_run_at=?,revision=revision+1,updated_at=? WHERE workflow=? AND db_name=? AND revision=?`, update.Status, update.SnapshotJson, update.LastCompletedRunAt, update.UpdatedAt, workflow, dbName, *expected)
+		err = checkCAS(queries.UpdateCheckpoint(ctx, connection, deliverydb.UpdateCheckpointParams{Status: sqlite.Text(update.Status), SnapshotJSON: sqlite.Text(update.SnapshotJson), LastCompletedRunAt: (*sqlite.Text)(update.LastCompletedRunAt), UpdatedAt: sqlite.Number(update.UpdatedAt), Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName), Revision: sqlite.Integer(*expected)}))
 	}
 	return err
 }

@@ -9,42 +9,76 @@ import (
 )
 
 type manualPushStatus struct {
-	JobId                 *string  `json:"job_id"`
-	Status                string   `json:"status"`
-	Message               string   `json:"message"`
-	StartedAt             *float64 `json:"started_at"`
-	FinishedAt            *float64 `json:"finished_at"`
-	DeadlineAt            *float64 `json:"deadline_at"`
-	CancellationRequested bool     `json:"cancellation_requested"`
-	CanCancel             bool     `json:"can_cancel"`
-	CanRetry              bool     `json:"can_retry"`
-	Pushed                int64    `json:"pushed"`
-	Selected              int64    `json:"selected"`
-	TotalCandidates       *int64   `json:"total_candidates"`
-	Summary               string   `json:"summary"`
-	FolderId              *int64   `json:"folder_id"`
-	FolderName            *string  `json:"folder_name"`
+	JobId                 *string  `json:"job_id" required:"false" nullable:"true"`
+	Status                string   `json:"status" nullable:"false" enum:"idle,pending,running,completed,failed,cancelled,timed_out,unknown"`
+	Message               string   `json:"message" nullable:"false"`
+	StartedAt             *float64 `json:"started_at" required:"false" nullable:"true" format:"double"`
+	FinishedAt            *float64 `json:"finished_at" required:"false" nullable:"true" format:"double"`
+	DeadlineAt            *float64 `json:"deadline_at" required:"false" nullable:"true" format:"double"`
+	CancellationRequested bool     `json:"cancellation_requested" nullable:"false"`
+	CanCancel             bool     `json:"can_cancel" nullable:"false"`
+	CanRetry              bool     `json:"can_retry" nullable:"false"`
+	Pushed                int64    `json:"pushed" nullable:"false" format:"int64"`
+	Selected              int64    `json:"selected" nullable:"false" format:"int64"`
+	TotalCandidates       *int64   `json:"total_candidates" required:"false" nullable:"true" format:"int64"`
+	Summary               string   `json:"summary" nullable:"false"`
+	FolderId              *int64   `json:"folder_id" required:"false" nullable:"true" format:"int64"`
+	FolderName            *string  `json:"folder_name" required:"false" nullable:"true"`
 }
 
 // manualOutcome admits a complete typed result and a strictly represented status.
 func manualOutcome(encoded string) map[string]any {
-	kind := structBody("ManualWeeklyPushOutcome", bodyFieldOf("status", bodyType{kind: "raw"}), bodyFieldOf("message", stringBody), bodyFieldOf("pushed", integerBody), bodyFieldOf("selected", integerBody), bodyFieldOf("total_candidates", optionalBody(integerBody)), bodyFieldOf("summary", stringBody), bodyFieldOf("folder_id", optionalBody(integerBody)), bodyFieldOf("folder_name", optionalBody(stringBody)))
-	scanner := bodyScanner{body: []byte(encoded)}
-	value, err := scanner.typed(kind, "", 0)
-	if err != nil || scanner.peek() != 0 || scanner.position != len(scanner.body) {
+	fields, err := storedFields(encoded, []string{"status", "message", "pushed", "selected", "total_candidates", "summary", "folder_id", "folder_name"})
+	if err != nil {
 		return nil
 	}
-	fields := value.(map[string]any)
-	raw := fields["status"].(json.RawMessage)
-	name, isValid := manualOutcomeStatus(raw)
-	if !isValid {
+	required := map[string]any{"message": new(string), "pushed": new(int64), "selected": new(int64), "summary": new(string)}
+	result := map[string]any{}
+	for name, target := range required {
+		raw, exists := fields[name]
+		if !exists || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return nil
+		}
+		if err := json.Unmarshal(raw, target); err != nil {
+			return nil
+		}
+		switch value := target.(type) {
+		case *string:
+			result[name] = *value
+		case *int64:
+			result[name] = *value
+		}
+	}
+	for _, name := range []string{"total_candidates", "folder_id", "folder_name"} {
+		raw, exists := fields[name]
+		if !exists {
+			continue
+		}
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			continue
+		}
+		if name == "folder_name" {
+			var value string
+			if err := json.Unmarshal(raw, &value); err != nil {
+				return nil
+			}
+			result[name] = value
+		} else {
+			var value int64
+			if err := json.Unmarshal(raw, &value); err != nil {
+				return nil
+			}
+			result[name] = value
+		}
+	}
+	name, ok := manualOutcomeStatus(fields["status"])
+	if !ok {
 		return nil
 	}
-	fields["status"] = name
-	return fields
+	result["status"] = name
+	return result
 }
 
-// manualOutcomeStatus accepts a known string or an externally tagged null unit.
 func manualOutcomeStatus(raw json.RawMessage) (string, bool) {
 	var name string
 	if json.Unmarshal(raw, &name) != nil || name == "" {

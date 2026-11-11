@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/deliverydb"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
@@ -13,20 +14,19 @@ func (repository *Repository) ListRunItems(ctx context.Context, runId int64) ([]
 	if err := validatePositiveId(runId, "Delivery run id is invalid"); err != nil {
 		return nil, err
 	}
-	rows, err := repository.database.QueryContext(ctx, "SELECT "+itemColumns+" FROM delivery_run_items WHERE delivery_run_id=? ORDER BY id", runId)
+	rows, err := queries.Items(ctx, repository.database, deliverydb.ItemsParams{DeliveryRunID: sqlite.Integer(runId)})
 	if err != nil {
 		return nil, storageError(err)
 	}
-	defer rows.Close()
-	result := []RunItemRecord{}
-	for rows.Next() {
-		item, err := scanRunItemRecord(rows)
+	result := make([]RunItemRecord, 0, len(rows))
+	for _, row := range rows {
+		record, err := decodeRunItemRecord(row, nil)
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, *item)
+		result = append(result, *record)
 	}
-	return result, storageError(rows.Err())
+	return result, nil
 }
 
 // InsertRunItems inserts unique new identities without changing the original terminal-run admission behavior.
@@ -80,7 +80,6 @@ func (repository *Repository) insertItems(ctx context.Context, runId int64, item
 		if shouldEnsure {
 			query += " ON CONFLICT(delivery_run_id,item_kind,item_key) DO NOTHING"
 		}
-		const selectItem = "SELECT " + itemColumns + " FROM delivery_run_items WHERE delivery_run_id=? AND item_kind=? AND item_key=?"
 		var insertStatement, selectStatement *sql.Stmt
 		if len(items) > 1 {
 			insertStatement, err = connection.PrepareContext(ctx, query)
@@ -88,7 +87,7 @@ func (repository *Repository) insertItems(ctx context.Context, runId int64, item
 				return err
 			}
 			defer insertStatement.Close()
-			selectStatement, err = connection.PrepareContext(ctx, selectItem)
+			selectStatement, err = connection.PrepareContext(ctx, deliverydb.ItemIdentity)
 			if err != nil {
 				return err
 			}
@@ -105,11 +104,11 @@ func (repository *Repository) insertItems(ctx context.Context, runId int64, item
 			}
 			var row *sql.Row
 			if selectStatement == nil {
-				row = connection.QueryRowContext(ctx, selectItem, runId, item.ItemKind, item.ItemKey)
+				row = connection.QueryRowContext(ctx, deliverydb.ItemIdentity, runId, item.ItemKind, item.ItemKey)
 			} else {
 				row = selectStatement.QueryRowContext(ctx, runId, item.ItemKind, item.ItemKey)
 			}
-			record, err := scanRunItemRecord(row)
+			record, err := scanPreparedItem(row)
 			if err != nil {
 				return err
 			}
@@ -183,7 +182,14 @@ func (repository *Repository) claimItem(ctx context.Context, runId int64, runOwn
 		var id int64
 		if itemId == nil {
 			var selected sqlite.Integer
-			err := connection.QueryRowContext(ctx, `SELECT id FROM delivery_run_items WHERE delivery_run_id=? AND (status='pending' OR (status='claimed' AND lease_expires_at<=?)) ORDER BY id LIMIT 1`, runId, now).Scan(&selected)
+			err := func() error {
+				queryResult, err := queries.ReadyItemID(ctx, connection, deliverydb.ReadyItemIDParams{DeliveryRunID: sqlite.Integer(runId), LeaseExpiresAt: new(sqlite.Number(now))})
+				if err != nil {
+					return err
+				}
+				selected = queryResult
+				return nil
+			}()
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil
 			}
@@ -191,7 +197,7 @@ func (repository *Repository) claimItem(ctx context.Context, runId int64, runOwn
 				return err
 			}
 			id = int64(selected)
-			if err := executeCas(ctx, connection, `UPDATE delivery_run_items SET status='claimed',owner_id=?1,lease_expires_at=?2,attempt_count=attempt_count+1,started_at=COALESCE(started_at,?3),updated_at=?4,revision=revision+1 WHERE id=?5 AND (status='pending' OR (status='claimed' AND lease_expires_at<=?3))`, itemOwner, now+seconds, now, now, id); err != nil {
+			if err := checkCAS(queries.ClaimReadyItem(ctx, connection, deliverydb.ClaimReadyItemParams{OwnerID: new(sqlite.Text(itemOwner)), LeaseExpiresAt: new(sqlite.Number(now + seconds)), StartedAt: new(sqlite.Number(now)), UpdatedAt: sqlite.Number(now), ID: sqlite.Integer(id)})); err != nil {
 				return err
 			}
 			record, err = requireRecord(loadRunItemRecord(ctx, connection, id))
@@ -209,7 +215,7 @@ func (repository *Repository) claimItem(ctx context.Context, runId int64, runOwn
 		if current.DeliveryRunId != runId || !(current.Status == ItemStatusPending || current.Status == ItemStatusClaimed && current.LeaseExpiresAt != nil && *current.LeaseExpiresAt <= now) {
 			return ErrConflict
 		}
-		if err := executeCas(ctx, connection, `UPDATE delivery_run_items SET status='claimed',owner_id=?1,lease_expires_at=?2,attempt_count=attempt_count+1,started_at=COALESCE(started_at,?3),updated_at=?4,revision=revision+1 WHERE id=?5 AND delivery_run_id=?6 AND revision=?7 AND (status='pending' OR (status='claimed' AND lease_expires_at<=?3))`, itemOwner, now+seconds, now, now, id, runId, current.Revision); err != nil {
+		if err := checkCAS(queries.ClaimItem(ctx, connection, deliverydb.ClaimItemParams{OwnerID: new(sqlite.Text(itemOwner)), LeaseExpiresAt: new(sqlite.Number(now + seconds)), StartedAt: new(sqlite.Number(now)), UpdatedAt: sqlite.Number(now), ID: sqlite.Integer(id), DeliveryRunID: sqlite.Integer(runId), Revision: sqlite.Integer(current.Revision)})); err != nil {
 			return err
 		}
 		record, err = requireRecord(loadRunItemRecord(ctx, connection, id))

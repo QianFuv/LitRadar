@@ -11,6 +11,8 @@ import (
 	"time"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/batchdb"
+	dbtypes "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/types"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
@@ -90,8 +92,22 @@ type batchHeader struct {
 
 func activeBatchHeader(ctx context.Context, connection *sql.Conn) (*batchHeader, error) {
 	var id, status, fingerprint, selection, mode sqlite.Text
-	var size, notify, dry, started sqlite.Integer
-	err := connection.QueryRowContext(ctx, `SELECT batch_id,status,fingerprint,selection_kind,sync_mode,issue_batch_size,notify,notify_dry_run,started_at FROM index_batches WHERE status IN ('active','abandoning')`).Scan(&id, &status, &fingerprint, &selection, &mode, &size, &notify, &dry, &started)
+	var size, notify, dry sqlite.Integer
+	err := func() error {
+		queryResult, err := batchQueries.ActiveBatch(ctx, connection)
+		if err != nil {
+			return err
+		}
+		id = queryResult.BatchID
+		status = queryResult.Status
+		fingerprint = queryResult.Fingerprint
+		selection = queryResult.SelectionKind
+		mode = queryResult.SyncMode
+		size = queryResult.IssueBatchSize
+		notify = queryResult.Notify
+		dry = queryResult.NotifyDryRun
+		return nil
+	}()
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -161,14 +177,21 @@ func AdmitBatch(ctx context.Context, connection *sql.Conn, request BatchRequest,
 			if isAbandoning && active.status == "active" {
 				if active.shouldNotify {
 					var pending sqlite.Integer
-					if err := connection.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM index_batch_catalogs WHERE batch_id=?1 AND phase!='completed' AND outcome_manifest_path IS NOT NULL)`, id).Scan(&pending); err != nil {
+					if err := func() error {
+						queryResult, err := batchQueries.HasPendingManifest(ctx, connection, batchdb.HasPendingManifestParams{BatchID: sqlite.Text(id)})
+						if err != nil {
+							return err
+						}
+						pending = sqlite.Integer(dbtypes.Boolean(queryResult))
+						return nil
+					}(); err != nil {
 						return err
 					}
 					if pending != 0 {
 						return &BatchError{Kind: "published_notification_pending"}
 					}
 				}
-				changed, err := connection.ExecContext(ctx, `UPDATE index_batches SET status='abandoning',updated_at=?2 WHERE batch_id=?1 AND status='active'`, id, now)
+				changed, err := batchQueries.AbandonBatch(ctx, connection, batchdb.AbandonBatchParams{BatchID: sqlite.Text(id), UpdatedAt: sqlite.Integer(now)})
 				if err = expectBatchChange(changed, err, "active batch could not enter abandonment"); err != nil {
 					return err
 				}
@@ -193,7 +216,7 @@ func ReplaceAbandoningBatch(ctx context.Context, connection *sql.Conn, previous 
 		if err := verifyBatchOwnership(ctx, connection, previous, owner, now); err != nil {
 			return err
 		}
-		changed, err := connection.ExecContext(ctx, `UPDATE index_batches SET status='abandoned',updated_at=?2,completed_at=?2 WHERE batch_id=?1 AND status='abandoning'`, previous, now)
+		changed, err := batchQueries.CompleteAbandonment(ctx, connection, batchdb.CompleteAbandonmentParams{BatchID: sqlite.Text(previous), UpdatedAt: sqlite.Integer(now)})
 		if err = expectBatchChange(changed, err, "batch replacement requires an abandoning batch"); err != nil {
 			return err
 		}
@@ -201,7 +224,7 @@ func ReplaceAbandoningBatch(ctx context.Context, connection *sql.Conn, previous 
 		if err := insertBatch(ctx, connection, id, request, now); err != nil {
 			return err
 		}
-		changed, err = connection.ExecContext(ctx, `UPDATE index_batch_lease SET batch_id=?1,heartbeat_at=?3,expires_at=?4 WHERE lease_key=1 AND batch_id=?2 AND owner_id=?5`, id, previous, now, batchLeaseExpiry(now), owner)
+		changed, err = batchQueries.ReplaceBatchLease(ctx, connection, batchdb.ReplaceBatchLeaseParams{BatchID: sqlite.Text(id), BatchID_2: sqlite.Text(previous), HeartbeatAt: sqlite.Integer(now), ExpiresAt: sqlite.Integer(batchLeaseExpiry(now)), OwnerID: sqlite.Text(owner)})
 		if err = expectLeaseChange(changed, err, owner); err != nil {
 			return err
 		}
@@ -216,11 +239,11 @@ func insertBatch(ctx context.Context, connection *sql.Conn, id string, request B
 	if err != nil {
 		return err
 	}
-	if _, err := connection.ExecContext(ctx, `INSERT INTO index_batches(batch_id,status,fingerprint,selection_kind,sync_mode,issue_batch_size,notify,notify_dry_run,started_at,updated_at) VALUES(?1,'active',?2,?3,?4,?5,?6,?7,?8,?8)`, id, request.Fingerprint(), request.Selection, request.Mode, size, request.ShouldNotify, request.IsNotifyDryRun, now); err != nil {
+	if _, err := batchQueries.InsertBatch(ctx, connection, batchdb.InsertBatchParams{BatchID: sqlite.Text(id), Fingerprint: sqlite.Text(request.Fingerprint()), SelectionKind: sqlite.Text(request.Selection), SyncMode: sqlite.Text(request.Mode), IssueBatchSize: sqlite.Integer(size), Notify: sqlite.Integer(dbtypes.Boolean(request.ShouldNotify)), NotifyDryRun: sqlite.Integer(dbtypes.Boolean(request.IsNotifyDryRun)), StartedAt: sqlite.Integer(now)}); err != nil {
 		return err
 	}
 	for ordinal, catalog := range request.Catalogs {
-		if _, err := connection.ExecContext(ctx, `INSERT INTO index_batch_catalogs(batch_id,ordinal,file_name,catalog_name,csv_sha256,provider_name,journal_count,phase,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,'pending',?8)`, id, ordinal, catalog.Filename, catalog.CatalogName, catalog.CsvSha256, catalog.ProviderName, len(catalog.Entries), now); err != nil {
+		if _, err := batchQueries.InsertBatchCatalog(ctx, connection, batchdb.InsertBatchCatalogParams{BatchID: sqlite.Text(id), Ordinal: sqlite.Integer(ordinal), FileName: sqlite.Text(catalog.Filename), CatalogName: sqlite.Text(catalog.CatalogName), CSVSHA256: sqlite.Text(catalog.CsvSha256), ProviderName: sqlite.Text(catalog.ProviderName), JournalCount: sqlite.Integer(len(catalog.Entries)), UpdatedAt: sqlite.Integer(now)}); err != nil {
 			return err
 		}
 	}
@@ -252,19 +275,34 @@ func batchMismatches(ctx context.Context, connection *sql.Conn, active batchHead
 func claimBatchLease(ctx context.Context, connection *sql.Conn, id, owner string, now int64) error {
 	var previous sqlite.Text
 	var expires sqlite.Integer
-	err := connection.QueryRowContext(ctx, `SELECT owner_id,expires_at FROM index_batch_lease WHERE lease_key=1`).Scan(&previous, &expires)
+	err := func() error {
+		queryResult, err := batchQueries.BatchLease(ctx, connection)
+		if err != nil {
+			return err
+		}
+		previous = queryResult.OwnerID
+		expires = queryResult.ExpiresAt
+		return nil
+	}()
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	if err == nil && string(previous) != owner && int64(expires) > now {
 		return &BatchError{Kind: "active_lease", OwnerId: string(previous), ExpiresAt: int64(expires)}
 	}
-	_, err = connection.ExecContext(ctx, `INSERT INTO index_batch_lease(lease_key,batch_id,owner_id,heartbeat_at,expires_at) VALUES(1,?1,?2,?3,?4) ON CONFLICT(lease_key) DO UPDATE SET batch_id=excluded.batch_id,owner_id=excluded.owner_id,heartbeat_at=excluded.heartbeat_at,expires_at=excluded.expires_at`, id, owner, now, batchLeaseExpiry(now))
+	_, err = batchQueries.UpsertBatchLease(ctx, connection, batchdb.UpsertBatchLeaseParams{BatchID: sqlite.Text(id), OwnerID: sqlite.Text(owner), HeartbeatAt: sqlite.Integer(now), ExpiresAt: sqlite.Integer(batchLeaseExpiry(now))})
 	return err
 }
 func verifyBatchOwnership(ctx context.Context, connection *sql.Conn, id, owner string, now int64) error {
 	var owns sqlite.Integer
-	if err := connection.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM index_batch_lease WHERE lease_key=1 AND batch_id=?1 AND owner_id=?2 AND expires_at>?3)`, id, owner, now).Scan(&owns); err != nil {
+	if err := func() error {
+		queryResult, err := batchQueries.OwnsBatchLease(ctx, connection, batchdb.OwnsBatchLeaseParams{BatchID: sqlite.Text(id), OwnerID: sqlite.Text(owner), ExpiresAt: sqlite.Integer(now)})
+		if err != nil {
+			return err
+		}
+		owns = sqlite.Integer(dbtypes.Boolean(queryResult))
+		return nil
+	}(); err != nil {
 		return err
 	}
 	if owns == 0 {
@@ -275,13 +313,13 @@ func verifyBatchOwnership(ctx context.Context, connection *sql.Conn, id, owner s
 
 // HeartbeatBatchLease renews only the same owner before its previous lease expires.
 func HeartbeatBatchLease(ctx context.Context, connection *sql.Conn, id, owner string, now int64) error {
-	changed, err := connection.ExecContext(ctx, `UPDATE index_batch_lease SET heartbeat_at=?3,expires_at=?4 WHERE lease_key=1 AND batch_id=?1 AND owner_id=?2 AND expires_at>?3`, id, owner, now, batchLeaseExpiry(now))
+	changed, err := batchQueries.HeartbeatBatchLease(ctx, connection, batchdb.HeartbeatBatchLeaseParams{BatchID: sqlite.Text(id), OwnerID: sqlite.Text(owner), HeartbeatAt: sqlite.Integer(now), ExpiresAt: sqlite.Integer(batchLeaseExpiry(now))})
 	return expectLeaseChange(changed, err, owner)
 }
 
 // ReleaseBatchLease is idempotent only when no competing lease remains.
 func ReleaseBatchLease(ctx context.Context, connection *sql.Conn, id, owner string) error {
-	changed, err := connection.ExecContext(ctx, `DELETE FROM index_batch_lease WHERE lease_key=1 AND batch_id=?1 AND owner_id=?2`, id, owner)
+	changed, err := batchQueries.ReleaseBatchLease(ctx, connection, batchdb.ReleaseBatchLeaseParams{BatchID: sqlite.Text(id), OwnerID: sqlite.Text(owner)})
 	if err != nil {
 		return err
 	}
@@ -289,8 +327,7 @@ func ReleaseBatchLease(ctx context.Context, connection *sql.Conn, id, owner stri
 	if err != nil || count == 1 {
 		return err
 	}
-	var current sqlite.Text
-	err = connection.QueryRowContext(ctx, `SELECT owner_id FROM index_batch_lease WHERE lease_key=1`).Scan(&current)
+	_, err = batchQueries.BatchLeaseOwner(ctx, connection)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -326,7 +363,7 @@ func expectBatchChange(result sql.Result, err error, reason string) error {
 	return nil
 }
 func touchBatch(ctx context.Context, connection *sql.Conn, id string, now int64) error {
-	_, err := connection.ExecContext(ctx, `UPDATE index_batches SET updated_at=?2 WHERE batch_id=?1`, id, now)
+	_, err := batchQueries.TouchBatch(ctx, connection, batchdb.TouchBatchParams{BatchID: sqlite.Text(id), UpdatedAt: sqlite.Integer(now)})
 	return err
 }
 
@@ -339,21 +376,13 @@ func parseStoredSyncMode(mode string) (domain.IndexSyncMode, error) {
 }
 
 func readBatchCatalogDescriptors(ctx context.Context, connection *sql.Conn, id string) ([][4]string, error) {
-	rows, err := connection.QueryContext(ctx, `SELECT file_name,catalog_name,csv_sha256,provider_name FROM index_batch_catalogs WHERE batch_id=?1 ORDER BY ordinal`, id)
+	rows, err := batchQueries.BatchCatalogDescriptors(ctx, connection, batchdb.BatchCatalogDescriptorsParams{BatchID: sqlite.Text(id)})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var stored [][4]string
-	for rows.Next() {
-		var fields [4]sqlite.Text
-		if err := rows.Scan(&fields[0], &fields[1], &fields[2], &fields[3]); err != nil {
-			return nil, err
-		}
-		stored = append(stored, [4]string{string(fields[0]), string(fields[1]), string(fields[2]), string(fields[3])})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	for _, row := range rows {
+		stored = append(stored, [4]string{string(row.FileName), string(row.CatalogName), string(row.CSVSHA256), string(row.ProviderName)})
 	}
 	return stored, nil
 }

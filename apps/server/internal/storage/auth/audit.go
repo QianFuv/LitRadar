@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/authdb"
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
@@ -69,7 +70,14 @@ func (repository *Repository) AppendAudit(ctx context.Context, event domain.Audi
 		if err := insertAudit(ctx, connection, &event); err != nil {
 			return err
 		}
-		return connection.QueryRowContext(ctx, "SELECT last_insert_rowid()").Scan(&id)
+		return func() error {
+			queryResult, err := queries.LastInsertID(ctx, connection)
+			if err != nil {
+				return err
+			}
+			id = queryResult
+			return nil
+		}()
 	})
 	if err != nil {
 		recordAuditError(ctx, err)
@@ -80,21 +88,13 @@ func (repository *Repository) AppendAudit(ctx context.Context, event domain.Audi
 
 // ListAudit returns insertion order for trusted offline consumers.
 func (repository *Repository) ListAudit(ctx context.Context) ([]AuditRecord, error) {
-	rows, err := repository.database.QueryContext(ctx, "SELECT id,actor_id,target_id,action,outcome,reason,request_id,source_class,bucket,rejected_count,retry_after_seconds,occurred_at FROM security_audit_events ORDER BY id")
+	rows, err := queries.AuditEvents(ctx, repository.database)
 	if err != nil {
 		return nil, AuditFailure{cause: err}
 	}
-	defer rows.Close()
-	result := []AuditRecord{}
-	for rows.Next() {
-		var item AuditRecord
-		if err := rows.Scan(&item.Id, &item.ActorId, &item.TargetId, &item.Action, &item.Outcome, &item.Reason, &item.RequestId, &item.SourceClass, &item.Bucket, &item.RejectedCount, &item.RetryAfterSeconds, &item.OccurredAt); err != nil {
-			return nil, AuditFailure{cause: err}
-		}
-		result = append(result, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, AuditFailure{cause: err}
+	result := make([]AuditRecord, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, AuditRecord{Id: row.ID, AuditEvent: domain.AuditEvent{ActorId: row.ActorID, TargetId: row.TargetID, Action: row.Action, Outcome: row.Outcome, Reason: row.Reason, RequestId: row.RequestID, SourceClass: row.SourceClass, Bucket: row.Bucket, RejectedCount: row.RejectedCount, RetryAfterSeconds: row.RetryAfterSeconds, OccurredAt: row.OccurredAt}})
 	}
 	return result, nil
 }
@@ -108,13 +108,20 @@ func (repository *Repository) CleanupAudit(ctx context.Context, retentionDays ui
 	result := RetentionResult{Cutoff: now - float64(retentionDays)*86400}
 	err := repository.Immediate(ctx, false, func(connection *sql.Conn) error {
 		var last *float64
-		if err := connection.QueryRowContext(ctx, "SELECT last_retention_at FROM security_audit_maintenance WHERE id=1").Scan(&last); err != nil {
+		if err := func() error {
+			queryResult, err := queries.AuditRetention(ctx, connection)
+			if err != nil {
+				return err
+			}
+			last = queryResult
+			return nil
+		}(); err != nil {
 			return AuditFailure{cause: err}
 		}
 		if last != nil && *last >= now-86400 {
 			return nil
 		}
-		deleted, err := connection.ExecContext(ctx, "DELETE FROM security_audit_events WHERE id IN (SELECT id FROM security_audit_events WHERE occurred_at<? ORDER BY occurred_at,id LIMIT 10000)", result.Cutoff)
+		deleted, err := queries.PruneAuditEvents(ctx, connection, authdb.PruneAuditEventsParams{OccurredAt: result.Cutoff})
 		if err != nil {
 			return AuditFailure{cause: err}
 		}
@@ -122,11 +129,18 @@ func (repository *Repository) CleanupAudit(ctx context.Context, retentionDays ui
 		if err != nil {
 			return AuditFailure{cause: err}
 		}
-		if err := connection.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM security_audit_events WHERE occurred_at<?)", result.Cutoff).Scan(&result.HasMoreExpired); err != nil {
+		if err := func() error {
+			queryResult, err := queries.HasExpiredAuditEvents(ctx, connection, authdb.HasExpiredAuditEventsParams{OccurredAt: result.Cutoff})
+			if err != nil {
+				return err
+			}
+			result.HasMoreExpired = queryResult
+			return nil
+		}(); err != nil {
 			return AuditFailure{cause: err}
 		}
 		if !result.HasMoreExpired {
-			updated, err := connection.ExecContext(ctx, "UPDATE security_audit_maintenance SET last_retention_at=? WHERE id=1", now)
+			updated, err := queries.RecordAuditRetention(ctx, connection, authdb.RecordAuditRetentionParams{LastRetentionAt: new(now)})
 			if err != nil {
 				return AuditFailure{cause: err}
 			}

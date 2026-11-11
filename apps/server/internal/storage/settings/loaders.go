@@ -40,23 +40,18 @@ func LoadLogging(ctx context.Context, filename string) (LoggingSettings, error) 
 	if !hasTable {
 		return result, nil
 	}
-	rows, err := database.QueryContext(ctx, "SELECT key,value FROM runtime_settings WHERE key IN ('log_filter','log_format')")
+	rows, err := queries.Logging(ctx, database)
 	if err != nil {
 		return LoggingSettings{}, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var field, value strictText
-		if err := rows.Scan(&field, &value); err != nil {
-			return LoggingSettings{}, err
-		}
-		if field == "log_filter" {
-			result.LogFilter = string(value)
+	for _, row := range rows {
+		if row.Key == "log_filter" {
+			result.LogFilter = string(row.Value)
 		} else {
-			result.LogFormat = string(value)
+			result.LogFormat = string(row.Value)
 		}
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 // openLoggingDatabase removes write-related pragmas from the read-only startup URI.
@@ -84,8 +79,7 @@ func (repository *Repository) LoadField(ctx context.Context, field string) (Valu
 	}
 	rows := map[string]storedRow{}
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
-		var value strictText
-		err := connection.QueryRowContext(ctx, "SELECT value FROM runtime_settings WHERE key=?", field).Scan(&value)
+		value, err := queries.Value(ctx, connection, strictText(field))
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
@@ -134,8 +128,7 @@ func (repository *Repository) AiBaseUrls(ctx context.Context) ([]string, error) 
 
 // AiBaseUrlsInConnection reads the allowlist in the caller's existing transaction snapshot.
 func AiBaseUrlsInConnection(ctx context.Context, connection *sql.Conn) ([]string, error) {
-	var stored strictText
-	err := connection.QueryRowContext(ctx, "SELECT value FROM runtime_settings WHERE key='ai_allowed_base_urls'").Scan(&stored)
+	stored, err := queries.Value(ctx, connection, strictText("ai_allowed_base_urls"))
 	if errors.Is(err, sql.ErrNoRows) {
 		stored = strictText(findDefinition("ai_allowed_base_urls").Default)
 	} else if err != nil {

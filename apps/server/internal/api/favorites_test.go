@@ -25,9 +25,7 @@ func favoriteFixture(t *testing.T) (*authHandlers, *favoriteHandlers, *http.Serv
 	if len(routes) != 17 {
 		t.Fatal("favorite inventory")
 	}
-	for _, route := range routes {
-		router.HandleFunc(route.operation.Method+" "+route.operation.Path, route.handler)
-	}
+	registerFixtureRoutes(t, router, routes)
 	return auth, handlers, router, token
 }
 
@@ -63,7 +61,7 @@ func TestFavoriteLifecycleOwnerIsolationAndExport(t *testing.T) {
 	if !strings.Contains(tracking.Body.String(), `"folder_name":"文献"`) {
 		t.Fatal(tracking.Body.String())
 	}
-	require("POST", path+"/articles/bulk", `{"articles":[{"article_id":2},{"article_id":3}]}`, 200)
+	require("POST", path+"/articles/bulk", `{"articles":[{"article_id":"2"},{"article_id":"3"}]}`, 200)
 	page := require("GET", path+"/articles/page?limit=1", "", 200)
 	var parsed struct {
 		Page struct {
@@ -75,8 +73,8 @@ func TestFavoriteLifecycleOwnerIsolationAndExport(t *testing.T) {
 	}
 	require("GET", path+"/articles/page?limit=1&cursor="+*parsed.Page.NextCursor, "", 200)
 	assertFavoriteCitationFormats(t, require, path)
-	require("POST", path+"/articles/bulk-move", fmt.Sprintf(`{"target_folder_id":%d,"articles":[{"article_id":2}]}`, target), 200)
-	require("POST", path+"/articles/bulk-remove", `{"articles":[{"article_id":3}]}`, 200)
+	require("POST", path+"/articles/bulk-move", fmt.Sprintf(`{"target_folder_id":%d,"articles":[{"article_id":"2"}]}`, target), 200)
+	require("POST", path+"/articles/bulk-remove", `{"articles":[{"article_id":"3"}]}`, 200)
 	require("DELETE", path+"/articles/9007199254740993?db_name=unavailable", "", 200)
 	count := require("GET", path+"/count", "", 200)
 	if count.Body.String() != `{"count":0}` {
@@ -145,5 +143,5 @@ func assertFavoriteOwnerIsolation(t *testing.T, auth *authHandlers, handlers *fa
 	if err != nil {
 		t.Fatal(err)
 	}
-	require("POST", fmt.Sprintf("/api/favorites/folders/%d/articles", foreignFolder.Id), `{"article_id":1}`, 404)
+	require("POST", fmt.Sprintf("/api/favorites/folders/%d/articles", foreignFolder.Id), `{"article_id":"1"}`, 404)
 }

@@ -14,8 +14,12 @@ import (
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	platformsqlite "github.com/QianFuv/LitRadar/apps/server/internal/platform/sqlite"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/authdb"
+	dbtypes "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/types"
 	sqlite3 "modernc.org/sqlite/lib"
 )
+
+var queries authdb.Queries
 
 var ErrUserNotFound = errors.New("User not found")
 var ErrLastAdministrator = errors.New("At least one administrator is required")
@@ -97,7 +101,7 @@ func insertAudit(ctx context.Context, connection *sql.Conn, event *domain.AuditE
 	if !validAudit(event) {
 		return AuditFailure{cause: ErrAuditEvent}
 	}
-	_, err := connection.ExecContext(ctx, `INSERT INTO security_audit_events(actor_id,target_id,action,outcome,reason,request_id,source_class,bucket,rejected_count,retry_after_seconds,occurred_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, event.ActorId, event.TargetId, event.Action, event.Outcome, event.Reason, event.RequestId, event.SourceClass, event.Bucket, event.RejectedCount, event.RetryAfterSeconds, event.OccurredAt)
+	_, err := queries.InsertAudit(ctx, connection, authdb.InsertAuditParams{ActorID: event.ActorId, TargetID: event.TargetId, Action: event.Action, Outcome: event.Outcome, Reason: event.Reason, RequestID: event.RequestId, SourceClass: event.SourceClass, Bucket: event.Bucket, RejectedCount: event.RejectedCount, RetryAfterSeconds: event.RetryAfterSeconds, OccurredAt: event.OccurredAt})
 	if err != nil {
 		return AuditFailure{cause: err}
 	}
@@ -155,7 +159,14 @@ func isAuditRequestIdByte(character byte) bool {
 // RequireAdministrator rechecks live authority while the caller owns the write transaction.
 func RequireAdministrator(ctx context.Context, connection *sql.Conn, actor identity.Id) error {
 	var isAdmin int64
-	err := connection.QueryRowContext(ctx, "SELECT is_admin FROM users WHERE id=?", actor).Scan(&isAdmin)
+	err := func() error {
+		row, err := queries.Administrator(ctx, connection, authdb.AdministratorParams{ID: int64(actor)})
+		if err != nil {
+			return err
+		}
+		isAdmin = row
+		return nil
+	}()
 	if errors.Is(err, sql.ErrNoRows) || err == nil && isAdmin == 0 {
 		return domain.ErrAdminForbidden
 	}
@@ -167,7 +178,14 @@ func (repository *Repository) Bootstrap(ctx context.Context, username, passwordH
 	var user domain.User
 	err := repository.Immediate(ctx, false, func(connection *sql.Conn) error {
 		var count int64
-		if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM users").Scan(&count); err != nil {
+		if err := func() error {
+			row, err := queries.UserCount(ctx, connection)
+			if err != nil {
+				return err
+			}
+			count = row
+			return nil
+		}(); err != nil {
 			return err
 		}
 		if count != 0 {
@@ -198,7 +216,14 @@ func (repository *Repository) Register(ctx context.Context, username, passwordHa
 	var user domain.User
 	err := repository.Immediate(ctx, false, func(connection *sql.Conn) error {
 		var count int64
-		if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM users").Scan(&count); err != nil {
+		if err := func() error {
+			row, err := queries.UserCount(ctx, connection)
+			if err != nil {
+				return err
+			}
+			count = row
+			return nil
+		}(); err != nil {
 			return err
 		}
 		if count == 0 {
@@ -213,14 +238,21 @@ func (repository *Repository) Register(ctx context.Context, username, passwordHa
 			return err
 		}
 		var inviteId int64
-		err = connection.QueryRowContext(ctx, `UPDATE invite_codes SET used_by=CASE WHEN use_count=0 THEN ?1 ELSE used_by END,used_at=CASE WHEN use_count=0 THEN ?2 ELSE used_at END,use_count=use_count+1 WHERE code=?3 AND revoked_at IS NULL AND expires_at>?2 AND use_count<max_uses RETURNING id`, user.Id, now, *invite).Scan(&inviteId)
+		err = func() error {
+			row, err := queries.RedeemInvite(ctx, connection, authdb.RedeemInviteParams{UsedBy: new(int64(user.Id)), UsedAt: new(now), Code: *invite})
+			if err != nil {
+				return err
+			}
+			inviteId = row
+			return nil
+		}()
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.ErrInvite
 		}
 		if err != nil {
 			return err
 		}
-		if _, err := connection.ExecContext(ctx, "INSERT INTO invite_code_uses(invite_code_id,user_id,used_at) VALUES(?,?,?)", inviteId, user.Id, now); err != nil {
+		if _, err := queries.RecordInviteUse(ctx, connection, authdb.RecordInviteUseParams{InviteCodeID: inviteId, UserID: new(int64(user.Id)), UsedAt: now}); err != nil {
 			return err
 		}
 		if email != nil {
@@ -252,7 +284,7 @@ func (repository *Repository) Register(ctx context.Context, username, passwordHa
 }
 
 func insertUser(ctx context.Context, connection *sql.Conn, username, passwordHash, salt string, isAdmin bool, now float64) (domain.User, error) {
-	result, err := connection.ExecContext(ctx, "INSERT INTO users(username,password_hash,salt,is_admin,created_at,updated_at) VALUES(?,?,?,?,?,?)", username, passwordHash, salt, isAdmin, now, now)
+	result, err := queries.CreateUser(ctx, connection, authdb.CreateUserParams{Username: username, PasswordHash: passwordHash, Salt: salt, IsAdmin: dbtypes.Boolean(isAdmin), CreatedAt: now, UpdatedAt: now})
 	if err != nil {
 		var sqliteError interface{ Code() int }
 		if errors.As(err, &sqliteError) && sqliteError.Code()&255 == sqlite3.SQLITE_CONSTRAINT {
@@ -265,41 +297,46 @@ func insertUser(ctx context.Context, connection *sql.Conn, username, passwordHas
 }
 
 func defaultFolder(ctx context.Context, connection *sql.Conn, user identity.Id, now float64) error {
-	_, err := connection.ExecContext(ctx, "INSERT INTO folders(user_id,name,is_tracking,created_at,updated_at) VALUES(?,?,1,?,?)", user, "默认收藏", now, now)
+	_, err := queries.CreateDefaultFolder(ctx, connection, authdb.CreateDefaultFolderParams{UserID: int64(user), Name: "默认收藏", CreatedAt: now, UpdatedAt: now})
 	return err
 }
 
-func scanCredentials(row *sql.Row) (*domain.Credentials, error) {
-	var credentials domain.Credentials
-	var isAdmin int64
-	err := row.Scan(&credentials.User.Id, &credentials.User.Username, &credentials.PasswordHash, &credentials.Salt, &isAdmin, &credentials.CreatedAt, &credentials.TokenGeneration, &credentials.User.Email, &credentials.User.AuthKind, &credentials.User.IsOidcLinked)
+func decodeCredentials(row authdb.CredentialsByIDRow, err error) (*domain.Credentials, error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	credentials.User.IsAdmin = isAdmin != 0
-	return &credentials, nil
+	return &domain.Credentials{User: domain.User{Id: identity.Id(row.ID), Username: row.Username, IsAdmin: row.IsAdmin != 0, Email: row.Email, AuthKind: row.AuthKind, IsOidcLinked: row.Exists}, PasswordHash: row.PasswordHash, Salt: row.Salt, CreatedAt: row.CreatedAt, TokenGeneration: row.TokenGeneration}, nil
 }
 
 // CredentialsByName preserves SQLite's existing NOCASE username comparison.
 func (repository *Repository) CredentialsByName(ctx context.Context, username string) (*domain.Credentials, error) {
 	if strings.Contains(username, "@") {
-		return scanCredentials(repository.database.QueryRowContext(ctx, credentialSelect+" WHERE email=?", strings.ToLower(strings.TrimSpace(username))))
+		row, err := queries.CredentialsByEmail(ctx, repository.database, authdb.CredentialsByEmailParams{Email: new(strings.ToLower(strings.TrimSpace(username)))})
+		return decodeCredentials(authdb.CredentialsByIDRow(row), err)
 	}
-	return scanCredentials(repository.database.QueryRowContext(ctx, credentialSelect+" WHERE username=?", username))
+	row, err := queries.CredentialsByName(ctx, repository.database, authdb.CredentialsByNameParams{Username: username})
+	return decodeCredentials(authdb.CredentialsByIDRow(row), err)
 }
 
 // CredentialsById loads the current credential generation for post-work race checks.
 func (repository *Repository) CredentialsById(ctx context.Context, user identity.Id) (*domain.Credentials, error) {
-	return scanCredentials(repository.database.QueryRowContext(ctx, credentialSelect+" WHERE id=?", user))
+	return decodeCredentials(queries.CredentialsByID(ctx, repository.database, authdb.CredentialsByIDParams{ID: int64(user)}))
 }
 
 // BootstrapRequired stops at the first user, including non-administrator users.
 func (repository *Repository) BootstrapRequired(ctx context.Context) (bool, error) {
 	var hasUsers bool
-	err := repository.database.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users)").Scan(&hasUsers)
+	err := func() error {
+		row, err := queries.HasUsers(ctx, repository.database)
+		if err != nil {
+			return err
+		}
+		hasUsers = row
+		return nil
+	}()
 	return !hasUsers, err
 }
 
@@ -309,7 +346,7 @@ func (repository *Repository) SetAdministrator(ctx context.Context, actor, targe
 		if err := checkAdminTarget(ctx, connection, actor, target, !isAdmin); err != nil {
 			return err
 		}
-		result, err := connection.ExecContext(ctx, "UPDATE users SET is_admin=?,updated_at=? WHERE id=?", isAdmin, float64(time.Now().UnixNano())/1e9, target)
+		result, err := queries.SetAdministrator(ctx, connection, authdb.SetAdministratorParams{IsAdmin: dbtypes.Boolean(isAdmin), UpdatedAt: float64(time.Now().UnixNano()) / 1e9, ID: int64(target)})
 		if err != nil {
 			return err
 		}
@@ -332,10 +369,10 @@ func (repository *Repository) DeleteUser(ctx context.Context, actor, target iden
 		if err := checkAdminTarget(ctx, connection, actor, target, true); err != nil {
 			return err
 		}
-		if _, err := connection.ExecContext(ctx, "UPDATE invite_codes SET revoked_at=MAX(?,created_at) WHERE created_by=? AND revoked_at IS NULL", float64(time.Now().UnixNano())/1e9, target); err != nil {
+		if _, err := queries.RevokeOwnedInvites(ctx, connection, authdb.RevokeOwnedInvitesParams{MAX: float64(time.Now().UnixNano()) / 1e9, CreatedBy: new(int64(target))}); err != nil {
 			return err
 		}
-		result, err := connection.ExecContext(ctx, "DELETE FROM users WHERE id=?", target)
+		result, err := queries.DeleteUser(ctx, connection, authdb.DeleteUserParams{ID: int64(target)})
 		if err != nil {
 			return err
 		}
@@ -357,7 +394,14 @@ func checkAdminTarget(ctx context.Context, connection *sql.Conn, actor, target i
 		return err
 	}
 	var wasAdmin int64
-	err := connection.QueryRowContext(ctx, "SELECT is_admin FROM users WHERE id=?", target).Scan(&wasAdmin)
+	err := func() error {
+		row, err := queries.Administrator(ctx, connection, authdb.AdministratorParams{ID: int64(target)})
+		if err != nil {
+			return err
+		}
+		wasAdmin = row
+		return nil
+	}()
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrUserNotFound
 	}
@@ -366,7 +410,14 @@ func checkAdminTarget(ctx context.Context, connection *sql.Conn, actor, target i
 	}
 	if canRemoveAdmin && wasAdmin != 0 {
 		var count int64
-		if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM users WHERE is_admin=1").Scan(&count); err != nil {
+		if err := func() error {
+			row, err := queries.AdministratorCount(ctx, connection)
+			if err != nil {
+				return err
+			}
+			count = row
+			return nil
+		}(); err != nil {
 			return err
 		}
 		if count <= 1 {

@@ -4,17 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	authstore "github.com/QianFuv/LitRadar/apps/server/internal/storage/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/secrets"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/settingsdb"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/types"
 )
 
 // Repository uses the same auth transaction boundary for settings and required audit events.
@@ -43,8 +43,8 @@ func (value Value) LogValue() slog.Value { return slog.StringValue(value.String(
 
 // SecretItem exposes an encrypted removal reference and a Unicode-aware public mask.
 type SecretItem struct {
-	Reference   string `json:"reference"`
-	MaskedValue string `json:"masked_value"`
+	Reference   string `json:"reference" nullable:"false"`
+	MaskedValue string `json:"masked_value" nullable:"false"`
 }
 
 func (item SecretItem) String() string       { return "RuntimeSecretItemInfo([REDACTED])" }
@@ -53,21 +53,21 @@ func (item SecretItem) LogValue() slog.Value { return slog.StringValue(item.Stri
 
 // Info preserves the complete administrator form and disclosure contract.
 type Info struct {
-	Field         string       `json:"field"`
-	Label         string       `json:"label"`
-	Description   string       `json:"description"`
-	Group         string       `json:"group"`
-	Control       string       `json:"control"`
-	ApplyMode     string       `json:"apply_mode"`
-	AllowedValues []string     `json:"allowed_values"`
-	InputType     string       `json:"input_type"`
-	IsSecret      bool         `json:"is_secret"`
-	Value         string       `json:"value"`
-	HasValue      bool         `json:"has_value"`
-	MaskedValue   string       `json:"masked_value"`
-	SecretItems   []SecretItem `json:"secret_items"`
-	Source        string       `json:"source"`
-	UpdatedAt     *float64     `json:"updated_at"`
+	Field         string       `json:"field" nullable:"false"`
+	Label         string       `json:"label" nullable:"false"`
+	Description   string       `json:"description" nullable:"false"`
+	Group         string       `json:"group" nullable:"false" enum:"source_access,provider_routing,server_security,single_sign_on,observability"`
+	Control       string       `json:"control" nullable:"false" enum:"text,secret_pool,string_list,boolean,select,index_provider_routes,provider_order,provider_proxy_policy"`
+	ApplyMode     string       `json:"apply_mode" nullable:"false" enum:"next_request,next_command,restart_required"`
+	AllowedValues []string     `json:"allowed_values" nullable:"false"`
+	InputType     string       `json:"input_type" nullable:"false"`
+	IsSecret      bool         `json:"is_secret" nullable:"false"`
+	Value         string       `json:"value" nullable:"false"`
+	HasValue      bool         `json:"has_value" nullable:"false"`
+	MaskedValue   string       `json:"masked_value" nullable:"false"`
+	SecretItems   []SecretItem `json:"secret_items" required:"false" nullable:"false"`
+	Source        string       `json:"source" nullable:"false"`
+	UpdatedAt     *float64     `json:"updated_at" required:"false" nullable:"true" format:"double"`
 }
 
 func (info Info) String() string       { return "RuntimeSettingInfo(" + info.Field + ", [REDACTED])" }
@@ -89,47 +89,20 @@ type storedRow struct {
 	updated float64
 }
 
-type strictText string
+type strictText = types.SettingText
 
-func (value *strictText) Scan(source any) error {
-	decoded, ok := source.(string)
-	if !ok || !utf8.ValidString(decoded) {
-		return errors.New("invalid runtime setting text column")
-	}
-	*value = strictText(decoded)
-	return nil
-}
-
-type strictReal float64
-
-func (value *strictReal) Scan(source any) error {
-	switch decoded := source.(type) {
-	case float64:
-		*value = strictReal(decoded)
-	case int64:
-		*value = strictReal(decoded)
-	default:
-		return errors.New("invalid runtime setting real column")
-	}
-	return nil
-}
+var queries settingsdb.Queries
 
 func readRows(ctx context.Context, connection *sql.Conn) (map[string]storedRow, error) {
-	rows, err := connection.QueryContext(ctx, "SELECT key,value,updated_at FROM runtime_settings")
+	rows, err := queries.All(ctx, connection)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	result := map[string]storedRow{}
-	for rows.Next() {
-		var key, value strictText
-		var updated strictReal
-		if err := rows.Scan(&key, &value, &updated); err != nil {
-			return nil, err
-		}
-		result[string(key)] = storedRow{string(value), float64(updated)}
+	for _, row := range rows {
+		result[string(row.Key)] = storedRow{string(row.Value), float64(row.UpdatedAt)}
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (repository *Repository) internal(definition *definition, rows map[string]storedRow) (Value, error) {
@@ -293,7 +266,7 @@ func (repository *Repository) Update(ctx context.Context, actor *identity.Id, va
 					return err
 				}
 			}
-			if _, err := connection.ExecContext(ctx, "INSERT INTO runtime_settings(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at", field, stored, now); err != nil {
+			if _, err := queries.Store(ctx, connection, settingsdb.StoreParams{Key: types.SettingText(field), Value: types.SettingText(stored), UpdatedAt: types.SettingReal(now)}); err != nil {
 				return err
 			}
 		}

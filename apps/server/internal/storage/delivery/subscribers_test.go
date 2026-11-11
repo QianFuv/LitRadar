@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"reflect"
-	"strings"
 	"testing"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/delivery"
@@ -33,6 +32,7 @@ func TestSubscriberProjectionAuthenticatesSecretsAndPreservesPreferences(t *test
 
 }
 
+// TestSubscriberCorruptionKeepsOriginalFieldErrorPrecedence exercises ordered validation through generated queries.
 func TestSubscriberCorruptionKeepsOriginalFieldErrorPrecedence(t *testing.T) {
 	repository := testRepository(t)
 	codec, err := secrets.NewCodec(make([]byte, 32))
@@ -40,14 +40,16 @@ func TestSubscriberCorruptionKeepsOriginalFieldErrorPrecedence(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer codec.Close()
-	values := []any{int64(1), "reader", "[1]", "[]", "[]", "folder", "", "markdown", "", "wechat", int64(0), "", "", "", "", "", "", "", "", []byte("bad-retry"), nil}
-	query := "SELECT " + strings.TrimSuffix(strings.Repeat("?,", len(values)), ",")
-	if _, err := scanSubscriber(repository.database.QueryRow(query, values...), codec); !errors.Is(err, ErrNotificationList) {
+	if _, err := repository.database.Exec(`PRAGMA ignore_check_constraints=ON; DROP TRIGGER notification_settings_json_strings_insert; INSERT INTO notification_settings(user_id,keywords,ai_retry_attempts,created_at,updated_at) VALUES(1,'[1]',x'6261642d7265747279',1,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.GetSubscriber(context.Background(), codec, 1); !errors.Is(err, ErrNotificationList) {
 		t.Fatalf("later malformed column hid earlier list error: %v", err)
 	}
-	values[2] = "[]"
-	values[6] = "old-plaintext"
-	if _, err := scanSubscriber(repository.database.QueryRow(query, values...), codec); !errors.Is(err, secrets.ErrLegacyPlaintext) {
+	if _, err := repository.database.Exec("UPDATE notification_settings SET keywords='[]',pushplus_token='old-plaintext'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.GetSubscriber(context.Background(), codec, 1); !errors.Is(err, secrets.ErrLegacyPlaintext) {
 		t.Fatalf("later malformed column hid earlier credential error: %v", err)
 	}
 }

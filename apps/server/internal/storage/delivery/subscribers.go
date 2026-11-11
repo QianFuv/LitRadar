@@ -9,43 +9,38 @@ import (
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/delivery"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/secrets"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/notificationdb"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 	"github.com/QianFuv/LitRadar/apps/server/internal/transport"
 )
 
 var ErrNotificationList = errors.New("Stored notification list state is invalid")
 
-const subscriberSelect = `SELECT ns.user_id,u.username,ns.keywords,ns.directions,ns.selected_databases,
-ns.delivery_method,ns.pushplus_token,ns.pushplus_template,ns.pushplus_topic,ns.pushplus_channel,
-ns.sync_to_tracking_folder,ns.ai_base_url,ns.ai_api_key,ns.ai_model,ns.ai_system_prompt,
-ns.ai_backup_base_url,ns.ai_backup_api_key,ns.ai_backup_model,ns.ai_backup_system_prompt,ns.ai_retry_attempts,
-(SELECT id FROM folders f WHERE f.user_id=ns.user_id AND f.is_tracking=1 LIMIT 1)
-FROM notification_settings ns JOIN users u ON u.id=ns.user_id WHERE ns.enabled=1`
-
 // ListSubscribers reads enabled subscriber credentials and validates their required delivery dependencies.
 func (repository *Repository) ListSubscribers(ctx context.Context, codec *secrets.Codec) ([]domain.Subscriber, error) {
-	rows, err := repository.database.QueryContext(ctx, subscriberSelect+" ORDER BY ns.user_id")
+	rows, err := notificationQueries.Subscribers(ctx, repository.database)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	result := []domain.Subscriber{}
-	for rows.Next() {
-		subscriber, err := scanSubscriber(rows, codec)
+	result := make([]domain.Subscriber, 0, len(rows))
+	for _, row := range rows {
+		subscriber, err := decodeSubscriber(notificationdb.SubscriberRow(row), nil, codec)
 		if err != nil {
 			return nil, err
 		}
 		result = append(result, *subscriber)
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 // GetSubscriber reads only the requested enabled user, returning nil for missing or disabled settings.
 func (repository *Repository) GetSubscriber(ctx context.Context, codec *secrets.Codec, userId int64) (*domain.Subscriber, error) {
-	return scanSubscriber(repository.database.QueryRowContext(ctx, subscriberSelect+" AND ns.user_id=?", userId), codec)
+	row, err := notificationQueries.Subscriber(ctx, repository.database, notificationdb.SubscriberParams{UserID: sqlite.Integer(userId)})
+	return decodeSubscriber(row, err, codec)
 }
 
-func scanSubscriber(scanner rowScanner, codec *secrets.Codec) (*domain.Subscriber, error) {
-	row := readNotificationRow(scanner, 21)
+func decodeSubscriber(record notificationdb.SubscriberRow, err error, codec *secrets.Codec) (*domain.Subscriber, error) {
+	row := &notificationRow{values: []any{record.UserID, record.Username, record.Keywords, record.Directions, record.SelectedDatabases, record.DeliveryMethod, record.PushplusToken, record.PushplusTemplate, record.PushplusTopic, record.PushplusChannel, record.SyncToTrackingFolder, record.AIBaseURL, record.AIAPIKey, record.AIModel, record.AISystemPrompt, record.AIBackupBaseURL, record.AIBackupAPIKey, record.AIBackupModel, record.AIBackupSystemPrompt, record.AIRetryAttempts, record.ID}, err: err}
 	if errors.Is(row.err, sql.ErrNoRows) {
 		return nil, nil
 	}

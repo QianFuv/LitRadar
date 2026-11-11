@@ -9,10 +9,10 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/cryptography"
 	platformsqlite "github.com/QianFuv/LitRadar/apps/server/internal/platform/sqlite"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/secretsdb"
 )
 
 var ErrAuthentication = errors.New("Stored secret authentication failed")
@@ -188,16 +188,7 @@ type secretValue struct {
 	identity                      any
 }
 
-type strictText string
-
-func (value *strictText) Scan(source any) error {
-	decoded, ok := source.(string)
-	if !ok || !utf8.ValidString(decoded) {
-		return errors.New("invalid secret storage text column")
-	}
-	*value = strictText(decoded)
-	return nil
-}
+var storageQueries secretsdb.Queries
 
 // visit owns connection and optional transaction lifetimes across ordered table reads.
 func visit(ctx context.Context, filename string, isMutation bool, visitor func(string, string) (*string, error)) error {
@@ -250,61 +241,45 @@ func visitSecretValues(ctx context.Context, connection *sql.Conn, values []secre
 }
 
 func notificationValues(ctx context.Context, connection *sql.Conn) ([]secretValue, error) {
-	rows, err := connection.QueryContext(ctx, "SELECT user_id,pushplus_token,ai_api_key,ai_backup_api_key FROM notification_settings")
+	rows, err := storageQueries.Notifications(ctx, connection)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	result := []secretValue{}
-	for rows.Next() {
-		var user int64
-		var values [3]strictText
-		if err := rows.Scan(&user, &values[0], &values[1], &values[2]); err != nil {
-			return nil, err
-		}
-		for index, field := range []string{"pushplus_token", "ai_api_key", "ai_backup_api_key"} {
-			result = append(result, secretValue{string(values[index]), NotificationContext(user, field), "UPDATE notification_settings SET " + field + "=? WHERE user_id=?", user})
+	result := make([]secretValue, 0, len(rows)*3)
+	for _, row := range rows {
+		fields := []struct{ name, stored, statement string }{{"pushplus_token", string(row.PushplusToken), secretsdb.UpdatePushplus}, {"ai_api_key", string(row.AIAPIKey), secretsdb.UpdatePrimaryAI}, {"ai_backup_api_key", string(row.AIBackupAPIKey), secretsdb.UpdateBackupAI}}
+		for _, field := range fields {
+			result = append(result, secretValue{field.stored, NotificationContext(row.UserID, field.name), field.statement, row.UserID})
 		}
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func runtimeValues(ctx context.Context, connection *sql.Conn) ([]secretValue, error) {
-	rows, err := connection.QueryContext(ctx, "SELECT key,value FROM runtime_settings")
+	rows, err := storageQueries.RuntimeSettings(ctx, connection)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	result := []secretValue{}
-	for rows.Next() {
-		var key, value strictText
-		if err := rows.Scan(&key, &value); err != nil {
-			return nil, err
-		}
-		field := string(key)
+	for _, row := range rows {
+		field := string(row.Key)
 		if IsRuntimeSecret(field) {
-			result = append(result, secretValue{string(value), RuntimeContext(field), "UPDATE runtime_settings SET value=? WHERE key=?", field})
+			result = append(result, secretValue{string(row.Value), RuntimeContext(field), secretsdb.UpdateRuntime, field})
 		}
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func cnkiValues(ctx context.Context, connection *sql.Conn) ([]secretValue, error) {
-	rows, err := connection.QueryContext(ctx, "SELECT user_id,session_json FROM cnki_sessions")
+	rows, err := storageQueries.CNKISessions(ctx, connection)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	result := []secretValue{}
-	for rows.Next() {
-		var user int64
-		var value strictText
-		if err := rows.Scan(&user, &value); err != nil {
-			return nil, err
-		}
-		result = append(result, secretValue{string(value), CnkiContext(user), "UPDATE cnki_sessions SET session_json=? WHERE user_id=?", user})
+	result := make([]secretValue, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, secretValue{string(row.SessionJSON), CnkiContext(row.UserID), secretsdb.UpdateCNKI, row.UserID})
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 // SignOidcState authenticates transient browser flow state without disclosing the deployment key.

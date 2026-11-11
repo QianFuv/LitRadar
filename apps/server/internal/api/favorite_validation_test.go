@@ -21,27 +21,31 @@ func TestFavoriteValidationPrecedesBusinessAdmission(t *testing.T) {
 		{"GET", "/api/favorites/folders/1/articles?offset=-1", "", "offset must be greater than or equal to 0"},
 		{"GET", "/api/favorites/folders/1/articles/page?limit=0", "", "limit must be between 1 and 500"},
 		{"GET", "/api/favorites/folders/1/export?format=other", "", "Invalid export format"},
-		{"POST", "/api/favorites/folders/0/articles", `{"article_id":0}`, "folder_id must be a positive integer"},
-		{"POST", "/api/favorites/folders/1/articles", `{"article_id":0}`, "article_id must be a positive integer"},
+		{"POST", "/api/favorites/folders/0/articles", `{"article_id":"0"}`, "folder_id must be a positive integer"},
+		{"POST", "/api/favorites/folders/1/articles", `{"article_id":"0"}`, "article_id must be a positive integer"},
 		{"DELETE", "/api/favorites/folders/1/articles/0", "", "article_id must be a positive integer"},
-		{"POST", "/api/favorites/folders/1/articles/bulk", `{"articles":[{"article_id":0}]}`, "article_id must be a positive integer"},
-		{"POST", "/api/favorites/folders/1/articles/bulk-remove", `{"articles":[{"article_id":0}]}`, "article_id must be a positive integer"},
-		{"POST", "/api/favorites/folders/1/articles/bulk-move", `{"target_folder_id":1,"articles":[{"article_id":0}]}`, "article_id must be a positive integer"},
+		{"POST", "/api/favorites/folders/1/articles/bulk", `{"articles":[{"article_id":"0"}]}`, "article_id must be a positive integer"},
+		{"POST", "/api/favorites/folders/1/articles/bulk-remove", `{"articles":[{"article_id":"0"}]}`, "article_id must be a positive integer"},
+		{"POST", "/api/favorites/folders/1/articles/bulk-move", `{"target_folder_id":1,"articles":[{"article_id":"0"}]}`, "article_id must be a positive integer"},
 		{"GET", "/api/favorites/check?article_id=0", "", "article_id must be a positive integer"},
 		{"POST", "/api/favorites/check/batch", `{"article_ids":[],"db_name":"` + strings.Repeat("x", 256) + `"}`, "db_name must be at most 255 characters"},
 	} {
 		response := authRequest(router, scenario.method, scenario.path, scenario.body, token)
-		if response.Code != 400 || !strings.Contains(response.Body.String(), scenario.detail) {
+		expected, detail := 400, scenario.detail
+		if strings.Contains(scenario.path, "/page?limit=0") || strings.Contains(scenario.body, strings.Repeat("x", 256)) {
+			expected, detail = 422, "validation failed"
+		}
+		if response.Code != expected || !strings.Contains(response.Body.String(), detail) {
 			t.Errorf("%s: %d %s", scenario.path, response.Code, response.Body.String())
 		}
-		if response := authRequest(router, scenario.method, scenario.path, scenario.body, ""); response.Code != 401 {
+		if response := authRequest(router, scenario.method, scenario.path, scenario.body, ""); response.Code != map[bool]int{true: 422, false: 401}[expected == 422] {
 			t.Errorf("validation preceded authentication: %s %d", scenario.path, response.Code)
 		}
 	}
 	for _, scenario := range []struct{ method, path, body string }{
 		{"POST", "/api/favorites/folders/1/articles/bulk-move", `{"target_folder_id":1,"articles":[]}`},
 		{"GET", "/api/favorites/folders/1/articles/page?cursor=invalid", ""},
-		{"POST", "/api/favorites/check/batch", `{"article_ids":[0,-1]}`},
+		{"POST", "/api/favorites/check/batch", `{"article_ids":["0","-1"]}`},
 		{"POST", "/api/favorites/folders/1/articles/bulk", `{"articles":[]}`},
 	} {
 		if response := authRequest(router, scenario.method, scenario.path, scenario.body, token); response.Code != 503 {
@@ -52,7 +56,7 @@ func TestFavoriteValidationPrecedesBusinessAdmission(t *testing.T) {
 
 func TestFavoriteMoveValidatesItemsBeforeSameFolder(t *testing.T) {
 	_, _, router, token := favoriteFixture(t)
-	response := authRequest(router, "POST", "/api/favorites/folders/1/articles/bulk-move", `{"target_folder_id":1,"articles":[{"article_id":0}]}`, token)
+	response := authRequest(router, "POST", "/api/favorites/folders/1/articles/bulk-move", `{"target_folder_id":1,"articles":[{"article_id":"0"}]}`, token)
 	if response.Code != 400 || !strings.Contains(response.Body.String(), "article_id must be a positive integer") {
 		t.Fatal(response.Code, response.Body.String())
 	}

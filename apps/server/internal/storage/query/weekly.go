@@ -15,6 +15,7 @@ import (
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/storage"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/search"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/querydb"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/weekly"
 	"github.com/QianFuv/LitRadar/apps/server/internal/telemetry"
@@ -381,7 +382,14 @@ func validateWeeklyArticleParams(params WeeklyArticlePageParams) (weekly.Timesta
 // Empty unsearched windows carry a false predicate instead of traversing journal history.
 func weeklyArticleFilters(ctx context.Context, configuration config.Config, params WeeklyArticlePageParams, cache *weekly.Cache, connection *sql.Conn, end weekly.Timestamp, name string) (filter, error) {
 	var exists bool
-	if err := connection.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM journals WHERE journal_id=?)", params.JournalId).Scan(&exists); err != nil {
+	if err := func() error {
+		queryResult, err := queries.HasJournal(ctx, connection, querydb.HasJournalParams{JournalID: storage.Integer(params.JournalId)})
+		if err != nil {
+			return err
+		}
+		exists = queryResult
+		return nil
+	}(); err != nil {
 		return filter{}, err
 	}
 	if !exists {

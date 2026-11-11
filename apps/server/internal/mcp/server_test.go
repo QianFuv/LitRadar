@@ -32,6 +32,7 @@ type wireClient struct {
 	testing           *testing.T
 	endpoint, session string
 	client            *http.Client
+	headers           http.Header
 }
 
 func (client *wireClient) post(token string, body any) (int, map[string]any) {
@@ -53,6 +54,7 @@ func (client *wireClient) post(token string, body any) (int, map[string]any) {
 		client.testing.Fatal(err)
 	}
 	defer response.Body.Close()
+	client.headers = response.Header.Clone()
 	wire, err := io.ReadAll(response.Body)
 	if err != nil {
 		client.testing.Fatal(err)
@@ -300,8 +302,8 @@ func assertRevokedToolCredential(t *testing.T, ctx context.Context, client *wire
 func assertClosedToolAuthentication(t *testing.T, client *wireClient, pool *executor.Pool, token string) {
 	t.Helper()
 	pool.Close()
-	_, unavailable := client.post(token, map[string]any{"jsonrpc": "2.0", "id": 10, "method": "tools/list"})
-	if unavailable["code"] != "service_unavailable" {
+	status, unavailable := client.post(token, map[string]any{"jsonrpc": "2.0", "id": 10, "method": "tools/list"})
+	if status != 503 || unavailable["status"] != float64(503) || unavailable["title"] != "Service Unavailable" || unavailable["code"] != nil || unavailable["retryable"] != nil || client.headers.Get("Content-Type") != "application/problem+json" || client.headers.Get("Retry-After") != "5" {
 		t.Fatal("closed authentication pool did not fail closed", unavailable)
 	}
 }

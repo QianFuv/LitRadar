@@ -142,8 +142,10 @@ func TestEmailRateLimitKeysRetainAddressSuffix(t *testing.T) {
 	}
 	limiter := newAuthRateLimiter(rateLimitTestPolicy())
 	source := directSource("192.0.2.60")
-	if limiter.checkAt(loginAttempt, source, first, 100) != nil || limiter.checkAt(loginAttempt, source, first, 100) != nil {
-		t.Fatal("initial email limit")
+	for range 2 {
+		if limiter.checkAt(loginAttempt, source, first, 100) != nil {
+			t.Fatal("initial email limit")
+		}
 	}
 	if limiter.checkAt(loginAttempt, source, second, 100) != nil {
 		t.Fatal("distinct email shared identifier bucket")

@@ -10,26 +10,29 @@ import (
 	"unicode/utf8"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/graphsdb"
 )
+
+var graphQueries graphsdb.Queries
 
 // MaxGraphBytes is the maximum encoded size of a saved graph snapshot.
 const MaxGraphBytes = 2 * 1024 * 1024
 
 // GraphSummary describes an owned graph without loading its snapshot.
 type GraphSummary struct {
-	Id            int64   `json:"id"`
-	Title         string  `json:"title"`
-	DbName        string  `json:"db_name"`
-	RootArticleId int64   `json:"root_article_id"`
-	NodeCount     int64   `json:"node_count"`
-	CreatedAt     float64 `json:"created_at"`
-	UpdatedAt     float64 `json:"updated_at"`
+	Id            int64   `json:"id" nullable:"false" format:"int64"`
+	Title         string  `json:"title" nullable:"false"`
+	DbName        string  `json:"db_name" nullable:"false"`
+	RootArticleId int64   `json:"root_article_id" nullable:"false" format:"int64"`
+	NodeCount     int64   `json:"node_count" nullable:"false" format:"int64"`
+	CreatedAt     float64 `json:"created_at" nullable:"false" format:"double"`
+	UpdatedAt     float64 `json:"updated_at" nullable:"false" format:"double"`
 }
 
 // Graph includes the original JSON object snapshot with its summary.
 type Graph struct {
 	GraphSummary
-	Graph json.RawMessage `json:"graph"`
+	Graph json.RawMessage `json:"graph" nullable:"false"`
 }
 
 // GraphCreate supplies the immutable source and initial graph snapshot.
@@ -50,8 +53,8 @@ type GraphUpdate struct {
 
 // GraphPage contains summaries and an owner-bound continuation cursor.
 type GraphPage struct {
-	Items      []GraphSummary `json:"items"`
-	NextCursor *string        `json:"next_cursor"`
+	Items      []GraphSummary `json:"items" nullable:"false"`
+	NextCursor *string        `json:"next_cursor" nullable:"true"`
 }
 
 func validateGraphTitle(title string) error {
@@ -140,7 +143,8 @@ func (repository *Repository) CreateGraph(ctx context.Context, owner identity.Id
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
 		now := nowSeconds()
 		var err error
-		result, err = scanGraph(connection.QueryRowContext(ctx, "INSERT INTO relation_graph_favorites(user_id,title,db_name,root_article_id,node_count,graph,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?) RETURNING "+graphSummaryColumns+",graph", owner, strings.TrimSpace(value.Title), value.DbName, value.RootArticleId, value.NodeCount, string(value.Graph), now, now))
+		row, lookup := graphQueries.CreateGraph(ctx, connection, graphsdb.CreateGraphParams{UserID: int64(owner), Title: strings.TrimSpace(value.Title), DBName: value.DbName, RootArticleID: value.RootArticleId, NodeCount: value.NodeCount, Graph: string(value.Graph), CreatedAt: now, UpdatedAt: now})
+		result, err = decodeGraph(graphsdb.GraphRow(row), lookup)
 		return err
 	})
 	return result, err
@@ -151,7 +155,7 @@ func (repository *Repository) GetGraph(ctx context.Context, owner identity.Id, i
 	var result *Graph
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
 		var err error
-		result, err = scanGraph(connection.QueryRowContext(ctx, "SELECT "+graphSummaryColumns+",graph FROM relation_graph_favorites WHERE user_id=? AND id=?", owner, id))
+		result, err = decodeGraph(graphQueries.Graph(ctx, connection, graphsdb.GraphParams{UserID: int64(owner), ID: id}))
 		return err
 	})
 	return result, err
@@ -228,7 +232,7 @@ func (repository *Repository) UpdateGraph(ctx context.Context, owner identity.Id
 func (repository *Repository) DeleteGraph(ctx context.Context, owner identity.Id, id int64) (bool, error) {
 	var changed bool
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
-		result, err := connection.ExecContext(ctx, "DELETE FROM relation_graph_favorites WHERE user_id=? AND id=?", owner, id)
+		result, err := graphQueries.DeleteGraph(ctx, connection, graphsdb.DeleteGraphParams{UserID: int64(owner), ID: id})
 		if err != nil {
 			return err
 		}
@@ -237,4 +241,14 @@ func (repository *Repository) DeleteGraph(ctx context.Context, owner identity.Id
 		return err
 	})
 	return changed, err
+}
+
+func decodeGraph(row graphsdb.GraphRow, err error) (*Graph, error) {
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &Graph{GraphSummary: GraphSummary{row.ID, row.Title, row.DBName, row.RootArticleID, row.NodeCount, row.CreatedAt, row.UpdatedAt}, Graph: json.RawMessage(row.Graph)}, nil
 }

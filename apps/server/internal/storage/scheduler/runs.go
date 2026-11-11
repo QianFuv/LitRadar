@@ -6,6 +6,8 @@ import (
 	"math"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/scheduler"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/schedulerdb"
+	dbtypes "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/types"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
@@ -44,7 +46,14 @@ func (repository *Repository) ClaimManual(ctx context.Context, id int64, worker 
 			return err
 		}
 		var active sqlite.Integer
-		if err := connection.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM scheduled_task_runs WHERE task_id=? AND status IN ('claimed','running'))`, id).Scan(&active); err != nil {
+		if err := func() error {
+			queryResult, err := queries.HasActiveRun(ctx, connection, schedulerdb.HasActiveRunParams{TaskID: sqlite.Integer(id)})
+			if err != nil {
+				return err
+			}
+			active = sqlite.Integer(dbtypes.Boolean(queryResult))
+			return nil
+		}(); err != nil {
 			return err
 		}
 		if active != 0 {
@@ -52,7 +61,7 @@ func (repository *Repository) ClaimManual(ctx context.Context, id int64, worker 
 			return nil
 		}
 		scheduledFor := saturatingInteger(math.Floor(now))
-		inserted, err := connection.ExecContext(ctx, `INSERT INTO scheduled_task_runs(task_id,task_name,scheduled_for,trigger_kind,status,worker_id,claimed_at,claim_expires_at) VALUES(?,?,?,'manual','claimed',?,?,?)`, id, task.Name, scheduledFor, worker, now, now+lease)
+		inserted, err := queries.CreateManualRun(ctx, connection, schedulerdb.CreateManualRunParams{TaskID: sqlite.Integer(id), TaskName: sqlite.Text(task.Name), ScheduledFor: sqlite.Integer(scheduledFor), WorkerID: new(sqlite.Text(worker)), ClaimedAt: new(sqlite.Number(now)), ClaimExpiresAt: new(sqlite.Number(now + lease))})
 		if err != nil {
 			return err
 		}
@@ -90,14 +99,23 @@ func (repository *Repository) Enqueue(ctx context.Context, task domain.Task, slo
 		if task.Coalesce {
 			latest := slots[len(slots)-1]
 			var known sqlite.OptionalInteger
-			if err := connection.QueryRowContext(ctx, `SELECT MAX(scheduled_for) FROM scheduled_task_runs WHERE task_id=? AND trigger_kind='scheduled'`, task.Id).Scan(&known); err != nil {
+			if err := func() error {
+				queryResult, err := queries.LatestScheduledSlot(ctx, connection, schedulerdb.LatestScheduledSlotParams{TaskID: sqlite.Integer(task.Id)})
+				if err != nil {
+					return err
+				}
+				if err := (&known).Scan(queryResult); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
 				return err
 			}
 			choice := latest
 			if known.Value != nil {
 				choice = max(choice, *known.Value)
 			}
-			if _, err := connection.ExecContext(ctx, `DELETE FROM scheduled_task_runs WHERE task_id=? AND trigger_kind='scheduled' AND status='pending' AND scheduled_for<?`, task.Id, choice); err != nil {
+			if _, err := queries.PrunePendingRuns(ctx, connection, schedulerdb.PrunePendingRunsParams{TaskID: sqlite.Integer(task.Id), ScheduledFor: sqlite.Integer(choice)}); err != nil {
 				return err
 			}
 			if choice != latest {
@@ -105,11 +123,10 @@ func (repository *Repository) Enqueue(ctx context.Context, task domain.Task, slo
 			}
 			selected = []int64{choice}
 		}
-		const insertRun = `INSERT OR IGNORE INTO scheduled_task_runs(task_id,task_name,scheduled_for,status) VALUES(?,?,?,'pending')`
 		var statement *sql.Stmt
 		if len(selected) > 1 {
 			var err error
-			statement, err = connection.PrepareContext(ctx, insertRun)
+			statement, err = connection.PrepareContext(ctx, schedulerdb.EnqueueRun)
 			if err != nil {
 				return err
 			}
@@ -119,7 +136,7 @@ func (repository *Repository) Enqueue(ctx context.Context, task domain.Task, slo
 			var result sql.Result
 			var err error
 			if statement == nil {
-				result, err = connection.ExecContext(ctx, insertRun, task.Id, task.Name, slot)
+				result, err = queries.EnqueueRun(ctx, connection, schedulerdb.EnqueueRunParams{TaskID: sqlite.Integer(task.Id), TaskName: sqlite.Text(task.Name), ScheduledFor: sqlite.Integer(slot)})
 			} else {
 				result, err = statement.ExecContext(ctx, task.Id, task.Name, slot)
 			}
@@ -151,29 +168,15 @@ func (repository *Repository) ClaimReady(ctx context.Context, worker string, now
 		if err := reconcile(ctx, connection, now); err != nil {
 			return err
 		}
-		rows, err := connection.QueryContext(ctx, `SELECT run.id,run.task_id,run.scheduled_for FROM scheduled_task_runs AS run JOIN scheduled_tasks AS task ON task.id=run.task_id
- WHERE run.status='pending' AND run.trigger_kind='scheduled' AND task.enabled=1 AND task.job_spec IS NOT NULL
- AND NOT EXISTS(SELECT 1 FROM scheduled_task_runs AS active WHERE active.task_id=run.task_id AND active.status IN ('claimed','running'))
- AND NOT EXISTS(SELECT 1 FROM scheduled_task_runs AS earlier WHERE earlier.task_id=run.task_id AND earlier.status='pending' AND earlier.trigger_kind='scheduled' AND (earlier.scheduled_for<run.scheduled_for OR (earlier.scheduled_for=run.scheduled_for AND earlier.id<run.id)))
- ORDER BY run.scheduled_for,run.id LIMIT ?`, limit)
+		rows, err := queries.ReadyRuns(ctx, connection, schedulerdb.ReadyRunsParams{Limit: limit})
 		if err != nil {
 			return err
 		}
-		for rows.Next() {
-			var runId, taskId, slot sqlite.Integer
-			if err := rows.Scan(&runId, &taskId, &slot); err != nil {
-				rows.Close()
-				return err
-			}
-			candidates = append(candidates, candidate{int64(runId), int64(taskId), int64(slot)})
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return err
+		for _, row := range rows {
+			candidates = append(candidates, candidate{int64(row.ID), int64(row.TaskID), int64(row.ScheduledFor)})
 		}
 		for _, item := range candidates {
-			didClaim, err := execute(ctx, connection, `UPDATE scheduled_task_runs SET status='claimed',worker_id=?,claimed_at=?,claim_expires_at=? WHERE id=? AND status='pending' AND NOT EXISTS(SELECT 1 FROM scheduled_task_runs AS active WHERE active.task_id=? AND active.status IN ('claimed','running'))`, worker, now, now+lease, item.runId, item.taskId)
+			didClaim, err := execute(queries.ClaimRun(ctx, connection, schedulerdb.ClaimRunParams{WorkerID: new(sqlite.Text(worker)), ClaimedAt: new(sqlite.Number(now)), ClaimExpiresAt: new(sqlite.Number(now + lease)), ID: sqlite.Integer(item.runId), TaskID: sqlite.Integer(item.taskId)}))
 			if err != nil {
 				return err
 			}
@@ -193,7 +196,7 @@ func (repository *Repository) ClaimReady(ctx context.Context, worker string, now
 		}
 		if task == nil || !task.Enabled || task.Job == nil {
 			err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
-				_, err := connection.ExecContext(ctx, `UPDATE scheduled_task_runs SET status='error',finished_at=?,claim_expires_at=NULL,output_summary='Task is no longer executable' WHERE id=? AND worker_id=? AND status='claimed'`, now, item.runId, worker)
+				_, err := queries.CancelUnexecutableRun(ctx, connection, schedulerdb.CancelUnexecutableRunParams{FinishedAt: new(sqlite.Number(now)), ID: sqlite.Integer(item.runId), WorkerID: new(sqlite.Text(worker))})
 				return err
 			})
 			if err != nil {
@@ -207,19 +210,22 @@ func (repository *Repository) ClaimReady(ctx context.Context, worker string, now
 }
 
 func reconcile(ctx context.Context, connection *sql.Conn, now float64) error {
-	statements := []string{
-		`UPDATE scheduled_task_runs SET status='unknown',finished_at=?1,claim_expires_at=NULL WHERE status='running' AND claim_expires_at<=?1`,
-		`UPDATE scheduled_tasks SET last_run_at=?1,last_status='unknown',updated_at=?1 WHERE id IN (SELECT task_id FROM scheduled_task_runs WHERE status='unknown' AND finished_at=?1)`,
-		`UPDATE scheduled_task_runs SET status='pending',worker_id=NULL,claim_expires_at=NULL,claimed_at=NULL WHERE status='claimed' AND trigger_kind='scheduled' AND claim_expires_at<=?1`,
-		`UPDATE scheduled_task_runs SET status='cancelled',finished_at=?1,claim_expires_at=NULL WHERE status='claimed' AND trigger_kind='manual' AND claim_expires_at<=?1`,
-		`UPDATE scheduled_tasks SET last_run_at=?1,last_status='cancelled',updated_at=?1 WHERE id IN (SELECT task_id FROM scheduled_task_runs WHERE trigger_kind='manual' AND status='cancelled' AND finished_at=?1)`,
+	if _, err := queries.ExpireRunningRuns(ctx, connection, schedulerdb.ExpireRunningRunsParams{FinishedAt: new(sqlite.Number(now))}); err != nil {
+		return err
 	}
-	for _, query := range statements {
-		if _, err := connection.ExecContext(ctx, query, now); err != nil {
-			return err
-		}
+	if _, err := queries.RecordUnknownTasks(ctx, connection, schedulerdb.RecordUnknownTasksParams{LastRunAt: new(sqlite.Number(now))}); err != nil {
+		return err
 	}
-	_, err := connection.ExecContext(ctx, `DELETE FROM scheduled_task_runs WHERE status='pending' AND trigger_kind='scheduled' AND task_id IN (SELECT id FROM scheduled_tasks WHERE coalesce=1) AND scheduled_for<(SELECT MAX(latest.scheduled_for) FROM scheduled_task_runs AS latest WHERE latest.task_id=scheduled_task_runs.task_id AND latest.trigger_kind='scheduled')`)
+	if _, err := queries.ReleaseScheduledClaims(ctx, connection, schedulerdb.ReleaseScheduledClaimsParams{ClaimExpiresAt: new(sqlite.Number(now))}); err != nil {
+		return err
+	}
+	if _, err := queries.CancelManualClaims(ctx, connection, schedulerdb.CancelManualClaimsParams{FinishedAt: new(sqlite.Number(now))}); err != nil {
+		return err
+	}
+	if _, err := queries.RecordCancelledTasks(ctx, connection, schedulerdb.RecordCancelledTasksParams{LastRunAt: new(sqlite.Number(now))}); err != nil {
+		return err
+	}
+	_, err := queries.PruneCoalescedRuns(ctx, connection)
 	return err
 }
 
@@ -228,7 +234,7 @@ func (repository *Repository) StartRun(ctx context.Context, id int64, worker str
 	var didStart bool
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
 		var err error
-		didStart, err = execute(ctx, connection, `UPDATE scheduled_task_runs SET status='running',started_at=?,claim_expires_at=? WHERE id=? AND worker_id=? AND status='claimed'`, now, now+lease, id, worker)
+		didStart, err = execute(queries.StartRun(ctx, connection, schedulerdb.StartRunParams{StartedAt: new(sqlite.Number(now)), ClaimExpiresAt: new(sqlite.Number(now + lease)), ID: sqlite.Integer(id), WorkerID: new(sqlite.Text(worker))}))
 		return err
 	})
 	return didStart, err
@@ -242,7 +248,7 @@ func (repository *Repository) HeartbeatRun(ctx context.Context, id int64, worker
 			return err
 		}
 		var err error
-		didRenew, err = execute(ctx, connection, `UPDATE scheduled_task_runs SET claim_expires_at=? WHERE id=? AND worker_id=? AND status='running'`, now+lease, id, worker)
+		didRenew, err = execute(queries.RenewRun(ctx, connection, schedulerdb.RenewRunParams{ClaimExpiresAt: new(sqlite.Number(now + lease)), ID: sqlite.Integer(id), WorkerID: new(sqlite.Text(worker))}))
 		return err
 	})
 	return didRenew, err
@@ -256,12 +262,12 @@ func (repository *Repository) FinishRun(ctx context.Context, claim Claim, status
 	var didFinish bool
 	err := repository.auth.Immediate(ctx, false, func(connection *sql.Conn) error {
 		var err error
-		didFinish, err = execute(ctx, connection, `UPDATE scheduled_task_runs SET status=?,finished_at=?,claim_expires_at=NULL,output_summary=? WHERE id=? AND worker_id=? AND status IN ('claimed','running')`, status, now, summary, claim.RunId, claim.WorkerId)
+		didFinish, err = execute(queries.FinishRun(ctx, connection, schedulerdb.FinishRunParams{Status: sqlite.Text(status), FinishedAt: new(sqlite.Number(now)), OutputSummary: sqlite.Text(summary), ID: sqlite.Integer(claim.RunId), WorkerID: new(sqlite.Text(claim.WorkerId))}))
 		if err != nil {
 			return err
 		}
 		if didFinish {
-			_, err = connection.ExecContext(ctx, `UPDATE scheduled_tasks SET last_run_at=?1,last_status=?2,updated_at=?1 WHERE id=?3`, now, status, claim.Task.Id)
+			_, err = queries.RecordTaskResult(ctx, connection, schedulerdb.RecordTaskResultParams{LastRunAt: new(sqlite.Number(now)), LastStatus: sqlite.Text(status), ID: sqlite.Integer(claim.Task.Id)})
 		}
 		return err
 	})

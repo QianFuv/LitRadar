@@ -13,7 +13,7 @@ import (
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	scheduled "github.com/QianFuv/LitRadar/apps/server/internal/domain/scheduler"
-	"github.com/QianFuv/LitRadar/apps/server/internal/openapi"
+
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/cryptography"
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/announcements"
@@ -32,29 +32,35 @@ type adminHandlers struct {
 	settings  *settings.Repository
 }
 type adminUserResponse struct {
-	Id            int64   `json:"id"`
-	Username      string  `json:"username"`
-	IsAdmin       bool    `json:"is_admin"`
-	CreatedAt     float64 `json:"created_at"`
-	UpdatedAt     float64 `json:"updated_at"`
-	FolderCount   int64   `json:"folder_count"`
-	FavoriteCount int64   `json:"favorite_count"`
-	NotifyEnabled bool    `json:"notify_enabled"`
+	// Email contains the account email, or null when unset.
+	Email *string `json:"email" nullable:"true"`
+	// AuthKind identifies a local or OIDC account.
+	AuthKind string `json:"auth_kind" nullable:"false" enum:"local,oidc"`
+	// IsOIDCLinked reports whether the account has a linked OIDC identity.
+	IsOIDCLinked  bool    `json:"is_oidc_linked" nullable:"false"`
+	Id            int64   `json:"id" nullable:"false" format:"int64"`
+	Username      string  `json:"username" nullable:"false"`
+	IsAdmin       bool    `json:"is_admin" nullable:"false"`
+	CreatedAt     float64 `json:"created_at" nullable:"false" format:"double"`
+	UpdatedAt     float64 `json:"updated_at" nullable:"false" format:"double"`
+	FolderCount   int64   `json:"folder_count" nullable:"false" format:"int64"`
+	FavoriteCount int64   `json:"favorite_count" nullable:"false" format:"int64"`
+	NotifyEnabled bool    `json:"notify_enabled" nullable:"false"`
 }
 type adminInviteResponse struct {
-	Id            int64    `json:"id"`
-	Code          string   `json:"code"`
-	CreatedBy     *int64   `json:"created_by"`
-	CreatedByName *string  `json:"created_by_name"`
-	UsedBy        *int64   `json:"used_by"`
-	UsedByName    *string  `json:"used_by_name"`
-	UsedAt        *float64 `json:"used_at"`
-	Status        string   `json:"status"`
-	ExpiresAt     float64  `json:"expires_at"`
-	RevokedAt     *float64 `json:"revoked_at"`
-	MaxUses       int64    `json:"max_uses"`
-	UseCount      int64    `json:"use_count"`
-	CreatedAt     float64  `json:"created_at"`
+	Id            int64    `json:"id" nullable:"false" format:"int64"`
+	Code          string   `json:"code" nullable:"false"`
+	CreatedBy     *int64   `json:"created_by" required:"false" nullable:"true" format:"int64"`
+	CreatedByName *string  `json:"created_by_name" required:"false" nullable:"true"`
+	UsedBy        *int64   `json:"used_by" required:"false" nullable:"true" format:"int64"`
+	UsedByName    *string  `json:"used_by_name" required:"false" nullable:"true"`
+	UsedAt        *float64 `json:"used_at" required:"false" nullable:"true" format:"double"`
+	Status        string   `json:"status" nullable:"false" enum:"active,expired,revoked,exhausted"`
+	ExpiresAt     float64  `json:"expires_at" nullable:"false" format:"double"`
+	RevokedAt     *float64 `json:"revoked_at" required:"false" nullable:"true" format:"double"`
+	MaxUses       int64    `json:"max_uses" nullable:"false" format:"int64"`
+	UseCount      int64    `json:"use_count" nullable:"false" format:"int64"`
+	CreatedAt     float64  `json:"created_at" nullable:"false" format:"double"`
 }
 
 func adminInvite(value storage.AdminInviteInfo) adminInviteResponse {
@@ -68,37 +74,6 @@ func adminInvite(value storage.AdminInviteInfo) adminInviteResponse {
 		used = &number
 	}
 	return adminInviteResponse{value.Id, value.Code, created, value.CreatedByName, used, value.UsedByName, value.UsedAt, value.Status, value.ExpiresAt, value.RevokedAt, value.MaxUses, value.UseCount, value.CreatedAt}
-}
-
-func (handlers *adminHandlers) routes() []route {
-	routes := []route{{openapi.Operation{Method: "GET", Path: "/api/admin/telemetry", Id: "telemetry"}, handlers.loadTelemetry}}
-	for _, operation := range []openapi.Operation{
-		{Method: "GET", Path: "/api/admin/users", Id: "list_users"},
-		{Method: "PUT", Path: "/api/admin/users/{user_id}/admin", Id: "set_admin"},
-		{Method: "POST", Path: "/api/admin/users/{user_id}/reset-password", Id: "reset_password"},
-		{Method: "DELETE", Path: "/api/admin/users/{user_id}", Id: "delete_user"},
-		{Method: "GET", Path: "/api/admin/invite-codes", Id: "list_invite_codes"},
-		{Method: "POST", Path: "/api/admin/invite-codes", Id: "create_invite_code"},
-		{Method: "DELETE", Path: "/api/admin/invite-codes/{code_id}", Id: "revoke_admin_invite_code"},
-		{Method: "GET", Path: "/api/admin/stats", Id: "stats"},
-		{Method: "GET", Path: "/api/admin/announcements", Id: "list_announcements"},
-		{Method: "POST", Path: "/api/admin/announcements", Id: "create_announcement"},
-		{Method: "PUT", Path: "/api/admin/announcements/{announcement_id}", Id: "update_announcement"},
-		{Method: "DELETE", Path: "/api/admin/announcements/{announcement_id}", Id: "delete_announcement"},
-		{Method: "GET", Path: "/api/admin/scheduled-tasks", Id: "list_scheduled_tasks"},
-		{Method: "POST", Path: "/api/admin/scheduled-tasks", Id: "create_scheduled_task"},
-		{Method: "PUT", Path: "/api/admin/scheduled-tasks/{task_id}", Id: "update_scheduled_task"},
-		{Method: "DELETE", Path: "/api/admin/scheduled-tasks/{task_id}", Id: "delete_scheduled_task"},
-		{Method: "GET", Path: "/api/admin/scheduler/status", Id: "scheduler_status"},
-		{Method: "GET", Path: "/api/admin/runtime-settings", Id: "list_runtime_settings"},
-		{Method: "PUT", Path: "/api/admin/runtime-settings", Id: "update_runtime_settings"},
-		{Method: "GET", Path: "/api/admin/provider-catalog", Id: "get_provider_catalog"},
-	} {
-		routes = append(routes, route{operation, func(writer http.ResponseWriter, request *http.Request) {
-			handlers.handle(writer, request, operation.Id)
-		}})
-	}
-	return routes
 }
 
 func mapAdminError(err error) *apiError {
@@ -142,70 +117,6 @@ func adminRejectionReason(err error) string {
 	}
 }
 
-// handle retains admission order and logs the final mutable audit target.
-func (handlers *adminHandlers) handle(writer http.ResponseWriter, request *http.Request, name string) {
-	target, failure := extractAdminTarget(request)
-	if failure != nil {
-		failure.write(writer)
-		return
-	}
-	body, failure := extractAdminBody(request, name)
-	if failure != nil {
-		failure.write(writer)
-		return
-	}
-	current, failure := handlers.auth.authenticator.requireAdmin(request)
-	if failure != nil {
-		failure.write(writer)
-		return
-	}
-	actor := current.authorization.User.Id
-	action := map[string]string{"set_admin": "user_admin_update", "reset_password": "user_password_reset", "delete_user": "user_delete", "create_invite_code": "invite_create", "revoke_admin_invite_code": "invite_revoke", "create_announcement": "announcement_create", "update_announcement": "announcement_update", "delete_announcement": "announcement_delete", "create_scheduled_task": "scheduled_task_create", "update_scheduled_task": "scheduled_task_update", "delete_scheduled_task": "scheduled_task_delete", "update_runtime_settings": "runtime_settings_update"}[name]
-	event := domain.AuditEvent{Action: action, Outcome: "completed", RequestId: requestId(request), OccurredAt: currentTimestamp()}
-	actorNumber := int64(actor)
-	event.ActorId = &actorNumber
-	if target > 0 {
-		event.TargetId = &target
-	}
-	started := time.Now()
-	isCompleted := false
-	defer logAdminCompletion(request, action, actorNumber, &target, &isCompleted, started)
-	reject := func(reason string, failure *apiError) {
-		rejection := event
-		rejection.Outcome, rejection.Reason = "rejected", reason
-		if persistence := handlers.auth.persistAudit(request, rejection); persistence != nil {
-			failure = persistence
-		}
-		failure.write(writer)
-	}
-
-	reason, failure := validateAdminSelf(name, target, actorNumber, body)
-	if failure != nil {
-		reject(reason, failure)
-		return
-	}
-	if failure = validateAdminOperationBody(name, body); failure != nil {
-		reject("validation_failed", failure)
-		return
-	}
-	payload, reason, failure := handlers.executeAdminOperation(request, name, actor, target, body, event)
-	if failure != nil {
-		if reason != "" {
-			reject(reason, failure)
-		} else {
-			failure.write(writer)
-		}
-		return
-	}
-	payload, target, failure = normalizeAdminPayload(name, payload, target)
-	if failure != nil {
-		reject("target_not_found", failure)
-		return
-	}
-	isCompleted = true
-	writeResponse(writer, payload)
-}
-
 // logAdminCompletion observes the final target and completion state at handler return.
 func logAdminCompletion(request *http.Request, action string, actor int64, target *int64, isCompleted *bool, started time.Time) {
 	if action == "" {
@@ -235,64 +146,6 @@ func (handlers *adminHandlers) perform(ctx context.Context, name string, actor i
 	default:
 		return handlers.performAdminAnnouncements(ctx, name, actor, target, body, event)
 	}
-}
-
-// extractAdminTarget validates every populated target capture in its existing order.
-func extractAdminTarget(request *http.Request) (int64, *apiError) {
-	target := int64(0)
-	for _, key := range []string{"user_id", "code_id", "announcement_id", "task_id"} {
-		if request.PathValue(key) != "" {
-			value, failure := extractPathInteger(request, key)
-			if failure != nil {
-				return target, failure
-			}
-			target = value
-		}
-	}
-
-	return target, nil
-}
-
-// adminRequestBody keeps operation-specific typed schemas and omission defaults.
-func adminRequestBody(name string) bodyType {
-	var kind bodyType
-	switch name {
-	case "set_admin":
-		kind = structBody("AdminSetAdmin", bodyFieldOf("is_admin", boolBody))
-	case "reset_password":
-		kind = structBody("AdminResetPassword", bodyFieldOf("new_password", stringBody))
-	case "create_invite_code":
-		kind = requestBodies["AdminInviteCodeCreate"]
-	case "create_announcement":
-		kind = structBody("AnnouncementCreate", bodyFieldOf("title", stringBody), bodyFieldOf("message", stringBody), defaultBodyField("priority", stringBody, "normal"), defaultBodyField("enabled", boolBody, true))
-	case "update_announcement":
-		kind = structBody("AnnouncementUpdate", bodyFieldOf("title", optionalBody(stringBody)), bodyFieldOf("message", optionalBody(stringBody)), bodyFieldOf("priority", optionalBody(stringBody)), bodyFieldOf("enabled", optionalBody(boolBody)))
-	case "create_scheduled_task", "update_scheduled_task":
-		kind = scheduledBody(name == "update_scheduled_task")
-	case "update_runtime_settings":
-		kind = runtimeSettingsBody()
-	}
-
-	return kind
-}
-
-// extractAdminBody preserves absent invite-body handling before admin authentication.
-func extractAdminBody(request *http.Request, name string) (map[string]any, *apiError) {
-	var body map[string]any
-	kind := adminRequestBody(name)
-	if kind.kind != "" {
-		decoded, failure := extractBody(request, kind, name == "create_invite_code")
-		if failure != nil {
-			return nil, failure
-		}
-		if decoded != nil {
-			body = decoded.(map[string]any)
-		} else {
-			body = map[string]any{}
-		}
-	}
-
-	return body, nil
 }
 
 // validateAdminSelf checks protected self mutations before other business validation.
@@ -365,7 +218,7 @@ func normalizeAdminPayload(name string, payload any, target int64) (any, int64, 
 		if !value {
 			return payload, target, &apiError{status: 404, detail: adminMissingTargetDetail(name)}
 		}
-		payload = map[string]bool{"ok": true}
+		payload = okResponse{OK: true}
 	case adminInviteResponse:
 		target = value.Id
 	case *announcements.Announcement:
@@ -409,7 +262,7 @@ func (handlers *adminHandlers) performAdminUsers(ctx context.Context, name strin
 		}
 		result := make([]adminUserResponse, len(rows))
 		for index, row := range rows {
-			result[index] = adminUserResponse{int64(row.Id), row.Username, row.IsAdmin, row.CreatedAt, row.UpdatedAt, row.FolderCount, row.FavoriteCount, row.NotifyEnabled}
+			result[index] = adminUserResponse{Email: row.Email, AuthKind: row.AuthKind, IsOIDCLinked: row.IsOidcLinked, Id: int64(row.Id), Username: row.Username, IsAdmin: row.IsAdmin, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, FolderCount: row.FolderCount, FavoriteCount: row.FavoriteCount, NotifyEnabled: row.NotifyEnabled}
 		}
 		return result, nil
 	case "set_admin":

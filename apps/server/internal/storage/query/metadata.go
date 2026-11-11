@@ -10,8 +10,11 @@ import (
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/storage"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/search"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/querydb"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
+
+var queries querydb.Queries
 
 // JournalListParams keeps repository zero defaults separate from transport defaults.
 type JournalListParams struct {
@@ -34,42 +37,42 @@ const journalColumns = `j.journal_id,j.catalog_id,j.title,j.title_aliases_json,j
 const issueColumns = `i.issue_id,i.journal_id,i.publication_year,i.title,i.volume,i.number,i.date`
 
 // journalFromRow maps canonical journal metadata using one fixed-width scan buffer.
-func journalFromRow(row scanner) (domain.Journal, error) {
-	var id, hasArticles storage.Integer
-	var catalog, title, aliases, issns storage.Text
-	var optional [11]storage.OptionalText
-	arguments := make([]any, 0, len(optional)+6)
-	arguments = append(arguments, &id, &catalog, &title, &aliases, &issns)
-	for index := range optional {
-		arguments = append(arguments, &optional[index])
-	}
-	arguments = append(arguments, &hasArticles)
-	if err := row.Scan(arguments...); err != nil {
+func journalFromRow(scanner scanner) (domain.Journal, error) {
+	var row querydb.JournalByIDRow
+	var hasArticles storage.Integer
+	if err := scanner.Scan(&row.JournalID, &row.CatalogID, &row.Title, &row.TitleAliasesJSON, &row.IssnsJSON, &row.ISSN, &row.EISSN, &row.Area, &row.UTDRank, &row.UTDRating, &row.ABSRank, &row.ABSRating, &row.FMSRank, &row.FMSRating, &row.FMSCNRank, &row.FMSCNRating, &hasArticles); err != nil {
 		return domain.Journal{}, err
 	}
-	names, err := search.DecodeAuthorNames(string(aliases))
-	if err != nil {
-		return domain.Journal{}, err
-	}
-	identifiers, err := search.DecodeAuthorNames(string(issns))
-	if err != nil {
-		return domain.Journal{}, err
-	}
-	return domain.Journal{JournalId: identity.Id(id), CatalogId: string(catalog), Title: string(title), TitleAliases: names, Issns: identifiers, Issn: optional[0].Value, Eissn: optional[1].Value, Area: optional[2].Value, UtdRank: optional[3].Value, UtdRating: optional[4].Value, AbsRank: optional[5].Value, AbsRating: optional[6].Value, FmsRank: optional[7].Value, FmsRating: optional[8].Value, FmscnRank: optional[9].Value, FmscnRating: optional[10].Value, HasArticles: hasArticles != 0}, nil
+	row.Exists = hasArticles != 0
+	return decodeJournal(row)
 }
 
-func issueFromRow(row scanner) (domain.Issue, error) {
-	var id, journal storage.Integer
-	var year storage.OptionalInteger
-	var title, volume, number, date storage.OptionalText
-	if err := row.Scan(&id, &journal, &year, &title, &volume, &number, &date); err != nil {
+func decodeJournal(row querydb.JournalByIDRow) (domain.Journal, error) {
+	names, err := search.DecodeAuthorNames(string(row.TitleAliasesJSON))
+	if err != nil {
+		return domain.Journal{}, err
+	}
+	identifiers, err := search.DecodeAuthorNames(string(row.IssnsJSON))
+	if err != nil {
+		return domain.Journal{}, err
+	}
+	return domain.Journal{JournalId: identity.Id(row.JournalID), CatalogId: string(row.CatalogID), Title: string(row.Title), TitleAliases: names, Issns: identifiers, Issn: (*string)(row.ISSN), Eissn: (*string)(row.EISSN), Area: (*string)(row.Area), UtdRank: (*string)(row.UTDRank), UtdRating: (*string)(row.UTDRating), AbsRank: (*string)(row.ABSRank), AbsRating: (*string)(row.ABSRating), FmsRank: (*string)(row.FMSRank), FmsRating: (*string)(row.FMSRating), FmscnRank: (*string)(row.FMSCNRank), FmscnRating: (*string)(row.FMSCNRating), HasArticles: row.Exists}, nil
+}
+
+func issueFromRow(scanner scanner) (domain.Issue, error) {
+	var row querydb.Issue
+	if err := scanner.Scan(&row.IssueID, &row.JournalID, &row.PublicationYear, &row.Title, &row.Volume, &row.Number, &row.Date); err != nil {
 		return domain.Issue{}, err
 	}
-	result := domain.Issue{IssueId: int64(id), JournalId: identity.Id(journal), PublicationYear: year.Value, Title: title.Value, Volume: volume.Value, Number: number.Value, Date: date.Value}
-	if date.Value != nil {
-		result.DatePrecision = domain.DatePrecision(*date.Value)
+	return decodeIssue(row), nil
+}
+
+func decodeIssue(row querydb.Issue) domain.Issue {
+	result := domain.Issue{IssueId: int64(row.IssueID), JournalId: identity.Id(row.JournalID), PublicationYear: (*int64)(row.PublicationYear), Title: (*string)(row.Title), Volume: (*string)(row.Volume), Number: (*string)(row.Number), Date: (*string)(row.Date)}
+	if result.Date != nil {
+		result.DatePrecision = domain.DatePrecision(*result.Date)
 	}
-	return result, nil
+	return result
 }
 
 // ListJournals validates public filters in their original order and counts all matching journals.
@@ -115,11 +118,14 @@ func GetJournal(ctx context.Context, configuration config.Config, name *string, 
 		return domain.Journal{}, err
 	}
 	defer database.Close()
-	record, err := journalFromRow(database.QueryRowContext(ctx, "SELECT "+journalColumns+" FROM journals j WHERE j.journal_id=?", id))
+	row, err := queries.JournalByID(ctx, database, querydb.JournalByIDParams{JournalID: storage.Integer(id)})
 	if errors.Is(err, sql.ErrNoRows) {
-		return record, NotFound{"Journal not found"}
+		return domain.Journal{}, NotFound{"Journal not found"}
 	}
-	return record, err
+	if err != nil {
+		return domain.Journal{}, err
+	}
+	return decodeJournal(row)
 }
 
 // ListIssues counts and pages the issue inventory rather than deriving it from articles.
@@ -165,11 +171,14 @@ func GetIssue(ctx context.Context, configuration config.Config, name *string, id
 		return domain.Issue{}, err
 	}
 	defer database.Close()
-	record, err := issueFromRow(database.QueryRowContext(ctx, "SELECT "+issueColumns+" FROM issues i WHERE i.issue_id=?", id))
+	row, err := queries.IssueByID(ctx, database, querydb.IssueByIDParams{IssueID: storage.Integer(id)})
 	if errors.Is(err, sql.ErrNoRows) {
-		return record, NotFound{"Issue not found"}
+		return domain.Issue{}, NotFound{"Issue not found"}
 	}
-	return record, err
+	if err != nil {
+		return domain.Issue{}, err
+	}
+	return decodeIssue(row), nil
 }
 
 func valueCountFromRow(row scanner) (domain.ValueCount, error) {
@@ -188,7 +197,18 @@ func ListAreas(ctx context.Context, configuration config.Config, name *string) (
 		return nil, err
 	}
 	defer database.Close()
-	return collect(ctx, database, "SELECT area,COUNT(*) FROM journals WHERE area IS NOT NULL AND area!='' GROUP BY area ORDER BY area ASC", nil, valueCountFromRow)
+	rows, err := queries.Areas(ctx, database)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]domain.ValueCount, 0, len(rows))
+	for _, row := range rows {
+		if row.Area == nil {
+			return nil, errors.New("invalid SQLite text column")
+		}
+		items = append(items, domain.ValueCount{Value: string(*row.Area), Count: row.Count})
+	}
+	return items, nil
 }
 
 // ListJournalRatings includes four arrays and counts journals without articles.
@@ -218,14 +238,15 @@ func ListJournalOptions(ctx context.Context, configuration config.Config, name *
 		return nil, err
 	}
 	defer database.Close()
-	return collect(ctx, database, "SELECT journal_id,title FROM journals ORDER BY title ASC", nil, func(row scanner) (domain.JournalOption, error) {
-		var id storage.Integer
-		var title storage.Text
-		if err := row.Scan(&id, &title); err != nil {
-			return domain.JournalOption{}, err
-		}
-		return domain.JournalOption{JournalId: identity.Id(id), Title: string(title)}, nil
-	})
+	rows, err := queries.JournalOptions(ctx, database)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]domain.JournalOption, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, domain.JournalOption{JournalId: identity.Id(row.JournalID), Title: string(row.Title)})
+	}
+	return items, nil
 }
 
 // ListYears counts distinct issues and journals grouped by stored publication year.
@@ -235,13 +256,18 @@ func ListYears(ctx context.Context, configuration config.Config, name *string) (
 		return nil, err
 	}
 	defer database.Close()
-	return collect(ctx, database, "SELECT publication_year,COUNT(DISTINCT issue_id),COUNT(DISTINCT journal_id) FROM issues WHERE publication_year IS NOT NULL GROUP BY publication_year ORDER BY publication_year DESC", nil, func(row scanner) (domain.YearSummary, error) {
-		var year, issues, journals storage.Integer
-		if err := row.Scan(&year, &issues, &journals); err != nil {
-			return domain.YearSummary{}, err
+	rows, err := queries.Years(ctx, database)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]domain.YearSummary, 0, len(rows))
+	for _, row := range rows {
+		if row.PublicationYear == nil {
+			return nil, errors.New("invalid SQLite integer column")
 		}
-		return domain.YearSummary{Year: int64(year), IssueCount: int64(issues), JournalCount: int64(journals)}, nil
-	})
+		items = append(items, domain.YearSummary{Year: int64(*row.PublicationYear), IssueCount: row.Count, JournalCount: row.Count_2})
+	}
+	return items, nil
 }
 
 // validateJournalFilterCount counts a supplied area even when its value is blank.

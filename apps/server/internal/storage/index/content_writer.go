@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"regexp"
 	"slices"
@@ -13,6 +14,9 @@ import (
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
 	"github.com/QianFuv/LitRadar/apps/server/internal/provider"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/search"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/contentdb"
+	dbtypes "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/types"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/writerdb"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
@@ -75,7 +79,7 @@ func WriteContentBatchWithEvents(ctx context.Context, connection *sql.Conn, cata
 		}
 		slices.Sort(issues)
 		for _, issue := range issues {
-			if _, err := connection.ExecContext(ctx, `UPDATE issues SET date=COALESCE((SELECT date FROM articles WHERE issue_id=?1 AND date IS NOT NULL ORDER BY length(date) DESC,date LIMIT 1),date) WHERE issue_id=?1`, issue); err != nil {
+			if _, err := contentQueries.UpdateIssueDate(ctx, connection, contentdb.UpdateIssueDateParams{IssueID: new(sqlite.Integer(issue))}); err != nil {
 				return err
 			}
 		}
@@ -93,6 +97,7 @@ type contentWriter struct {
 	shouldRecordEvents     bool
 	observedIssues         map[int64]bool
 	statements             map[string]*sql.Stmt
+	queries                *writerdb.Queries
 	journalTitle           string
 	isJournalTitlePrepared bool
 }
@@ -100,7 +105,13 @@ type contentWriter struct {
 // prepareWriter binds shared statements to one content transaction.
 func prepareWriter(ctx context.Context, connection *sql.Conn, shouldRecordEvents bool) (*contentWriter, error) {
 	writer := &contentWriter{ctx: ctx, connection: connection, shouldRecordEvents: shouldRecordEvents, observedIssues: map[int64]bool{}, statements: map[string]*sql.Stmt{}}
-	for _, statement := range []string{journalProjectionSql, journalUpsertSql, issueUpsertSql, identityLookupSql, articleLookupSql, retractionLookupSql, articleUpsertSql, retractionDeleteSql, retractionInsertSql, listingUpsertSql, searchDeleteSql, searchInsertSql, identityClaimSql, changeEventInsertSql} {
+	var err error
+	writer.queries, err = writerdb.Prepare(ctx, &statementTracker{Conn: connection, statements: writer.statements})
+	if err != nil {
+		writer.close()
+		return nil, err
+	}
+	for _, statement := range []string{searchDeleteSql, searchInsertSql, identityClaimSql} {
 		prepared, err := connection.PrepareContext(ctx, statement)
 		if err != nil {
 			writer.close()
@@ -113,7 +124,9 @@ func prepareWriter(ctx context.Context, connection *sql.Conn, shouldRecordEvents
 
 func (writer *contentWriter) close() {
 	for _, statement := range writer.statements {
-		statement.Close()
+		if err := statement.Close(); err != nil {
+			slog.WarnContext(writer.ctx, "storage.statement.close_failed", "component", "storage")
+		}
 	}
 }
 func (writer *contentWriter) exec(statement string, args ...any) (sql.Result, error) {
@@ -128,7 +141,7 @@ func (writer *contentWriter) upsertIssue(journal int64, issue domain.IssueDraft)
 	if id == nil {
 		return nil, nil
 	}
-	if _, err := writer.exec(issueUpsertSql, *id, journal, issue.PublicationYear, issue.Title, issue.Volume, issue.Number, issue.Date); err != nil {
+	if _, err := writer.queries.UpsertIssue(writer.ctx, writerdb.UpsertIssueParams{IssueID: sqlite.Integer(*id), JournalID: sqlite.Integer(journal), PublicationYear: (*sqlite.Integer)(issue.PublicationYear), Title: (*sqlite.Text)(issue.Title), Volume: (*sqlite.Text)(issue.Volume), Number: (*sqlite.Text)(issue.Number), Date: (*sqlite.Text)(issue.Date)}); err != nil {
 		return nil, err
 	}
 	writer.observedIssues[*id] = true
@@ -136,39 +149,26 @@ func (writer *contentWriter) upsertIssue(journal int64, issue domain.IssueDraft)
 }
 
 func (writer *contentWriter) loadArticle(id int64) (*domain.ArticleDraft, *int64, error) {
-	var catalog, title, authors sqlite.Text
-	var year, access, inPress, issue sqlite.OptionalInteger
-	var date, issueTitle, volume, number, start, end, abstract, doi, pmid sqlite.OptionalText
-	err := writer.queryRow(articleLookupSql, id).Scan(&catalog, &title, &year, &date, &issueTitle, &volume, &number, &authors, &start, &end, &abstract, &doi, &pmid, &access, &inPress, &issue)
+	row, err := writer.queries.Article(writer.ctx, writerdb.ArticleParams{ArticleID: sqlite.Integer(id)})
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil, nil
 	}
 	if err != nil {
 		return nil, nil, err
 	}
-	rows, err := writer.statements[retractionLookupSql].QueryContext(writer.ctx, id)
+	storedRetractions, err := writer.queries.Retractions(writer.ctx, writerdb.RetractionsParams{ArticleID: sqlite.Integer(id)})
 	if err != nil {
 		return nil, nil, err
 	}
-	retractions := []string{}
-	for rows.Next() {
-		var value sqlite.Text
-		if err := rows.Scan(&value); err != nil {
-			rows.Close()
-			return nil, nil, err
-		}
+	retractions := make([]string, 0, len(storedRetractions))
+	for _, value := range storedRetractions {
 		retractions = append(retractions, string(value))
 	}
-	err = rows.Err()
-	rows.Close()
+	names, err := decodeCanonicalAuthors(string(row.AuthorsJSON))
 	if err != nil {
 		return nil, nil, err
 	}
-	names, err := decodeCanonicalAuthors(string(authors))
-	if err != nil {
-		return nil, nil, err
-	}
-	return &domain.ArticleDraft{CatalogId: string(catalog), Title: string(title), PublicationYear: year.Value, Date: date.Value, IssueTitle: issueTitle.Value, Volume: volume.Value, IssueNumber: number.Value, Authors: names, StartPage: start.Value, EndPage: end.Value, AbstractText: abstract.Value, Doi: doi.Value, Pmid: pmid.Value, OpenAccess: integerBool(access.Value), InPress: integerBool(inPress.Value), RetractionDois: retractions}, issue.Value, nil
+	return &domain.ArticleDraft{CatalogId: string(row.CatalogID), Title: string(row.Title), PublicationYear: (*int64)(row.PublicationYear), Date: (*string)(row.Date), IssueTitle: (*string)(row.Title_2), Volume: (*string)(row.Volume), IssueNumber: (*string)(row.Number), Authors: names, StartPage: (*string)(row.StartPage), EndPage: (*string)(row.EndPage), AbstractText: (*string)(row.AbstractText), Doi: (*string)(row.DOI), Pmid: (*string)(row.PMID), OpenAccess: integerBool((*int64)(row.OpenAccess)), InPress: integerBool((*int64)(row.InPress)), RetractionDois: retractions}, (*int64)(row.IssueID), nil
 }
 
 func (writer *contentWriter) writeArticle(catalog domain.JournalCatalogEntry, journal int64, article domain.ArticleDraft, revision, createdAt string, outcome *ContentWriteOutcome) error {
@@ -243,11 +243,14 @@ func (writer *contentWriter) resolveStoredArticleIdentity(article domain.Article
 	}
 	pmid := firstValue(article.Pmid, strong.Pmid)
 	var hasStrongConflict bool
-	loadError = writer.connection.QueryRowContext(writer.ctx, `SELECT EXISTS(
-        SELECT 1 FROM article_identity_keys WHERE
-        (article_id=?1 AND identity_kind IN ('doi','pmid')) OR
-        (article_id=?2 AND ((identity_kind='doi' AND identity_value<>?3) OR
-                           (identity_kind='pmid' AND identity_value<>?4))))`, weakId, strongId, doiKey.Value, optionalString(pmid)).Scan(&hasStrongConflict)
+	loadError = func() error {
+		queryResult, err := contentQueries.HasStoredArticleIdentity(writer.ctx, writer.connection, contentdb.HasStoredArticleIdentityParams{ArticleID: sqlite.Integer(weakId), ArticleID_2: sqlite.Integer(strongId), IdentityValue: sqlite.Text(doiKey.Value), IdentityValue_2: sqlite.Text(optionalString(pmid))})
+		if err != nil {
+			return err
+		}
+		hasStrongConflict = queryResult
+		return nil
+	}()
 	if loadError != nil {
 		return ArticleIdentityResolution{}, nil, loadError
 	}
@@ -284,14 +287,14 @@ func (writer *contentWriter) upsertArticle(id, journal int64, issue *int64, arti
 	if err != nil {
 		return err
 	}
-	if _, err := writer.exec(articleUpsertSql, id, journal, issue, article.Title, article.PublicationYear, article.Date, authors, article.StartPage, article.EndPage, article.AbstractText, article.Doi, article.Pmid, article.OpenAccess, article.InPress); err != nil {
+	if _, err := writer.queries.UpsertArticle(writer.ctx, writerdb.UpsertArticleParams{ArticleID: sqlite.Integer(id), JournalID: sqlite.Integer(journal), IssueID: (*sqlite.Integer)(issue), Title: sqlite.Text(article.Title), PublicationYear: (*sqlite.Integer)(article.PublicationYear), Date: (*sqlite.Text)(article.Date), AuthorsJSON: sqlite.Text(authors), StartPage: (*sqlite.Text)(article.StartPage), EndPage: (*sqlite.Text)(article.EndPage), AbstractText: (*sqlite.Text)(article.AbstractText), DOI: (*sqlite.Text)(article.Doi), PMID: (*sqlite.Text)(article.Pmid), OpenAccess: booleanInteger(article.OpenAccess), InPress: booleanInteger(article.InPress)}); err != nil {
 		return err
 	}
-	if _, err := writer.exec(retractionDeleteSql, id); err != nil {
+	if _, err := writer.queries.DeleteRetractions(writer.ctx, writerdb.DeleteRetractionsParams{ArticleID: sqlite.Integer(id)}); err != nil {
 		return err
 	}
 	for _, doi := range article.RetractionDois {
-		if _, err := writer.exec(retractionInsertSql, id, doi); err != nil {
+		if _, err := writer.queries.InsertRetraction(writer.ctx, writerdb.InsertRetractionParams{ArticleID: sqlite.Integer(id), RetractionDOI: sqlite.Text(doi)}); err != nil {
 			return err
 		}
 	}
@@ -300,7 +303,7 @@ func (writer *contentWriter) upsertArticle(id, journal int64, issue *int64, arti
 
 // projectArticle publishes changed fields with bounded SQL arguments and a shared journal-title projection.
 func (writer *contentWriter) projectArticle(id, journal int64, issue *int64, catalog domain.JournalCatalogEntry, article domain.ArticleDraft) error {
-	if _, err := writer.exec(listingUpsertSql, id, journal, issue, article.PublicationYear, article.Date, article.OpenAccess, article.InPress, article.Doi, article.Pmid, catalog.Area); err != nil {
+	if _, err := writer.queries.UpsertListing(writer.ctx, writerdb.UpsertListingParams{ArticleID: sqlite.Integer(id), JournalID: sqlite.Integer(journal), IssueID: (*sqlite.Integer)(issue), PublicationYear: (*sqlite.Integer)(article.PublicationYear), Date: (*sqlite.Text)(article.Date), OpenAccess: booleanInteger(article.OpenAccess), InPress: booleanInteger(article.InPress), DOI: (*sqlite.Text)(article.Doi), PMID: (*sqlite.Text)(article.Pmid), Area: (*sqlite.Text)(catalog.Area)}); err != nil {
 		return err
 	}
 	if _, err := writer.exec(searchDeleteSql, id); err != nil {
@@ -326,7 +329,7 @@ func (writer *contentWriter) projectArticle(id, journal int64, issue *int64, cat
 
 func (writer *contentWriter) recordEvent(revision string, id int64, kind string, journal int64, issue *int64, inPress *bool, createdAt string) (uint64, error) {
 	isInPress := inPress != nil && *inPress
-	result, err := writer.exec(changeEventInsertSql, revision, id, kind, journal, issue, isInPress, createdAt)
+	result, err := writer.queries.InsertChangeEvent(writer.ctx, writerdb.InsertChangeEventParams{ContentRevision: sqlite.Text(revision), ArticleID: sqlite.Integer(id), ChangeKind: sqlite.Text(kind), JournalID: sqlite.Integer(journal), IssueID: (*sqlite.Integer)(issue), InPress: sqlite.Integer(dbtypes.Boolean(isInPress)), CreatedAt: sqlite.Text(createdAt)})
 	if err != nil {
 		return 0, err
 	}
@@ -344,8 +347,7 @@ func integerBool(value *int64) *bool {
 func (writer *contentWriter) lookupIdentityAliases(incoming []ArticleIdentityKey) (map[ArticleIdentityKey]int64, error) {
 	aliases := map[ArticleIdentityKey]int64{}
 	for _, key := range incoming {
-		var owner sqlite.Integer
-		err := writer.queryRow(identityLookupSql, key.Kind, key.Value).Scan(&owner)
+		owner, err := writer.queries.IdentityOwner(writer.ctx, writerdb.IdentityOwnerParams{IdentityKind: sqlite.Text(key.Kind), IdentityValue: sqlite.Text(key.Value)})
 		if err == nil {
 			aliases[key] = int64(owner)
 		} else if !errors.Is(err, sql.ErrNoRows) {
@@ -367,14 +369,9 @@ func (writer *contentWriter) claimArticleAliases(incoming []ArticleIdentityKey, 
 		}
 		var owner, wasInserted sqlite.Integer
 		if _, hasKnownOwner := knownAliases[key]; hasKnownOwner {
-			if writer.statements[existingIdentityClaimSql] == nil {
-				prepared, err := writer.connection.PrepareContext(writer.ctx, existingIdentityClaimSql)
-				if err != nil {
-					return err
-				}
-				writer.statements[existingIdentityClaimSql] = prepared
-			}
-			if err := writer.queryRow(existingIdentityClaimSql, key.Kind, key.Value, claimId).Scan(&owner); err != nil {
+			var err error
+			owner, err = writer.queries.ClaimArticleAlias(writer.ctx, writerdb.ClaimArticleAliasParams{IdentityKind: sqlite.Text(key.Kind), IdentityValue: sqlite.Text(key.Value), ArticleID: sqlite.Integer(claimId)})
+			if err != nil {
 				return err
 			}
 		} else {
@@ -406,7 +403,7 @@ func (writer *contentWriter) persistArticleChange(catalog domain.JournalCatalogE
 	}
 	if !reflect.DeepEqual(previousIssue, issue) && previousIssue != nil {
 		writer.observedIssues[*previousIssue] = true
-		if _, err := writer.connection.ExecContext(writer.ctx, "DELETE FROM issues WHERE issue_id=?1 AND NOT EXISTS(SELECT 1 FROM articles WHERE issue_id=?1)", *previousIssue); err != nil {
+		if _, err := contentQueries.DeleteEmptyIssue(writer.ctx, writer.connection, contentdb.DeleteEmptyIssueParams{IssueID: sqlite.Integer(*previousIssue)}); err != nil {
 			return err
 		}
 	}
@@ -453,4 +450,27 @@ func mergeStoredArticle(existing *domain.ArticleDraft, article domain.ArticleDra
 	merged.Authors = append([]domain.ArticleAuthorDraft{}, merged.Authors...)
 	merged.RetractionDois = append([]string{}, merged.RetractionDois...)
 	return merged, nil
+}
+
+func booleanInteger(value *bool) *sqlite.Integer {
+	if value == nil {
+		return nil
+	}
+	return new(sqlite.Integer(dbtypes.Boolean(*value)))
+}
+
+// statementTracker retains ownership of partially prepared sqlc query sets.
+type statementTracker struct {
+	*sql.Conn
+	statements map[string]*sql.Stmt
+}
+
+// PrepareContext records each statement before sqlc can return a later preparation error.
+func (tracker *statementTracker) PrepareContext(ctx context.Context, query string) (*sql.Stmt, error) {
+	statement, err := tracker.Conn.PrepareContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	tracker.statements[query] = statement
+	return statement, nil
 }

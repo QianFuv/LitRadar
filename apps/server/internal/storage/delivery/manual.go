@@ -6,10 +6,12 @@ import (
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/auth"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/deliverydb"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
 func latestManual(ctx context.Context, connection *sql.Conn, userId int64) (*RunRecord, error) {
-	return scanRunRecord(connection.QueryRowContext(ctx, "SELECT "+runColumns+" FROM delivery_runs WHERE trigger_kind='manual' AND user_id=? ORDER BY id DESC LIMIT 1", userId))
+	return decodeRunRecord(queries.LatestManualRun(ctx, connection, deliverydb.LatestManualRunParams{UserID: new(sqlite.Integer(userId))}))
 }
 
 // AdmitManualRun checks unknown quarantine and normal admission in the same write transaction.
@@ -52,7 +54,7 @@ func (repository *Repository) AcknowledgeUnknownManualRun(ctx context.Context, u
 	}
 	var record *RunRecord
 	err := repository.immediate(ctx, func(connection *sql.Conn) error {
-		unknown, err := scanRunRecord(connection.QueryRowContext(ctx, "SELECT "+runColumns+" FROM delivery_runs WHERE trigger_kind='manual' AND user_id=? AND external_id=? ORDER BY id DESC LIMIT 1", userId, unknownExternalId))
+		unknown, err := decodeRunRecord(queries.ManualRun(ctx, connection, deliverydb.ManualRunParams{UserID: new(sqlite.Integer(userId)), ExternalID: sqlite.Text(unknownExternalId)}))
 		if err != nil {
 			return err
 		}
@@ -100,7 +102,7 @@ func (repository *Repository) LoadLatestManualRun(ctx context.Context, userId in
 	if err := validatePositiveId(userId, "Manual delivery user id is invalid"); err != nil {
 		return nil, err
 	}
-	return scanRunRecord(repository.database.QueryRowContext(ctx, "SELECT "+runColumns+" FROM delivery_runs WHERE trigger_kind='manual' AND user_id=? ORDER BY id DESC LIMIT 1", userId))
+	return decodeRunRecord(queries.LatestManualRun(ctx, repository.database, deliverydb.LatestManualRunParams{UserID: new(sqlite.Integer(userId))}))
 }
 
 // LoadManualRun restricts the opaque external identifier to its authenticated user.
@@ -111,7 +113,7 @@ func (repository *Repository) LoadManualRun(ctx context.Context, userId int64, e
 	if err := validateIdentifier(externalId, "Manual delivery job id is invalid"); err != nil {
 		return nil, err
 	}
-	return scanRunRecord(repository.database.QueryRowContext(ctx, "SELECT "+runColumns+" FROM delivery_runs WHERE trigger_kind='manual' AND user_id=? AND external_id=? ORDER BY id DESC LIMIT 1", userId, externalId))
+	return decodeRunRecord(queries.ManualRun(ctx, repository.database, deliverydb.ManualRunParams{UserID: new(sqlite.Integer(userId)), ExternalID: sqlite.Text(externalId)}))
 }
 
 // LoadManualRunForAdmin reads an opaque job after the caller has established administrator authority.
@@ -119,7 +121,7 @@ func (repository *Repository) LoadManualRunForAdmin(ctx context.Context, externa
 	if err := validateIdentifier(externalId, "Manual delivery job id is invalid"); err != nil {
 		return nil, err
 	}
-	return scanRunRecord(repository.database.QueryRowContext(ctx, "SELECT "+runColumns+" FROM delivery_runs WHERE trigger_kind='manual' AND external_id=? ORDER BY id DESC LIMIT 1", externalId))
+	return decodeRunRecord(queries.AdminManualRun(ctx, repository.database, deliverydb.AdminManualRunParams{ExternalID: sqlite.Text(externalId)}))
 }
 
 // ListDispatchableManualRuns bounds pending and expired active work in stable creation/id order.
@@ -130,18 +132,17 @@ func (repository *Repository) ListDispatchableManualRuns(ctx context.Context, no
 	if limit < 1 || limit > 64 {
 		return nil, invalid("Manual delivery dispatch limit is invalid")
 	}
-	rows, err := repository.database.QueryContext(ctx, "SELECT "+runColumns+" FROM delivery_runs WHERE trigger_kind='manual' AND (status='queued' OR (status IN ('claimed','running','cancelling') AND lease_expires_at<=?)) ORDER BY created_at,id LIMIT ?", now, limit)
+	rows, err := queries.DispatchableManualRuns(ctx, repository.database, deliverydb.DispatchableManualRunsParams{LeaseExpiresAt: new(sqlite.Number(now)), Limit: int64(limit)})
 	if err != nil {
 		return nil, storageError(err)
 	}
-	defer rows.Close()
-	result := []RunRecord{}
-	for rows.Next() {
-		record, err := scanRunRecord(rows)
+	result := make([]RunRecord, 0, len(rows))
+	for _, row := range rows {
+		record, err := decodeRunRecord(row, nil)
 		if err != nil {
 			return nil, err
 		}
 		result = append(result, *record)
 	}
-	return result, storageError(rows.Err())
+	return result, nil
 }

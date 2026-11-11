@@ -13,18 +13,19 @@ import (
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/auth"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/announcementsdb"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
 // Announcement preserves numeric identifiers and fractional epoch timestamps.
 type Announcement struct {
-	Id        int64   `json:"id"`
-	Title     string  `json:"title"`
-	Message   string  `json:"message"`
-	Priority  string  `json:"priority"`
-	Enabled   bool    `json:"enabled"`
-	CreatedAt float64 `json:"created_at"`
-	UpdatedAt float64 `json:"updated_at"`
+	Id        int64   `json:"id" nullable:"false" format:"int64"`
+	Title     string  `json:"title" nullable:"false"`
+	Message   string  `json:"message" nullable:"false"`
+	Priority  string  `json:"priority" nullable:"false"`
+	Enabled   bool    `json:"enabled" nullable:"false"`
+	CreatedAt float64 `json:"created_at" nullable:"false" format:"double"`
+	UpdatedAt float64 `json:"updated_at" nullable:"false" format:"double"`
 }
 
 // InvalidInput reports normalized announcement field constraints.
@@ -71,45 +72,28 @@ func normalize(input Update) (Update, error) {
 	return input, nil
 }
 
-const columns = "id,title,message,priority,enabled,created_at,updated_at"
+var queries announcementsdb.Queries
 
-type scanner interface{ Scan(...any) error }
-
-func decode(row scanner) (Announcement, error) {
-	var id, enabled storage.Integer
-	var title, message, priority storage.Text
-	var created, updated storage.Number
-	if err := row.Scan(&id, &title, &message, &priority, &enabled, &created, &updated); err != nil {
-		return Announcement{}, err
-	}
-	return Announcement{int64(id), string(title), string(message), string(priority), enabled != 0, float64(created), float64(updated)}, nil
+func decode(row announcementsdb.Announcement) Announcement {
+	return Announcement{int64(row.ID), string(row.Title), string(row.Message), string(row.Priority), row.Enabled != 0, float64(row.CreatedAt), float64(row.UpdatedAt)}
 }
 
-func list(ctx context.Context, repository *auth.Repository, suffix string) ([]Announcement, error) {
-	var items []Announcement
-	err := repository.WithConnection(ctx, func(connection *sql.Conn) error {
-		var err error
-		items, err = listConnection(ctx, connection, suffix)
-		return err
-	})
-	return items, err
-}
-
-func listConnection(ctx context.Context, connection *sql.Conn, suffix string) ([]Announcement, error) {
-	items := []Announcement{}
-	rows, err := connection.QueryContext(ctx, "SELECT "+columns+" FROM announcements "+suffix)
+func decodeList(rows []announcementsdb.Announcement, err error) ([]Announcement, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		item, err := decode(rows)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, item)
+	items := make([]Announcement, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, decode(row))
 	}
-	return items, rows.Err()
+	return items, nil
+}
+
+func enabledValue(isEnabled bool) storage.Integer {
+	if isEnabled {
+		return 1
+	}
+	return 0
 }
 
 // ListActive returns only enabled=1 rows, ordered by priority and creation time without an added tie-breaker.
@@ -124,22 +108,29 @@ func ListActive(ctx context.Context, filename string) ([]Announcement, error) {
 		return nil, err
 	}
 	defer connection.Close()
-	return listConnection(ctx, connection, "WHERE enabled=1 ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,created_at DESC")
+	return decodeList(queries.Active(ctx, connection))
 }
 
 // ListAll returns administrative rows in creation-time order.
 func ListAll(ctx context.Context, repository *auth.Repository) ([]Announcement, error) {
-	return list(ctx, repository, "ORDER BY created_at DESC")
+	var items []Announcement
+	err := repository.WithConnection(ctx, func(connection *sql.Conn) error {
+		var err error
+		items, err = decodeList(queries.All(ctx, connection))
+		return err
+	})
+	return items, err
 }
 
 func get(ctx context.Context, connection *sql.Conn, id int64) (*Announcement, error) {
-	item, err := decode(connection.QueryRowContext(ctx, "SELECT "+columns+" FROM announcements WHERE id=?", id))
+	row, err := queries.ByID(ctx, connection, storage.Integer(id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	item := decode(row)
 	return &item, nil
 }
 
@@ -178,7 +169,7 @@ func Create(ctx context.Context, repository *auth.Repository, actor *identity.Id
 			return err
 		}
 		now := float64(time.Now().UnixNano()) / 1e9
-		inserted, err := connection.ExecContext(ctx, "INSERT INTO announcements(title,message,priority,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?)", *input.Title, *input.Message, *input.Priority, isEnabled, now, now)
+		inserted, err := queries.Create(ctx, connection, announcementsdb.CreateParams{Title: storage.Text(*input.Title), Message: storage.Text(*input.Message), Priority: storage.Text(*input.Priority), Enabled: enabledValue(isEnabled), CreatedAt: storage.Number(now), UpdatedAt: storage.Number(now)})
 		if err != nil {
 			return err
 		}
@@ -229,7 +220,7 @@ func Modify(ctx context.Context, repository *auth.Repository, actor *identity.Id
 		if input.Enabled != nil {
 			current.Enabled = *input.Enabled
 		}
-		if _, err := connection.ExecContext(ctx, "UPDATE announcements SET title=?,message=?,priority=?,enabled=?,updated_at=? WHERE id=?", current.Title, current.Message, current.Priority, current.Enabled, float64(time.Now().UnixNano())/1e9, id); err != nil {
+		if _, err := queries.Update(ctx, connection, announcementsdb.UpdateParams{Title: storage.Text(current.Title), Message: storage.Text(current.Message), Priority: storage.Text(current.Priority), Enabled: enabledValue(current.Enabled), UpdatedAt: storage.Number(float64(time.Now().UnixNano()) / 1e9), ID: storage.Integer(id)}); err != nil {
 			return err
 		}
 		result, err = get(ctx, connection, id)
@@ -254,7 +245,7 @@ func Delete(ctx context.Context, repository *auth.Repository, actor *identity.Id
 		if err := authorize(ctx, connection, actor); err != nil {
 			return err
 		}
-		result, err := connection.ExecContext(ctx, "DELETE FROM announcements WHERE id=?", id)
+		result, err := queries.Delete(ctx, connection, storage.Integer(id))
 		if err != nil {
 			return err
 		}

@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -148,32 +149,32 @@ func (value NotificationSettings) LogValue() slog.Value { return slog.StringValu
 
 // NotificationSettingsResponse preserves the notification settings contract.
 type NotificationSettingsResponse struct {
-	Id                   int64    `json:"id"`
-	UserId               int64    `json:"user_id"`
-	Keywords             []string `json:"keywords"`
-	Directions           []string `json:"directions"`
-	SelectedDatabases    []string `json:"selected_databases"`
-	DeliveryMethod       string   `json:"delivery_method"`
-	HasPushplusToken     bool     `json:"has_pushplus_token"`
-	PushplusTokenMask    string   `json:"pushplus_token_mask"`
-	PushplusTemplate     string   `json:"pushplus_template"`
-	PushplusTopic        string   `json:"pushplus_topic"`
-	PushplusChannel      string   `json:"pushplus_channel"`
-	SyncToTrackingFolder bool     `json:"sync_to_tracking_folder"`
-	AiBaseUrl            string   `json:"ai_base_url"`
-	HasAiApiKey          bool     `json:"has_ai_api_key"`
-	AiApiKeyMask         string   `json:"ai_api_key_mask"`
-	AiModel              string   `json:"ai_model"`
-	AiSystemPrompt       string   `json:"ai_system_prompt"`
-	AiBackupBaseUrl      string   `json:"ai_backup_base_url"`
-	HasAiBackupApiKey    bool     `json:"has_ai_backup_api_key"`
-	AiBackupApiKeyMask   string   `json:"ai_backup_api_key_mask"`
-	AiBackupModel        string   `json:"ai_backup_model"`
-	AiBackupSystemPrompt string   `json:"ai_backup_system_prompt"`
-	AiRetryAttempts      int64    `json:"ai_retry_attempts"`
-	Enabled              bool     `json:"enabled"`
-	CreatedAt            float64  `json:"created_at"`
-	UpdatedAt            float64  `json:"updated_at"`
+	Id                   int64    `json:"id" nullable:"false" format:"int64"`
+	UserId               int64    `json:"user_id" nullable:"false" format:"int64"`
+	Keywords             []string `json:"keywords" nullable:"false"`
+	Directions           []string `json:"directions" nullable:"false"`
+	SelectedDatabases    []string `json:"selected_databases" nullable:"false"`
+	DeliveryMethod       string   `json:"delivery_method" nullable:"false"`
+	HasPushplusToken     bool     `json:"has_pushplus_token" nullable:"false"`
+	PushplusTokenMask    string   `json:"pushplus_token_mask" nullable:"false"`
+	PushplusTemplate     string   `json:"pushplus_template" nullable:"false"`
+	PushplusTopic        string   `json:"pushplus_topic" nullable:"false"`
+	PushplusChannel      string   `json:"pushplus_channel" nullable:"false"`
+	SyncToTrackingFolder bool     `json:"sync_to_tracking_folder" nullable:"false"`
+	AiBaseUrl            string   `json:"ai_base_url" nullable:"false"`
+	HasAiApiKey          bool     `json:"has_ai_api_key" nullable:"false"`
+	AiApiKeyMask         string   `json:"ai_api_key_mask" nullable:"false"`
+	AiModel              string   `json:"ai_model" nullable:"false"`
+	AiSystemPrompt       string   `json:"ai_system_prompt" nullable:"false"`
+	AiBackupBaseUrl      string   `json:"ai_backup_base_url" nullable:"false"`
+	HasAiBackupApiKey    bool     `json:"has_ai_backup_api_key" nullable:"false"`
+	AiBackupApiKeyMask   string   `json:"ai_backup_api_key_mask" nullable:"false"`
+	AiBackupModel        string   `json:"ai_backup_model" nullable:"false"`
+	AiBackupSystemPrompt string   `json:"ai_backup_system_prompt" nullable:"false"`
+	AiRetryAttempts      int64    `json:"ai_retry_attempts" nullable:"false" format:"int64"`
+	Enabled              bool     `json:"enabled" nullable:"false"`
+	CreatedAt            float64  `json:"created_at" nullable:"false" format:"double"`
+	UpdatedAt            float64  `json:"updated_at" nullable:"false" format:"double"`
 }
 
 func (value NotificationSettingsResponse) String() string {
@@ -220,4 +221,15 @@ func (value NotificationSettings) Public() NotificationSettingsResponse {
 		CreatedAt:            value.CreatedAt,
 		UpdatedAt:            value.UpdatedAt,
 	}
+}
+
+// UnmarshalJSON retains the distinction between omitted, cleared and replaced secrets.
+func (update *SecretUpdate) UnmarshalJSON(data []byte) error {
+	var value *string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	update.IsPresent = true
+	update.Value = value
+	return nil
 }

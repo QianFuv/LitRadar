@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/controldb"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
@@ -47,6 +48,8 @@ type ProviderRunCheckpoint struct {
 }
 
 // Format excludes opaque state from diagnostic formatting, including pointer and Go-syntax forms.
+var controlQueries controldb.Queries
+
 func (value ProviderRunCheckpoint) Format(state fmt.State, verb rune) {
 	fmt.Fprintf(state, "ProviderRunCheckpoint{has_batch:%t run:%q mode:%s has_base:%t has_checkpoint:%t started:%q updated:%q}", value.BatchId != nil, value.RunId, value.Mode, value.BaseAnchor != nil, value.TraversalCheckpoint != nil, value.StartedAt, value.UpdatedAt)
 }
@@ -169,7 +172,24 @@ func OpenControl(ctx context.Context, path string) (*Connection, error) {
 func ReadSyncAnchor(ctx context.Context, connection *sql.Conn, scope SyncScope) (*ProviderSyncAnchor, error) {
 	var anchor, batch sqlite.OptionalText
 	var completed sqlite.Text
-	err := connection.QueryRowContext(ctx, "SELECT committed_anchor,completed_at,completed_batch_id FROM provider_sync_anchors WHERE catalog_name=?1 AND provider_name=?2 AND catalog_id=?3", scope.CatalogName, scope.ProviderName, scope.CatalogId).Scan(&anchor, &completed, &batch)
+	err := func() error {
+		queryResult, err := controlQueries.SyncAnchor(ctx, connection, controldb.SyncAnchorParams{CatalogName: sqlite.Text(scope.CatalogName), ProviderName: sqlite.Text(scope.ProviderName), CatalogID: sqlite.Text(scope.CatalogId)})
+		if err != nil {
+			return err
+		}
+		if queryResult.CommittedAnchor == nil {
+			anchor.Value = nil
+		} else {
+			anchor.Value = new(string(*queryResult.CommittedAnchor))
+		}
+		completed = queryResult.CompletedAt
+		if queryResult.CompletedBatchID == nil {
+			batch.Value = nil
+		} else {
+			batch.Value = new(string(*queryResult.CompletedBatchID))
+		}
+		return nil
+	}()
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -186,7 +206,32 @@ func ReadSyncAnchor(ctx context.Context, connection *sql.Conn, scope SyncScope) 
 func ReadRunCheckpoint(ctx context.Context, connection *sql.Conn, scope SyncScope) (*ProviderRunCheckpoint, error) {
 	var batch, base, checkpoint sqlite.OptionalText
 	var run, mode, started, updated sqlite.Text
-	err := connection.QueryRowContext(ctx, "SELECT batch_id,run_id,sync_mode,base_anchor,traversal_checkpoint,started_at,updated_at FROM provider_run_checkpoints WHERE catalog_name=?1 AND provider_name=?2 AND catalog_id=?3", scope.CatalogName, scope.ProviderName, scope.CatalogId).Scan(&batch, &run, &mode, &base, &checkpoint, &started, &updated)
+	err := func() error {
+		queryResult, err := controlQueries.RunCheckpoint(ctx, connection, controldb.RunCheckpointParams{CatalogName: sqlite.Text(scope.CatalogName), ProviderName: sqlite.Text(scope.ProviderName), CatalogID: sqlite.Text(scope.CatalogId)})
+		if err != nil {
+			return err
+		}
+		if queryResult.BatchID == nil {
+			batch.Value = nil
+		} else {
+			batch.Value = new(string(*queryResult.BatchID))
+		}
+		run = queryResult.RunID
+		mode = queryResult.SyncMode
+		if queryResult.BaseAnchor == nil {
+			base.Value = nil
+		} else {
+			base.Value = new(string(*queryResult.BaseAnchor))
+		}
+		if queryResult.TraversalCheckpoint == nil {
+			checkpoint.Value = nil
+		} else {
+			checkpoint.Value = new(string(*queryResult.TraversalCheckpoint))
+		}
+		started = queryResult.StartedAt
+		updated = queryResult.UpdatedAt
+		return nil
+	}()
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

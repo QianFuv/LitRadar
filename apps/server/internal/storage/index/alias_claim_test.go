@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/writerdb"
 )
 
 // aliasClaimFixture seeds two separately owned bibliographic and DOI identities.
@@ -134,7 +135,7 @@ func TestMergedOnlyAliasConflictRollsBack(t *testing.T) {
 func articleAliasOwner(t *testing.T, connection *Connection, article domain.ArticleDraft) int64 {
 	t.Helper()
 	var owner int64
-	if err := connection.QueryRowContext(context.Background(), identityLookupSql, "doi", *article.Doi).Scan(&owner); err != nil {
+	if err := connection.QueryRowContext(context.Background(), writerdb.IdentityOwner, "doi", *article.Doi).Scan(&owner); err != nil {
 		t.Fatal(err)
 	}
 	return owner
@@ -166,7 +167,7 @@ func legacyAliasFixture(t *testing.T, change func(*domain.ArticleDraft, *domain.
 	}
 	key := ArticleIdentityKeys(legacy)[len(ArticleIdentityKeys(legacy))-1]
 	var weakId int64
-	if err := connection.QueryRowContext(context.Background(), identityLookupSql, key.Kind, key.Value).Scan(&weakId); err != nil {
+	if err := connection.QueryRowContext(context.Background(), writerdb.IdentityOwner, key.Kind, key.Value).Scan(&weakId); err != nil {
 		t.Fatal(err)
 	}
 	batch := domain.BatchFromArticles(catalog, []domain.ArticleDraft{incoming}, domain.ProviderProgress{State: domain.Complete})

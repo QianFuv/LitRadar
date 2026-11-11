@@ -81,17 +81,28 @@
 
 ### 错误
 
-普通错误响应采用统一形状：
+Errors use Huma's default RFC 9457 `application/problem+json` representation:
 
 ```json
 {
+  "title": "Bad Request",
+  "status": 400,
   "detail": "Readable error message",
-  "code": "bad_request",
-  "retryable": false
+  "errors": [{ "location": "body.field", "message": "Validation diagnostic" }]
 }
 ```
 
-`detail` 继续保持字符串，旧客户端可以忽略新增字段；`code` 是稳定的机器分类，常见值包括 `bad_request`、`unauthorized`、`forbidden`、`not_found`、`conflict`、`payload_too_large`、`rate_limited`、`bad_gateway`、`service_unavailable` 和 `internal_server_error`。`retryable=true` 表示不修改请求也可能在稍后成功，并同时提供浏览器可读取的 `Retry-After`；第一方客户端将其解析为非负秒数。结构化 CNKI/Provider 工作流错误仍保留原有的嵌套 `detail.code`、`detail.phase` 和 `detail.message` 形状。
+The model supports `type`, `title`, `status`, `detail`, `instance` and `errors`; optional properties are omitted when unset. The retired top-level `code` and `retryable` properties are no longer returned. Retryable `429` and `503` responses include `Retry-After`, expressed as nonnegative seconds. Clients use that header to decide whether to retry. Huma decodes and validates typed path, query, header and JSON-object inputs; validation failures normally return `422`, while malformed JSON returns `400`.
+
+Classified workflow errors retain their machine-readable values as entries in `errors`, with the classification name in `location` and its value in `message`. The human-readable workflow message becomes `detail`.
+
+| Workflow | Error locations |
+| --- | --- |
+| CNKI login, polling and warm-up | `code`, `phase` |
+| Article provider authentication | `code`, `action` |
+| Unconfirmed session revocation | `code`, `request_id` |
+
+For example, a CNKI login timeout includes `{"location":"code","message":"cnki_login_timeout"}` and `{"location":"phase","message":"login"}`. Huma validation diagnostics use locations such as `body.field`, `query.limit` and `path.article_id`.
 
 常见状态码：
 
@@ -303,7 +314,7 @@ SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户�
 - `hourly`：稀疏的「小时 + 类型」行，按小时、再按类型升序，只包含有观测的小时；客户端应根据 `from`/`to` 补零。
 - `search_shapes`：各检索特征的边际分布（不是交叉组合），每项为 `feature`、`value` 和按调用加权的 `calls`。特征为 `endpoint`、`mode`、`database`、`term_count`、`uses_prefix`、`uses_boolean`、`hits` 和 `hit_count_basis`；只请求 `http` 或 `mcp` 时为空数组。`hits` 桶的计数口径由 `hit_count_basis` 区分：`total` 为总命中数，`returned` 为无总数时的返回条数，`candidates` 为相关推荐去重前的候选数。不同口径代表不同总体，不能合并解读；需要按口径拆分时使用 `series` 中的 `hits` 与 `hit_count_basis` 组合。
 
-所有数组在为空时都以 `[]` 出现。读取遥测存储失败时返回 `503`，body 为 `{"detail":"Load telemetry temporarily unavailable","code":"service_unavailable","retryable":true}`，并带 `Retry-After: 5`。当前这次 `/api/admin/telemetry` 请求在自身响应快照之后才被记录，因此出现在下一次读取中；成功的健康检查同样会被计量，尽管请求日志不记录它们。数值为尽力而为的估计：锁竞争、序列上限或存储失败都可能导致少计，写入与保留语义见[数据库参考](database.md#负载遥测库)。
+所有数组在为空时都以 `[]` 出现。读取遥测存储失败时返回 `503`，body 为 `{"title":"Service Unavailable","status":503,"detail":"Load telemetry temporarily unavailable"}`（`application/problem+json`），并带 `Retry-After: 5`。当前这次 `/api/admin/telemetry` 请求在自身响应快照之后才被记录，因此出现在下一次读取中；成功的健康检查同样会被计量，尽管请求日志不记录它们。数值为尽力而为的估计：锁竞争、序列上限或存储失败都可能导致少计，写入与保留语义见[数据库参考](database.md#负载遥测库)。
 
 隐私边界：采集器不接收、也不存储用户 ID、用户名、IP、授权令牌、request ID、原始路径、原始查询字符串或检索/标题文本；不提供按用户聚合或原始检索记录。项目也不提供 Prometheus `/metrics` 端点或 CPU profile 采集端点。开关和保留期见[配置参考](configuration.md#负载遥测设置)。
 

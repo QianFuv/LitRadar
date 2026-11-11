@@ -4,285 +4,195 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/deliverydb"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
-type rowScanner interface{ Scan(...any) error }
+var queries deliverydb.Queries
 
-const checkpointColumns = `id, workflow, db_name, status, legacy_status, snapshot_json, last_completed_run_at,
-     revision, legacy_source_hash, legacy_source_name, legacy_imported_at, created_at, updated_at`
-
-func scanCheckpointRecord(row rowScanner) (*CheckpointRecord, error) {
+func decodeCheckpointRecord(row deliverydb.DeliveryCheckpoint, err error) (*CheckpointRecord, error) {
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, storageError(err)
+	}
+	if !(Workflow(row.Workflow)).valid() {
+		return nil, &Error{Kind: "sqlite"}
+	}
+	if !(CheckpointStatus(row.Status)).valid() {
+		return nil, &Error{Kind: "sqlite"}
+	}
 	var result CheckpointRecord
-	var column0 sqlite.Integer
-	var column1 enumScanner[Workflow]
-	var column2 sqlite.Text
-	var column3 enumScanner[CheckpointStatus]
-	var column4 sqlite.OptionalText
-	var column5 sqlite.Text
-	var column6 sqlite.OptionalText
-	var column7 sqlite.Integer
-	var column8 sqlite.OptionalText
-	var column9 sqlite.OptionalText
-	var column10 optionalNumber
-	var column11 sqlite.Number
-	var column12 sqlite.Number
-	if err := row.Scan(&column0, &column1, &column2, &column3, &column4, &column5, &column6, &column7, &column8, &column9, &column10, &column11, &column12); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, storageError(err)
-	}
-	result.Id = int64(column0)
-	result.Workflow = column1.value
-	result.DbName = string(column2)
-	result.Status = column3.value
-	result.LegacyStatus = column4.Value
-	result.SnapshotJson = string(column5)
-	result.LastCompletedRunAt = column6.Value
-	result.Revision = int64(column7)
-	result.LegacySourceHash = column8.Value
-	result.LegacySourceName = column9.Value
-	result.LegacyImportedAt = column10.Value
-	result.CreatedAt = float64(column11)
-	result.UpdatedAt = float64(column12)
+	result.Id = int64(row.ID)
+	result.Workflow = Workflow(row.Workflow)
+	result.DbName = string(row.DBName)
+	result.Status = CheckpointStatus(row.Status)
+	result.LegacyStatus = (*string)(row.LegacyStatus)
+	result.SnapshotJson = string(row.SnapshotJSON)
+	result.LastCompletedRunAt = (*string)(row.LastCompletedRunAt)
+	result.Revision = int64(row.Revision)
+	result.LegacySourceHash = (*string)(row.LegacySourceHash)
+	result.LegacySourceName = (*string)(row.LegacySourceName)
+	result.LegacyImportedAt = (*float64)(row.LegacyImportedAt)
+	result.CreatedAt = float64(row.CreatedAt)
+	result.UpdatedAt = float64(row.UpdatedAt)
 	return &result, nil
 }
 
-const runColumns = `id, external_id, workflow, scope_key, db_name, trigger_kind, mode, user_id, status,
-     legacy_status, owner_id, lease_expires_at, deadline_at, cancellation_requested,
-     result_json, error_code, revision, created_at, started_at, updated_at, finished_at`
-
-func scanRunRecord(row rowScanner) (*RunRecord, error) {
+func decodeRunRecord(row deliverydb.DeliveryRun, err error) (*RunRecord, error) {
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, storageError(err)
+	}
+	if !(Workflow(row.Workflow)).valid() {
+		return nil, &Error{Kind: "sqlite"}
+	}
+	if !(TriggerKind(row.TriggerKind)).valid() {
+		return nil, &Error{Kind: "sqlite"}
+	}
+	if !(RunMode(row.Mode)).valid() {
+		return nil, &Error{Kind: "sqlite"}
+	}
+	if !(RunStatus(row.Status)).valid() {
+		return nil, &Error{Kind: "sqlite"}
+	}
 	var result RunRecord
-	var column0 sqlite.Integer
-	var column1 sqlite.Text
-	var column2 enumScanner[Workflow]
-	var column3 sqlite.Text
-	var column4 sqlite.OptionalText
-	var column5 enumScanner[TriggerKind]
-	var column6 enumScanner[RunMode]
-	var column7 sqlite.OptionalInteger
-	var column8 enumScanner[RunStatus]
-	var column9 sqlite.OptionalText
-	var column10 sqlite.OptionalText
-	var column11 optionalNumber
-	var column12 optionalNumber
-	var column13 sqlite.Integer
-	var column14 sqlite.OptionalText
-	var column15 sqlite.OptionalText
-	var column16 sqlite.Integer
-	var column17 sqlite.Number
-	var column18 optionalNumber
-	var column19 sqlite.Number
-	var column20 optionalNumber
-	if err := row.Scan(&column0, &column1, &column2, &column3, &column4, &column5, &column6, &column7, &column8, &column9, &column10, &column11, &column12, &column13, &column14, &column15, &column16, &column17, &column18, &column19, &column20); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, storageError(err)
-	}
-	result.Id = int64(column0)
-	result.ExternalId = string(column1)
-	result.Workflow = column2.value
-	result.ScopeKey = string(column3)
-	result.DbName = column4.Value
-	result.TriggerKind = column5.value
-	result.Mode = column6.value
-	result.UserId = column7.Value
-	result.Status = column8.value
-	result.LegacyStatus = column9.Value
-	result.OwnerId = column10.Value
-	result.LeaseExpiresAt = column11.Value
-	result.DeadlineAt = column12.Value
-	result.CancellationRequested = column13 != 0
-	result.ResultJson = column14.Value
-	result.ErrorCode = column15.Value
-	result.Revision = int64(column16)
-	result.CreatedAt = float64(column17)
-	result.StartedAt = column18.Value
-	result.UpdatedAt = float64(column19)
-	result.FinishedAt = column20.Value
+	result.Id = int64(row.ID)
+	result.ExternalId = string(row.ExternalID)
+	result.Workflow = Workflow(row.Workflow)
+	result.ScopeKey = string(row.ScopeKey)
+	result.DbName = (*string)(row.DBName)
+	result.TriggerKind = TriggerKind(row.TriggerKind)
+	result.Mode = RunMode(row.Mode)
+	result.UserId = (*int64)(row.UserID)
+	result.Status = RunStatus(row.Status)
+	result.LegacyStatus = (*string)(row.LegacyStatus)
+	result.OwnerId = (*string)(row.OwnerID)
+	result.LeaseExpiresAt = (*float64)(row.LeaseExpiresAt)
+	result.DeadlineAt = (*float64)(row.DeadlineAt)
+	result.CancellationRequested = row.CancellationRequested != 0
+	result.ResultJson = (*string)(row.ResultJSON)
+	result.ErrorCode = (*string)(row.ErrorCode)
+	result.Revision = int64(row.Revision)
+	result.CreatedAt = float64(row.CreatedAt)
+	result.StartedAt = (*float64)(row.StartedAt)
+	result.UpdatedAt = float64(row.UpdatedAt)
+	result.FinishedAt = (*float64)(row.FinishedAt)
 	return &result, nil
 }
 
-const itemColumns = `id, delivery_run_id, item_kind, item_key, user_id, article_id, status, legacy_status,
-     owner_id, lease_expires_at, attempt_count, result_json, error_code, revision,
-     created_at, started_at, updated_at, finished_at`
-
-func scanRunItemRecord(row rowScanner) (*RunItemRecord, error) {
+func decodeRunItemRecord(row deliverydb.DeliveryRunItem, err error) (*RunItemRecord, error) {
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, storageError(err)
+	}
+	if !(ItemKind(row.ItemKind)).valid() {
+		return nil, &Error{Kind: "sqlite"}
+	}
+	if !(ItemStatus(row.Status)).valid() {
+		return nil, &Error{Kind: "sqlite"}
+	}
 	var result RunItemRecord
-	var column0 sqlite.Integer
-	var column1 sqlite.Integer
-	var column2 enumScanner[ItemKind]
-	var column3 sqlite.Text
-	var column4 sqlite.OptionalInteger
-	var column5 sqlite.OptionalInteger
-	var column6 enumScanner[ItemStatus]
-	var column7 sqlite.OptionalText
-	var column8 sqlite.OptionalText
-	var column9 optionalNumber
-	var column10 sqlite.Integer
-	var column11 sqlite.OptionalText
-	var column12 sqlite.OptionalText
-	var column13 sqlite.Integer
-	var column14 sqlite.Number
-	var column15 optionalNumber
-	var column16 sqlite.Number
-	var column17 optionalNumber
-	if err := row.Scan(&column0, &column1, &column2, &column3, &column4, &column5, &column6, &column7, &column8, &column9, &column10, &column11, &column12, &column13, &column14, &column15, &column16, &column17); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, storageError(err)
-	}
-	result.Id = int64(column0)
-	result.DeliveryRunId = int64(column1)
-	result.ItemKind = column2.value
-	result.ItemKey = string(column3)
-	result.UserId = column4.Value
-	result.ArticleId = column5.Value
-	result.Status = column6.value
-	result.LegacyStatus = column7.Value
-	result.OwnerId = column8.Value
-	result.LeaseExpiresAt = column9.Value
-	result.AttemptCount = int64(column10)
-	result.ResultJson = column11.Value
-	result.ErrorCode = column12.Value
-	result.Revision = int64(column13)
-	result.CreatedAt = float64(column14)
-	result.StartedAt = column15.Value
-	result.UpdatedAt = float64(column16)
-	result.FinishedAt = column17.Value
+	result.Id = int64(row.ID)
+	result.DeliveryRunId = int64(row.DeliveryRunID)
+	result.ItemKind = ItemKind(row.ItemKind)
+	result.ItemKey = string(row.ItemKey)
+	result.UserId = (*int64)(row.UserID)
+	result.ArticleId = (*int64)(row.ArticleID)
+	result.Status = ItemStatus(row.Status)
+	result.LegacyStatus = (*string)(row.LegacyStatus)
+	result.OwnerId = (*string)(row.OwnerID)
+	result.LeaseExpiresAt = (*float64)(row.LeaseExpiresAt)
+	result.AttemptCount = int64(row.AttemptCount)
+	result.ResultJson = (*string)(row.ResultJSON)
+	result.ErrorCode = (*string)(row.ErrorCode)
+	result.Revision = int64(row.Revision)
+	result.CreatedAt = float64(row.CreatedAt)
+	result.StartedAt = (*float64)(row.StartedAt)
+	result.UpdatedAt = float64(row.UpdatedAt)
+	result.FinishedAt = (*float64)(row.FinishedAt)
 	return &result, nil
 }
 
-const dedupeColumns = `id, workflow, db_name, user_id, article_id, delivery_run_id, status, message_id,
-     reservation_owner, legacy_delivered_at, revision, reserved_at, delivered_at, updated_at`
-
-func scanDedupeRecord(row rowScanner) (*DedupeRecord, error) {
+func decodeDedupeRecord(row deliverydb.DeliveryDedupe, err error) (*DedupeRecord, error) {
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, storageError(err)
+	}
+	if !(Workflow(row.Workflow)).valid() {
+		return nil, &Error{Kind: "sqlite"}
+	}
+	if !(DedupeStatus(row.Status)).valid() {
+		return nil, &Error{Kind: "sqlite"}
+	}
 	var result DedupeRecord
-	var column0 sqlite.Integer
-	var column1 enumScanner[Workflow]
-	var column2 sqlite.Text
-	var column3 sqlite.Integer
-	var column4 sqlite.Integer
-	var column5 sqlite.OptionalInteger
-	var column6 enumScanner[DedupeStatus]
-	var column7 sqlite.OptionalText
-	var column8 sqlite.OptionalText
-	var column9 sqlite.OptionalText
-	var column10 sqlite.Integer
-	var column11 sqlite.Number
-	var column12 optionalNumber
-	var column13 sqlite.Number
-	if err := row.Scan(&column0, &column1, &column2, &column3, &column4, &column5, &column6, &column7, &column8, &column9, &column10, &column11, &column12, &column13); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, storageError(err)
-	}
-	result.Id = int64(column0)
-	result.Workflow = column1.value
-	result.DbName = string(column2)
-	result.UserId = int64(column3)
-	result.ArticleId = int64(column4)
-	result.DeliveryRunId = column5.Value
-	result.Status = column6.value
-	result.MessageId = column7.Value
-	result.ReservationOwner = column8.Value
-	result.LegacyDeliveredAt = column9.Value
-	result.Revision = int64(column10)
-	result.ReservedAt = float64(column11)
-	result.DeliveredAt = column12.Value
-	result.UpdatedAt = float64(column13)
+	result.Id = int64(row.ID)
+	result.Workflow = Workflow(row.Workflow)
+	result.DbName = string(row.DBName)
+	result.UserId = int64(row.UserID)
+	result.ArticleId = int64(row.ArticleID)
+	result.DeliveryRunId = (*int64)(row.DeliveryRunID)
+	result.Status = DedupeStatus(row.Status)
+	result.MessageId = (*string)(row.MessageID)
+	result.ReservationOwner = (*string)(row.ReservationOwner)
+	result.LegacyDeliveredAt = (*string)(row.LegacyDeliveredAt)
+	result.Revision = int64(row.Revision)
+	result.ReservedAt = float64(row.ReservedAt)
+	result.DeliveredAt = (*float64)(row.DeliveredAt)
+	result.UpdatedAt = float64(row.UpdatedAt)
 	return &result, nil
 }
 
-const leaseColumns = `id, workflow, db_name, delivery_run_id, owner_id, revision, acquired_at,
-     heartbeat_at, expires_at, updated_at`
-
-func scanLeaseRecord(row rowScanner) (*LeaseRecord, error) {
+func decodeLeaseRecord(row deliverydb.DeliveryLease, err error) (*LeaseRecord, error) {
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, storageError(err)
+	}
+	if !(Workflow(row.Workflow)).valid() {
+		return nil, &Error{Kind: "sqlite"}
+	}
 	var result LeaseRecord
-	var column0 sqlite.Integer
-	var column1 enumScanner[Workflow]
-	var column2 sqlite.Text
-	var column3 sqlite.OptionalInteger
-	var column4 sqlite.OptionalText
-	var column5 sqlite.Integer
-	var column6 optionalNumber
-	var column7 optionalNumber
-	var column8 optionalNumber
-	var column9 sqlite.Number
-	if err := row.Scan(&column0, &column1, &column2, &column3, &column4, &column5, &column6, &column7, &column8, &column9); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, storageError(err)
-	}
-	result.Id = int64(column0)
-	result.Workflow = column1.value
-	result.DbName = string(column2)
-	result.DeliveryRunId = column3.Value
-	result.OwnerId = column4.Value
-	result.Revision = int64(column5)
-	result.AcquiredAt = column6.Value
-	result.HeartbeatAt = column7.Value
-	result.ExpiresAt = column8.Value
-	result.UpdatedAt = float64(column9)
+	result.Id = int64(row.ID)
+	result.Workflow = Workflow(row.Workflow)
+	result.DbName = string(row.DBName)
+	result.DeliveryRunId = (*int64)(row.DeliveryRunID)
+	result.OwnerId = (*string)(row.OwnerID)
+	result.Revision = int64(row.Revision)
+	result.AcquiredAt = (*float64)(row.AcquiredAt)
+	result.HeartbeatAt = (*float64)(row.HeartbeatAt)
+	result.ExpiresAt = (*float64)(row.ExpiresAt)
+	result.UpdatedAt = float64(row.UpdatedAt)
 	return &result, nil
 }
 
-type storedEnum interface {
-	~string
-	valid() bool
-}
-type enumScanner[T storedEnum] struct{ value T }
-
-func (scanner *enumScanner[T]) Scan(source any) error {
-	var text sqlite.Text
-	if err := text.Scan(source); err != nil {
-		return err
-	}
-	scanner.value = T(text)
-	if !scanner.value.valid() {
-		return &Error{Kind: "sqlite"}
-	}
-	return nil
-}
-
-type optionalNumber struct{ Value *float64 }
-
-func (number *optionalNumber) Scan(source any) error {
-	if source == nil {
-		number.Value = nil
-		return nil
-	}
-	var parsed sqlite.Number
-	if err := parsed.Scan(source); err != nil {
-		return err
-	}
-	value := float64(parsed)
-	number.Value = &value
-	return nil
+func scanPreparedItem(scanner *sql.Row) (*RunItemRecord, error) {
+	var row deliverydb.DeliveryRunItem
+	err := scanner.Scan(&row.ID, &row.DeliveryRunID, &row.ItemKind, &row.ItemKey, &row.UserID, &row.ArticleID, &row.Status, &row.LegacyStatus, &row.OwnerID, &row.LeaseExpiresAt, &row.AttemptCount, &row.ResultJSON, &row.ErrorCode, &row.Revision, &row.CreatedAt, &row.StartedAt, &row.UpdatedAt, &row.FinishedAt)
+	return decodeRunItemRecord(row, err)
 }
 
 func loadRunRecord(ctx context.Context, connection *sql.Conn, id int64) (*RunRecord, error) {
-	return scanRunRecord(connection.QueryRowContext(ctx, "SELECT "+runColumns+" FROM delivery_runs WHERE id=?", id))
+	return decodeRunRecord(queries.Run(ctx, connection, deliverydb.RunParams{ID: sqlite.Integer(id)}))
 }
-
 func loadRunItemRecord(ctx context.Context, connection *sql.Conn, id int64) (*RunItemRecord, error) {
-	return scanRunItemRecord(connection.QueryRowContext(ctx, "SELECT "+itemColumns+" FROM delivery_run_items WHERE id=?", id))
+	return decodeRunItemRecord(queries.Item(ctx, connection, deliverydb.ItemParams{ID: sqlite.Integer(id)}))
 }
-
 func loadDedupeRecord(ctx context.Context, connection *sql.Conn, id int64) (*DedupeRecord, error) {
-	return scanDedupeRecord(connection.QueryRowContext(ctx, "SELECT "+dedupeColumns+" FROM delivery_dedupe WHERE id=?", id))
+	return decodeDedupeRecord(queries.DedupeByID(ctx, connection, deliverydb.DedupeByIDParams{ID: sqlite.Integer(id)}))
 }
-
 func loadCheckpointRecord(ctx context.Context, connection *sql.Conn, workflow Workflow, dbName string) (*CheckpointRecord, error) {
-	return scanCheckpointRecord(connection.QueryRowContext(ctx, "SELECT "+checkpointColumns+" FROM delivery_checkpoints WHERE workflow=? AND db_name=?", workflow, dbName))
+	return decodeCheckpointRecord(queries.Checkpoint(ctx, connection, deliverydb.CheckpointParams{Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName)}))
 }
-
 func loadLeaseRecord(ctx context.Context, connection *sql.Conn, workflow Workflow, dbName string) (*LeaseRecord, error) {
-	return scanLeaseRecord(connection.QueryRowContext(ctx, "SELECT "+leaseColumns+" FROM delivery_leases WHERE workflow=? AND db_name=?", workflow, dbName))
+	return decodeLeaseRecord(queries.Lease(ctx, connection, deliverydb.LeaseParams{Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName)}))
 }

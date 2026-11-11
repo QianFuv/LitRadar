@@ -3,6 +3,9 @@ package delivery
 import (
 	"context"
 	"database/sql"
+
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/deliverydb"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
 // LeaseOutcome distinguishes a newly acquired lease from an unexpired owner.
@@ -16,7 +19,7 @@ func (repository *Repository) LoadLease(ctx context.Context, workflow Workflow, 
 	if err := validateDbName(dbName); err != nil {
 		return nil, err
 	}
-	return scanLeaseRecord(repository.database.QueryRowContext(ctx, "SELECT "+leaseColumns+" FROM delivery_leases WHERE workflow=? AND db_name=?", workflow, dbName))
+	return decodeLeaseRecord(queries.Lease(ctx, repository.database, deliverydb.LeaseParams{Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName)}))
 }
 
 func validateLeaseScope(dbName string, runId int64, owner string) error {
@@ -54,9 +57,9 @@ func (repository *Repository) AcquireLease(ctx context.Context, workflow Workflo
 			return err
 		}
 		if existing == nil {
-			_, err = connection.ExecContext(ctx, `INSERT INTO delivery_leases(workflow,db_name,delivery_run_id,owner_id,revision,acquired_at,heartbeat_at,expires_at,updated_at) VALUES(?,?,?,?,0,?,?,?,?)`, workflow, dbName, runId, owner, now, now, now+seconds, now)
+			_, err = queries.CreateLease(ctx, connection, deliverydb.CreateLeaseParams{Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName), DeliveryRunID: new(sqlite.Integer(runId)), OwnerID: new(sqlite.Text(owner)), AcquiredAt: new(sqlite.Number(now)), HeartbeatAt: new(sqlite.Number(now)), ExpiresAt: new(sqlite.Number(now + seconds)), UpdatedAt: sqlite.Number(now)})
 		} else if existing.OwnerId == nil || existing.ExpiresAt != nil && *existing.ExpiresAt <= now {
-			err = executeCas(ctx, connection, `UPDATE delivery_leases SET delivery_run_id=?,owner_id=?,revision=revision+1,acquired_at=?,heartbeat_at=?,expires_at=?,updated_at=? WHERE id=? AND revision=?`, runId, owner, now, now, now+seconds, now, existing.Id, existing.Revision)
+			err = checkCAS(queries.AcquireLease(ctx, connection, deliverydb.AcquireLeaseParams{DeliveryRunID: new(sqlite.Integer(runId)), OwnerID: new(sqlite.Text(owner)), AcquiredAt: new(sqlite.Number(now)), HeartbeatAt: new(sqlite.Number(now)), ExpiresAt: new(sqlite.Number(now + seconds)), UpdatedAt: sqlite.Number(now), ID: sqlite.Integer(existing.Id), Revision: sqlite.Integer(existing.Revision)}))
 		} else {
 			outcome = LeaseOutcome{"busy", existing}
 			return nil
@@ -81,7 +84,7 @@ func (repository *Repository) RenewLease(ctx context.Context, workflow Workflow,
 	}
 	var record *LeaseRecord
 	err := repository.immediate(ctx, func(connection *sql.Conn) error {
-		if err := executeCas(ctx, connection, `UPDATE delivery_leases SET heartbeat_at=?1,expires_at=?2,updated_at=?3,revision=revision+1 WHERE workflow=?4 AND db_name=?5 AND delivery_run_id=?6 AND owner_id=?7 AND revision=?8 AND expires_at>?1`, now, now+seconds, now, workflow, dbName, runId, owner, revision); err != nil {
+		if err := checkCAS(queries.RenewLease(ctx, connection, deliverydb.RenewLeaseParams{HeartbeatAt: new(sqlite.Number(now)), ExpiresAt: new(sqlite.Number(now + seconds)), UpdatedAt: sqlite.Number(now), Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName), DeliveryRunID: new(sqlite.Integer(runId)), OwnerID: new(sqlite.Text(owner)), Revision: sqlite.Integer(revision)})); err != nil {
 			return err
 		}
 		var err error
@@ -112,7 +115,7 @@ func (repository *Repository) ReleaseLease(ctx context.Context, workflow Workflo
 }
 
 func releaseLease(ctx context.Context, connection *sql.Conn, workflow Workflow, dbName string, runId int64, owner string, revision int64, now float64) error {
-	return executeCas(ctx, connection, `UPDATE delivery_leases SET delivery_run_id=NULL,owner_id=NULL,acquired_at=NULL,heartbeat_at=NULL,expires_at=NULL,updated_at=?,revision=revision+1 WHERE workflow=? AND db_name=? AND delivery_run_id=? AND owner_id=? AND revision=?`, now, workflow, dbName, runId, owner, revision)
+	return checkCAS(queries.ReleaseLease(ctx, connection, deliverydb.ReleaseLeaseParams{UpdatedAt: sqlite.Number(now), Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName), DeliveryRunID: new(sqlite.Integer(runId)), OwnerID: new(sqlite.Text(owner)), Revision: sqlite.Integer(revision)}))
 }
 
 // ReconcileAfterTakeover quarantines all sending work before releasing safe pre-send reservations.
@@ -138,18 +141,8 @@ func (repository *Repository) ReconcileAfterTakeover(ctx context.Context, runId 
 		if run.OwnerId == nil || *run.OwnerId != owner || run.Revision != revision || !run.Status.IsActive() || run.LeaseExpiresAt == nil || *run.LeaseExpiresAt <= now {
 			return ErrConflict
 		}
-		steps := []struct {
-			query string
-			args  []any
-			count *int
-		}{
-			{`UPDATE delivery_dedupe SET status='unknown',reservation_owner=NULL,delivered_at=?1,updated_at=?2,revision=revision+1 WHERE delivery_run_id=?3 AND status='reserved' AND user_id IN (SELECT user_id FROM delivery_run_items WHERE delivery_run_id=?3 AND item_kind='subscriber' AND status='sending' AND user_id IS NOT NULL)`, []any{now, now, runId}, &result.UnknownDedupeCount},
-			{`UPDATE delivery_run_items SET status='unknown',owner_id=NULL,lease_expires_at=NULL,error_code='abandoned_sending',updated_at=?,finished_at=?,revision=revision+1 WHERE delivery_run_id=? AND status='sending'`, []any{now, now, runId}, &result.UnknownItemCount},
-			{`DELETE FROM delivery_dedupe WHERE delivery_run_id=? AND status='reserved'`, []any{runId}, &result.ReleasedDedupeCount},
-			{`UPDATE delivery_run_items SET status='pending',owner_id=NULL,lease_expires_at=NULL,updated_at=?,revision=revision+1 WHERE delivery_run_id=? AND status='claimed'`, []any{now, runId}, &result.ResetItemCount},
-		}
-		for _, step := range steps {
-			executed, err := connection.ExecContext(ctx, step.query, step.args...)
+		{
+			executed, err := queries.QuarantineDedupe(ctx, connection, deliverydb.QuarantineDedupeParams{DeliveredAt: new(sqlite.Number(now)), UpdatedAt: sqlite.Number(now), DeliveryRunID: new(sqlite.Integer(runId))})
 			if err != nil {
 				return err
 			}
@@ -157,7 +150,40 @@ func (repository *Repository) ReconcileAfterTakeover(ctx context.Context, runId 
 			if err != nil {
 				return err
 			}
-			*step.count = int(count)
+			result.UnknownDedupeCount = int(count)
+		}
+		{
+			executed, err := queries.QuarantineItems(ctx, connection, deliverydb.QuarantineItemsParams{UpdatedAt: sqlite.Number(now), FinishedAt: new(sqlite.Number(now)), DeliveryRunID: sqlite.Integer(runId)})
+			if err != nil {
+				return err
+			}
+			count, err := executed.RowsAffected()
+			if err != nil {
+				return err
+			}
+			result.UnknownItemCount = int(count)
+		}
+		{
+			executed, err := queries.ReleaseDedupe(ctx, connection, deliverydb.ReleaseDedupeParams{DeliveryRunID: new(sqlite.Integer(runId))})
+			if err != nil {
+				return err
+			}
+			count, err := executed.RowsAffected()
+			if err != nil {
+				return err
+			}
+			result.ReleasedDedupeCount = int(count)
+		}
+		{
+			executed, err := queries.ResetClaimedItems(ctx, connection, deliverydb.ResetClaimedItemsParams{UpdatedAt: sqlite.Number(now), DeliveryRunID: sqlite.Integer(runId)})
+			if err != nil {
+				return err
+			}
+			count, err := executed.RowsAffected()
+			if err != nil {
+				return err
+			}
+			result.ResetItemCount = int(count)
 		}
 		return nil
 	})

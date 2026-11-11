@@ -41,9 +41,7 @@ func trackingFixture(t *testing.T) (*trackingHandlers, *authHandlers, *http.Serv
 	t.Cleanup(codec.Close)
 	handlers := &trackingHandlers{repository: repository, favorites: favorites.New(auth.repository), settings: settings.New(auth.repository, codec), codec: codec, authenticator: auth.authenticator, pool: auth.pool}
 	handlers.storage.IndexDir = filepath.Join(t.TempDir(), "index")
-	for _, route := range handlers.routes() {
-		router.HandleFunc(route.operation.Method+" "+route.operation.Path, route.handler)
-	}
+	registerFixtureRoutes(t, router, handlers.routes())
 	return handlers, auth, router, token, member
 }
 
@@ -85,9 +83,9 @@ func TestTrackingValidationOrderAndDatabaseNormalization(t *testing.T) {
 		status       int
 		detail       string
 	}{
-		{`{"enabled":null}`, "", 422, "expected a boolean"},
-		{`{"ai_retry_attempts":0}`, "", 401, "Authentication required"},
-		{`{"ai_retry_attempts":0}`, token, 400, "ai_retry_attempts must be between"},
+		{`{"enabled":null}`, "", 401, "Authentication required"},
+		{`{"ai_retry_attempts":0}`, "", 422, "body.ai_retry_attempts"},
+		{`{"ai_retry_attempts":0}`, token, 422, "body.ai_retry_attempts"},
 		{`{"selected_databases":["absent","absent"],"delivery_method":"bad"}`, token, 400, "Unknown databases: absent.sqlite"},
 		{`{"delivery_method":" folder "}`, token, 400, "delivery_method must be one of"},
 		{`{"enabled":false}`, token, 400, "A tracking folder is required when"},

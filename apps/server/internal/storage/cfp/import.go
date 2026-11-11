@@ -7,16 +7,18 @@ import (
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/cfp"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/cfpdb"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
 // insertNotices preserves source order while reusing the insert statement for multi-notice publications.
+var queries cfpdb.Queries
+
 func insertNotices(ctx context.Context, connection *sql.Conn, key, sourceKey string, notices []preparedNotice) error {
-	const insertNotice = `INSERT INTO cfp_notices(journal_key,notice_key,source_key,source_json,normalized_json,display_order) VALUES(?,?,?,?,?,?)`
 	var statement *sql.Stmt
 	if len(notices) > 1 {
 		var err error
-		statement, err = connection.PrepareContext(ctx, insertNotice)
+		statement, err = connection.PrepareContext(ctx, cfpdb.InsertNotices)
 		if err != nil {
 			return err
 		}
@@ -32,7 +34,7 @@ func insertNotices(ctx context.Context, connection *sql.Conn, key, sourceKey str
 			return err
 		}
 		if statement == nil {
-			_, err = connection.ExecContext(ctx, insertNotice, key, pair.notice.Id, sourceKey, source, notice, order)
+			_, err = queries.InsertNotices(ctx, connection, cfpdb.InsertNoticesParams{JournalKey: sqlite.Text(key), NoticeKey: sqlite.Text(pair.notice.Id), SourceKey: sqlite.Text(sourceKey), SourceJSON: sqlite.Text(source), NormalizedJSON: sqlite.Text(notice), DisplayOrder: sqlite.Integer(order)})
 		} else {
 			_, err = statement.ExecContext(ctx, key, pair.notice.Id, sourceKey, source, notice, order)
 		}
@@ -50,15 +52,15 @@ func emptyFields(journal *preparedJournal) (*string, *string) {
 }
 func insertJournal(ctx context.Context, connection *sql.Conn, key, sourceKey string, journal *preparedJournal) error {
 	url, statement := emptyFields(journal)
-	if _, err := connection.ExecContext(ctx, `INSERT INTO cfp_journals(journal_key,title,checked_on,source_url,source_statement) VALUES(?,?,?,?,?)`, key, journal.title, journal.checkedOn, url, statement); err != nil {
+	if _, err := queries.InsertJournal(ctx, connection, cfpdb.InsertJournalParams{JournalKey: sqlite.Text(key), Title: sqlite.Text(journal.title), CheckedOn: sqlite.Text(journal.checkedOn), SourceURL: (*sqlite.Text)(url), SourceStatement: (*sqlite.Text)(statement)}); err != nil {
 		return err
 	}
 	for _, alias := range journal.aliases {
-		if _, err := connection.ExecContext(ctx, `INSERT INTO cfp_journal_aliases(catalog_id,journal_key) VALUES(?,?)`, alias, key); err != nil {
+		if _, err := queries.InsertAlias(ctx, connection, cfpdb.InsertAliasParams{CatalogID: sqlite.Text(alias), JournalKey: sqlite.Text(key)}); err != nil {
 			return err
 		}
 	}
-	if _, err := connection.ExecContext(ctx, `INSERT INTO cfp_source_journals(source_key,journal_key) VALUES(?,?)`, sourceKey, key); err != nil {
+	if _, err := queries.InsertSourceJournal(ctx, connection, cfpdb.InsertSourceJournalParams{SourceKey: sqlite.Text(sourceKey), JournalKey: sqlite.Text(key)}); err != nil {
 		return err
 	}
 	return insertNotices(ctx, connection, key, sourceKey, journal.notices)
@@ -78,7 +80,14 @@ func (repository *Repository) ImportPrepared(ctx context.Context, seedId string,
 	result := ImportResult{Journals: uint64(len(seed.journals)), Notices: seed.notices, ContentHash: seed.digest}
 	err := repository.transaction(ctx, true, func(connection *sql.Conn) error {
 		var previous sqlite.Text
-		err := connection.QueryRowContext(ctx, `SELECT content_hash FROM cfp_seed_imports WHERE seed_id=?`, seedId).Scan(&previous)
+		err := func() error {
+			queryResult, err := queries.SeedHash(ctx, connection, cfpdb.SeedHashParams{SeedID: sqlite.Text(seedId)})
+			if err != nil {
+				return err
+			}
+			previous = queryResult
+			return nil
+		}()
 		if err == nil {
 			if string(previous) != seed.digest {
 				return invalid("CFP seed identity has different content; use a new import identity")
@@ -105,14 +114,14 @@ func (repository *Repository) ImportPrepared(ctx context.Context, seedId string,
 			} else if len(journal.notices) > 0 {
 				sourceUrl = journal.notices[0].source.SourceUrl
 			}
-			if _, err = connection.ExecContext(ctx, `INSERT INTO cfp_sources(source_key,url,parser_version,capture,capture_format,content_hash,status) VALUES(?,?,?,?,'seed_json',?,'snapshot')`, sourceKey, sourceUrl, domain.ParserVersion, capture, digest([]byte(capture))); err != nil {
+			if _, err = queries.InsertSource(ctx, connection, cfpdb.InsertSourceParams{SourceKey: sqlite.Text(sourceKey), URL: sqlite.Text(sourceUrl), ParserVersion: sqlite.Integer(domain.ParserVersion), Capture: sqlite.Text(capture), ContentHash: sqlite.Text(digest([]byte(capture)))}); err != nil {
 				return err
 			}
 			if err = insertJournal(ctx, connection, key, sourceKey, journal); err != nil {
 				return err
 			}
 		}
-		_, err = connection.ExecContext(ctx, `INSERT INTO cfp_seed_imports(seed_id,format_version,content_hash,parser_version,journal_count,notice_count) VALUES(?,1,?,?,?,?)`, seedId, seed.digest, domain.ParserVersion, result.Journals, result.Notices)
+		_, err = queries.RecordSeed(ctx, connection, cfpdb.RecordSeedParams{SeedID: sqlite.Text(seedId), ContentHash: sqlite.Text(seed.digest), ParserVersion: sqlite.Integer(domain.ParserVersion), JournalCount: sqlite.Integer(result.Journals), NoticeCount: sqlite.Integer(result.Notices)})
 		if err == nil {
 			result.DidImport = true
 		}

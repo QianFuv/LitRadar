@@ -1,16 +1,16 @@
 package api
 
 import (
-	"context"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"net/http"
+	"encoding/json"
+
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	acquisition "github.com/QianFuv/LitRadar/apps/server/internal/cfp"
 	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
@@ -18,7 +18,7 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
 	metadata "github.com/QianFuv/LitRadar/apps/server/internal/domain/storage"
 	"github.com/QianFuv/LitRadar/apps/server/internal/index"
-	"github.com/QianFuv/LitRadar/apps/server/internal/openapi"
+
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/executor"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/cfp"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
@@ -62,49 +62,51 @@ func (counts cfpStateCounts) MarshalJSON() ([]byte, error) {
 }
 
 type cfpJournalSummary struct {
-	CatalogId       string         `json:"catalogId"`
-	CatalogAliases  []string       `json:"catalogAliases"`
-	AllIssns        []string       `json:"allIssns"`
-	TitleAliases    []string       `json:"titleAliases"`
-	Title           string         `json:"title"`
-	Area            *string        `json:"area"`
-	Coverage        string         `json:"coverage"`
-	CheckedOn       *string        `json:"checkedOn"`
-	SourceUrl       *string        `json:"sourceUrl"`
-	SourceStatement *string        `json:"sourceStatement"`
-	NoticeCount     int            `json:"noticeCount"`
-	CurrentCount    int            `json:"currentCount"`
-	StateCounts     cfpStateCounts `json:"stateCounts"`
-	CanRefresh      bool           `json:"canRefresh"`
-	RefreshStatus   string         `json:"refreshStatus"`
-	LastAttempt     *int64         `json:"lastAttempt"`
-	LastSuccess     *int64         `json:"lastSuccess"`
-	LastError       *string        `json:"lastError"`
+	CatalogId       string         `json:"catalogId" nullable:"false"`
+	CatalogAliases  []string       `json:"catalogAliases" nullable:"false"`
+	AllIssns        []string       `json:"allIssns" nullable:"false"`
+	TitleAliases    []string       `json:"titleAliases" nullable:"false"`
+	Title           string         `json:"title" nullable:"false"`
+	Area            *string        `json:"area" required:"false" nullable:"true"`
+	Coverage        string         `json:"coverage" nullable:"false" enum:"adapted,unadapted"`
+	CheckedOn       *string        `json:"checkedOn" required:"false" nullable:"true"`
+	SourceUrl       *string        `json:"sourceUrl" required:"false" nullable:"true"`
+	SourceStatement *string        `json:"sourceStatement" required:"false" nullable:"true"`
+	NoticeCount     int            `json:"noticeCount" nullable:"false" minimum:"0" format:"int64"`
+	CurrentCount    int            `json:"currentCount" nullable:"false" minimum:"0" format:"int64"`
+	StateCounts     cfpStateCounts `json:"stateCounts" nullable:"false"`
+	CanRefresh      bool           `json:"canRefresh" nullable:"false"`
+	RefreshStatus   string         `json:"refreshStatus" nullable:"false" enum:"snapshot,success,failed,refreshing,unsupported,unadapted"`
+	LastAttempt     *int64         `json:"lastAttempt" required:"false" nullable:"true" format:"int64"`
+	LastSuccess     *int64         `json:"lastSuccess" required:"false" nullable:"true" format:"int64"`
+	LastError       *string        `json:"lastError" required:"false" nullable:"true"`
 }
 
 type cfpCatalogSummary struct {
-	Journals        int `json:"journals"`
-	AdaptedJournals int `json:"adaptedJournals"`
-	Notices         int `json:"notices"`
-	CurrentNotices  int `json:"currentNotices"`
+	Journals        int `json:"journals" nullable:"false" minimum:"0" format:"int64"`
+	AdaptedJournals int `json:"adaptedJournals" nullable:"false" minimum:"0" format:"int64"`
+	Notices         int `json:"notices" nullable:"false" minimum:"0" format:"int64"`
+	CurrentNotices  int `json:"currentNotices" nullable:"false" minimum:"0" format:"int64"`
 }
 type cfpCatalogResponse struct {
-	Database    string              `json:"database"`
-	EvaluatedAt int64               `json:"evaluatedAt"`
-	Summary     cfpCatalogSummary   `json:"summary"`
-	Items       []cfpJournalSummary `json:"items"`
+	Database    string              `json:"database" nullable:"false"`
+	EvaluatedAt int64               `json:"evaluatedAt" nullable:"false" format:"int64"`
+	Summary     cfpCatalogSummary   `json:"summary" nullable:"false"`
+	Items       []cfpJournalSummary `json:"items" nullable:"false"`
 }
-type cfpNoticeWire domain.Notice
+
+// NoticeWire retains notice fields without promoting its standalone JSON encoder.
+type NoticeWire domain.Notice
 type cfpNoticeView struct {
-	cfpNoticeWire
-	State         domain.State `json:"state"`
-	EntryDeadline *domain.Date `json:"entryDeadline"`
+	NoticeWire
+	State         domain.State `json:"state" nullable:"false" enum:"open,upcoming,closed,historical,invitation_only,undated,uncertain"`
+	EntryDeadline *domain.Date `json:"entryDeadline" required:"false" nullable:"false" allowNull:"true"`
 }
 type cfpNoticePage struct {
-	Journal     cfpJournalSummary `json:"journal"`
-	EvaluatedAt int64             `json:"evaluatedAt"`
-	Items       []cfpNoticeView   `json:"items"`
-	Page        metadata.PageMeta `json:"page"`
+	Journal     cfpJournalSummary `json:"journal" nullable:"false"`
+	EvaluatedAt int64             `json:"evaluatedAt" nullable:"false" format:"int64"`
+	Items       []cfpNoticeView   `json:"items" nullable:"false"`
+	Page        metadata.PageMeta `json:"page" nullable:"false"`
 }
 type cfpCursor struct {
 	Database      string `json:"database"`
@@ -114,130 +116,6 @@ type cfpCursor struct {
 	EvaluatedAt   int64  `json:"evaluated_at"`
 	Position      uint64 `json:"position"`
 	Order         string `json:"order"`
-}
-
-func (handlers *cfpHandlers) routes() []route {
-	return []route{
-		{openapi.Operation{Method: "GET", Path: "/api/cfp/journals", Id: "list_cfp_journals"}, handlers.catalog},
-		{openapi.Operation{Method: "GET", Path: "/api/cfp/journals/{catalog_id}/notices", Id: "list_cfp_notices"}, handlers.notices},
-	}
-}
-
-func (handlers *cfpHandlers) catalog(writer http.ResponseWriter, request *http.Request) {
-	query, failure := extractQuery(request.URL.RawQuery, map[string]queryKind{"db": queryText, "q": queryText})
-	if failure == nil && query.text("db") == nil {
-		failure = queryRejection("missing field `db`")
-	}
-	if failure != nil {
-		failure.write(writer)
-		return
-	}
-	if _, failure = handlers.authenticator.requireUser(request); failure != nil {
-		failure.write(writer)
-		return
-	}
-	if search := query.text("q"); search != nil && utf8.RuneCountInString(*search) > 256 {
-		badRequest("CFP journal search exceeds 256 characters").write(writer)
-		return
-	}
-	handlers.respond(writer, request, func() (any, *apiError) {
-		entries, failure := handlers.catalogMembers(*query.text("db"))
-		if failure != nil {
-			return nil, failure
-		}
-		snapshots, err := handlers.repository.LoadJournals(context.WithoutCancel(request.Context()))
-		if err != nil {
-			return nil, internalError()
-		}
-		return cfpCatalog(*query.text("db"), query.text("q"), entries, snapshots, time.Now().Unix())
-	})
-}
-
-// notices preserves path, query and authentication admission before pagination validation.
-func (handlers *cfpHandlers) notices(writer http.ResponseWriter, request *http.Request) {
-	catalogId := request.PathValue("catalog_id")
-	if !utf8.ValidString(catalogId) {
-		(&apiError{status: 400, detail: "Invalid URL: Invalid UTF-8 in `catalog_id`", isPlain: true}).write(writer)
-		return
-	}
-	query, failure := extractQuery(request.URL.RawQuery, map[string]queryKind{"db": queryText, "include_closed": queryBoolean, "limit": queryUnsigned, "cursor": queryText})
-	if failure == nil && query.text("db") == nil {
-		failure = queryRejection("missing field `db`")
-	}
-	if failure != nil {
-		failure.write(writer)
-		return
-	}
-	if _, failure = handlers.authenticator.requireUser(request); failure != nil {
-		failure.write(writer)
-		return
-	}
-	limit, cursor, failure := cfpPagination(query)
-	if failure != nil {
-		failure.write(writer)
-		return
-	}
-	includeClosed, _ := query["include_closed"].(bool)
-	handlers.respond(writer, request, func() (any, *apiError) {
-		entries, failure := handlers.catalogMembers(*query.text("db"))
-		if failure != nil {
-			return nil, failure
-		}
-		var entry *sources.JournalCatalogEntry
-		for index := range entries {
-			if entries[index].CatalogId == catalogId || slices.Contains(entries[index].CatalogAliases, catalogId) {
-				entry = &entries[index]
-				break
-			}
-		}
-		if entry == nil {
-			return nil, &apiError{status: 404, detail: "CFP journal catalog member not found"}
-		}
-		catalogIds := append([]string{entry.CatalogId}, entry.CatalogAliases...)
-		snapshots, err := handlers.repository.LoadJournalsForCatalogIds(context.WithoutCancel(request.Context()), catalogIds)
-		if err != nil {
-			return nil, internalError()
-		}
-		snapshot, failure := cfpFindSnapshot(*entry, snapshots)
-		if failure != nil {
-			return nil, failure
-		}
-		return cfpPage(handlers.codec, *query.text("db"), *entry, snapshot, includeClosed, cursor, limit, time.Now().Unix())
-	})
-}
-
-// cfpPagination validates the limit before bounding the encrypted cursor size.
-func cfpPagination(query typedQuery) (uint64, *string, *apiError) {
-	limit, exists := query["limit"].(uint64)
-	if !exists {
-		limit = 50
-	}
-	if limit < 1 || limit > 200 {
-		return limit, nil, badRequest("CFP page limit must be between 1 and 200")
-	}
-	cursor := query.text("cursor")
-	if cursor != nil && len(*cursor) > 4096 {
-		return limit, cursor, cfpCursorError()
-	}
-	return limit, cursor, nil
-}
-
-func (handlers *cfpHandlers) respond(writer http.ResponseWriter, request *http.Request, operation func() (any, *apiError)) {
-	type result struct {
-		payload any
-		failure *apiError
-	}
-	value, err := executor.Run(request.Context(), handlers.pool, func() (result, error) {
-		payload, failure := operation()
-		return result{payload, failure}, nil
-	})
-	if err != nil {
-		mapExecutorError(err).write(writer)
-	} else if value.failure != nil {
-		value.failure.write(writer)
-	} else {
-		writeResponse(writer, value.payload)
-	}
 }
 
 func (handlers *cfpHandlers) catalogMembers(database string) ([]sources.JournalCatalogEntry, *apiError) {
@@ -463,18 +341,24 @@ func decodeCfpCursor(codec *secrets.Codec, ciphertext string) (*cfpCursor, *apiE
 	if err != nil {
 		return nil, cfpCursorError()
 	}
-	kind := structBody("NoticeCursor", bodyFieldOf("database", stringBody), bodyFieldOf("catalog_id", stringBody), bodyFieldOf("include_closed", boolBody), bodyFieldOf("revision", stringBody), bodyFieldOf("evaluated_at", integerBody), bodyFieldOf("position", bodyType{kind: "unsigned"}), bodyFieldOf("order", stringBody))
-	kind.deniesUnknown = true
-	scanner := bodyScanner{body: []byte(plaintext)}
-	value, err := scanner.typed(kind, "", 0)
-	if err != nil || scanner.peek() != 0 || scanner.position != len(scanner.body) {
+	fields, err := storedFields(plaintext, []string{"database", "catalog_id", "include_closed", "revision", "evaluated_at", "position", "order"})
+	if err != nil || len(fields) != 7 {
 		return nil, cfpCursorError()
 	}
-	fields := value.(map[string]any)
-	return &cfpCursor{fields["database"].(string), fields["catalog_id"].(string), fields["include_closed"].(bool), fields["revision"].(string), fields["evaluated_at"].(int64), fields["position"].(uint64), fields["order"].(string)}, nil
+	result := cfpCursor{}
+	targets := map[string]any{"database": &result.Database, "catalog_id": &result.CatalogId, "include_closed": &result.IncludeClosed, "revision": &result.Revision, "evaluated_at": &result.EvaluatedAt, "position": &result.Position, "order": &result.Order}
+	for name, target := range targets {
+		raw, exists := fields[name]
+		if !exists || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return nil, cfpCursorError()
+		}
+		if err := json.Unmarshal(raw, target); err != nil {
+			return nil, cfpCursorError()
+		}
+	}
+	return &result, nil
 }
 
-// cfpPage binds pagination to catalog revision, filter and frozen evaluation time.
 func cfpPage(codec *secrets.Codec, database string, entry sources.JournalCatalogEntry, snapshot *storage.JournalSnapshot, includeClosed bool, ciphertext *string, limit uint64, now int64) (*cfpNoticePage, *apiError) {
 	revision, err := cfpRevision(entry, snapshot)
 	if err != nil {
@@ -537,7 +421,7 @@ func cfpNoticeItems(snapshot *storage.JournalSnapshot, includeClosed bool, evalu
 	for _, notice := range snapshot.Notices {
 		state := notice.State(time.Unix(evaluatedAt, 0))
 		if includeClosed || !state.IsArchived() {
-			items = append(items, cfpNoticeView{cfpNoticeWire(notice), state, notice.EntryDeadline()})
+			items = append(items, cfpNoticeView{NoticeWire(notice), state, notice.EntryDeadline()})
 		}
 	}
 	return items

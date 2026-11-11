@@ -14,6 +14,7 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/storage"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/favoritesdb"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
@@ -67,7 +68,14 @@ func (repository *Repository) LoadCitationSnapshot(ctx context.Context, owner id
 	result := CitationSnapshot{References: []Reference{}}
 	err := repository.readSnapshot(ctx, func(connection *sql.Conn) error {
 		var name storage.Text
-		err := connection.QueryRowContext(ctx, "SELECT name FROM folders WHERE id=? AND user_id=?", folder, owner).Scan(&name)
+		err := func() error {
+			queryResult, err := queries.FolderName(ctx, connection, favoritesdb.FolderNameParams{ID: storage.Integer(folder), UserID: storage.Integer(owner)})
+			if err != nil {
+				return err
+			}
+			name = storage.Text(queryResult)
+			return nil
+		}()
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrFolderNotFound
 		}
@@ -79,20 +87,14 @@ func (repository *Repository) LoadCitationSnapshot(ctx context.Context, owner id
 		if limit < uint64(math.MaxInt64) {
 			queryLimit = int64(limit + 1)
 		}
-		rows, err := connection.QueryContext(ctx, "SELECT article_id,db_name FROM favorites WHERE user_id=? AND folder_id=? ORDER BY created_at DESC,id DESC LIMIT ?", owner, folder, queryLimit)
+		rows, err := queries.CitationReferences(ctx, connection, favoritesdb.CitationReferencesParams{UserID: storage.Integer(owner), FolderID: storage.Integer(folder), Limit: queryLimit})
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-		for rows.Next() {
-			var id storage.Integer
-			var name storage.Text
-			if err := rows.Scan(&id, &name); err != nil {
-				return err
-			}
-			result.References = append(result.References, Reference{identity.Id(id), string(name)})
+		for _, row := range rows {
+			result.References = append(result.References, Reference{identity.Id(row.ArticleID), string(row.DBName)})
 		}
-		return rows.Err()
+		return nil
 	})
 	if err != nil {
 		return CitationSnapshot{}, err

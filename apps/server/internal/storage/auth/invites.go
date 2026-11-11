@@ -7,6 +7,7 @@ import (
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/authdb"
 )
 
 // IssueInvite requires explicit rotation even when the previous unrevoked invite is expired or exhausted.
@@ -17,7 +18,14 @@ func (repository *Repository) IssueInvite(ctx context.Context, user identity.Id,
 	var invite domain.InviteRow
 	err := repository.Immediate(ctx, false, func(connection *sql.Conn) error {
 		var previous int64
-		lookup := connection.QueryRowContext(ctx, "SELECT id FROM invite_codes WHERE created_by=? AND revoked_at IS NULL", user).Scan(&previous)
+		lookup := func() error {
+			queryResult, err := queries.ActiveInviteID(ctx, connection, authdb.ActiveInviteIDParams{CreatedBy: new(int64(user))})
+			if err != nil {
+				return err
+			}
+			previous = queryResult
+			return nil
+		}()
 		if lookup != nil && !errors.Is(lookup, sql.ErrNoRows) {
 			return lookup
 		}
@@ -25,11 +33,11 @@ func (repository *Repository) IssueInvite(ctx context.Context, user identity.Id,
 			if !isRotation {
 				return domain.ErrActiveInvite
 			}
-			if _, err := connection.ExecContext(ctx, "UPDATE invite_codes SET revoked_at=MAX(?,created_at) WHERE created_by=? AND revoked_at IS NULL", now, user); err != nil {
+			if _, err := queries.RevokeOwnedInvites(ctx, connection, authdb.RevokeOwnedInvitesParams{MAX: now, CreatedBy: new(int64(user))}); err != nil {
 				return err
 			}
 		}
-		result, err := connection.ExecContext(ctx, "INSERT INTO invite_codes(code,created_by,created_at,expires_at,max_uses,use_count) VALUES(?,?,?,?,?,0)", code, user, now, expires, maxUses)
+		result, err := queries.CreateInvite(ctx, connection, authdb.CreateInviteParams{Code: code, CreatedBy: new(int64(user)), CreatedAt: now, ExpiresAt: expires, MaxUses: maxUses})
 		if err != nil {
 			return err
 		}
@@ -61,7 +69,14 @@ func (repository *Repository) RevokeInvite(ctx context.Context, user identity.Id
 	var revoked bool
 	err := repository.Immediate(ctx, false, func(connection *sql.Conn) error {
 		var id int64
-		err := connection.QueryRowContext(ctx, "UPDATE invite_codes SET revoked_at=MAX(?,created_at) WHERE created_by=? AND revoked_at IS NULL RETURNING id", now, user).Scan(&id)
+		err := func() error {
+			queryResult, err := queries.RevokeInvite(ctx, connection, authdb.RevokeInviteParams{MAX: now, CreatedBy: new(int64(user))})
+			if err != nil {
+				return err
+			}
+			id = queryResult
+			return nil
+		}()
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
@@ -81,7 +96,22 @@ func (repository *Repository) RevokeInvite(ctx context.Context, user identity.Id
 // Invite returns the latest issuance, including expired, exhausted or revoked history.
 func (repository *Repository) Invite(ctx context.Context, user identity.Id) (*domain.InviteRow, error) {
 	var invite domain.InviteRow
-	err := repository.database.QueryRowContext(ctx, "SELECT id,code,used_by,used_at,expires_at,revoked_at,max_uses,use_count,created_at FROM invite_codes WHERE created_by=? ORDER BY created_at DESC,id DESC LIMIT 1", user).Scan(&invite.Id, &invite.Code, &invite.UsedBy, &invite.UsedAt, &invite.ExpiresAt, &invite.RevokedAt, &invite.MaxUses, &invite.UseCount, &invite.CreatedAt)
+	err := func() error {
+		queryResult, err := queries.LatestInvite(ctx, repository.database, authdb.LatestInviteParams{CreatedBy: new(int64(user))})
+		if err != nil {
+			return err
+		}
+		invite.Id = queryResult.ID
+		invite.Code = queryResult.Code
+		invite.UsedBy = (*identity.Id)(queryResult.UsedBy)
+		invite.UsedAt = queryResult.UsedAt
+		invite.ExpiresAt = queryResult.ExpiresAt
+		invite.RevokedAt = queryResult.RevokedAt
+		invite.MaxUses = queryResult.MaxUses
+		invite.UseCount = queryResult.UseCount
+		invite.CreatedAt = queryResult.CreatedAt
+		return nil
+	}()
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

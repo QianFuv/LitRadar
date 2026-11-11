@@ -1,0 +1,300 @@
+version: "2"
+sql:
+  - engine: sqlite
+    schema: internal/storage/sqlc/schema/auth.sql
+    queries: internal/storage/sqlc/queries/announcements.sql
+    gen:
+      go: &strict
+        package: announcementsdb
+        out: internal/storage/sqlc/announcementsdb
+        sql_package: database/sql
+        emit_methods_with_db_argument: true
+        emit_exported_queries: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+        initialisms: [id, db, url, json, sql, http, https, oidc, cnki, qr, uuid, ai, api, sha256, csv, doi, pmid, issn, eissn, fts, utd, abs, fms, fmscn]
+        overrides:
+          - db_type: INTEGER
+            go_type:
+              import: github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite
+              type: Integer
+          - db_type: TEXT
+            go_type:
+              import: github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite
+              type: Text
+          - db_type: REAL
+            go_type:
+              import: github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite
+              type: Number
+          - db_type: INTEGER
+            nullable: true
+            go_type:
+              import: github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite
+              type: Integer
+              pointer: true
+          - db_type: TEXT
+            nullable: true
+            go_type:
+              import: github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite
+              type: Text
+              pointer: true
+          - db_type: REAL
+            nullable: true
+            go_type:
+              import: github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite
+              type: Number
+              pointer: true
+  - engine: sqlite
+    schema: internal/storage/sqlc/schema/auth.sql
+    queries: internal/storage/sqlc/queries/settings.sql
+    gen:
+      go:
+        <<: *strict
+        package: settingsdb
+        out: internal/storage/sqlc/settingsdb
+        overrides:
+          - db_type: TEXT
+            go_type:
+              import: github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/types
+              type: SettingText
+          - db_type: REAL
+            go_type:
+              import: github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/types
+              type: SettingReal
+  - engine: sqlite
+    schema: internal/storage/sqlc/schema/auth.sql
+    queries: internal/storage/sqlc/queries/backup.sql
+    gen:
+      go:
+        package: backupdb
+        out: internal/storage/sqlc/backupdb
+        sql_package: database/sql
+        emit_methods_with_db_argument: true
+        omit_unused_structs: true
+        initialisms: [id, db, url, json, sql, http, https, oidc, cnki, qr, uuid, ai, api, sha256, csv, doi, pmid, issn, eissn, fts, utd, abs, fms, fmscn]
+  - engine: sqlite
+    schema: internal/storage/sqlc/schema/telemetry.sql
+    queries: internal/storage/sqlc/queries/telemetry.sql
+    gen:
+      go:
+        package: telemetrydb
+        out: internal/storage/sqlc/telemetrydb
+        sql_package: database/sql
+        emit_methods_with_db_argument: true
+        omit_unused_structs: true
+        initialisms: [id, db, url, json, sql, http, https, oidc, cnki, qr, uuid, ai, api, sha256, csv, doi, pmid, issn, eissn, fts, utd, abs, fms, fmscn]
+  - engine: sqlite
+    schema: internal/storage/sqlc/schema/auth.sql
+    queries: internal/storage/sqlc/queries/auth.sql
+    gen:
+      go:
+        package: authdb
+        out: internal/storage/sqlc/authdb
+        sql_package: database/sql
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+        query_parameter_limit: 0
+        initialisms: [id, db, url, json, sql, http, https, oidc, cnki, qr, uuid, ai, api, sha256, csv, doi, pmid, issn, eissn, fts, utd, abs, fms, fmscn]
+  - engine: sqlite
+    schema: internal/storage/sqlc/schema/auth.sql
+    queries: internal/storage/sqlc/queries/favorites.sql
+    gen:
+      go:
+        <<: *strict
+        package: favoritesdb
+        out: internal/storage/sqlc/favoritesdb
+        query_parameter_limit: 0
+  - engine: sqlite
+    schema: internal/storage/sqlc/schema/auth.sql
+    queries: internal/storage/sqlc/queries/graphs.sql
+    gen:
+      go:
+        package: graphsdb
+        out: internal/storage/sqlc/graphsdb
+        sql_package: database/sql
+        emit_methods_with_db_argument: true
+        omit_unused_structs: true
+        query_parameter_limit: 0
+        initialisms: [id, db, url, json, sql, http, https, oidc, cnki, qr, uuid, ai, api, sha256, csv, doi, pmid, issn, eissn, fts, utd, abs, fms, fmscn]
+  - engine: sqlite
+    schema: internal/storage/sqlc/schema/auth.sql
+    queries: internal/storage/sqlc/queries/meta.sql
+    gen:
+      go:
+        <<: *strict
+        package: metadb
+        out: internal/storage/sqlc/metadb
+        query_parameter_limit: 0
+  - engine: sqlite
+    schema: internal/storage/sqlc/schema/auth.sql
+    queries: internal/storage/sqlc/queries/cfp.sql
+    gen:
+      go:
+        <<: *strict
+        package: cfpdb
+        out: internal/storage/sqlc/cfpdb
+        query_parameter_limit: 0
+  - engine: sqlite
+    schema: internal/storage/sqlc/schema/auth.sql
+    queries: internal/storage/sqlc/queries/scheduler.sql
+    gen:
+      go:
+        <<: *strict
+        package: schedulerdb
+        out: internal/storage/sqlc/schedulerdb
+        query_parameter_limit: 0
+  - engine: sqlite
+    schema: internal/storage/sqlc/schema/auth.sql
+    queries: internal/storage/sqlc/queries/delivery.sql
+    gen:
+      go:
+        <<: *strict
+        package: deliverydb
+        out: internal/storage/sqlc/deliverydb
+        query_parameter_limit: 0
+  - engine: sqlite
+    schema: internal/storage/sqlc/schema/auth.sql
+    queries: internal/storage/sqlc/queries/notification.sql
+    gen:
+      go:
+        package: notificationdb
+        out: internal/storage/sqlc/notificationdb
+        sql_package: database/sql
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+        query_parameter_limit: 0
+        initialisms: [id, db, url, json, sql, http, https, oidc, cnki, qr, uuid, ai, api, sha256, csv, doi, pmid, issn, eissn, fts, utd, abs, fms, fmscn]
+        overrides:
+          - db_type: INTEGER
+            nullable: false
+            go_type:
+              type: "interface{}"
+          - db_type: INTEGER
+            nullable: true
+            go_type:
+              type: "interface{}"
+          - db_type: TEXT
+            nullable: false
+            go_type:
+              type: "interface{}"
+          - db_type: TEXT
+            nullable: true
+            go_type:
+              type: "interface{}"
+          - db_type: REAL
+            nullable: false
+            go_type:
+              type: "interface{}"
+          - db_type: REAL
+            nullable: true
+            go_type:
+              type: "interface{}"
+  - engine: sqlite
+    schema: internal/storage/sqlc/schema/batch.sql
+    queries: internal/storage/sqlc/queries/batch.sql
+    gen:
+      go:
+        <<: *strict
+        package: batchdb
+        out: internal/storage/sqlc/batchdb
+        query_parameter_limit: 0
+        overrides:
+          - db_type: INTEGER
+            go_type:
+              import: github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite
+              type: Integer
+          - db_type: TEXT
+            go_type:
+              import: github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite
+              type: Text
+          - db_type: REAL
+            go_type:
+              import: github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite
+              type: Number
+          - db_type: INTEGER
+            nullable: true
+            go_type:
+              import: github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite
+              type: Integer
+              pointer: true
+          - db_type: TEXT
+            nullable: true
+            go_type:
+              import: github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite
+              type: Text
+              pointer: true
+          - db_type: REAL
+            nullable: true
+            go_type:
+              import: github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite
+              type: Number
+              pointer: true
+          - db_type: BLOB
+            nullable: false
+            go_type:
+              import: github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/types
+              type: Blob
+          - db_type: BLOB
+            nullable: true
+            go_type:
+              import: github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/types
+              type: Blob
+  - engine: sqlite
+    schema: internal/storage/sqlc/schema/control.sql
+    queries: internal/storage/sqlc/queries/control.sql
+    gen:
+      go:
+        <<: *strict
+        package: controldb
+        out: internal/storage/sqlc/controldb
+        query_parameter_limit: 0
+  - engine: sqlite
+    schema: internal/storage/sqlc/schema/index.sql
+    queries: [internal/storage/sqlc/queries/content.sql, internal/storage/sqlc/queries/content_shared.sql]
+    gen:
+      go:
+        <<: *strict
+        package: contentdb
+        out: internal/storage/sqlc/contentdb
+        query_parameter_limit: 0
+  - engine: sqlite
+    schema: internal/storage/sqlc/schema/index.sql
+    queries: internal/storage/sqlc/queries/query.sql
+    gen:
+      go:
+        <<: *strict
+        package: querydb
+        out: internal/storage/sqlc/querydb
+        query_parameter_limit: 0
+  - engine: sqlite
+    schema: internal/storage/sqlc/schema/index.sql
+    queries: [internal/storage/sqlc/queries/content_writer.sql, internal/storage/sqlc/queries/content_shared.sql]
+    gen:
+      go:
+        <<: *strict
+        package: writerdb
+        out: internal/storage/sqlc/writerdb
+        emit_methods_with_db_argument: false
+        emit_prepared_queries: true
+        query_parameter_limit: 0
+  - engine: sqlite
+    schema: internal/storage/sqlc/schema/auth.sql
+    queries: internal/storage/sqlc/queries/secrets.sql
+    gen:
+      go:
+        package: secretsdb
+        out: internal/storage/sqlc/secretsdb
+        sql_package: database/sql
+        emit_methods_with_db_argument: true
+        emit_exported_queries: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+        initialisms: [id, db, url, json, sql, http, https, oidc, cnki, qr, uuid, ai, api, sha256, csv, doi, pmid, issn, eissn, fts, utd, abs, fms, fmscn]
+        overrides:
+          - db_type: TEXT
+            go_type:
+              import: github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/types
+              type: SecretText

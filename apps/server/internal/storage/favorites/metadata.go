@@ -17,22 +17,22 @@ import (
 // Article distinguishes missing content from temporarily unreadable metadata without losing the favorite.
 type Article struct {
 	Favorite
-	MetadataStatus  string       `json:"metadata_status"`
-	JournalId       *identity.Id `json:"journal_id"`
-	IssueId         *int64       `json:"issue_id"`
-	Title           *string      `json:"title"`
-	PublicationYear *int64       `json:"publication_year"`
-	Date            *string      `json:"date"`
-	Authors         *[]string    `json:"authors"`
-	Abstract        *string      `json:"abstract"`
-	Doi             *string      `json:"doi"`
-	JournalTitle    *string      `json:"journal_title"`
-	OpenAccess      *bool        `json:"open_access"`
-	InPress         *bool        `json:"in_press"`
-	Volume          *string      `json:"volume"`
-	Number          *string      `json:"number"`
-	Issn            *string      `json:"issn"`
-	Eissn           *string      `json:"eissn"`
+	MetadataStatus  string       `json:"metadata_status" nullable:"false" enum:"available,missing,unavailable"`
+	JournalId       *identity.Id `json:"journal_id" required:"false" nullable:"true"`
+	IssueId         *int64       `json:"issue_id" required:"false" nullable:"true" format:"int64"`
+	Title           *string      `json:"title" required:"false" nullable:"true"`
+	PublicationYear *int64       `json:"publication_year" required:"false" nullable:"true" format:"int64"`
+	Date            *string      `json:"date" required:"false" nullable:"true"`
+	Authors         *[]string    `json:"authors" required:"false" nullable:"true"`
+	Abstract        *string      `json:"abstract" required:"false" nullable:"true"`
+	Doi             *string      `json:"doi" required:"false" nullable:"true"`
+	JournalTitle    *string      `json:"journal_title" required:"false" nullable:"true"`
+	OpenAccess      *bool        `json:"open_access" required:"false" nullable:"true"`
+	InPress         *bool        `json:"in_press" required:"false" nullable:"true"`
+	Volume          *string      `json:"volume" required:"false" nullable:"true"`
+	Number          *string      `json:"number" required:"false" nullable:"true"`
+	Issn            *string      `json:"issn" required:"false" nullable:"true"`
+	Eissn           *string      `json:"eissn" required:"false" nullable:"true"`
 }
 
 func resolve(configuration config.Config, name string) (string, error) {

@@ -3,6 +3,9 @@ package delivery
 import (
 	"context"
 	"database/sql"
+
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/deliverydb"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
 // DedupeOutcome distinguishes a newly inserted reservation from an existing durable identity.
@@ -26,7 +29,7 @@ func (repository *Repository) LoadDedupe(ctx context.Context, workflow Workflow,
 	if err := validateDedupeScope(dbName, userId, articleId); err != nil {
 		return nil, err
 	}
-	return scanDedupeRecord(repository.database.QueryRowContext(ctx, "SELECT "+dedupeColumns+" FROM delivery_dedupe WHERE workflow=? AND db_name=? AND user_id=? AND article_id=?", workflow, dbName, userId, articleId))
+	return decodeDedupeRecord(queries.Dedupe(ctx, repository.database, deliverydb.DedupeParams{Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName), UserID: sqlite.Integer(userId), ArticleID: sqlite.Integer(articleId)}))
 }
 
 // ListDedupe returns the workflow's reservations in stable user/article order.
@@ -34,20 +37,19 @@ func (repository *Repository) ListDedupe(ctx context.Context, workflow Workflow,
 	if err := validateDbName(dbName); err != nil {
 		return nil, err
 	}
-	rows, err := repository.database.QueryContext(ctx, "SELECT "+dedupeColumns+" FROM delivery_dedupe WHERE workflow=? AND db_name=? ORDER BY user_id,article_id", workflow, dbName)
+	rows, err := queries.DedupeList(ctx, repository.database, deliverydb.DedupeListParams{Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName)})
 	if err != nil {
 		return nil, storageError(err)
 	}
-	defer rows.Close()
-	result := []DedupeRecord{}
-	for rows.Next() {
-		record, err := scanDedupeRecord(rows)
+	result := make([]DedupeRecord, 0, len(rows))
+	for _, row := range rows {
+		record, err := decodeDedupeRecord(row, nil)
 		if err != nil {
 			return nil, err
 		}
 		result = append(result, *record)
 	}
-	return result, storageError(rows.Err())
+	return result, nil
 }
 
 // CleanupConfirmedDedupe never removes ambiguous or pending delivery protection.
@@ -58,7 +60,7 @@ func (repository *Repository) CleanupConfirmedDedupe(ctx context.Context, workfl
 	if err := validateTime(before, "Delivery dedupe retention cutoff is invalid"); err != nil {
 		return 0, err
 	}
-	result, err := repository.database.ExecContext(ctx, `DELETE FROM delivery_dedupe WHERE workflow=? AND db_name=? AND status='confirmed' AND delivered_at<?`, workflow, dbName, before)
+	result, err := queries.CleanupDedupe(ctx, repository.database, deliverydb.CleanupDedupeParams{Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName), DeliveredAt: new(sqlite.Number(before))})
 	if err != nil {
 		return 0, storageError(err)
 	}
@@ -92,7 +94,7 @@ func (repository *Repository) ReserveDedupe(ctx context.Context, workflow Workfl
 		if run.Workflow != workflow || run.DbName == nil || *run.DbName != dbName {
 			return invalid("Delivery dedupe scope does not match its run")
 		}
-		result, err := connection.ExecContext(ctx, `INSERT INTO delivery_dedupe(workflow,db_name,user_id,article_id,delivery_run_id,status,message_id,reservation_owner,legacy_delivered_at,revision,reserved_at,delivered_at,updated_at) VALUES(?,?,?,?,?,'reserved',NULL,?,NULL,0,?,NULL,?) ON CONFLICT(workflow,db_name,user_id,article_id) DO NOTHING`, workflow, dbName, userId, articleId, runId, owner, now, now)
+		result, err := queries.ReserveDedupe(ctx, connection, deliverydb.ReserveDedupeParams{Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName), UserID: sqlite.Integer(userId), ArticleID: sqlite.Integer(articleId), DeliveryRunID: new(sqlite.Integer(runId)), ReservationOwner: new(sqlite.Text(owner)), ReservedAt: sqlite.Number(now), UpdatedAt: sqlite.Number(now)})
 		if err != nil {
 			return err
 		}
@@ -100,7 +102,7 @@ func (repository *Repository) ReserveDedupe(ctx context.Context, workflow Workfl
 		if err != nil {
 			return err
 		}
-		record, err := scanDedupeRecord(connection.QueryRowContext(ctx, "SELECT "+dedupeColumns+" FROM delivery_dedupe WHERE workflow=? AND db_name=? AND user_id=? AND article_id=?", workflow, dbName, userId, articleId))
+		record, err := decodeDedupeRecord(queries.Dedupe(ctx, connection, deliverydb.DedupeParams{Workflow: sqlite.Text(workflow), DBName: sqlite.Text(dbName), UserID: sqlite.Integer(userId), ArticleID: sqlite.Integer(articleId)}))
 		if err != nil {
 			return err
 		}
@@ -118,7 +120,7 @@ func (repository *Repository) ReserveDedupe(ctx context.Context, workflow Workfl
 }
 
 func resolveDedupe(ctx context.Context, connection *sql.Conn, id, runId int64, owner string, revision int64, status DedupeStatus, message *string, now float64) error {
-	return executeCas(ctx, connection, `UPDATE delivery_dedupe SET status=?,message_id=?,reservation_owner=NULL,delivered_at=?,updated_at=?,revision=revision+1 WHERE id=? AND delivery_run_id=? AND reservation_owner=? AND revision=? AND status='reserved'`, status, message, now, now, id, runId, owner, revision)
+	return checkCAS(queries.ResolveDedupe(ctx, connection, deliverydb.ResolveDedupeParams{Status: sqlite.Text(status), MessageID: (*sqlite.Text)(message), DeliveredAt: new(sqlite.Number(now)), UpdatedAt: sqlite.Number(now), ID: sqlite.Integer(id), DeliveryRunID: new(sqlite.Integer(runId)), ReservationOwner: new(sqlite.Text(owner)), Revision: sqlite.Integer(revision)}))
 }
 
 // ResolveDedupe finalizes one reservation using owner and revision CAS.
@@ -166,7 +168,7 @@ func (repository *Repository) ReleaseReservations(ctx context.Context, runId int
 	}
 	err := repository.immediate(ctx, func(connection *sql.Conn) error {
 		for _, reservation := range reservations {
-			if err := executeCas(ctx, connection, `DELETE FROM delivery_dedupe WHERE id=? AND delivery_run_id=? AND reservation_owner=? AND revision=? AND status='reserved'`, reservation.Id, runId, owner, reservation.ExpectedRevision); err != nil {
+			if err := checkCAS(queries.ReleaseReservation(ctx, connection, deliverydb.ReleaseReservationParams{ID: sqlite.Integer(reservation.Id), DeliveryRunID: new(sqlite.Integer(runId)), ReservationOwner: new(sqlite.Text(owner)), Revision: sqlite.Integer(reservation.ExpectedRevision)})); err != nil {
 				return err
 			}
 		}

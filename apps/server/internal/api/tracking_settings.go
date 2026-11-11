@@ -14,41 +14,8 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/settings"
 )
 
-type omittedSecret struct{}
-
-func notificationBody() bodyType {
-	stringsBody := listBody(stringBody)
-	secret := optionalBody(stringBody)
-	return structBody("NotificationSettingsUpdate",
-		defaultBodyField("keywords", stringsBody, []any{}), defaultBodyField("directions", stringsBody, []any{}), defaultBodyField("selected_databases", stringsBody, []any{}),
-		defaultBodyField("delivery_method", stringBody, "folder"), defaultBodyField("pushplus_token", secret, omittedSecret{}), defaultBodyField("pushplus_template", stringBody, "markdown"), defaultBodyField("pushplus_topic", stringBody, ""), defaultBodyField("pushplus_channel", stringBody, "wechat"), defaultBodyField("sync_to_tracking_folder", boolBody, false),
-		defaultBodyField("ai_base_url", stringBody, ""), defaultBodyField("ai_api_key", secret, omittedSecret{}), defaultBodyField("ai_model", stringBody, ""), defaultBodyField("ai_system_prompt", stringBody, ""), defaultBodyField("ai_backup_base_url", stringBody, ""), defaultBodyField("ai_backup_api_key", secret, omittedSecret{}), defaultBodyField("ai_backup_model", stringBody, ""), defaultBodyField("ai_backup_system_prompt", stringBody, ""), defaultBodyField("ai_retry_attempts", integerBody, int64(3)), defaultBodyField("enabled", boolBody, true))
-}
-func notificationUpdate(body map[string]any) domain.NotificationSettingsUpdate {
-	stringsOf := func(name string) []string {
-		items := body[name].([]any)
-		result := make([]string, len(items))
-		for index, item := range items {
-			result[index] = item.(string)
-		}
-		return result
-	}
-	secretOf := func(name string) domain.SecretUpdate {
-		value := body[name]
-		if _, omitted := value.(omittedSecret); omitted {
-			return domain.SecretUpdate{}
-		}
-		if value == nil {
-			return domain.SecretUpdate{IsPresent: true}
-		}
-		text := value.(string)
-		return domain.SecretUpdate{IsPresent: true, Value: &text}
-	}
-	return domain.NotificationSettingsUpdate{Keywords: stringsOf("keywords"), Directions: stringsOf("directions"), SelectedDatabases: stringsOf("selected_databases"), DeliveryMethod: body["delivery_method"].(string), PushplusToken: secretOf("pushplus_token"), PushplusTemplate: body["pushplus_template"].(string), PushplusTopic: body["pushplus_topic"].(string), PushplusChannel: body["pushplus_channel"].(string), SyncToTrackingFolder: body["sync_to_tracking_folder"].(bool), AiBaseUrl: body["ai_base_url"].(string), AiApiKey: secretOf("ai_api_key"), AiModel: body["ai_model"].(string), AiSystemPrompt: body["ai_system_prompt"].(string), AiBackupBaseUrl: body["ai_backup_base_url"].(string), AiBackupApiKey: secretOf("ai_backup_api_key"), AiBackupModel: body["ai_backup_model"].(string), AiBackupSystemPrompt: body["ai_backup_system_prompt"].(string), AiRetryAttempts: body["ai_retry_attempts"].(int64), Enabled: body["enabled"].(bool)}
-}
-
 // updateNotification preserves database, delivery, endpoint and persistence validation order.
-func (handlers *trackingHandlers) updateNotification(ctx context.Context, user int64, update domain.NotificationSettingsUpdate) (any, *apiError) {
+func (handlers *trackingHandlers) updateNotification(ctx context.Context, user int64, update domain.NotificationSettingsUpdate) (domain.NotificationSettingsResponse, *apiError) {
 	available, failure := trackingStorage(ctx, handlers.pool, func() ([]string, error) {
 		paths, err := handlers.storage.ListIndexDatabases()
 		names := make([]string, len(paths))
@@ -58,24 +25,24 @@ func (handlers *trackingHandlers) updateNotification(ctx context.Context, user i
 		return names, err
 	})
 	if failure != nil {
-		return nil, failure
+		return domain.NotificationSettingsResponse{}, failure
 	}
 
 	if failure = normalizeTrackingDatabases(&update, available); failure != nil {
-		return nil, failure
+		return domain.NotificationSettingsResponse{}, failure
 	}
 	if update.DeliveryMethod != "folder" && update.DeliveryMethod != "pushplus" {
-		return nil, badRequest("delivery_method must be one of: folder, pushplus")
+		return domain.NotificationSettingsResponse{}, badRequest("delivery_method must be one of: folder, pushplus")
 	}
 	if failure = handlers.validateTrackingDelivery(ctx, user, update); failure != nil {
-		return nil, failure
+		return domain.NotificationSettingsResponse{}, failure
 	}
 	allowed, failure := trackingStorage(ctx, handlers.pool, func() ([]string, error) { return handlers.settings.AiBaseUrls(context.WithoutCancel(ctx)) })
 	if failure != nil {
-		return nil, failure
+		return domain.NotificationSettingsResponse{}, failure
 	}
 	if failure = normalizeTrackingEndpoints(&update, allowed); failure != nil {
-		return nil, failure
+		return domain.NotificationSettingsResponse{}, failure
 	}
 	trimNotificationUpdate(&update)
 	return handlers.persistNotificationUpdate(ctx, user, update)
@@ -201,7 +168,7 @@ func trimNotificationUpdate(update *domain.NotificationSettingsUpdate) {
 }
 
 // persistNotificationUpdate revalidates within admitted work and maps repository rejections.
-func (handlers *trackingHandlers) persistNotificationUpdate(ctx context.Context, user int64, update domain.NotificationSettingsUpdate) (any, *apiError) {
+func (handlers *trackingHandlers) persistNotificationUpdate(ctx context.Context, user int64, update domain.NotificationSettingsUpdate) (domain.NotificationSettingsResponse, *apiError) {
 	type result struct {
 		value     *domain.NotificationSettings
 		err       error
@@ -215,19 +182,19 @@ func (handlers *trackingHandlers) persistNotificationUpdate(ctx context.Context,
 		return result{value: value, err: err}, nil
 	})
 	if failure != nil {
-		return nil, failure
+		return domain.NotificationSettingsResponse{}, failure
 	}
 	if observed.err != nil {
 		if observed.isInvalid {
-			return nil, badRequest(observed.err.Error())
+			return domain.NotificationSettingsResponse{}, badRequest(observed.err.Error())
 		}
 		if errors.Is(observed.err, storage.ErrEndpointNotAllowed) {
-			return nil, badRequest("AI endpoint is not available")
+			return domain.NotificationSettingsResponse{}, badRequest("AI endpoint is not available")
 		}
 		if slices.Contains([]string{"A tracking folder is required when delivery_method is 'folder'", "pushplus_token is required when delivery_method is 'pushplus'", "A tracking folder is required before enabling PushPlus sync to tracking"}, observed.err.Error()) {
-			return nil, badRequest(observed.err.Error())
+			return domain.NotificationSettingsResponse{}, badRequest(observed.err.Error())
 		}
-		return nil, internalError()
+		return domain.NotificationSettingsResponse{}, internalError()
 	}
 	return observed.value.Public(), nil
 }

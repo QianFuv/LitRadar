@@ -18,7 +18,7 @@ func BenchmarkTelemetryRequest(b *testing.B) {
 	defer slog.SetDefault(previous)
 	for _, isEnabled := range []bool{false, true} {
 		name := "disabled"
-		handler := &Handler{routes: compileRoutes([]route{{openapi.Operation{Method: "GET", Path: "/api/articles/{article_id}"}, func(writer http.ResponseWriter, request *http.Request) { writer.WriteHeader(200) }}})}
+		handler := &Handler{mux: fixtureMux([]route{fixtureRawRoute(openapi.Operation{Method: "GET", Path: "/api/articles/{article_id}"}, func(writer http.ResponseWriter, request *http.Request) { writer.WriteHeader(200) })})}
 		if isEnabled {
 			name = "enabled"
 			handler.telemetry = telemetry.New()

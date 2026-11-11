@@ -12,6 +12,8 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/scheduler"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/auth"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/schedulerdb"
+	dbtypes "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/types"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
@@ -46,78 +48,31 @@ func auditTarget(ctx context.Context, connection *sql.Conn, event *auditdomain.A
 	return auth.InsertAudit(ctx, connection, &copy)
 }
 
-type scanner interface{ Scan(...any) error }
-type optionalNumber struct{ Value *float64 }
+var queries schedulerdb.Queries
 
-func (value *optionalNumber) Scan(raw any) error {
-	if raw == nil {
-		value.Value = nil
-		return nil
+func decodeTask(row schedulerdb.TaskRow) (*domain.Task, error) {
+	var job *domain.Job
+	if row.JobSpec != nil {
+		job = new(domain.Job)
+		if err := json.Unmarshal([]byte(string(*row.JobSpec)), job); err != nil {
+			return nil, err
+		}
 	}
-	var number sqlite.Number
-	if err := number.Scan(raw); err != nil {
-		return err
+	if row.TimeoutSeconds < 0 {
+		return nil, errors.New("invalid SQLite unsigned integer column")
 	}
-	result := float64(number)
-	value.Value = &result
-	return nil
-}
-
-type unsignedInteger uint64
-
-func (value *unsignedInteger) Scan(raw any) error {
-	var integer sqlite.Integer
-	if err := integer.Scan(raw); err != nil {
-		return err
-	}
-	if integer < 0 {
-		return errors.New("invalid SQLite unsigned integer column")
-	}
-	*value = unsignedInteger(integer)
-	return nil
-}
-
-type jobColumn struct{ Value *domain.Job }
-
-func (value *jobColumn) Scan(raw any) error {
-	var text sqlite.OptionalText
-	if err := text.Scan(raw); err != nil {
-		return err
-	}
-	if text.Value == nil {
-		value.Value = nil
-		return nil
-	}
-	var job domain.Job
-	if err := json.Unmarshal([]byte(*text.Value), &job); err != nil {
-		return err
-	}
-	value.Value = &job
-	return nil
-}
-
-const taskColumns = `id,name,job_spec,legacy_command,cron,timezone,timeout_seconds,coalesce,enabled,last_run_at,last_status,created_at,updated_at`
-
-func scanTask(row scanner) (*domain.Task, error) {
-	var id, coalesce, enabled sqlite.Integer
-	var name, cron, timezone, status sqlite.Text
-	var job jobColumn
-	var legacy sqlite.OptionalText
-	var timeout unsignedInteger
-	var last optionalNumber
-	var created, updated sqlite.Number
-	if err := row.Scan(&id, &name, &job, &legacy, &cron, &timezone, &timeout, &coalesce, &enabled, &last, &status, &created, &updated); err != nil {
-		return nil, err
-	}
-	return &domain.Task{Id: int64(id), Name: string(name), Job: job.Value, LegacyCommand: legacy.Value, Cron: string(cron), Timezone: string(timezone), TimeoutSeconds: uint64(timeout), Coalesce: coalesce != 0, Enabled: enabled != 0, LastRunAt: last.Value, LastStatus: domain.PersistedState(string(status)), CreatedAt: float64(created), UpdatedAt: float64(updated)}, nil
+	return &domain.Task{Id: int64(row.ID), Name: string(row.Name), Job: job, LegacyCommand: (*string)(row.LegacyCommand), Cron: string(row.Cron), Timezone: string(row.Timezone), TimeoutSeconds: uint64(row.TimeoutSeconds), Coalesce: row.Coalesce != 0, Enabled: row.Enabled != 0, LastRunAt: (*float64)(row.LastRunAt), LastStatus: domain.PersistedState(string(row.LastStatus)), CreatedAt: float64(row.CreatedAt), UpdatedAt: float64(row.UpdatedAt)}, nil
 }
 
 func getTask(ctx context.Context, connection *sql.Conn, id int64) (*domain.Task, error) {
-	task, err := scanTask(connection.QueryRowContext(ctx, "SELECT "+taskColumns+" FROM scheduled_tasks WHERE id=?", id))
+	row, err := queries.Task(ctx, connection, schedulerdb.TaskParams{ID: sqlite.Integer(id)})
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-	return task, err
+	if err != nil {
+		return nil, err
+	}
+	return decodeTask(row)
 }
 
 // Get returns an existing task, including disabled and legacy definitions.
@@ -131,19 +86,18 @@ func (repository *Repository) Get(ctx context.Context, id int64) (*domain.Task, 
 func (repository *Repository) List(ctx context.Context) ([]domain.Task, error) {
 	tasks := []domain.Task{}
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
-		rows, err := connection.QueryContext(ctx, "SELECT "+taskColumns+" FROM scheduled_tasks ORDER BY created_at DESC")
+		rows, err := queries.Tasks(ctx, connection)
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-		for rows.Next() {
-			task, err := scanTask(rows)
+		for _, row := range rows {
+			task, err := decodeTask(schedulerdb.TaskRow(row))
 			if err != nil {
 				return err
 			}
 			tasks = append(tasks, *task)
 		}
-		return rows.Err()
+		return nil
 	})
 	return tasks, err
 }
@@ -166,7 +120,7 @@ func (repository *Repository) Create(ctx context.Context, input domain.Create, a
 			return err
 		}
 		now := nowSeconds()
-		result, err := connection.ExecContext(ctx, `INSERT INTO scheduled_tasks(name,job_spec,legacy_command,cron,timezone,timeout_seconds,coalesce,enabled,last_run_at,last_status,created_at,updated_at) VALUES(?,?,NULL,?,?,?,?,?,NULL,'idle',?,?)`, input.Name, string(encoded), input.Cron, input.Timezone, input.TimeoutSeconds, input.Coalesce, input.Enabled, now, now)
+		result, err := queries.CreateTask(ctx, connection, schedulerdb.CreateTaskParams{Name: sqlite.Text(input.Name), JobSpec: new(sqlite.Text(string(encoded))), Cron: sqlite.Text(input.Cron), Timezone: sqlite.Text(input.Timezone), TimeoutSeconds: sqlite.Integer(input.TimeoutSeconds), Coalesce: sqlite.Integer(dbtypes.Boolean(input.Coalesce)), Enabled: sqlite.Integer(dbtypes.Boolean(input.Enabled)), CreatedAt: sqlite.Number(now), UpdatedAt: sqlite.Number(now)})
 		if err != nil {
 			return err
 		}
@@ -230,15 +184,15 @@ func (repository *Repository) Update(ctx context.Context, input domain.Update, a
 		if input.Coalesce != nil {
 			current.Coalesce = *input.Coalesce
 		}
-		var encoded any
+		var encoded *sqlite.Text
 		if current.Job != nil {
 			value, err := current.Job.MarshalJSON()
 			if err != nil {
 				return err
 			}
-			encoded = string(value)
+			encoded = new(sqlite.Text(string(value)))
 		}
-		if _, err := connection.ExecContext(ctx, `UPDATE scheduled_tasks SET name=?,job_spec=?,legacy_command=?,cron=?,timezone=?,timeout_seconds=?,coalesce=?,enabled=?,updated_at=? WHERE id=?`, current.Name, encoded, current.LegacyCommand, current.Cron, current.Timezone, current.TimeoutSeconds, current.Coalesce, current.Enabled, nowSeconds(), input.TaskId); err != nil {
+		if _, err := queries.UpdateTask(ctx, connection, schedulerdb.UpdateTaskParams{Name: sqlite.Text(current.Name), JobSpec: encoded, LegacyCommand: (*sqlite.Text)(current.LegacyCommand), Cron: sqlite.Text(current.Cron), Timezone: sqlite.Text(current.Timezone), TimeoutSeconds: sqlite.Integer(current.TimeoutSeconds), Coalesce: sqlite.Integer(dbtypes.Boolean(current.Coalesce)), Enabled: sqlite.Integer(dbtypes.Boolean(current.Enabled)), UpdatedAt: sqlite.Number(nowSeconds()), ID: sqlite.Integer(input.TaskId)}); err != nil {
 			return err
 		}
 		task, err = getTask(ctx, connection, input.TaskId)
@@ -260,7 +214,7 @@ func (repository *Repository) Delete(ctx context.Context, id int64, actor *ident
 		if err := authorize(ctx, connection, actor); err != nil {
 			return err
 		}
-		result, err := connection.ExecContext(ctx, "DELETE FROM scheduled_tasks WHERE id=?", id)
+		result, err := queries.DeleteTask(ctx, connection, schedulerdb.DeleteTaskParams{ID: sqlite.Integer(id)})
 		if err != nil {
 			return err
 		}
@@ -285,14 +239,13 @@ func (repository *Repository) RecordTaskRun(ctx context.Context, id int64, statu
 	var didUpdate bool
 	err := repository.auth.WithConnection(ctx, func(connection *sql.Conn) error {
 		var err error
-		didUpdate, err = execute(ctx, connection, `UPDATE scheduled_tasks SET last_run_at=?,last_status=?,updated_at=? WHERE id=?`, ranAt, status, nowSeconds(), id)
+		didUpdate, err = execute(queries.RecordTaskRun(ctx, connection, schedulerdb.RecordTaskRunParams{LastRunAt: new(sqlite.Number(ranAt)), LastStatus: sqlite.Text(status), UpdatedAt: sqlite.Number(nowSeconds()), ID: sqlite.Integer(id)}))
 		return err
 	})
 	return didUpdate, err
 }
 
-func execute(ctx context.Context, connection *sql.Conn, query string, args ...any) (bool, error) {
-	result, err := connection.ExecContext(ctx, query, args...)
+func execute(result sql.Result, err error) (bool, error) {
 	if err != nil {
 		return false, err
 	}

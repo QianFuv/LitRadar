@@ -12,6 +12,9 @@ import (
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/delivery"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/secrets"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/settings"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/deliverydb"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/notificationdb"
+	dbtypes "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/types"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
@@ -40,11 +43,12 @@ func (repository *Repository) UpsertNotificationSettings(ctx context.Context, co
 		return nil, err
 	}
 	now := float64(time.Now().UnixNano()) / 1e9
-	_, err = connection.ExecContext(ctx, notificationUpsert, userId, encoded.keywords, encoded.directions, encoded.databases, update.DeliveryMethod, prepared.push, update.PushplusTemplate, update.PushplusTopic, update.PushplusChannel, update.SyncToTrackingFolder, prepared.primaryBase, prepared.primary, update.AiModel, update.AiSystemPrompt, prepared.backupBase, prepared.backup, update.AiBackupModel, update.AiBackupSystemPrompt, update.AiRetryAttempts, update.Enabled, now, now)
+	_, err = queries.StoreNotificationSettings(ctx, connection, deliverydb.StoreNotificationSettingsParams{UserID: sqlite.Integer(userId), Keywords: sqlite.Text(encoded.keywords), Directions: sqlite.Text(encoded.directions), SelectedDatabases: sqlite.Text(encoded.databases), DeliveryMethod: sqlite.Text(update.DeliveryMethod), PushplusToken: sqlite.Text(prepared.push), PushplusTemplate: sqlite.Text(update.PushplusTemplate), PushplusTopic: sqlite.Text(update.PushplusTopic), PushplusChannel: sqlite.Text(update.PushplusChannel), SyncToTrackingFolder: sqlite.Integer(dbtypes.Boolean(update.SyncToTrackingFolder)), AIBaseURL: sqlite.Text(prepared.primaryBase), AIAPIKey: sqlite.Text(prepared.primary), AIModel: sqlite.Text(update.AiModel), AISystemPrompt: sqlite.Text(update.AiSystemPrompt), AIBackupBaseURL: sqlite.Text(prepared.backupBase), AIBackupAPIKey: sqlite.Text(prepared.backup), AIBackupModel: sqlite.Text(update.AiBackupModel), AIBackupSystemPrompt: sqlite.Text(update.AiBackupSystemPrompt), AIRetryAttempts: sqlite.Integer(update.AiRetryAttempts), Enabled: sqlite.Integer(dbtypes.Boolean(update.Enabled)), CreatedAt: sqlite.Number(now), UpdatedAt: sqlite.Number(now)})
 	if err != nil {
 		return nil, err
 	}
-	stored, err := scanNotificationSettings(connection.QueryRowContext(ctx, "SELECT "+notificationColumns+" FROM notification_settings WHERE user_id=?", userId), codec)
+	row, err := notificationQueries.NotificationSettings(ctx, connection, notificationdb.NotificationSettingsParams{UserID: sqlite.Integer(userId)})
+	stored, err := decodeNotificationSettings(row, err, codec)
 	if err != nil {
 		return nil, err
 	}
@@ -89,16 +93,6 @@ func resolveNotificationSecret(codec *secrets.Codec, userId int64, field string,
 	}
 	return codec.Encrypt(value, secrets.NotificationContext(userId, field))
 }
-
-const notificationUpsert = `INSERT INTO notification_settings
-(user_id,keywords,directions,selected_databases,delivery_method,pushplus_token,pushplus_template,pushplus_topic,pushplus_channel,sync_to_tracking_folder,ai_base_url,ai_api_key,ai_model,ai_system_prompt,ai_backup_base_url,ai_backup_api_key,ai_backup_model,ai_backup_system_prompt,ai_retry_attempts,enabled,created_at,updated_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(user_id) DO UPDATE SET
-keywords=excluded.keywords,directions=excluded.directions,selected_databases=excluded.selected_databases,delivery_method=excluded.delivery_method,
-pushplus_token=excluded.pushplus_token,pushplus_template=excluded.pushplus_template,pushplus_topic=excluded.pushplus_topic,pushplus_channel=excluded.pushplus_channel,
-sync_to_tracking_folder=excluded.sync_to_tracking_folder,ai_base_url=excluded.ai_base_url,ai_api_key=excluded.ai_api_key,ai_model=excluded.ai_model,ai_system_prompt=excluded.ai_system_prompt,
-ai_backup_base_url=excluded.ai_backup_base_url,ai_backup_api_key=excluded.ai_backup_api_key,ai_backup_model=excluded.ai_backup_model,ai_backup_system_prompt=excluded.ai_backup_system_prompt,
-ai_retry_attempts=excluded.ai_retry_attempts,enabled=excluded.enabled,updated_at=excluded.updated_at`
 
 type notificationEncodedLists struct {
 	keywords, directions, databases string
@@ -165,7 +159,16 @@ type notificationExistingSecrets struct {
 
 func loadAuthenticatedNotificationSecrets(ctx context.Context, connection *sql.Conn, codec *secrets.Codec, userId int64) (notificationExistingSecrets, error) {
 	var currentPush, currentPrimary, currentBackup sqlite.Text
-	err := connection.QueryRowContext(ctx, "SELECT pushplus_token,ai_api_key,ai_backup_api_key FROM notification_settings WHERE user_id=?", userId).Scan(&currentPush, &currentPrimary, &currentBackup)
+	err := func() error {
+		queryResult, err := queries.NotificationSecrets(ctx, connection, deliverydb.NotificationSecretsParams{UserID: sqlite.Integer(userId)})
+		if err != nil {
+			return err
+		}
+		currentPush = queryResult.PushplusToken
+		currentPrimary = queryResult.AIAPIKey
+		currentBackup = queryResult.AIBackupAPIKey
+		return nil
+	}()
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return notificationExistingSecrets{}, err
 	}
@@ -185,7 +188,14 @@ func loadAuthenticatedNotificationSecrets(ctx context.Context, connection *sql.C
 func validateNotificationWriteDependencies(ctx context.Context, connection *sql.Conn, userId int64, update domain.NotificationSettingsUpdate, push string) error {
 	hasFolder := true
 	if strings.TrimSpace(update.DeliveryMethod) == "folder" || update.SyncToTrackingFolder {
-		if err := connection.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM folders WHERE user_id=? AND is_tracking=1)", userId).Scan(&hasFolder); err != nil {
+		if err := func() error {
+			queryResult, err := queries.HasTrackingFolder(ctx, connection, deliverydb.HasTrackingFolderParams{UserID: sqlite.Integer(userId)})
+			if err != nil {
+				return err
+			}
+			hasFolder = queryResult
+			return nil
+		}(); err != nil {
 			return err
 		}
 	}

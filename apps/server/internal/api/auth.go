@@ -5,14 +5,14 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
-	"strings"
+
 	"time"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/auth"
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/auth"
-	"github.com/QianFuv/LitRadar/apps/server/internal/openapi"
+
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/executor"
-	"github.com/QianFuv/LitRadar/apps/server/internal/platform/httpwire"
+
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/auth"
 )
 
@@ -25,12 +25,12 @@ func beginAuthAudit(request *http.Request) *http.Request {
 func currentTimestamp() float64 { return float64(time.Now().UnixNano()) / 1e9 }
 
 type userResponse struct {
-	Email        *string `json:"email"`
-	AuthKind     string  `json:"auth_kind"`
-	IsOidcLinked bool    `json:"is_oidc_linked"`
-	Id           int64   `json:"id"`
-	Username     string  `json:"username"`
-	IsAdmin      bool    `json:"is_admin"`
+	Email        *string `json:"email" nullable:"true"`
+	AuthKind     string  `json:"auth_kind" nullable:"false" enum:"local,oidc"`
+	IsOidcLinked bool    `json:"is_oidc_linked" nullable:"false"`
+	Id           int64   `json:"id" nullable:"false" format:"int64"`
+	Username     string  `json:"username" nullable:"false"`
+	IsAdmin      bool    `json:"is_admin" nullable:"false"`
 }
 
 func publicUser(user domain.User) userResponse {
@@ -73,48 +73,6 @@ type authHandlers struct {
 	limiter        *authRateLimiter
 	trustedProxies []netip.Prefix
 	isCookieSecure bool
-}
-
-func (handlers *authHandlers) routes() []route {
-	routes := []route{}
-	for _, operation := range []openapi.Operation{
-		{Method: "PUT", Path: "/api/auth/email", Id: "update_email"},
-		{Method: "GET", Path: "/api/auth/providers", Id: "get_auth_providers"},
-		{Method: "GET", Path: "/api/auth/oidc/login", Id: "oidc_login"},
-		{Method: "GET", Path: "/api/auth/oidc/callback", Id: "oidc_callback"},
-		{Method: "POST", Path: "/api/auth/oidc/link", Id: "oidc_link"},
-		{Method: "DELETE", Path: "/api/auth/oidc/link", Id: "oidc_unlink"},
-		{Method: "POST", Path: "/api/auth/register", Id: "register"},
-		{Method: "POST", Path: "/api/auth/login", Id: "login"},
-		{Method: "POST", Path: "/api/auth/native/login", Id: "native_login"},
-		{Method: "GET", Path: "/api/auth/oidc/native/login", Id: "oidc_native_login"},
-		{Method: "POST", Path: "/api/auth/oidc/native/exchange", Id: "oidc_native_exchange"},
-		{Method: "POST", Path: "/api/auth/change-password", Id: "change_password"},
-		{Method: "POST", Path: "/api/auth/tokens", Id: "create_token"},
-		{Method: "GET", Path: "/api/auth/me", Id: "get_me"},
-		{Method: "GET", Path: "/api/auth/tokens", Id: "get_tokens"},
-		{Method: "DELETE", Path: "/api/auth/tokens/{token_id}", Id: "delete_token"},
-		{Method: "POST", Path: "/api/auth/logout", Id: "logout"},
-		{Method: "POST", Path: "/api/auth/logout-all", Id: "logout_all"},
-		{Method: "POST", Path: "/api/auth/invite-code", Id: "generate_invite_code"},
-		{Method: "GET", Path: "/api/auth/invite-code", Id: "get_invite_code"},
-		{Method: "DELETE", Path: "/api/auth/invite-code", Id: "revoke_invite_code"},
-		{Method: "POST", Path: "/api/auth/invite-code/rotate", Id: "rotate_invite_code"},
-		{Method: "GET", Path: "/api/auth/invite-required", Id: "check_invite_required"},
-	} {
-		routes = append(routes, route{operation, func(writer http.ResponseWriter, request *http.Request) {
-			if operation.Id == "oidc_native_exchange" {
-				handlers.nativeOIDCExchange(writer, request)
-			} else if operation.Id == "get_auth_providers" || strings.HasPrefix(operation.Id, "oidc_") {
-				handlers.handleOidc(writer, request, operation.Id)
-			} else if kind, exists := authRequestTypes[operation.Id]; exists {
-				handlers.handleBody(writer, request, operation.Id, kind)
-			} else {
-				handlers.handle(writer, request, operation.Id)
-			}
-		}})
-	}
-	return routes
 }
 
 func runAuth[Value any](request *http.Request, pool *executor.Pool, work func() (Value, error)) (Value, *apiError) {
@@ -170,52 +128,6 @@ func (handlers *authHandlers) persistAudit(request *http.Request, event domain.A
 	return nil
 }
 
-// handle preserves path extraction, cookie clearing, authentication and mutation auditing order.
-func (handlers *authHandlers) handle(writer http.ResponseWriter, request *http.Request, name string) {
-	ctx := context.WithoutCancel(request.Context())
-	if name == "check_invite_required" {
-		handlers.respondInviteRequired(writer, request, ctx)
-		return
-	}
-	tokenId, failure := extractAuthTokenId(request, name)
-	if failure != nil {
-		failure.write(writer)
-		return
-	}
-	request = beginAuthAudit(request)
-	handlers.clearLogoutCookie(writer, request, name)
-	event := domain.AuditEvent{Action: authOperationAction(name), Outcome: "completed", RequestId: requestId(request), OccurredAt: float64(time.Now().UnixNano()) / 1e9}
-	current, failure := handlers.authenticator.requireUser(request)
-	if failure != nil {
-		handlers.authOperationFailure(request, event, "authentication_required", failure).write(writer)
-		return
-	}
-	applyAuthAuditIdentity(&event, current, name, tokenId)
-	payload, failure, didRespond := handlers.performAuthOperation(writer, request, ctx, name, current, tokenId, &event)
-	if didRespond {
-		return
-	}
-	if failure != nil {
-		handlers.authOperationFailure(request, event, "operation_failed", failure).write(writer)
-		return
-	}
-	if event.Action != "" {
-		logAuth(request, event, "")
-	}
-	writeResponse(writer, payload)
-}
-
-// respondInviteRequired keeps bootstrap inspection publicly available.
-func (handlers *authHandlers) respondInviteRequired(writer http.ResponseWriter, request *http.Request, ctx context.Context) {
-	bootstrap, err := runAuth(request, handlers.pool, func() (bool, error) { return handlers.service.BootstrapRequired(ctx) })
-	if err != nil {
-		err.write(writer)
-		return
-	}
-	writeResponse(writer, map[string]bool{"required": handlers.service.InviteRequired(), "bootstrap_required": bootstrap})
-	return
-}
-
 // authOperationAction identifies only audited mutations.
 func authOperationAction(name string) string {
 	action := ""
@@ -233,22 +145,6 @@ func authOperationAction(name string) string {
 	}
 
 	return action
-}
-
-// extractAuthTokenId performs numeric path admission before authentication and auditing.
-func extractAuthTokenId(request *http.Request, name string) (int64, *apiError) {
-	if name != "delete_token" {
-		return 0, nil
-	}
-	return extractPathInteger(request, "token_id")
-}
-
-// clearLogoutCookie removes an existing session cookie before authenticating logout.
-func (handlers *authHandlers) clearLogoutCookie(writer http.ResponseWriter, request *http.Request, name string) {
-	isLogout := name == "logout" || name == "logout_all"
-	if _, hasCookie := sessionCookie(request.Header); isLogout && hasCookie {
-		writer.Header().Add("Set-Cookie", sessionCookieHeader("", 0, 0, handlers.isCookieSecure))
-	}
 }
 
 // applyAuthAuditIdentity records the actor and operation-specific target before execution.
@@ -272,94 +168,6 @@ func (handlers *authHandlers) authOperationFailure(request *http.Request, event 
 	return failure
 }
 
-// performAuthOperation dispatches freshly authenticated reads and mutations.
-func (handlers *authHandlers) performAuthOperation(writer http.ResponseWriter, request *http.Request, ctx context.Context, name string, current currentIdentity, tokenId int64, event *domain.AuditEvent) (any, *apiError, bool) {
-	var err *apiError
-	var payload any
-	switch name {
-	case "get_me":
-		payload = publicUser(current.authorization.User)
-	case "get_tokens":
-		payload, err = runAuth(request, handlers.pool, func() ([]domain.TokenInfo, error) {
-			return handlers.service.ListTokens(ctx, current.authorization.User.Id)
-		})
-	case "get_invite_code":
-		payload, err = runAuth(request, handlers.pool, func() (*domain.InviteResponse, error) {
-			return handlers.service.Invite(ctx, current.authorization.User.Id)
-		})
-	case "generate_invite_code", "rotate_invite_code":
-		payload, err = runAuth(request, handlers.pool, func() (domain.InviteResponse, error) {
-			return handlers.service.IssueInvite(ctx, current.authorization.User.Id, name == "rotate_invite_code", event)
-		})
-		if err == nil {
-			target := payload.(domain.InviteResponse).Id
-			event.TargetId = &target
-		}
-	case "delete_token", "revoke_invite_code":
-		return handlers.revokeAuthResource(writer, request, ctx, name, current, tokenId, event)
-	case "logout", "logout_all":
-		return handlers.logoutAuthSession(writer, request, ctx, name, current, event)
-	}
-
-	return payload, err, false
-}
-
-// revokeAuthResource preserves distinct missing-token and missing-invite rejection details.
-func (handlers *authHandlers) revokeAuthResource(writer http.ResponseWriter, request *http.Request, ctx context.Context, name string, current currentIdentity, tokenId int64, event *domain.AuditEvent) (any, *apiError, bool) {
-	var payload any
-	var err *apiError
-	var changed bool
-	changed, err = runAuth(request, handlers.pool, func() (bool, error) {
-		if name == "delete_token" {
-			return handlers.service.RevokeTokenId(ctx, current.authorization.User.Id, tokenId, *event)
-		}
-		return handlers.service.RevokeInvite(ctx, current.authorization.User.Id, event)
-	})
-	if err == nil && !changed {
-		detail := "Token not found"
-		if name == "revoke_invite_code" {
-			detail = "Unrevoked invite code not found"
-		}
-		handlers.reject(request, *event, "not_found", &apiError{status: 404, detail: detail}).write(writer)
-		return nil, nil, true
-	}
-	payload = map[string]bool{"ok": true}
-
-	return payload, err, false
-}
-
-// logoutAuthSession reports unconfirmed revocation even when rejection audit persistence fails.
-func (handlers *authHandlers) logoutAuthSession(writer http.ResponseWriter, request *http.Request, ctx context.Context, name string, current currentIdentity, event *domain.AuditEvent) (any, *apiError, bool) {
-	actor := int64(current.authorization.User.Id)
-	var payload any
-	var err *apiError
-	_, err = runAuth(request, handlers.pool, func() (bool, error) {
-		return retryRevocation(func() (bool, error) {
-			if name == "logout" {
-				return handlers.service.RevokeToken(ctx, current.token, *event)
-			}
-			_, err := handlers.service.RevokeAll(ctx, current.authorization.User.Id, *event)
-			return err == nil, err
-		})
-	})
-	if err != nil {
-		slog.WarnContext(request.Context(), "security.auth.revocation_unconfirmed", "event", "security.auth.revocation_unconfirmed", "component", "security", "action", event.Action, "actor_id", actor, "request_id", event.RequestId)
-		rejection := *event
-		rejection.Outcome, rejection.Reason = "rejected", "operation_failed"
-		if handlers.persistAudit(request, rejection) != nil {
-			slog.ErrorContext(request.Context(), "security.audit.persistence_failed", "event", "security.audit.persistence_failed", "component", "security", "action", event.Action, "request_id", event.RequestId)
-		}
-		logAuth(request, *event, "operation_failed")
-		(&apiError{status: 503, structured: map[string]string{"code": "session_revocation_unconfirmed", "message": "Session revocation could not be confirmed", "request_id": event.RequestId}}).write(writer)
-		return nil, nil, true
-	}
-	payload = struct {
-		Ok     bool  `json:"ok"`
-		UserId int64 `json:"user_id"`
-	}{true, actor}
-	return payload, err, false
-}
-
 func retryRevocation[Value any](work func() (Value, error)) (Value, error) {
 	value, err := work()
 	if storage.IsTransientContention(err) {
@@ -367,10 +175,4 @@ func retryRevocation[Value any](work func() (Value, error)) (Value, error) {
 		return work()
 	}
 	return value, err
-}
-
-func writeResponse(writer http.ResponseWriter, value any) {
-	if err := httpwire.JSON(writer, 200, value); err != nil {
-		internalError().write(writer)
-	}
 }

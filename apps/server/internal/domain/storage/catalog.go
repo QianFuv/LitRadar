@@ -5,9 +5,9 @@ import "github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 
 // ProviderCatalog describes a safe catalog without exposing filesystem paths.
 type ProviderCatalog struct {
-	Stem             string  `json:"stem"`
-	CsvFilename      *string `json:"csv_filename"`
-	DatabaseFilename *string `json:"database_filename"`
+	Stem             string  `json:"stem" nullable:"false"`
+	CsvFilename      *string `json:"csv_filename" required:"false" nullable:"true"`
+	DatabaseFilename *string `json:"database_filename" required:"false" nullable:"true"`
 }
 
 // FavoriteCitation retains absent metadata separately from a known empty article title.

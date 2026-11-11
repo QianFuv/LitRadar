@@ -3,6 +3,9 @@ package delivery
 import (
 	"context"
 	"database/sql"
+
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/deliverydb"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
 // RunFinalization returns the three rows committed by one run/checkpoint/lease transaction.
@@ -22,7 +25,7 @@ func (repository *Repository) FinalizeRunWithCheckpoint(ctx context.Context, run
 		if err := writeCheckpoint(ctx, connection, workflow, dbName, checkpointRevision, update); err != nil {
 			return err
 		}
-		if err := executeCas(ctx, connection, `UPDATE delivery_runs SET status=?,owner_id=NULL,lease_expires_at=NULL,result_json=?,error_code=?,updated_at=?,finished_at=?,revision=revision+1 WHERE id=? AND workflow=? AND db_name=? AND owner_id=? AND revision=? AND status IN ('claimed','running','cancelling')`, status, result, errorCode, update.UpdatedAt, update.UpdatedAt, runId, workflow, dbName, owner, runRevision); err != nil {
+		if err := checkCAS(queries.FinalizeRun(ctx, connection, deliverydb.FinalizeRunParams{Status: sqlite.Text(status), ResultJSON: (*sqlite.Text)(result), ErrorCode: (*sqlite.Text)(errorCode), UpdatedAt: sqlite.Number(update.UpdatedAt), FinishedAt: new(sqlite.Number(update.UpdatedAt)), ID: sqlite.Integer(runId), Workflow: sqlite.Text(workflow), DBName: new(sqlite.Text(dbName)), OwnerID: new(sqlite.Text(owner)), Revision: sqlite.Integer(runRevision)})); err != nil {
 			return err
 		}
 		if err := releaseLease(ctx, connection, workflow, dbName, runId, owner, leaseRevision, update.UpdatedAt); err != nil {
@@ -79,7 +82,7 @@ func (repository *Repository) FinalizeAttempt(ctx context.Context, itemId int64,
 				return err
 			}
 		}
-		if err := executeCas(ctx, connection, `UPDATE delivery_run_items SET status=?,owner_id=NULL,lease_expires_at=NULL,result_json=?,error_code=?,updated_at=?,finished_at=?,revision=revision+1 WHERE id=? AND delivery_run_id=? AND owner_id=? AND revision=? AND status IN ('claimed','sending')`, itemStatus, result, errorCode, now, now, itemId, runId, owner, itemRevision); err != nil {
+		if err := checkCAS(queries.FinalizeItem(ctx, connection, deliverydb.FinalizeItemParams{Status: sqlite.Text(itemStatus), ResultJSON: (*sqlite.Text)(result), ErrorCode: (*sqlite.Text)(errorCode), UpdatedAt: sqlite.Number(now), FinishedAt: new(sqlite.Number(now)), ID: sqlite.Integer(itemId), DeliveryRunID: sqlite.Integer(runId), OwnerID: new(sqlite.Text(owner)), Revision: sqlite.Integer(itemRevision)})); err != nil {
 			return err
 		}
 		var err error

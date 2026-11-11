@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/deliverydb"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 	"github.com/QianFuv/LitRadar/apps/server/internal/transport"
 )
 
@@ -90,7 +92,7 @@ func insertLegacyItem(ctx context.Context, connection *sql.Conn, runId int64, ki
 	if status.IsTerminal() {
 		finished = &now
 	}
-	_, err := connection.ExecContext(ctx, `INSERT INTO delivery_run_items(delivery_run_id,item_kind,item_key,user_id,article_id,status,legacy_status,owner_id,lease_expires_at,attempt_count,result_json,error_code,revision,created_at,started_at,updated_at,finished_at) VALUES(?,?,?,?,NULL,?,?,NULL,NULL,0,NULL,NULL,0,?,NULL,?,?)`, runId, kind, key, userId, status, legacyStatus, now, now, finished)
+	_, err := queries.ImportItem(ctx, connection, deliverydb.ImportItemParams{DeliveryRunID: sqlite.Integer(runId), ItemKind: sqlite.Text(kind), ItemKey: sqlite.Text(key), UserID: (*sqlite.Integer)(userId), Status: sqlite.Text(status), LegacyStatus: (*sqlite.Text)(legacyStatus), CreatedAt: sqlite.Number(now), UpdatedAt: sqlite.Number(now), FinishedAt: (*sqlite.Number)(finished)})
 	return err
 }
 
@@ -160,7 +162,7 @@ func importLegacyCheckpoint(ctx context.Context, connection *sql.Conn, input leg
 		return err
 	}
 	snapshot := `{"issue_article_counts":` + issues + `,"inpress_article_counts":` + inpress + `}`
-	_, err = connection.ExecContext(ctx, `INSERT INTO delivery_checkpoints(workflow,db_name,status,legacy_status,snapshot_json,last_completed_run_at,revision,legacy_source_hash,legacy_source_name,legacy_imported_at,created_at,updated_at) VALUES(?,?,?,?,?,?,0,?,?,?,?,?)`, input.workflow, state.DbName, status, legacyStatus, snapshot, state.LastCompletedRunAt, input.sourceHash, input.sourceName, now, now, now)
+	_, err = queries.ImportCheckpoint(ctx, connection, deliverydb.ImportCheckpointParams{Workflow: sqlite.Text(input.workflow), DBName: sqlite.Text(state.DbName), Status: sqlite.Text(status), LegacyStatus: (*sqlite.Text)(legacyStatus), SnapshotJSON: sqlite.Text(snapshot), LastCompletedRunAt: (*sqlite.Text)(state.LastCompletedRunAt), LegacySourceHash: new(sqlite.Text(input.sourceHash)), LegacySourceName: new(sqlite.Text(input.sourceName)), LegacyImportedAt: new(sqlite.Number(now)), CreatedAt: sqlite.Number(now), UpdatedAt: sqlite.Number(now)})
 	if err != nil {
 		return err
 	}
@@ -197,7 +199,7 @@ func importLegacyDedupe(ctx context.Context, connection *sql.Conn, input legacyI
 		if err != nil {
 			return err
 		}
-		if _, err := connection.ExecContext(ctx, `INSERT INTO delivery_dedupe(workflow,db_name,user_id,article_id,delivery_run_id,status,message_id,reservation_owner,legacy_delivered_at,revision,reserved_at,delivered_at,updated_at) VALUES(?,?,?,?,?,'confirmed',NULL,NULL,?,0,?,?,?)`, input.workflow, state.DbName, userId, articleId, runId, state.DeliveryDedupe[key], now, now, now); err != nil {
+		if _, err := queries.ImportDedupe(ctx, connection, deliverydb.ImportDedupeParams{Workflow: sqlite.Text(input.workflow), DBName: sqlite.Text(state.DbName), UserID: sqlite.Integer(userId), ArticleID: sqlite.Integer(articleId), DeliveryRunID: (*sqlite.Integer)(runId), LegacyDeliveredAt: new(sqlite.Text(state.DeliveryDedupe[key])), ReservedAt: sqlite.Number(now), DeliveredAt: new(sqlite.Number(now)), UpdatedAt: sqlite.Number(now)}); err != nil {
 			return err
 		}
 	}
@@ -214,7 +216,7 @@ func createLegacyRun(ctx context.Context, connection *sql.Conn, input legacyInpu
 	if err := validateJson(summary); err != nil {
 		return 0, err
 	}
-	inserted, err := connection.ExecContext(ctx, `INSERT INTO delivery_runs(external_id,workflow,scope_key,db_name,trigger_kind,mode,user_id,status,legacy_status,owner_id,lease_expires_at,deadline_at,cancellation_requested,result_json,error_code,revision,created_at,started_at,updated_at,finished_at) VALUES(?,?,?,?,'legacy','execute',NULL,?,?,NULL,NULL,NULL,0,?,NULL,0,?,NULL,?,?)`, run.RunId, input.workflow, state.DbName, state.DbName, status, legacyStatus, summary, now, now, now)
+	inserted, err := queries.ImportRun(ctx, connection, deliverydb.ImportRunParams{ExternalID: sqlite.Text(run.RunId), Workflow: sqlite.Text(input.workflow), ScopeKey: sqlite.Text(state.DbName), DBName: new(sqlite.Text(state.DbName)), Status: sqlite.Text(status), LegacyStatus: (*sqlite.Text)(legacyStatus), ResultJSON: new(sqlite.Text(summary)), CreatedAt: sqlite.Number(now), UpdatedAt: sqlite.Number(now), FinishedAt: new(sqlite.Number(now))})
 	if err != nil {
 		return 0, err
 	}
@@ -269,7 +271,7 @@ func importLegacySubscribers(ctx context.Context, connection *sql.Conn, id int64
 		if err := insertLegacyItem(ctx, connection, id, ItemKindSubscriber, result.SubscriberId, &userId, status, legacyStatus, now); err != nil {
 			return 0, err
 		}
-		if _, err := connection.ExecContext(ctx, `UPDATE delivery_run_items SET result_json=? WHERE delivery_run_id=? AND item_kind='subscriber' AND item_key=?`, payload, id, result.SubscriberId); err != nil {
+		if _, err := queries.ImportSubscriberResult(ctx, connection, deliverydb.ImportSubscriberResultParams{ResultJSON: new(sqlite.Text(payload)), DeliveryRunID: sqlite.Integer(id), ItemKey: sqlite.Text(result.SubscriberId)}); err != nil {
 			return 0, err
 		}
 		itemCount++

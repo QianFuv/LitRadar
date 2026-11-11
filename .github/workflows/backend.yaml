@@ -14,6 +14,8 @@ env:
   GOTOOLCHAIN: go1.27.3
   GOENV: "off"
   GOFLAGS: ""
+  GOLANGCI_LINT_VERSION: v2.15.0
+  SQLC_VERSION: v1.31.1
 
 permissions:
   contents: read
@@ -63,6 +65,8 @@ jobs:
         run: |
           echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
           echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "bin=$(go env GOPATH)/bin" >> "$GITHUB_OUTPUT"
+          echo "exe=$(go env GOEXE)" >> "$GITHUB_OUTPUT"
           compiler=none
           if [ "$LANE" = race ]; then
             compiler=$(gcc --version | sha256sum | cut -d ' ' -f 1)
@@ -84,6 +88,50 @@ jobs:
           key: go-build-${{ runner.os }}-${{ runner.arch }}-${{ env.GOTOOLCHAIN }}-${{ matrix.lane }}-${{ steps.cache.outputs.compiler }}-${{ hashFiles('go.mod', 'go.sum', 'third_party/**/go.mod', 'third_party/**/go.sum', 'apps/server/scripts/go-check-plan.mjs') }}-${{ inputs.source_ref || github.sha }}
           restore-keys: |
             go-build-${{ runner.os }}-${{ runner.arch }}-${{ env.GOTOOLCHAIN }}-${{ matrix.lane }}-${{ steps.cache.outputs.compiler }}-${{ hashFiles('go.mod', 'go.sum', 'third_party/**/go.mod', 'third_party/**/go.sum', 'apps/server/scripts/go-check-plan.mjs') }}-
+
+      - name: Cache backend tool binaries
+        id: cache_backend_tools
+        if: matrix.lane == 'regular'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ steps.cache.outputs.bin }}/golangci-lint${{ steps.cache.outputs.exe }}
+            ${{ steps.cache.outputs.bin }}/sqlc${{ steps.cache.outputs.exe }}
+          key: go-tools-${{ runner.os }}-${{ runner.arch }}-${{ env.GOTOOLCHAIN }}-golangci-${{ env.GOLANGCI_LINT_VERSION }}-sqlc-${{ env.SQLC_VERSION }}
+
+      - name: Install backend tools
+        id: install_backend_tools
+        if: matrix.lane == 'regular' && steps.cache_backend_tools.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}"
+          go install "github.com/sqlc-dev/sqlc/cmd/sqlc@${SQLC_VERSION}"
+
+      - name: Lint backend Go packages
+        id: lint
+        if: matrix.lane == 'regular'
+        shell: bash
+        run: |
+          mkdir -p test-results/go
+          golangci-lint version
+          golangci-lint run . ./apps/server/... 2>&1 | tee test-results/go/lint.log
+
+      - name: Check migration-derived schema inputs
+        id: sqlc_schema
+        if: matrix.lane == 'regular'
+        shell: bash
+        run: |
+          mkdir -p test-results/go
+          go run ./apps/server/cmd/sqlc-schema -check -output apps/server/internal/storage/sqlc/schema 2>&1 | tee test-results/go/sqlc-schema.log
+
+      - name: Check generated SQLite queries
+        id: sqlc_diff
+        if: matrix.lane == 'regular'
+        shell: bash
+        run: |
+          mkdir -p test-results/go
+          sqlc version
+          sqlc diff -f apps/server/sqlc.yaml 2>&1 | tee test-results/go/sqlc-diff.log
 
       - name: Run complete Go verification lane
         id: quality
