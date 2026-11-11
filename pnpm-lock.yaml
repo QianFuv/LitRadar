@@ -173,6 +173,9 @@ overrides:
   brace-expansion@>=4.0.0 <5.0.12: 5.0.12
   undici@>=7.0.0 <7.29.1: 7.29.1
 
+patchedDependencies:
+  '@stylexjs/unplugin@0.19.1': 542c9f5b7513a6e7e8cb9cf6bd109fe6f0114c12e8db50e7f77a30f05f1e24c9
+
 importers:
 
   .: {}
@@ -242,7 +245,7 @@ importers:
         version: 0.19.1
       '@stylexjs/unplugin':
         specifier: ^0.19.1
-        version: 0.19.1(supports-color@10.2.2)(unplugin@2.3.11)
+        version: 0.19.1(patch_hash=542c9f5b7513a6e7e8cb9cf6bd109fe6f0114c12e8db50e7f77a30f05f1e24c9)(supports-color@10.2.2)(unplugin@2.3.11)
       '@tanstack/react-devtools':
         specifier: ^0.10.14
         version: 0.10.14(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(csstype@3.2.3)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(solid-js@1.9.18)
@@ -5804,7 +5807,7 @@ snapshots:
       invariant: 2.2.4
       styleq: 0.2.1
 
-  '@stylexjs/unplugin@0.19.1(supports-color@10.2.2)(unplugin@2.3.11)':
+  '@stylexjs/unplugin@0.19.1(patch_hash=542c9f5b7513a6e7e8cb9cf6bd109fe6f0114c12e8db50e7f77a30f05f1e24c9)(supports-color@10.2.2)(unplugin@2.3.11)':
     dependencies:
       '@babel/core': 7.29.13(supports-color@10.2.2)
       '@babel/plugin-syntax-flow': 7.29.7(@babel/core@7.29.13(supports-color@10.2.2))
