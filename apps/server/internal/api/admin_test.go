@@ -61,7 +61,7 @@ func adminFixture(t *testing.T) (*authHandlers, *http.ServeMux, string, domain.U
 }
 
 func TestAdministratorRoutesEnforceRolesSelfProtectionAndNumericIds(t *testing.T) {
-	_, router, token, user, memberToken := adminFixture(t)
+	auth, router, token, user, memberToken := adminFixture(t)
 	target := strconv.FormatInt(int64(user.Id), 10)
 	for _, scenario := range []struct {
 		method, path, body, bearer string
@@ -88,6 +88,15 @@ func TestAdministratorRoutesEnforceRolesSelfProtectionAndNumericIds(t *testing.T
 		if response.Code != scenario.status || !strings.Contains(response.Body.String(), scenario.contains) {
 			t.Fatal(scenario.method, scenario.path, response.Code, response.Body.String())
 		}
+	}
+	var reason string
+	if err := auth.repository.WithConnection(context.Background(), func(connection *sql.Conn) error {
+		return connection.QueryRowContext(context.Background(), "SELECT reason FROM security_audit_events WHERE action='user_password_reset' AND target_id=99999 ORDER BY id DESC LIMIT 1").Scan(&reason)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if reason != "target_not_found" {
+		t.Fatalf("missing target audit classification changed: %s", reason)
 	}
 }
 
@@ -129,9 +138,9 @@ func TestAdministratorAnnouncementsValidateBeforeLookupAndAuditChanges(t *testin
 	}{
 		{"POST", "/api/admin/announcements", `{"title":"test","message":"test"}`, member, 403, "Admin access required"},
 		{"PUT", "/api/admin/announcements/999", `{"title":" "}`, token, 400, "Title must be"},
-		{"PUT", "/api/admin/announcements/999", `{"priority":"urgent"}`, token, 400, "Priority must be"},
+		{"PUT", "/api/admin/announcements/999", `{"priority":"urgent"}`, token, 422, "body.priority"},
 		{"PUT", "/api/admin/announcements/999", `{}`, token, 404, "Announcement not found"},
-		{"POST", "/api/admin/announcements", `{"title":" title ","message":" message ","priority":" HIGH "}`, token, 200, `"priority":"high"`},
+		{"POST", "/api/admin/announcements", `{"title":" title ","message":" message ","priority":"high"}`, token, 200, `"priority":"high"`},
 		{"GET", "/api/admin/announcements", "", token, 200, `"title":"title"`},
 		{"PUT", "/api/admin/announcements/1", `{"enabled":false,"title":null}`, token, 200, `"enabled":false`},
 		{"DELETE", "/api/admin/announcements/1", "", token, 200, `"ok":true`},

@@ -133,19 +133,15 @@ func TestManualPushDurableAdmissionOwnershipAndCancellation(t *testing.T) {
 		t.Fatal(response.Code, response.Body.String())
 	}
 	assertAdminCanCancelMemberManualRun(t, router, token, member)
-	assertManualRunAuthenticationPrecedesIdValidation(t, router, token)
+	assertManualRunSchemaValidationPrecedesAuthentication(t, router, token)
 }
 
-// assertManualRunAuthenticationPrecedesIdValidation checks unauthenticated and owner responses.
-func assertManualRunAuthenticationPrecedesIdValidation(t *testing.T, router *http.ServeMux, token string) {
+// assertManualRunSchemaValidationPrecedesAuthentication rejects malformed identifiers before authorization.
+func assertManualRunSchemaValidationPrecedesAuthentication(t *testing.T, router *http.ServeMux, token string) {
 	t.Helper()
 	for _, bearer := range []string{"", token} {
 		response := authRequest(router, "GET", "/api/tracking/push-weekly/runs/invalid", "", bearer)
-		expected := 404
-		if bearer == "" {
-			expected = 401
-		}
-		if response.Code != expected {
+		if response.Code != 422 || !strings.Contains(response.Body.String(), "path.run_id") {
 			t.Fatal(response.Code, response.Body.String())
 		}
 	}

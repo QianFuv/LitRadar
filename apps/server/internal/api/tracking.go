@@ -6,14 +6,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-
-	"strings"
 	"time"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/auth"
-
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/executor"
-
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/delivery"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/favorites"
@@ -41,19 +37,6 @@ func newManualRun(user int64) (storage.RunCreate, error) {
 	now := currentTimestamp()
 	deadline := now + 600
 	return storage.RunCreate{ExternalId: hex.EncodeToString(entropy[:]), Workflow: storage.WorkflowPush, ScopeKey: fmt.Sprintf("manual-user-%d", user), TriggerKind: storage.TriggerKindManual, Mode: storage.RunModeExecute, UserId: &user, DeadlineAt: &deadline, CreatedAt: now}, nil
-}
-
-// validateManualRunId checks only named run operations after authentication has succeeded.
-func validateManualRunId(operation, runId string) *apiError {
-	if strings.Contains(operation, "_weekly_run") || operation == "acknowledge_unknown_push_weekly_run" {
-		if len(runId) != 32 || strings.ContainsFunc(runId, func(value rune) bool {
-			return !(value >= '0' && value <= '9' || value >= 'a' && value <= 'f' || value >= 'A' && value <= 'F')
-		}) {
-			return manualRunMissing()
-		}
-	}
-
-	return nil
 }
 
 // trackingStatus loads folders and settings before computing available weekly articles.

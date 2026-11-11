@@ -1976,8 +1976,9 @@ export interface components {
       /**
        * @description Priority label.
        * @default normal
+       * @enum {string}
        */
-      priority?: string;
+      priority?: 'high' | 'normal' | 'low';
       /** @description Announcement title. */
       title: string;
     };
@@ -1986,8 +1987,11 @@ export interface components {
       enabled?: boolean | null;
       /** @description Optional replacement message. */
       message?: string | null;
-      /** @description Optional replacement priority. */
-      priority?: string | null;
+      /**
+       * @description Optional replacement priority.
+       * @enum {string|null}
+       */
+      priority?: 'high' | 'normal' | 'low' | null;
       /** @description Optional replacement title. */
       title?: string | null;
     };
@@ -13537,7 +13541,7 @@ export interface operations {
     parameters: {
       query?: {
         /** @description Export format. */
-        format?: string;
+        format?: 'bibtex' | 'ris' | 'endnote';
       };
       header?: never;
       path: {

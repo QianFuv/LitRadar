@@ -91,8 +91,8 @@ func TestCnkiPollValidationOccursBeforeAuthentication(t *testing.T) {
 		status int
 		detail string
 	}{
-		{`{"timeout_seconds":0,"interval_seconds":0}`, 400, "timeout_seconds"},
-		{`{"interval_seconds":0}`, 400, "interval_seconds"},
+		{`{"timeout_seconds":0,"interval_seconds":0}`, 422, "timeout_seconds"},
+		{`{"interval_seconds":0}`, 422, "interval_seconds"},
 		{`{"timeout_seconds":null}`, 401, "Authentication required"},
 		{`{}`, 401, "Authentication required"},
 		{`[180,2]`, 422, "expected object"},

@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"errors"
+	"strings"
+
 	"github.com/QianFuv/LitRadar/apps/server/internal/citation"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/storage"
@@ -10,8 +12,6 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/favorites"
-	"strings"
-	"unicode/utf8"
 )
 
 type favoriteHandlers struct {
@@ -61,11 +61,8 @@ func (handlers *favoriteHandlers) exportFolder(ctx context.Context, input *Expor
 	if failure != nil {
 		return nil, failure.problem()
 	}
-	if _, failure := selectFavoriteCitationFormat(textOr(cleanText(input.Format.Pointer()), "bibtex")); failure != nil {
-		return nil, failure.problem()
-	}
 	value, err := admitted(ctx, handlers.pool, func() (favoriteExport, error) {
-		return handlers.export(context.WithoutCancel(ctx), current.authorization.User.Id, input.FolderID, cleanText(input.Format.Pointer()))
+		return handlers.export(context.WithoutCancel(ctx), current.authorization.User.Id, input.FolderID, input.Format)
 	}, mapBusinessError)
 	if err != nil {
 		return nil, err
@@ -167,9 +164,6 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			if failure := positiveFavoriteID("folder_id", input.Body.FolderID); failure != nil {
-				return nil, failure.problem()
-			}
 			owner := current.authorization.User.Id
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (okResponse, error) {
@@ -194,13 +188,10 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			if failure := validateFavoritePage(numberOr(input.Limit.Pointer(), 100), numberOr(input.Offset.Pointer(), 0)); failure != nil {
-				return nil, failure.problem()
-			}
 			owner := current.authorization.User.Id
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() ([]favorites.Article, error) {
-				rows, err := handlers.repository.ListFavorites(workContext, owner, &input.FolderID, numberOr(input.Limit.Pointer(), 100), numberOr(input.Offset.Pointer(), 0))
+				rows, err := handlers.repository.ListFavorites(workContext, owner, &input.FolderID, input.Limit, input.Offset)
 				if err != nil {
 					return nil, err
 				}
@@ -212,24 +203,15 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			if failure := validateFavoritePage(numberOr(input.Limit.Pointer(), 50), 0); failure != nil {
-				return nil, failure.problem()
-			}
 			owner := current.authorization.User.Id
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (domain.Page[favorites.Article], error) {
-				return handlers.repository.ArticlePage(workContext, handlers.storage, owner, input.FolderID, numberOr(input.Limit.Pointer(), 50), cleanText(input.Cursor.Pointer()))
+				return handlers.repository.ArticlePage(workContext, handlers.storage, owner, input.FolderID, input.Limit, cleanText(input.Cursor.Pointer()))
 			}, mapBusinessError)
 		}),
 		typedRoute(openapi.Operation{Method: "POST", Path: "/api/favorites/folders/{folder_id}/articles", ID: "add_favorite"}, func(ctx context.Context, input *AddFavoriteInput) (*output[favorites.Favorite], error) {
 			current, failure := handlers.authenticator.requireUser(input.request)
 			if failure != nil {
-				return nil, failure.problem()
-			}
-			if failure := positiveFavoriteID("folder_id", input.FolderID); failure != nil {
-				return nil, failure.problem()
-			}
-			if failure := positiveFavoriteID("article_id", int64(input.Body.ArticleID)); failure != nil {
 				return nil, failure.problem()
 			}
 			owner := current.authorization.User.Id
@@ -243,15 +225,6 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			if failure := positiveFavoriteID("folder_id", input.FolderID); failure != nil {
-				return nil, failure.problem()
-			}
-			if failure := positiveFavoriteID("article_id", input.ArticleID); failure != nil {
-				return nil, failure.problem()
-			}
-			if failure := validateCharacters("db_name", textOr(input.DBName.Pointer(), ""), 255); failure != nil {
-				return nil, failure.problem()
-			}
 			owner := current.authorization.User.Id
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (okResponse, error) {
@@ -262,12 +235,6 @@ func (handlers *favoriteHandlers) routes() []route {
 		typedRoute(openapi.Operation{Method: "GET", Path: "/api/favorites/check", ID: "check_favorite"}, func(ctx context.Context, input *CheckFavoriteInput) (*output[[]favorites.Membership], error) {
 			current, failure := handlers.authenticator.requireUser(input.request)
 			if failure != nil {
-				return nil, failure.problem()
-			}
-			if failure := positiveFavoriteID("article_id", input.ArticleID); failure != nil {
-				return nil, failure.problem()
-			}
-			if failure := validateCharacters("db_name", textOr(input.DBName.Pointer(), ""), 255); failure != nil {
 				return nil, failure.problem()
 			}
 			owner := current.authorization.User.Id
@@ -296,14 +263,6 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			if failure := positiveFavoriteID("folder_id", input.FolderID); failure != nil {
-				return nil, failure.problem()
-			}
-			for _, item := range input.Body.Articles {
-				if failure := positiveFavoriteID("article_id", int64(item.ArticleID)); failure != nil {
-					return nil, failure.problem()
-				}
-			}
 			owner := current.authorization.User.Id
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (addedResponse, error) {
@@ -320,14 +279,6 @@ func (handlers *favoriteHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			if failure := positiveFavoriteID("folder_id", input.FolderID); failure != nil {
-				return nil, failure.problem()
-			}
-			for _, item := range input.Body.Articles {
-				if failure := positiveFavoriteID("article_id", int64(item.ArticleID)); failure != nil {
-					return nil, failure.problem()
-				}
-			}
 			owner := current.authorization.User.Id
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (countResponse, error) {
@@ -343,17 +294,6 @@ func (handlers *favoriteHandlers) routes() []route {
 			current, failure := handlers.authenticator.requireUser(input.request)
 			if failure != nil {
 				return nil, failure.problem()
-			}
-			if failure := positiveFavoriteID("source_folder_id", input.FolderID); failure != nil {
-				return nil, failure.problem()
-			}
-			if failure := positiveFavoriteID("target_folder_id", input.Body.TargetFolderID); failure != nil {
-				return nil, failure.problem()
-			}
-			for _, item := range input.Body.Articles {
-				if failure := positiveFavoriteID("article_id", int64(item.ArticleID)); failure != nil {
-					return nil, failure.problem()
-				}
 			}
 			owner := current.authorization.User.Id
 			workContext := context.WithoutCancel(ctx)
@@ -373,11 +313,7 @@ func (handlers *favoriteHandlers) routes() []route {
 type favoriteExport struct{ content, filename, media string }
 
 // export preserves snapshot limits, metadata batches and output-limit projection.
-func (handlers *favoriteHandlers) export(ctx context.Context, owner identity.Id, folder int64, requested *string) (favoriteExport, error) {
-	format := "bibtex"
-	if requested != nil {
-		format = *requested
-	}
+func (handlers *favoriteHandlers) export(ctx context.Context, owner identity.Id, folder int64, format string) (favoriteExport, error) {
 	selected, failure := selectFavoriteCitationFormat(format)
 	if failure != nil {
 		return favoriteExport{}, failure
@@ -442,25 +378,11 @@ func selectFavoriteCitationFormat(format string) (favoriteCitationFormat, *apiEr
 	return favoriteCitationFormat{serialize, extension, media}, nil
 }
 
-func positiveFavoriteID(name string, value int64) *apiError {
-	if value <= 0 {
-		return badRequest(name + " must be a positive integer")
-	}
-	return nil
-}
+// validateFolderName rejects whitespace-only labels after Huma validates raw length.
 func validateFolderName(value string) *apiError {
 	value = strings.TrimSpace(value)
-	if value == "" || utf8.RuneCountInString(value) > 100 {
+	if value == "" {
 		return badRequest("Folder name must be 1-100 characters")
-	}
-	return nil
-}
-func validateFavoritePage(limit, offset int64) *apiError {
-	if limit < 1 || limit > 500 {
-		return badRequest("limit must be between 1 and 500")
-	}
-	if offset < 0 {
-		return badRequest("offset must be greater than or equal to 0")
 	}
 	return nil
 }

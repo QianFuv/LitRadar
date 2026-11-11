@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+
 	delivery "github.com/QianFuv/LitRadar/apps/server/internal/domain/delivery"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	scheduled "github.com/QianFuv/LitRadar/apps/server/internal/domain/scheduler"
@@ -36,7 +37,7 @@ type AnnouncementCreate struct {
 	// Message describes announcement message body.
 	Message string `json:"message" nullable:"false" minLength:"1" maxLength:"10000" doc:"Announcement message body."`
 	// Priority describes priority label.
-	Priority string `json:"priority,omitempty" nullable:"false" minLength:"1" maxLength:"16" doc:"Priority label." default:"normal"`
+	Priority string `json:"priority,omitempty" nullable:"false" enum:"high,normal,low" minLength:"1" maxLength:"16" doc:"Priority label." default:"normal"`
 	// Title describes announcement title.
 	Title string `json:"title" nullable:"false" minLength:"1" maxLength:"200" doc:"Announcement title."`
 }
@@ -48,7 +49,7 @@ type AnnouncementUpdate struct {
 	// Message describes optional replacement message.
 	Message *string `json:"message,omitempty" nullable:"true" minLength:"1" maxLength:"10000" doc:"Optional replacement message."`
 	// Priority describes optional replacement priority.
-	Priority *string `json:"priority,omitempty" nullable:"true" minLength:"1" maxLength:"16" doc:"Optional replacement priority."`
+	Priority *string `json:"priority,omitempty" nullable:"true" enum:"high,normal,low" minLength:"1" maxLength:"16" doc:"Optional replacement priority."`
 	// Title describes optional replacement title.
 	Title *string `json:"title,omitempty" nullable:"true" minLength:"1" maxLength:"200" doc:"Optional replacement title."`
 }
@@ -64,15 +65,15 @@ type ChangePasswordRequest struct {
 // CNKILoginPollRequest describes zhejiang Library QR login polling parameters.
 type CNKILoginPollRequest struct {
 	// IntervalSeconds describes poll interval in seconds.
-	IntervalSeconds *float64 `json:"interval_seconds,omitempty" nullable:"false" format:"double" doc:"Poll interval in seconds." default:"2"`
+	IntervalSeconds *float64 `json:"interval_seconds,omitempty" nullable:"false" minimum:"0.1" maximum:"10" format:"double" doc:"Poll interval in seconds." default:"2"`
 	// TimeoutSeconds describes poll timeout in seconds.
-	TimeoutSeconds *int64 `json:"timeout_seconds,omitempty" nullable:"false" format:"int64" doc:"Poll timeout in seconds." default:"180"`
+	TimeoutSeconds *int64 `json:"timeout_seconds,omitempty" nullable:"false" minimum:"1" maximum:"600" format:"int64" doc:"Poll timeout in seconds." default:"180"`
 }
 
 // FavoriteAdd describes favorite creation request payload.
 type FavoriteAdd struct {
 	// ArticleID describes article identifier.
-	ArticleID identity.Id `json:"article_id" nullable:"false" doc:"Article identifier."`
+	ArticleID identity.Id `json:"article_id" nullable:"false" pattern:"^[1-9][0-9]*$" doc:"Article identifier."`
 	// DBName describes source index database name.
 	DBName string `json:"db_name,omitempty" nullable:"false" maxLength:"255" doc:"Source index database name."`
 	// Note describes user note text.
@@ -82,7 +83,7 @@ type FavoriteAdd struct {
 // FavoriteArticleRef describes favorite article reference used by bulk operations.
 type FavoriteArticleRef struct {
 	// ArticleID describes article identifier.
-	ArticleID identity.Id `json:"article_id" nullable:"false" doc:"Article identifier."`
+	ArticleID identity.Id `json:"article_id" nullable:"false" pattern:"^[1-9][0-9]*$" doc:"Article identifier."`
 	// DBName describes source index database name.
 	DBName string `json:"db_name,omitempty" nullable:"false" maxLength:"255" doc:"Source index database name."`
 }
@@ -106,7 +107,7 @@ type FavoriteBulkMove struct {
 	// Articles describes favorite articles to move.
 	Articles []FavoriteArticleRef `json:"articles" nullable:"false" maxItems:"500" doc:"Favorite articles to move."`
 	// TargetFolderID describes target folder row identifier.
-	TargetFolderID int64 `json:"target_folder_id" nullable:"false" format:"int64" doc:"Target folder row identifier."`
+	TargetFolderID int64 `json:"target_folder_id" nullable:"false" minimum:"1" format:"int64" doc:"Target folder row identifier."`
 }
 
 // FavoriteBulkRemove describes bulk favorite remove request.
@@ -222,17 +223,17 @@ type ScheduledTaskCreate struct {
 	// Coalesce reports whether missed slots are collapsed to the latest slot.
 	Coalesce *bool `json:"coalesce,omitempty" nullable:"false" doc:"Whether missed slots are collapsed to the latest slot." default:"true"`
 	// Cron describes five-field cron expression.
-	Cron string `json:"cron" nullable:"false" doc:"Five-field cron expression."`
+	Cron string `json:"cron" nullable:"false" minLength:"1" doc:"Five-field cron expression."`
 	// Enabled reports whether the task is enabled.
 	Enabled *bool `json:"enabled,omitempty" nullable:"false" doc:"Whether the task is enabled." default:"true"`
 	// Job describes validated job specification.
 	Job scheduled.Job `json:"job" nullable:"false" doc:"Validated job specification."`
 	// Name describes display name.
-	Name string `json:"name" nullable:"false" doc:"Display name."`
+	Name string `json:"name" nullable:"false" minLength:"1" doc:"Display name."`
 	// TimeoutSeconds describes maximum execution time in seconds.
 	TimeoutSeconds *int64 `json:"timeout_seconds,omitempty" nullable:"false" minimum:"1" maximum:"86400" format:"int64" doc:"Maximum execution time in seconds." default:"3600"`
 	// Timezone describes explicit IANA time zone used for cron evaluation.
-	Timezone string `json:"timezone,omitempty" nullable:"false" doc:"Explicit IANA time zone used for cron evaluation." default:"UTC"`
+	Timezone string `json:"timezone,omitempty" nullable:"false" minLength:"1" doc:"Explicit IANA time zone used for cron evaluation." default:"UTC"`
 }
 
 // ScheduledTaskUpdate describes scheduled task update payload.
@@ -240,17 +241,17 @@ type ScheduledTaskUpdate struct {
 	// Coalesce describes optional coalescing flag.
 	Coalesce *bool `json:"coalesce,omitempty" nullable:"true" doc:"Optional coalescing flag."`
 	// Cron describes optional replacement cron expression.
-	Cron *string `json:"cron,omitempty" nullable:"true" doc:"Optional replacement cron expression."`
+	Cron *string `json:"cron,omitempty" nullable:"true" minLength:"1" doc:"Optional replacement cron expression."`
 	// Enabled describes optional enabled flag.
 	Enabled *bool `json:"enabled,omitempty" nullable:"true" doc:"Optional enabled flag."`
 	// Job describes optional replacement job specification.
 	Job *scheduled.Job `json:"job,omitempty" nullable:"false" doc:"Optional replacement job specification."`
 	// Name describes optional replacement display name.
-	Name *string `json:"name,omitempty" nullable:"true" doc:"Optional replacement display name."`
+	Name *string `json:"name,omitempty" nullable:"true" minLength:"1" doc:"Optional replacement display name."`
 	// TimeoutSeconds describes optional replacement timeout in seconds.
 	TimeoutSeconds *int64 `json:"timeout_seconds,omitempty" nullable:"true" minimum:"1" maximum:"86400" format:"int64" doc:"Optional replacement timeout in seconds."`
 	// Timezone describes optional replacement IANA time zone.
-	Timezone *string `json:"timezone,omitempty" nullable:"true" doc:"Optional replacement IANA time zone."`
+	Timezone *string `json:"timezone,omitempty" nullable:"true" minLength:"1" doc:"Optional replacement IANA time zone."`
 }
 
 // TokenCreateRequest describes access token creation request.
@@ -264,7 +265,7 @@ type TokenCreateRequest struct {
 // TrackingSetRequest describes set-tracking-folder request payload.
 type TrackingSetRequest struct {
 	// FolderID describes folder row identifier to mark as tracking.
-	FolderID int64 `json:"folder_id" nullable:"false" format:"int64" doc:"Folder row identifier to mark as tracking."`
+	FolderID int64 `json:"folder_id" nullable:"false" minimum:"1" format:"int64" doc:"Folder row identifier to mark as tracking."`
 }
 
 // EmailUpdateRequest describes EmailUpdateRequest JSON fields.

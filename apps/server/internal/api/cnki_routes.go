@@ -3,13 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"strings"
+
 	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	"github.com/QianFuv/LitRadar/apps/server/internal/openapi"
 	"github.com/QianFuv/LitRadar/apps/server/internal/sources/zjlib"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/auth"
-	"net/http"
-	"strings"
 )
 
 type cnkiStartResponse struct {
@@ -56,12 +57,6 @@ func (handlers *cnkiHandlers) routes() []route {
 			return handlers.startCnkiLogin(input.request, context.WithoutCancel(ctx), owner)
 		}),
 		typedRoute(openapi.Operation{Method: "POST", Path: "/api/cnki/login/poll", ID: "poll_login"}, func(ctx context.Context, input *PollLoginInput) (*output[cnkiPollResponse], error) {
-			if *input.Body.TimeoutSeconds < 1 || *input.Body.TimeoutSeconds > 600 {
-				return nil, badRequest("timeout_seconds must be between 1 and 600").problem()
-			}
-			if *input.Body.IntervalSeconds < 0.1 || *input.Body.IntervalSeconds > 10 {
-				return nil, badRequest("interval_seconds must be between 0.1 and 10.0").problem()
-			}
 			current, failure := handlers.authenticator.requireUser(input.request)
 			if failure != nil {
 				return nil, failure.problem()

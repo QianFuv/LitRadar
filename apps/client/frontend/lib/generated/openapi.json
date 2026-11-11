@@ -132,6 +132,7 @@
           "priority": {
             "default": "normal",
             "description": "Priority label.",
+            "enum": ["high", "normal", "low"],
             "maxLength": 16,
             "minLength": 1,
             "type": "string"
@@ -158,6 +159,7 @@
           },
           "priority": {
             "description": "Optional replacement priority.",
+            "enum": ["high", "normal", "low"],
             "maxLength": 16,
             "minLength": 1,
             "type": ["string", "null"]
@@ -270,12 +272,16 @@
             "default": 2,
             "description": "Poll interval in seconds.",
             "format": "double",
+            "maximum": 10,
+            "minimum": 0.1,
             "type": "number"
           },
           "timeout_seconds": {
             "default": 180,
             "description": "Poll timeout in seconds.",
             "format": "int64",
+            "maximum": 600,
+            "minimum": 1,
             "type": "integer"
           }
         },
@@ -610,7 +616,11 @@
       "FavoriteAdd": {
         "additionalProperties": false,
         "properties": {
-          "article_id": { "description": "Article identifier.", "type": "string" },
+          "article_id": {
+            "description": "Article identifier.",
+            "pattern": "^[1-9][0-9]*$",
+            "type": "string"
+          },
           "db_name": {
             "description": "Source index database name.",
             "maxLength": 255,
@@ -661,7 +671,11 @@
       "FavoriteArticleRef": {
         "additionalProperties": false,
         "properties": {
-          "article_id": { "description": "Article identifier.", "type": "string" },
+          "article_id": {
+            "description": "Article identifier.",
+            "pattern": "^[1-9][0-9]*$",
+            "type": "string"
+          },
           "db_name": {
             "description": "Source index database name.",
             "maxLength": 255,
@@ -726,6 +740,7 @@
           "target_folder_id": {
             "description": "Target folder row identifier.",
             "format": "int64",
+            "minimum": 1,
             "type": "integer"
           }
         },
@@ -1746,7 +1761,11 @@
             "description": "Whether missed slots are collapsed to the latest slot.",
             "type": "boolean"
           },
-          "cron": { "description": "Five-field cron expression.", "type": "string" },
+          "cron": {
+            "description": "Five-field cron expression.",
+            "minLength": 1,
+            "type": "string"
+          },
           "enabled": {
             "default": true,
             "description": "Whether the task is enabled.",
@@ -1796,7 +1815,7 @@
               }
             ]
           },
-          "name": { "description": "Display name.", "type": "string" },
+          "name": { "description": "Display name.", "minLength": 1, "type": "string" },
           "timeout_seconds": {
             "default": 3600,
             "description": "Maximum execution time in seconds.",
@@ -1808,6 +1827,7 @@
           "timezone": {
             "default": "UTC",
             "description": "Explicit IANA time zone used for cron evaluation.",
+            "minLength": 1,
             "type": "string"
           }
         },
@@ -1820,6 +1840,7 @@
           "coalesce": { "description": "Optional coalescing flag.", "type": ["boolean", "null"] },
           "cron": {
             "description": "Optional replacement cron expression.",
+            "minLength": 1,
             "type": ["string", "null"]
           },
           "enabled": { "description": "Optional enabled flag.", "type": ["boolean", "null"] },
@@ -1869,6 +1890,7 @@
           },
           "name": {
             "description": "Optional replacement display name.",
+            "minLength": 1,
             "type": ["string", "null"]
           },
           "timeout_seconds": {
@@ -1880,6 +1902,7 @@
           },
           "timezone": {
             "description": "Optional replacement IANA time zone.",
+            "minLength": 1,
             "type": ["string", "null"]
           }
         },
@@ -2070,6 +2093,7 @@
           "folder_id": {
             "description": "Folder row identifier to mark as tracking.",
             "format": "int64",
+            "minimum": 1,
             "type": "integer"
           }
         },
@@ -10596,14 +10620,19 @@
             "in": "query",
             "name": "article_id",
             "required": true,
-            "schema": { "description": "Article identifier.", "format": "int64", "type": "integer" }
+            "schema": {
+              "description": "Article identifier.",
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
           },
           {
             "description": "Source database name.",
             "explode": false,
             "in": "query",
             "name": "db_name",
-            "schema": { "description": "Source database name.", "type": "string" }
+            "schema": { "description": "Source database name.", "maxLength": 255, "type": "string" }
           }
         ],
         "responses": {
@@ -11170,6 +11199,7 @@
             "schema": {
               "description": "Folder row identifier.",
               "format": "int64",
+              "minimum": 1,
               "type": "integer"
             }
           }
@@ -11313,6 +11343,7 @@
             "schema": {
               "description": "Folder row identifier.",
               "format": "int64",
+              "minimum": 1,
               "type": "integer"
             }
           }
@@ -11464,6 +11495,7 @@
             "schema": {
               "description": "Folder row identifier.",
               "format": "int64",
+              "minimum": 1,
               "type": "integer"
             }
           },
@@ -11472,14 +11504,27 @@
             "explode": false,
             "in": "query",
             "name": "limit",
-            "schema": { "description": "Maximum row count.", "format": "int64", "type": "integer" }
+            "schema": {
+              "default": 100,
+              "description": "Maximum row count.",
+              "format": "int64",
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            }
           },
           {
             "description": "Offset row count.",
             "explode": false,
             "in": "query",
             "name": "offset",
-            "schema": { "description": "Offset row count.", "format": "int64", "type": "integer" }
+            "schema": {
+              "default": 0,
+              "description": "Offset row count.",
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -11626,6 +11671,7 @@
             "schema": {
               "description": "Folder row identifier.",
               "format": "int64",
+              "minimum": 1,
               "type": "integer"
             }
           }
@@ -11777,6 +11823,7 @@
             "schema": {
               "description": "Folder row identifier.",
               "format": "int64",
+              "minimum": 1,
               "type": "integer"
             }
           }
@@ -11928,6 +11975,7 @@
             "schema": {
               "description": "Folder row identifier.",
               "format": "int64",
+              "minimum": 1,
               "type": "integer"
             }
           }
@@ -12079,6 +12127,7 @@
             "schema": {
               "description": "Folder row identifier.",
               "format": "int64",
+              "minimum": 1,
               "type": "integer"
             }
           }
@@ -12230,6 +12279,7 @@
             "schema": {
               "description": "Folder row identifier.",
               "format": "int64",
+              "minimum": 1,
               "type": "integer"
             }
           },
@@ -12239,6 +12289,7 @@
             "in": "query",
             "name": "limit",
             "schema": {
+              "default": 50,
               "description": "Maximum row count, defaulting to fifty.",
               "format": "int64",
               "maximum": 500,
@@ -12401,6 +12452,7 @@
             "schema": {
               "description": "Folder row identifier.",
               "format": "int64",
+              "minimum": 1,
               "type": "integer"
             }
           },
@@ -12409,14 +12461,19 @@
             "in": "path",
             "name": "article_id",
             "required": true,
-            "schema": { "description": "Article identifier.", "format": "int64", "type": "integer" }
+            "schema": {
+              "description": "Article identifier.",
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
           },
           {
             "description": "Source database name.",
             "explode": false,
             "in": "query",
             "name": "db_name",
-            "schema": { "description": "Source database name.", "type": "string" }
+            "schema": { "description": "Source database name.", "maxLength": 255, "type": "string" }
           }
         ],
         "responses": {
@@ -12560,6 +12617,7 @@
             "schema": {
               "description": "Folder row identifier.",
               "format": "int64",
+              "minimum": 1,
               "type": "integer"
             }
           }
@@ -12705,6 +12763,7 @@
             "schema": {
               "description": "Folder row identifier.",
               "format": "int64",
+              "minimum": 1,
               "type": "integer"
             }
           },
@@ -12713,7 +12772,12 @@
             "explode": false,
             "in": "query",
             "name": "format",
-            "schema": { "description": "Export format.", "type": "string" }
+            "schema": {
+              "default": "bibtex",
+              "description": "Export format.",
+              "enum": ["bibtex", "ris", "endnote"],
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -15718,7 +15782,11 @@
             "in": "path",
             "name": "run_id",
             "required": true,
-            "schema": { "description": "Opaque manual push job id.", "type": "string" }
+            "schema": {
+              "description": "Opaque manual push job id.",
+              "pattern": "^[A-Fa-f0-9]{32}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -15859,7 +15927,11 @@
             "in": "path",
             "name": "run_id",
             "required": true,
-            "schema": { "description": "Opaque ambiguous manual push job id.", "type": "string" }
+            "schema": {
+              "description": "Opaque ambiguous manual push job id.",
+              "pattern": "^[A-Fa-f0-9]{32}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -16000,7 +16072,11 @@
             "in": "path",
             "name": "run_id",
             "required": true,
-            "schema": { "description": "Opaque manual push job id.", "type": "string" }
+            "schema": {
+              "description": "Opaque manual push job id.",
+              "pattern": "^[A-Fa-f0-9]{32}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {

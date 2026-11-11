@@ -4,16 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/QianFuv/LitRadar/apps/server/internal/platform/httpwire"
-	"github.com/danielgtaylor/huma/v2"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/admission"
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/executor"
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/httpwire"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/query"
+	"github.com/danielgtaylor/huma/v2"
 )
 
 // requireProblem checks the standard error body and rejects the retired envelope fields.
@@ -48,7 +48,7 @@ func TestProblemResponsesRetainDetailsAndRetryHeaders(t *testing.T) {
 		{badRequest("bad filter"), ""},
 		{serviceUnavailable(), "5"},
 		{&apiError{status: 429, detail: "rate limited"}, "5"},
-		{&apiError{status: 428, structured: map[string]string{"code": "login_required", "message": "Sign in first", "phase": "fulltext"}}, ""},
+		{&apiError{status: 428, detail: "Sign in first", details: []error{&huma.ErrorDetail{Location: "code", Message: "login_required"}, &huma.ErrorDetail{Location: "phase", Message: "fulltext"}}}, ""},
 		{&apiError{status: 408, detail: "timed out"}, ""},
 	} {
 		response := httptest.NewRecorder()
@@ -57,7 +57,7 @@ func TestProblemResponsesRetainDetailsAndRetryHeaders(t *testing.T) {
 		if response.Header().Get("Retry-After") != scenario.retry {
 			t.Fatal(response.Header())
 		}
-		if scenario.failure.structured != nil && (problem.Detail != "Sign in first" || len(problem.Errors) != 2 || problem.Errors[0].Location != "code" || problem.Errors[0].Message != "login_required") {
+		if len(scenario.failure.details) != 0 && (problem.Detail != "Sign in first" || len(problem.Errors) != 2 || problem.Errors[0].Location != "code" || problem.Errors[0].Message != "login_required") {
 			t.Fatal(problem)
 		}
 	}

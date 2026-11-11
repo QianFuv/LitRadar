@@ -5,14 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
-
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/admission"
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/apps/server/internal/provider"
@@ -20,6 +18,7 @@ import (
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/settings"
+	"github.com/danielgtaylor/huma/v2"
 )
 
 type articleHandlers struct {
@@ -205,7 +204,7 @@ func (failures *articleFailures) providerError(ctx context.Context, name, action
 }
 func (failures articleFailures) response(action string) *apiError {
 	if failures.hasAuthentication {
-		return &apiError{status: 428, structured: map[string]string{"code": "article_access_authentication_required", "action": action, "message": "Complete the configured provider login before retrying this action."}}
+		return &apiError{status: 428, detail: "Complete the configured provider login before retrying this action.", details: []error{&huma.ErrorDetail{Location: "action", Message: action}, &huma.ErrorDetail{Location: "code", Message: "article_access_authentication_required"}}}
 	}
 	if failures.hasRetryable {
 		retry := uint64(5)

@@ -2,15 +2,16 @@ package api
 
 import (
 	"context"
+	"log/slog"
+	"net/http"
+	"net/netip"
+	"strings"
+
 	"github.com/QianFuv/LitRadar/apps/server/internal/auth"
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/openapi"
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/cryptography"
 	"github.com/danielgtaylor/huma/v2"
-	"log/slog"
-	"net/http"
-	"net/netip"
-	"strings"
 )
 
 type sessionOutput[Body any] struct {
@@ -345,7 +346,7 @@ func (handlers *authHandlers) logout(request *http.Request, name string) (*sessi
 		})
 		if failure != nil {
 			slog.WarnContext(request.Context(), "security.auth.revocation_unconfirmed", "event", "security.auth.revocation_unconfirmed", "component", "security", "action", event.Action, "actor_id", actor, "request_id", event.RequestId)
-			return logoutResponse{}, &apiError{status: 503, structured: map[string]string{"code": "session_revocation_unconfirmed", "message": "Session revocation could not be confirmed", "request_id": event.RequestId}}
+			return logoutResponse{}, &apiError{status: 503, detail: "Session revocation could not be confirmed", details: []error{&huma.ErrorDetail{Location: "code", Message: "session_revocation_unconfirmed"}, &huma.ErrorDetail{Location: "request_id", Message: event.RequestId}}}
 		}
 		return logoutResponse{OK: true, UserID: actor}, nil
 	})

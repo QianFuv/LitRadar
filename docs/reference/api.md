@@ -94,7 +94,9 @@ OpenAPI 由 Go 类型生成：`apps/server/internal/api/` 用 huma 注册各操�
 
 模型包含 `type`、`title`、`status`、`detail`、`instance` 和 `errors`，未设置的可选成员会省略。响应不含顶层 `code` 或 `retryable`。可重试的 `429` 和 `503` 响应带 `Retry-After`（非负秒数），客户端据此决定是否重试。
 
-huma 在调用业务 handler 之前解码并按 OpenAPI schema 校验 typed path、query、header 和 JSON 对象请求体，因此 schema 校验失败返回 `422`，并先于认证检查；JSON 语法错误返回 `400`。`errors[].location` 指出失败位置，例如 `body.field`、`query.limit` 和 `path.article_id`。handler 内部的业务校验仍返回 `400`。
+huma 在调用业务 handler 之前解码并按 OpenAPI schema 校验 typed path、query、header 和 JSON 对象请求体，因此 schema 校验失败返回 `422`，并先于认证检查；JSON 语法错误返回 `400`。`errors[].location` 指出失败位置，例如 `body.field`、`query.limit` 和 `path.article_id`。handler 内部的业务校验仍返回 `400`。业务错误和原始 HTTP 边界共用 huma 的错误模型；`errors[]` 保留 `code`、`phase`、`action`、`request_id` 等分类位置，`Retry-After` 头按原有策略返回。
+
+浙江图书馆 QR 登录轮询的 `interval_seconds` 为 `0.1..=10`（默认 2），`timeout_seconds` 为 `1..=600`（默认 180）；越界值在认证前返回 `422`。
 
 分类的工作流错误把机器可读的值放进 `errors`：`location` 是分类名，`message` 是值；面向人的工作流消息放在 `detail`。
 
@@ -248,6 +250,8 @@ CNKI 会话按 LitRadar 用户隔离；状态接口只返回安全元数据，�
 | `POST`           | `/api/tracking/push-weekly/runs/{run_id}/cancel`           | 请求取消 owner/admin 任务     |
 | `POST`           | `/api/tracking/push-weekly/runs/{run_id}/acknowledge`      | owner 确认 Unknown 并新建任务 |
 
+收藏 folder ID、单条删除路径的 article ID 和 tracking 的 folder ID 必须为正整数。添加及批量 item 的字符串 `article_id` 必须使用无符号、无前导零的正十进制形式。列表 `limit` 为 `1..=500`，普通列表默认 100、游标页默认 50；普通列表 `offset` 默认 0 且不得为负。导出 `format` 只接受 `bibtex`、`ris`、`endnote`，默认 `bibtex`。这些范围、格式和字符长度约束由 schema 校验，非法输入在认证和任务接纳之前返回 `422`；仅包含空白的文件夹名仍在认证后返回业务错误 `400`。
+
 收藏文件夹名称按 Unicode scalar value 计数，最多 100 个字符；note 最多 2,000 个字符，`db_name` 最多 255 个字符。批量添加、删除、移动和检查每次最多提交 500 个 article item/ID；501 个及以上在 schema 校验阶段返回 `422`，不会构造 SQL。动态 `IN` 查询固定按 500 个 ID 分块，HTTP JSON body 超过框架的 2 MiB 上限仍返回 `413`。
 
 收藏文章列表的每一行都包含必填的 `metadata_status`：`available` 表示索引元数据已读取，`missing` 表示来源数据库或文章已不存在，`unavailable` 表示文件系统、SQLite 或作者 JSON 等操作性读取失败。后两种状态都保留收藏行及其移动、删除能力；`missing` 条目导出为空元数据引文，`unavailable` 条目按下述原子导出规则返回明确失败。服务端只以安全数据库标识和错误类别记录 unavailable 事件，不记录 note、abstract、绝对路径或原始数据库错误。
@@ -258,7 +262,7 @@ CNKI 会话按 LitRadar 用户隔离；状态接口只返回安全元数据，�
 
 手动周报是 SQLite 持久化异步任务。启动接口返回 `202`；没有任务时状态为 `idle`，`pending/running` 状态应继续轮询，服务重启后仍可通过 latest 或 run-id 接口恢复。公开终态为 `completed`、`failed`、`cancelled`、`timed_out` 或 `unknown`，并返回 `deadline_at`、`cancellation_requested`、`can_cancel` 和 `can_retry`。完整通知链路见[通知指南](../guides/notifications.md)。
 
-SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户重复启动返回现有 job，不同用户可以同时排队或在实例有界池中并行。普通用户只能查询和取消自己的 run；管理员可按不可猜测的 job id 管理任意用户 run。`unknown` 表示外部结果可能已发生，`can_retry=false`，客户端不得把它当普通失败自动重放。普通启动在最新任务为 Unknown 时固定返回 `409`，不创建新行。owner 检查外部投递记录后，可对该最新任务调用 `POST /api/tracking/push-weekly/runs/{run_id}/acknowledge`；服务在一个 immediate transaction 中复核 ownership/latest/Unknown，写入 `manual_push_unknown_acknowledge` 安全审计并返回一个新 queued job。非 owner 或畸形 ID 返回 `404`，过期、重复或非 Unknown 确认返回 `409`。管理员不能代替 owner 确认。旧 run、item 和 Unknown/confirmed dedupe 保持不变，所以旧的不确定文章不会重发，后续 manifest 的新文章仍可处理。
+SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户重复启动返回现有 job，不同用户可以同时排队或在实例有界池中并行。普通用户只能查询和取消自己的 run；管理员可按不可猜测的 job id 管理任意用户 run。`unknown` 表示外部结果可能已发生，`can_retry=false`，客户端不得把它当普通失败自动重放。普通启动在最新任务为 Unknown 时固定返回 `409`，不创建新行。owner 检查外部投递记录后，可对该最新任务调用 `POST /api/tracking/push-weekly/runs/{run_id}/acknowledge`；服务在一个 immediate transaction 中复核 ownership/latest/Unknown，写入 `manual_push_unknown_acknowledge` 安全审计并返回一个新 queued job。畸形 `run_id`（非 32 位十六进制字符串）在认证前返回 `422`；格式正确但不存在、或不属于请求 owner 的 ID 返回 `404`。过期、重复或非 Unknown 确认返回 `409`。管理员不能代替 owner 确认。旧 run、item 和 Unknown/confirmed dedupe 保持不变，所以旧的不确定文章不会重发，后续 manifest 的新文章仍可处理。
 
 `PUT /api/tracking/notification-settings` 的 `ai_retry_attempts` 只接受 `1..=10`。超出范围时返回 `422`，且不会替换已有设置。历史或被手工修改的数据库值在读取时会归一到该范围，但服务不会因此自动改写数据库。
 
@@ -291,6 +295,10 @@ SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户�
 所有管理写请求都会在目标 storage 事务取得 `BEGIN IMMEDIATE` 写锁后重新读取 actor 的当前管理员状态。若撤权先提交，即使请求已通过路由入口检查或已经完成密码 KDF/输入校验，该写入也返回固定 `403` 且不改变目标、令牌或完成审计；若写事务先提交，则撤权在其后线性化。读请求仍使用入口身份快照，不产生持久副作用。
 
 管理员创建邀请码的 JSON body 可省略；可选字段为绝对 Unix 秒 `expires_at`（必须晚于当前时间且最多 365 天）和 `max_uses`（`1..=1000`）。省略时仍使用 7 天、1 次。删除路由保留 HTTP `DELETE` 兼容性，但只写入 `revoked_at`，不会物理删除兑换历史。
+
+公告 `priority` 只接受精确的小写枚举 `high`、`normal`、`low`，创建时默认 `normal`；不再对优先级修剪空白或转换大小写。非法值在认证前返回 `422`。
+
+计划任务的 `name`、`cron`、`timezone` 不接受空字符串（`422`）；仅含空白、非法 cron 语法或无效时区仍在认证后返回 `400`。创建默认 UTC、3,600 秒超时、启用和 coalesce；显式 `false` 及更新时的字段省略语义保持不变。
 
 计划任务只接受固定的类型化 job。内嵌调度器将已验证字段转换为当前可执行文件加 `index`、`notify` 或 `push` 子命令的完整 argv，不会执行 shell 命令。应用终止时，活动子进程会被结束并等待，运行状态保存为 `cancelled`。旧 `legacy_command` 只供审阅，不能启用或执行。
 

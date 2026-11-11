@@ -5,15 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-
 	"time"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
-
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/apps/server/internal/sources/zjlib"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/transport"
+	"github.com/danielgtaylor/huma/v2"
 )
 
 type cnkiHandlers struct {
@@ -54,7 +53,7 @@ func runCnki[Value any](request *http.Request, pool *executor.Pool, work func() 
 }
 
 func cnkiFailure(status int, code, phase, message string) *apiError {
-	return &apiError{status: status, structured: map[string]string{"code": code, "phase": phase, "message": message}}
+	return &apiError{status: status, detail: message, details: []error{&huma.ErrorDetail{Location: "code", Message: code}, &huma.ErrorDetail{Location: "phase", Message: phase}}}
 }
 func cnkiSuperseded() *apiError {
 	return cnkiFailure(409, "cnki_login_superseded", "login", "CNKI login operation was superseded")

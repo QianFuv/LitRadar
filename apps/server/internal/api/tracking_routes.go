@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/delivery"
 	"github.com/QianFuv/LitRadar/apps/server/internal/openapi"
 )
@@ -102,9 +103,6 @@ func (handlers *trackingHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			if failure := validateManualRunId("get_push_weekly_run", input.RunID); failure != nil {
-				return nil, failure.problem()
-			}
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (manualPushStatus, error) {
 				value, failure := handlers.performManualRun(workContext, "get_push_weekly_run", current.authorization.User, input.RunID)
@@ -119,9 +117,6 @@ func (handlers *trackingHandlers) routes() []route {
 			if failure != nil {
 				return nil, failure.problem()
 			}
-			if failure := validateManualRunId("cancel_push_weekly_run", input.RunID); failure != nil {
-				return nil, failure.problem()
-			}
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (manualPushStatus, error) {
 				value, failure := handlers.performManualRun(workContext, "cancel_push_weekly_run", current.authorization.User, input.RunID)
@@ -134,9 +129,6 @@ func (handlers *trackingHandlers) routes() []route {
 		typedRoute(openapi.Operation{Method: "POST", Path: "/api/tracking/push-weekly/runs/{run_id}/acknowledge", ID: "acknowledge_unknown_push_weekly_run"}, func(ctx context.Context, input *AcknowledgeUnknownPushWeeklyRunInput) (*output[manualPushStatus], error) {
 			current, failure := handlers.authenticator.requireUser(input.request)
 			if failure != nil {
-				return nil, failure.problem()
-			}
-			if failure := validateManualRunId("acknowledge_unknown_push_weekly_run", input.RunID); failure != nil {
 				return nil, failure.problem()
 			}
 			workContext := context.WithoutCancel(ctx)

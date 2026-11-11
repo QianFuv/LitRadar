@@ -365,9 +365,9 @@ type ClearSessionInput struct {
 type CheckFavoriteInput struct {
 	RequestMetadata
 	// ArticleID describes article identifier.
-	ArticleID int64 `query:"article_id" required:"true" nullable:"false" format:"int64" doc:"Article identifier."`
+	ArticleID int64 `query:"article_id" required:"true" nullable:"false" minimum:"1" format:"int64" doc:"Article identifier."`
 	// DBName describes source database name.
-	DBName optional[string] `query:"db_name" nullable:"false" doc:"Source database name."`
+	DBName optional[string] `query:"db_name" nullable:"false" maxLength:"255" doc:"Source database name."`
 }
 
 // CheckFavoritesBatchInput contains parameters for check_favorites_batch.
@@ -393,7 +393,7 @@ type CreateFolderInput struct {
 type RenameFolderInput struct {
 	RequestMetadata
 	// FolderID describes folder row identifier.
-	FolderID int64 `path:"folder_id" required:"true" nullable:"false" format:"int64" doc:"Folder row identifier."`
+	FolderID int64 `path:"folder_id" required:"true" nullable:"false" minimum:"1" format:"int64" doc:"Folder row identifier."`
 	// Body contains the decoded operation payload.
 	Body FolderRename `required:"true"`
 }
@@ -402,25 +402,25 @@ type RenameFolderInput struct {
 type DeleteFolderInput struct {
 	RequestMetadata
 	// FolderID describes folder row identifier.
-	FolderID int64 `path:"folder_id" required:"true" nullable:"false" format:"int64" doc:"Folder row identifier."`
+	FolderID int64 `path:"folder_id" required:"true" nullable:"false" minimum:"1" format:"int64" doc:"Folder row identifier."`
 }
 
 // ListFolderArticlesInput contains parameters for list_folder_articles.
 type ListFolderArticlesInput struct {
 	RequestMetadata
 	// FolderID describes folder row identifier.
-	FolderID int64 `path:"folder_id" required:"true" nullable:"false" format:"int64" doc:"Folder row identifier."`
+	FolderID int64 `path:"folder_id" required:"true" nullable:"false" minimum:"1" format:"int64" doc:"Folder row identifier."`
 	// Limit describes maximum row count.
-	Limit optional[int64] `query:"limit" nullable:"false" format:"int64" doc:"Maximum row count."`
+	Limit int64 `query:"limit" default:"100" nullable:"false" minimum:"1" maximum:"500" format:"int64" doc:"Maximum row count."`
 	// Offset describes offset row count.
-	Offset optional[int64] `query:"offset" nullable:"false" format:"int64" doc:"Offset row count."`
+	Offset int64 `query:"offset" default:"0" nullable:"false" minimum:"0" format:"int64" doc:"Offset row count."`
 }
 
 // AddFavoriteInput contains parameters for add_favorite.
 type AddFavoriteInput struct {
 	RequestMetadata
 	// FolderID describes folder row identifier.
-	FolderID int64 `path:"folder_id" required:"true" nullable:"false" format:"int64" doc:"Folder row identifier."`
+	FolderID int64 `path:"folder_id" required:"true" nullable:"false" minimum:"1" format:"int64" doc:"Folder row identifier."`
 	// Body contains the decoded operation payload.
 	Body FavoriteAdd `required:"true"`
 }
@@ -429,7 +429,7 @@ type AddFavoriteInput struct {
 type BulkAddInput struct {
 	RequestMetadata
 	// FolderID describes folder row identifier.
-	FolderID int64 `path:"folder_id" required:"true" nullable:"false" format:"int64" doc:"Folder row identifier."`
+	FolderID int64 `path:"folder_id" required:"true" nullable:"false" minimum:"1" format:"int64" doc:"Folder row identifier."`
 	// Body contains the decoded operation payload.
 	Body FavoriteBulkAdd `required:"true"`
 }
@@ -438,7 +438,7 @@ type BulkAddInput struct {
 type BulkMoveInput struct {
 	RequestMetadata
 	// FolderID describes folder row identifier.
-	FolderID int64 `path:"folder_id" required:"true" nullable:"false" format:"int64" doc:"Folder row identifier."`
+	FolderID int64 `path:"folder_id" required:"true" nullable:"false" minimum:"1" format:"int64" doc:"Folder row identifier."`
 	// Body contains the decoded operation payload.
 	Body FavoriteBulkMove `required:"true"`
 }
@@ -447,7 +447,7 @@ type BulkMoveInput struct {
 type BulkRemoveInput struct {
 	RequestMetadata
 	// FolderID describes folder row identifier.
-	FolderID int64 `path:"folder_id" required:"true" nullable:"false" format:"int64" doc:"Folder row identifier."`
+	FolderID int64 `path:"folder_id" required:"true" nullable:"false" minimum:"1" format:"int64" doc:"Folder row identifier."`
 	// Body contains the decoded operation payload.
 	Body FavoriteBulkRemove `required:"true"`
 }
@@ -456,9 +456,9 @@ type BulkRemoveInput struct {
 type ListFolderArticlePageInput struct {
 	RequestMetadata
 	// FolderID describes folder row identifier.
-	FolderID int64 `path:"folder_id" required:"true" nullable:"false" format:"int64" doc:"Folder row identifier."`
+	FolderID int64 `path:"folder_id" required:"true" nullable:"false" minimum:"1" format:"int64" doc:"Folder row identifier."`
 	// Limit describes maximum row count, defaulting to fifty.
-	Limit optional[int64] `query:"limit" nullable:"false" minimum:"1" maximum:"500" format:"int64" doc:"Maximum row count, defaulting to fifty."`
+	Limit int64 `query:"limit" default:"50" nullable:"false" minimum:"1" maximum:"500" format:"int64" doc:"Maximum row count, defaulting to fifty."`
 	// Cursor describes opaque continuation bound to this user and folder.
 	Cursor optional[string] `query:"cursor" nullable:"false" maxLength:"128" doc:"Opaque continuation bound to this user and folder."`
 }
@@ -467,27 +467,27 @@ type ListFolderArticlePageInput struct {
 type RemoveFavoriteInput struct {
 	RequestMetadata
 	// FolderID describes folder row identifier.
-	FolderID int64 `path:"folder_id" required:"true" nullable:"false" format:"int64" doc:"Folder row identifier."`
+	FolderID int64 `path:"folder_id" required:"true" nullable:"false" minimum:"1" format:"int64" doc:"Folder row identifier."`
 	// ArticleID describes article identifier.
-	ArticleID int64 `path:"article_id" required:"true" nullable:"false" format:"int64" doc:"Article identifier."`
+	ArticleID int64 `path:"article_id" required:"true" nullable:"false" minimum:"1" format:"int64" doc:"Article identifier."`
 	// DBName describes source database name.
-	DBName optional[string] `query:"db_name" nullable:"false" doc:"Source database name."`
+	DBName optional[string] `query:"db_name" nullable:"false" maxLength:"255" doc:"Source database name."`
 }
 
 // FolderCountInput contains parameters for folder_count.
 type FolderCountInput struct {
 	RequestMetadata
 	// FolderID describes folder row identifier.
-	FolderID int64 `path:"folder_id" required:"true" nullable:"false" format:"int64" doc:"Folder row identifier."`
+	FolderID int64 `path:"folder_id" required:"true" nullable:"false" minimum:"1" format:"int64" doc:"Folder row identifier."`
 }
 
 // ExportFolderInput contains parameters for export_folder.
 type ExportFolderInput struct {
 	RequestMetadata
 	// FolderID describes folder row identifier.
-	FolderID int64 `path:"folder_id" required:"true" nullable:"false" format:"int64" doc:"Folder row identifier."`
+	FolderID int64 `path:"folder_id" required:"true" nullable:"false" minimum:"1" format:"int64" doc:"Folder row identifier."`
 	// Format describes export format.
-	Format optional[string] `query:"format" nullable:"false" doc:"Export format."`
+	Format string `query:"format" nullable:"false" default:"bibtex" enum:"bibtex,ris,endnote" doc:"Export format."`
 }
 
 // GetTrackingInput contains parameters for get_tracking.
@@ -616,21 +616,21 @@ type PushWeeklyToTrackingInput struct {
 type GetPushWeeklyRunInput struct {
 	RequestMetadata
 	// RunID describes opaque manual push job id.
-	RunID string `path:"run_id" required:"true" nullable:"false" doc:"Opaque manual push job id."`
+	RunID string `path:"run_id" required:"true" nullable:"false" pattern:"^[A-Fa-f0-9]{32}$" doc:"Opaque manual push job id."`
 }
 
 // AcknowledgeUnknownPushWeeklyRunInput contains parameters for acknowledge_unknown_push_weekly_run.
 type AcknowledgeUnknownPushWeeklyRunInput struct {
 	RequestMetadata
 	// RunID describes opaque ambiguous manual push job id.
-	RunID string `path:"run_id" required:"true" nullable:"false" doc:"Opaque ambiguous manual push job id."`
+	RunID string `path:"run_id" required:"true" nullable:"false" pattern:"^[A-Fa-f0-9]{32}$" doc:"Opaque ambiguous manual push job id."`
 }
 
 // CancelPushWeeklyRunInput contains parameters for cancel_push_weekly_run.
 type CancelPushWeeklyRunInput struct {
 	RequestMetadata
 	// RunID describes opaque manual push job id.
-	RunID string `path:"run_id" required:"true" nullable:"false" doc:"Opaque manual push job id."`
+	RunID string `path:"run_id" required:"true" nullable:"false" pattern:"^[A-Fa-f0-9]{32}$" doc:"Opaque manual push job id."`
 }
 
 // GetPushWeeklyStatusInput contains parameters for get_push_weekly_status.

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strconv"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/admission"
@@ -19,15 +18,14 @@ import (
 type apiError struct {
 	status     int
 	detail     string
-	structured any
+	details    []error
 	retryAfter *uint64
 }
 
 func (failure *apiError) Error() string { return failure.detail }
 
 func (failure *apiError) problem() error {
-	detail, details := failure.problemDetails()
-	model := huma.NewError(failure.status, detail, details...)
+	model := failure.model()
 	if failure.retryAfter != nil {
 		return huma.ErrorWithHeaders(model, http.Header{"Retry-After": {strconv.FormatUint(*failure.retryAfter, 10)}})
 	}
@@ -50,45 +48,19 @@ func (failure *apiError) write(writer http.ResponseWriter) {
 	} else if failure.status == http.StatusServiceUnavailable || failure.status == http.StatusTooManyRequests {
 		writer.Header().Set("Retry-After", "5")
 	}
-	detail, details := failure.problemDetails()
-	model := huma.NewError(failure.status, detail, details...)
+	model := failure.model()
 	if err := httpwire.JSON(writer, failure.status, model); err != nil {
 		slog.Error("http.response.failed", "error_kind", "problem_write_failed")
 	}
 }
 
-// problemDetails retains classified business diagnostics within the standard errors array.
-func (failure *apiError) problemDetails() (string, []error) {
-	fields := map[string]string{}
-	switch structured := failure.structured.(type) {
-	case map[string]string:
-		fields = structured
-	case map[string]any:
-		for name, value := range structured {
-			if text, ok := value.(string); ok {
-				fields[name] = text
-			}
-		}
-	}
+// model builds Huma's standard error directly from typed details.
+func (failure *apiError) model() huma.StatusError {
 	detail := failure.detail
-	if message := fields["message"]; message != "" {
-		detail = message
-	}
 	if detail == "" {
 		detail = http.StatusText(failure.status)
 	}
-	names := make([]string, 0, len(fields))
-	for name := range fields {
-		if name != "message" {
-			names = append(names, name)
-		}
-	}
-	slices.Sort(names)
-	details := make([]error, 0, len(names))
-	for _, name := range names {
-		details = append(details, &huma.ErrorDetail{Location: name, Message: fields[name]})
-	}
-	return detail, details
+	return huma.NewError(failure.status, detail, failure.details...)
 }
 
 func mapExecutorError(err error) *apiError {
