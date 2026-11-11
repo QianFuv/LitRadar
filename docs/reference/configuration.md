@@ -64,7 +64,7 @@ manifest 存在时，`serve` 和普通 `index` 会在认证库迁移后验证整
 | `article_abstract_provider_orders` | 见下文                     |   否 | 默认顺序 + catalog 继承/排序/禁用 | 下一请求 | 在线摘要页 fallback               |
 | `article_fulltext_provider_orders` | 见下文                     |   否 | 默认顺序 + catalog 继承/排序/禁用 | 下一请求 | 在线全文 fallback                 |
 | `log_format`                       | `json`                     |   否 | `json` / `compact` 单选           | 重启进程 | 结构化日志格式                    |
-| `log_filter`                       | 见[日志设置](#日志设置)    |   否 | 文本                              | 重启进程 | tracing filter                    |
+| `log_filter`                       | 见[日志设置](#日志设置)    |   否 | 文本                              | 重启进程 | Go regexp 字段过滤                    |
 | `telemetry_enabled`                | `true`                     |   否 | 布尔开关                          | 重启进程 | 匿名负载遥测采集                  |
 | `telemetry_retention_days`         | `90`                       |   否 | `1..=3650` 的整数                 | 重启进程 | 负载遥测按小时数据保留            |
 
@@ -323,9 +323,9 @@ Web host 使用 `WAILS_SERVER_HOST`（默认 `0.0.0.0`）、`WAILS_SERVER_PORT`�
 
 ## 日志设置
 
-`log_format` 默认 `json`，只接受精确值 `json` 或 `compact`。部署运行和机器解析使用 JSON Lines；本地交互终端可由管理员显式选择 compact。
+`log_format` 默认 `json`，只接受精确值 `json` 或 `compact`。部署运行和机器解析使用 JSON Lines；本地交互终端可由管理员显式选择 compact。两者分别使用标准 `slog.JSONHandler` 和 `slog.TextHandler`；JSON 元数据字段为 `time`、`level`、`msg`。
 
-`log_filter` 使用 tracing `EnvFilter` 语法。默认值为：
+`log_filter` 保留 target / span 指令结构，字段模式使用 Go `regexp` 的子串匹配。Rust 专用正则语法不再兼容；末尾匹配请显式写 `$`。默认值为：
 
 ```text
 warn,litradar=info,litradar_api=info,litradar_cli=info,litradar_index=info,litradar_sources=info,litradar_storage=info,litradar_worker=info
@@ -368,3 +368,7 @@ Content-Type: application/json
 检索分词在 Go 中完成，不注册 SQLite 分词扩展；不存在选择分词库的运行时路径或环境变量，规则见[数据库参考](database.md#article_search)。
 
 `/usr/share/litradar/meta` 不在 `project-root` 下，只是发布镜像中的固定官方只读 bundle；`data/meta` 才是需要备份和恢复的运行时目录。
+
+## 上游 HTML 字符集
+
+HTML 编码使用 `golang.org/x/net/html/charset.DetermineEncoding` 的 WHATWG 探测：BOM、HTTP charset、前 1024 字节内的 HTML meta、UTF-8 启发式检测，最后回退 windows-1252。未知声明会继续探测，而不是立即拒绝；meta 不再通过 4096 字节正则扫描。编码确定后仍严格验证字节序列，保留 GB18030 修正表与未定义 windows-1252 字节拒绝规则。

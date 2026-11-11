@@ -23,11 +23,12 @@ litradar openapi > openapi.json 2> litradar.log
 
 ## 服务端事件契约
 
-部署运行的默认格式是 JSON Lines。每个正常 tracing 事件至少包含：
+部署运行的默认格式是 JSON Lines。标准 `slog.JSONHandler` 输出 JSON；`compact` 使用 `slog.TextHandler`。每个正常 slog 事件包含：
 
 | 字段          | 含义                                                                  |
 | ------------- | --------------------------------------------------------------------- |
-| `timestamp`   | UTC RFC 3339 时间                                                     |
+| `time`   | UTC RFC 3339 时间                                                     |
+| `msg` | slog 记录消息，通常与 `event` 相同 |
 | `level`       | `TRACE`、`DEBUG`、`INFO`、`WARN` 或 `ERROR`                           |
 | `target`      | 产生事件的兼容 target                                                |
 | `event`       | 稳定的点分事件名，例如 `http.request.completed`                       |
@@ -44,8 +45,9 @@ litradar openapi > openapi.json 2> litradar.log
 
 ```json
 {
-  "timestamp": "2026-07-18T03:20:41.152Z",
+  "time": "2026-07-18T03:20:41.152Z",
   "level": "WARN",
+  "msg": "http.request.completed",
   "event": "http.request.completed",
   "component": "http",
   "request_id": "019be8c4-4e8a-7c21-9d17-9017ca04a290",
@@ -85,6 +87,10 @@ litradar openapi > openapi.json 2> litradar.log
 - `security.auth.*`、`security.admin.*`：认证结果、限流和状态变更审计
 - `logging.events_dropped`：非阻塞日志队列在过载时丢失的行数
 
+标准 handler 通过 `ReplaceAttr` 把时间统一为 UTC、最低日志级别显示为 `TRACE`，并移除内部 `log_target` 属性。JSON 时间使用标准精度，文本时间由 `TextHandler` 格式化；不再输出自定义六位小数时间或 span 前缀。`WithGroup` 按标准规则输出嵌套 JSON / 点分文本键，重复属性也遵循标准 handler 的行为。`error` 属性按标准 slog 语义输出其错误文本；不能序列化的其他属性由 handler 写为 `!ERROR:...` 字符串。调用点仍负责只提交经过裁剪的安全字段。4096 条有界队列、丢弃计数、span 关联和关闭时的一秒排空预算保持不变。
+
+字段模式改用 Go `regexp.Compile` / `MatchString`：默认在任意子串上匹配，需要匹配末尾时显式加 `$`。`\d` 只匹配 ASCII 数字；Unicode 字符请使用支持的 Unicode 类。Rust 专用的 `x` / `R` / `u` flag、Unicode 转义和字符集运算不再具有原先语义，保存前应重新检查。外层指令仍以逗号、花括号等分隔字段，不能直接嵌入含这些分隔符的正则。旧配置中不能编译的模式会在保存或启动时明确失败，应先改成 Go 语法再重启。
+
 ## 级别规则
 
 | 级别    | 使用场景                                                      |
@@ -104,7 +110,7 @@ litradar openapi > openapi.json 2> litradar.log
 | 字段         | 默认值 | 前端控件 | 生效方式 | 允许值/语义                                  |
 | ------------ | ------ | -------- | -------- | -------------------------------------------- |
 | `log_format` | `json` | 单选     | 重启进程 | `json` 或 `compact`                          |
-| `log_filter` | 见下文 | 文本     | 重启进程 | tracing `EnvFilter` 指令；`off` 完全关闭事件 |
+| `log_filter` | 见下文 | 文本     | 重启进程 | 目标、span 和字段过滤指令；字段模式使用 Go regexp；`off` 完全关闭事件 |
 
 默认 filter 为：
 
@@ -123,8 +129,8 @@ warn,litradar=info,litradar_api=info,litradar_cli=info,litradar_index=info,litra
 compact 只改变显示形式，不改变事件选择或隐私规则。一次本地命令看起来类似：
 
 ```text
-2026-07-18T03:22:14.681Z  INFO process: litradar: event="process.started" component="runtime" component="runtime" command="help" version="0.1.0" process_id=42412
-2026-07-18T03:22:14.682Z  INFO process: litradar: event="process.completed" component="runtime" outcome="success" duration_ms=0 component="runtime" command="help" version="0.1.0" process_id=42412
+time=2026-07-18T03:22:14.681Z level=INFO msg=process.started event=process.started component=runtime target=litradar
+time=2026-07-18T03:22:14.682Z level=INFO msg=process.completed event=process.completed component=runtime outcome=success duration_ms=0 target=litradar
 ```
 
 部署运行和需要机器解析的本地检查保持默认 JSON。临时增加目标级别时，在同一管理分组把 `log_filter` 保存为最窄指令，例如 `warn,litradar=debug,litradar_api=debug`，重启并完成诊断后再恢复默认值。
@@ -151,8 +157,9 @@ compact 只改变显示形式，不改变事件选择或隐私规则。一次本
 
 ```json
 {
-  "timestamp": "2026-07-18T03:24:05.810Z",
+  "time": "2026-07-18T03:24:05.810Z",
   "level": "error",
+  "msg": "client.error",
   "event": "client.error",
   "component": "browser",
   "source": "route_boundary",
@@ -172,6 +179,7 @@ compact 只改变显示形式，不改变事件选择或隐私规则。一次本
 {
   "level": "WARN",
   "target": "litradar",
+  "msg": "logging.events_dropped",
   "event": "logging.events_dropped",
   "component": "logging",
   "dropped_count": 37
@@ -182,7 +190,7 @@ compact 只改变显示形式，不改变事件选择或隐私规则。一次本
 
 ## 持久安全审计
 
-普通 tracing 队列不是安全审计的权威记录。认证结果、认证限流和安全敏感变更会同步追加到 `data/auth.sqlite` 的 `security_audit_events`；普通日志过载不会删除或跳过这些数据库行。固定字段为：
+普通日志队列不是安全审计的权威记录。认证结果、认证限流和安全敏感变更会同步追加到 `data/auth.sqlite` 的 `security_audit_events`；普通日志过载不会删除或跳过这些数据库行。固定字段为：
 
 - `actor_id`、`target_id`：可空内部数值 ID；
 - `action`、`outcome`、`reason`：固定小写分类；

@@ -327,3 +327,9 @@ go test -count=1 -race -mod=readonly ./apps/server/internal/storage/weekly ./app
 Go 版本的容器性能画像使用 `node apps/server/tests/profiling/go-image.mjs`，要求已构建 `litradar:go-test-amd64`。
 
 历史记录中，2026-09-05 的一次本地 Windows release 测试使用 8 个目录、每个目录 10,000 篇文章。10 次未缓存的续页请求总计 267.83 ms，预热缓存后为 198.03 ms；预热后的系列在初始 8 次解析之外没有新增解析。这是单次合成测试结果，仅说明当时的测试表现，不构成线上延迟承诺。目录元数据检查、成员分组和每次查询的临时 SQLite 成员表仍有开销。
+
+### Backend JSON and managed files
+
+The pinned Go 1.27.3 toolchain provides `encoding/json/v2`. Files importing the Go 1.27 JSON APIs declare `//go:build go1.27`; the module's existing `go` and `toolchain` directives are unchanged. Prefer typed objects and standard numeric conversion over serde compatibility code. `jsonobject` adds only required-field and non-null validation that the standard decoder does not supply. Preserve external JSON tags and SQL column names.
+
+Use an opened `os.Root` and relative names for files inside a managed directory. Retain SQLite's native VFS and its NOFOLLOW policy, plus domain ownership checks and rollback gates. `rootfile` only adapts parent handles and random exclusive temporary names where `os.Root` lacks a temp-file API. During backend batch work, run affected packages first and the complete module suite once at the final gate.

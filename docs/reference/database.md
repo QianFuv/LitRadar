@@ -238,7 +238,7 @@ tokenize = "ascii tokenchars '!""#$%&()*+,-./:;<=>?@[\]^_`{|}~''' "
 - 记录 article/journal/issue 和 in-press membership；
 - revision 唯一索引让 Provider 重试和控制状态丢失重放幂等收敛。
 
-`--update` 把事件生成到 `data/push_state/<db>.changes.json`。项目 batch ledger 先持久化精确 JSON 字节和 inclusive through-event cursor，再原子替换文件、幂等删除 `event_id <= cursor` 的行并推进 catalog phase。只要 active batch ledger 保留，rename 或 acknowledgement 任一侧崩溃都会重放同一 payload；ledger 丢失后文件系统与 SQLite 仍是至少一次边界，消费者继续按身份去重。空 outbox 不会覆盖已有的有界、可解析且 `db_name` 匹配的 manifest。Bootstrap 和 `--full-rescan` 不发布清单，并在成功结束时丢弃本次无需投递的 outbox。
+`--update` 把事件生成到 `data/push_state/<db>.changes.json`。项目 batch ledger 先持久化精确 JSON 字节和 inclusive through-event cursor，再原子替换文件、幂等删除 `event_id <= cursor` 的行并推进 catalog phase。只要 active batch ledger 保留，rename 或 acknowledgement 任一侧崩溃都会重放同一 payload；ledger 丢失后文件系统与 SQLite 仍是至少一次边界，消费者继续按身份去重。空 outbox 不会覆盖已有的有界、可解析且 `db_name` 匹配的 manifest；旧时间格式的当前 manifest 会以新格式重建。Bootstrap 和 `--full-rescan` 不发布清单，并在成功结束时丢弃本次无需投递的 outbox。
 
 ## v2 项目 batch ledger
 
@@ -387,7 +387,7 @@ run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-
 
 周报查询、可追踪文章数量和手动周报共享以 UTC 计算的 7 日变更清单窗口。它们合并当前及受管历史清单，去除重复发布，只包含仍存在于可用内容库中的可通知文章；历史回填 ID 不计入数量或手动候选集。
 
-手动任务以持久化创建时间固定窗口终点，并把已解析的来源快照交给投递流程，保留原来源运行身份与用户尝试去重。发现候选后不会在发送前重新读取可变的当前清单；无时间戳或窗口外的清单被排除，损坏的受管文件则明确失败。
+手动任务以持久化创建时间固定窗口终点，并把已解析的来源快照交给投递流程，保留原来源运行身份与用户尝试去重。发现候选后不会在发送前重新读取可变的当前清单；窗口外的清单被排除；包含候选却缺少有效 `generated_at` 的受管清单明确失败。
 
 ### 调度和活动门禁
 
@@ -501,3 +501,13 @@ v2 备份固定包含 `auth.sqlite` 和完整 `data/meta`，因此持久投递�
 
 `idx_relation_graph_favorites_user_updated` indexes `(user_id, updated_at DESC, id DESC)`.
 Fresh databases run the same versioned migrations through v22.
+
+## JSON 和文件格式边界
+
+Source、worker、CFP、备份及投递结果使用 typed structs 和标准 `encoding/json`，共享字符串 codec 使用 Go 1.27 的 `encoding/json/v2`。重复字段、非法 UTF-8、孤立 surrogate 会被标准库拒绝；数字使用标准转换，不再复刻 serde 浮点舍入和输出格式；通用验证不再强制所有 JSON number 转为 float64，也不再使用手写的 128 层阈值。标量或集合元素中的 `null` 遵循标准库零值规则，必填对象字段和计数 map 的非空约束仍明确校验。`json.Number` 保留上游 token，int64/uint64 转换检查范围；不能编码的结果不会以部分 JSON 写入存储。必填字段和非可空字段仍在解码前校验，外部 JSON tag 与 SQL 列名不变。
+
+旧 positional tuple 和单键对象 enum 格式已移除，适用于 Source/CFP、worker、作者、备份/metadata manifest、投递状态及结果。旧 Crossref cursor checkpoint（版本 1）不再升级或重放；继续使用当前版本 2 的 workset 状态和 OpenAlex cursor。旧格式会报错，索引需要重新创建 traversal；内容库和 committed identity 不会被清空。JSON 字节表示变化也可能使旧 workset 的冻结上下文校验失败，应重跑该索引任务。
+
+周报 `.changes.json` 的 `generated_at` 统一写为 UTC RFC3339Nano，保留纳秒；不再接受 Unix 秒字符串、以 `run_id` 充当时间、Chrono 闰秒、小写或空格分隔符。当前旧 manifest 可在下一次索引发布时重建；旧 prepared intent 明确要求重跑索引，保留 outbox。历史文件不自动改写或删除：不符合格式时周报明确失败，需先归档旧文件再重新生成清单。历史清理只对可解析 RFC3339Nano 时间和受管摘要文件名生效。
+
+托管文件的读写、枚举和发布使用 `os.Root` 限制目录穿越和指向目录外的链接；备份恢复及维护保留原有校验与失败补偿。SQLite 继续由现有 VFS 打开，保留 NOFOLLOW、硬链接和 Windows reparse-point 检查。metadata 的无覆盖发布使用 `Root.Link`，要求目标文件系统支持硬链接；不支持时明确失败并执行原有补偿。目标已存在时拒绝覆盖。外部指定的密钥和 CLI 输入文件仍按其显式路径读取。
