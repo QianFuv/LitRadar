@@ -53,20 +53,32 @@ func TestFixtureSeedsRealStorageAndRefreshesOriginalOverHttp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer accounts.Close()
+	defer func() {
+		if err := accounts.Close(); err != nil {
+			t.Errorf("accounts.Close: %v", err)
+		}
+	}()
 	assertFixtureAccounts(t, ctx, accounts)
 	content, err := indexstorage.OpenContent(ctx, filepath.Join(configuration.IndexDir, databaseName))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer content.Close()
+	defer func() {
+		if err := content.Close(); err != nil {
+			t.Errorf("content.Close: %v", err)
+		}
+	}()
 	articleId := fixtureArticleIdentity(t, ctx, content)
 	assertFixtureWeeklyManifest(t, root, articleId)
 	repository, err := cfpstorage.Open(configuration.AuthDbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	}()
 	assertInitialFixtureCfp(t, ctx, repository)
 	output.Reset()
 	if err := Run(ctx, []string{"--project-root", root, "--refresh-cfp"}, &output); err != nil {

@@ -37,11 +37,11 @@ func (transport fixtureTransport) Fetch(ctx context.Context, configuration cfp.S
 	if err != nil {
 		return cfp.Document{}, cfp.ErrRequest
 	}
-	defer response.Body.Close()
+	defer func(closeBody func() error) { _ = closeBody() }(response.Body.Close)
 	return fixtureDocument(response)
 }
 
-func refresh(ctx context.Context, root string) (any, error) {
+func refresh(ctx context.Context, root string) (resultValue1 any, resultError error) {
 	root, err := validateRoot(root)
 	if err != nil {
 		return nil, err
@@ -50,7 +50,11 @@ func refresh(ctx context.Context, root string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer listener.Close()
+	defer func() {
+		if closeError := listener.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close listener: %w", closeError))
+		}
+	}()
 	if err := listener.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		return nil, err
 	}
@@ -62,7 +66,11 @@ func refresh(ctx context.Context, root string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer repository.Close()
+	defer func() {
+		if closeError := repository.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close repository: %w", closeError))
+		}
+	}()
 	server := make(chan error, 1)
 	go func() { server <- serveCfp(listener) }()
 	catalog := fixtureCatalog()
@@ -80,12 +88,16 @@ func refresh(ctx context.Context, root string) (any, error) {
 	return map[string]any{"status": "cfp_updated", "notices": result.Notices}, nil
 }
 
-func serveCfp(listener *net.TCPListener) error {
+func serveCfp(listener *net.TCPListener) (resultError error) {
 	connection, err := listener.AcceptTCP()
 	if err != nil {
 		return err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	if err := connection.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		return err
 	}

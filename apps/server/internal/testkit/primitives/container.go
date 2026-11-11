@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
@@ -70,10 +71,14 @@ func ledger(directory string) error {
 		count.Add(1)
 		fmt.Println(`{"event":"synthetic-delivery","host":"www.pushplus.plus","path":"/send"}`)
 		writer.Header().Set("Content-Type", "application/json")
-		io.WriteString(writer, `{"code":200,"msg":"success"}`)
+		if _, err := io.WriteString(writer, `{"code":200,"msg":"success"}`); err != nil {
+			slog.Warn("cleanup.failed", "operation", "io.WriteString", "error", err)
+		}
 	})
 	mux.HandleFunc("GET /ledger", func(writer http.ResponseWriter, request *http.Request) {
-		json.NewEncoder(writer).Encode(map[string]int32{"count": count.Load()})
+		if err := json.NewEncoder(writer).Encode(map[string]int32{"count": count.Load()}); err != nil {
+			slog.Warn("cleanup.failed", "operation", "json.NewEncoder", "error", err)
+		}
 	})
 	identity := os.Getenv("LITRADAR_FIXTURE_CERT")
 	if identity == "" {
@@ -91,7 +96,9 @@ func probe() error {
 	defer cancel()
 	connection, err := (&net.Dialer{}).DialContext(ctx, "tcp", "1.1.1.1:443")
 	if err == nil {
-		connection.Close()
+		if err := connection.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "connection.Close", "error", err)
+		}
 		return errors.New("outbound isolation failed")
 	}
 	selected, err := transport.New("")
@@ -105,7 +112,7 @@ func probe() error {
 		return err
 	}
 	data, err := io.ReadAll(response.Body)
-	response.Body.Close()
+	_ = response.Body.Close()
 	if err != nil || response.StatusCode != 200 || string(data) != `{"code":200,"msg":"success"}` {
 		return errors.New("synthetic delivery did not reach ledger")
 	}
@@ -113,7 +120,7 @@ func probe() error {
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func(closeBody func() error) { _ = closeBody() }(response.Body.Close)
 	var result struct{ Count int }
 	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
 		return err

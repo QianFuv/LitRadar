@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -17,7 +18,7 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/process"
 )
 
-func helperCommand(ctx context.Context, executable string, args []string, input string, allowPrivate bool) (string, string, error) {
+func helperCommand(ctx context.Context, executable string, args []string, input string, allowPrivate bool) (resultValue1 string, resultValue2 string, resultError error) {
 	environment := []string{}
 	for _, entry := range os.Environ() {
 		if !strings.HasPrefix(entry, "OBSCURA_ALLOW_PRIVATE_NETWORK=") {
@@ -31,9 +32,19 @@ func helperCommand(ctx context.Context, executable string, args []string, input 
 	if err != nil {
 		return "", "", err
 	}
-	defer child.Close()
+	defer func() {
+		if closeError := child.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close child: %w", closeError))
+		}
+	}()
 	written := make(chan error, 1)
-	go func() { _, err := io.WriteString(child.Stdin, input); child.Stdin.Close(); written <- err }()
+	go func() {
+		_, err := io.WriteString(child.Stdin, input)
+		if err := child.Stdin.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "child.Stdin.Close", "error", err)
+		}
+		written <- err
+	}()
 	waitError := child.Wait(ctx)
 	closeError := child.Close()
 	writeError := <-written
@@ -46,7 +57,7 @@ func helperCommand(ctx context.Context, executable string, args []string, input 
 }
 
 // helpers owns the local server and shared deadline through ordered native protocol checks.
-func helpers() error {
+func helpers() (resultError error) {
 	if err := verifyFixtureHardening(); err != nil {
 		return err
 	}
@@ -56,10 +67,20 @@ func helpers() error {
 	}
 	server := &http.Server{Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "text/html;charset=utf-8")
-		io.WriteString(writer, `<!doctype html><html><body><div id="result">before</div><script>document.getElementById('result').textContent='rendered '+(2+2)</script></body></html>`)
+		if _, err := io.WriteString(writer, `<!doctype html><html><body><div id="result">before</div><script>document.getElementById('result').textContent='rendered '+(2+2)</script></body></html>`); err != nil {
+			slog.Warn("cleanup.failed", "operation", "io.WriteString", "error", err)
+		}
 	}), ReadHeaderTimeout: time.Second}
-	go server.Serve(listener)
-	defer server.Close()
+	go func() {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("fixture.serve.failed", "error", err)
+		}
+	}()
+	defer func() {
+		if closeError := server.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close server: %w", closeError))
+		}
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	if err := verifyFixtureBrowserPolicy(ctx); err != nil {

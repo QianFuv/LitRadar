@@ -98,7 +98,7 @@ func validateRoot(root string) (string, error) {
 }
 
 // seed owns both database lifetimes through ordered fixture writes and manifest publication.
-func seed(ctx context.Context, root string) (any, error) {
+func seed(ctx context.Context, root string) (resultValue1 any, resultError error) {
 	storage, err := prepareSeedStorage(ctx, root)
 	if err != nil {
 		return nil, err
@@ -107,7 +107,11 @@ func seed(ctx context.Context, root string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer repository.Close()
+	defer func() {
+		if closeError := repository.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close repository: %w", closeError))
+		}
+	}()
 	if err := seedFixtureAccounts(ctx, repository); err != nil {
 		return nil, err
 	}
@@ -118,7 +122,11 @@ func seed(ctx context.Context, root string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	catalog := fixtureCatalog()
 	if err := seedCfp(ctx, storage, catalog); err != nil {
 		return nil, err
@@ -136,7 +144,7 @@ func seed(ctx context.Context, root string) (any, error) {
 	return map[string]any{"status": "seeded", "database": databaseName, "user_count": 2, "article_count": changed, "weekly_article_count": 1}, nil
 }
 
-func seedCfp(ctx context.Context, storage config.Config, catalog domain.JournalCatalogEntry) error {
+func seedCfp(ctx context.Context, storage config.Config, catalog domain.JournalCatalogEntry) (resultError error) {
 	if err := os.MkdirAll(storage.MetaDir, 0777); err != nil {
 		return err
 	}
@@ -156,7 +164,11 @@ func seedCfp(ctx context.Context, storage config.Config, catalog domain.JournalC
 	if err != nil {
 		return err
 	}
-	defer repository.Close()
+	defer func() {
+		if closeError := repository.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close repository: %w", closeError))
+		}
+	}()
 	_, err = repository.ImportSeed(ctx, "full-stack-cfp-v1", []byte(encoded))
 	return err
 }

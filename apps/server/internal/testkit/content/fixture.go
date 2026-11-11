@@ -4,6 +4,7 @@ package content
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,7 +25,7 @@ func Batch() (domain.JournalCatalogEntry, domain.ProviderBatch) {
 }
 
 // Create writes a fresh database with explicit version boundaries and synthetic records.
-func Create(filename string, version int) error {
+func Create(filename string, version int) (resultError error) {
 	if version < 4 || version > indexschema.Version {
 		return fmt.Errorf("unsupported test schema version %d", version)
 	}
@@ -35,13 +36,21 @@ func Create(filename string, version int) error {
 	if err != nil {
 		return err
 	}
-	defer database.Close()
+	defer func() {
+		if closeError := database.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close database: %w", closeError))
+		}
+	}()
 	ctx := context.Background()
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer connection.Close()
+	defer func() {
+		if closeError := connection.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close connection: %w", closeError))
+		}
+	}()
 	return writeFixtureContent(ctx, connection, version)
 }
 

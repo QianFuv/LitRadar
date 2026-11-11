@@ -319,7 +319,9 @@ func fixtureListenerReady(address string) bool {
 	if err != nil {
 		return false
 	}
-	connection.Close()
+	if err := connection.Close(); err != nil {
+		return false
+	}
 	return true
 }
 
@@ -328,14 +330,18 @@ func assertFixtureListenerClosed(t *testing.T, address string) {
 	t.Helper()
 	connection, err := net.DialTimeout("tcp", address, time.Second)
 	if err == nil {
-		connection.Close()
+		if err := connection.Close(); err != nil {
+			t.Fatalf("connection.Close: %v", err)
+		}
 		t.Fatal("cancelled helper retained its listener")
 	}
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		t.Fatal("cancelled helper did not release its socket", err)
 	}
-	listener.Close()
+	if err := listener.Close(); err != nil {
+		t.Fatalf("listener.Close: %v", err)
+	}
 }
 
 // TestPrimitiveHelperFixture runs only explicitly selected synthetic child modes.
@@ -346,12 +352,20 @@ func TestPrimitiveHelperFixture(t *testing.T) {
 	case "echo":
 		writeFixtureEcho()
 	case "fail":
-		io.WriteString(os.Stdout, "synthetic-failure")
-		io.WriteString(os.Stderr, "synthetic-diagnostic")
+		if _, err := io.WriteString(os.Stdout, "synthetic-failure"); err != nil {
+			t.Fatalf("io.WriteString: %v", err)
+		}
+		if _, err := io.WriteString(os.Stderr, "synthetic-diagnostic"); err != nil {
+			t.Fatalf("io.WriteString: %v", err)
+		}
 		os.Exit(7)
 	case "flood":
-		io.WriteString(os.Stdout, strings.Repeat("x", 1024*1024+1))
-		io.WriteString(os.Stderr, "synthetic-diagnostic")
+		if _, err := io.WriteString(os.Stdout, strings.Repeat("x", 1024*1024+1)); err != nil {
+			t.Fatalf("io.WriteString: %v", err)
+		}
+		if _, err := io.WriteString(os.Stderr, "synthetic-diagnostic"); err != nil {
+			t.Fatalf("io.WriteString: %v", err)
+		}
 		os.Exit(0)
 	case "hold":
 		holdFixtureListener()
@@ -367,7 +381,9 @@ func writeFixtureEcho() {
 		os.Exit(8)
 	}
 	fmt.Fprintf(os.Stdout, "policy=%s|other=%s|input=%s", os.Getenv("OBSCURA_ALLOW_PRIVATE_NETWORK"), os.Getenv("LITRADAR_PRIMITIVE_HELPER_OTHER"), body)
-	io.WriteString(os.Stderr, "synthetic-diagnostic")
+	if _, err := io.WriteString(os.Stderr, "synthetic-diagnostic"); err != nil {
+		os.Exit(99)
+	}
 	os.Exit(0)
 }
 
@@ -377,7 +393,11 @@ func holdFixtureListener() {
 	if err != nil {
 		os.Exit(9)
 	}
-	defer listener.Close()
+	defer func() {
+		if err := listener.Close(); err != nil {
+			os.Exit(99)
+		}
+	}()
 	if err := os.WriteFile(os.Getenv("LITRADAR_PRIMITIVE_HELPER_READY"), []byte(listener.Addr().String()), 0600); err != nil {
 		os.Exit(10)
 	}

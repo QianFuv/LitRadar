@@ -50,7 +50,11 @@ func fixtureValues(t *testing.T, database *sql.DB, statement string) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			t.Errorf("rows.Close: %v", err)
+		}
+	}()
 	values := []string{}
 	for rows.Next() {
 		var value string
