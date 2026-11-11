@@ -12,18 +12,18 @@ export type LoginResponse = ApiSchemas['LoginResponse'];
 export type AuthProviders = ApiSchemas['AuthProvidersResponse'];
 export type OidcLinkStart = ApiSchemas['OidcLinkResponse'];
 export type InviteRequirement = ApiSchemas['InviteRequiredResponse'];
-export type InviteCodeStatus = ApiSchemas['InviteCodeStatus'];
-export type InviteCode = Required<ApiSchemas['InviteCodeResponse']>;
-export type AdminInviteCode = Required<ApiSchemas['AdminInviteCodeInfo']>;
+export type InviteCodeStatus = ApiSchemas['InviteResponse']['status'];
+export type InviteCode = Required<ApiSchemas['InviteResponse']>;
+export type AdminInviteCode = Required<ApiSchemas['AdminInviteResponse']>;
 type GeneratedAdminInviteCodeCreate = ApiSchemas['AdminInviteCodeCreate'];
 export type AdminInviteCodeCreate = {
   expires_at?: Exclude<GeneratedAdminInviteCodeCreate['expires_at'], null | undefined>;
   max_uses?: Exclude<GeneratedAdminInviteCodeCreate['max_uses'], null | undefined>;
 };
 export type TrackingStatus = ApiSchemas['TrackingStatusResponse'];
-export type ManualPushStatus = ApiSchemas['ManualWeeklyPushStatus'];
-export type ManualPushState = ApiSchemas['ManualPushState'];
-export type SchedulerRunState = ApiSchemas['SchedulerRunState'];
+export type ManualPushStatus = ApiSchemas['ManualPushStatus'];
+export type ManualPushState = ApiSchemas['ManualPushStatus']['status'];
+export type SchedulerRunState = ApiSchemas['Task']['last_status'];
 export type NotificationSettings = ApiSchemas['NotificationSettingsResponse'];
 type GeneratedNotificationSettingsUpdate = ApiSchemas['NotificationSettingsUpdate'];
 type NotificationSecretField = 'ai_api_key' | 'ai_backup_api_key' | 'pushplus_token';
@@ -31,13 +31,13 @@ export type NotificationSettingsUpdate = Required<
   Omit<GeneratedNotificationSettingsUpdate, NotificationSecretField>
 > &
   Pick<GeneratedNotificationSettingsUpdate, NotificationSecretField>;
-type RuntimeSecretItemInfo = ApiSchemas['RuntimeSecretItemInfo'];
+type RuntimeSecretItemInfo = ApiSchemas['SecretItem'];
 type RuntimeSecretPoolUpdate = Required<ApiSchemas['RuntimeSecretPoolUpdate']>;
-export type RuntimeSettingApplyMode = ApiSchemas['RuntimeSettingApplyMode'];
-export type RuntimeSettingGroup = ApiSchemas['RuntimeSettingGroup'];
+export type RuntimeSettingApplyMode = ApiSchemas['Info']['apply_mode'];
+export type RuntimeSettingGroup = ApiSchemas['Info']['group'];
 type RuntimeSettingControl = string;
 export type RuntimeSettingInfo = Omit<
-  ApiSchemas['RuntimeSettingInfo'],
+  ApiSchemas['Info'],
   'control' | 'input_type' | 'secret_items' | 'source' | 'updated_at'
 > & {
   control: RuntimeSettingControl;
@@ -46,9 +46,9 @@ export type RuntimeSettingInfo = Omit<
   source: 'database' | 'default';
   updated_at: number | null;
 };
-export type ProviderCapabilityInfo = ApiSchemas['ProviderCapabilityInfo'];
+export type ProviderCapabilityInfo = ApiSchemas['CapabilityInfo'];
 export type ProviderCatalogInfo = Omit<
-  ApiSchemas['ProviderCatalogInfo'],
+  ApiSchemas['ProviderCatalog'],
   'csv_filename' | 'database_filename'
 > & {
   csv_filename: string | null;
@@ -59,15 +59,23 @@ export type ProviderCatalogResponse = {
   catalogs: ProviderCatalogInfo[];
 };
 export type ProviderProxyPolicy = Record<string, boolean>;
-export type ProviderOrderConfiguration = ApiSchemas['ProviderOrderConfiguration'];
+/**
+ * Provider order setting decoded from its JSON string value. The API carries it inside a runtime
+ * setting value, so the OpenAPI schema has no type for it; the shape mirrors the server's
+ * `settings.ProviderOrders`.
+ */
+export type ProviderOrderConfiguration = {
+  default: string[];
+  catalogs: Record<string, string[]>;
+};
 export type IndexProviderRoutes = Record<string, string>;
 export type RuntimeSettingsUpdate = {
   values: NonNullable<ApiSchemas['RuntimeSettingsUpdate']['values']>;
   secret_pool_updates: Record<string, RuntimeSecretPoolUpdate>;
 };
-export type ScheduledJobSpec = ApiSchemas['ScheduledJobSpec'];
+export type ScheduledJobSpec = NonNullable<ApiSchemas['Task']['job']>;
 export type ScheduledTaskInfo = Omit<
-  ApiSchemas['ScheduledTaskInfo'],
+  ApiSchemas['Task'],
   'job' | 'last_run_at' | 'legacy_command'
 > & {
   job: ScheduledJobSpec | null;
@@ -77,7 +85,7 @@ export type ScheduledTaskInfo = Omit<
 export type ScheduledTaskCreate = Required<ApiSchemas['ScheduledTaskCreate']>;
 export type ScheduledTaskUpdate = ApiSchemas['ScheduledTaskUpdate'];
 type ScheduledTaskRunInfo = Omit<
-  ApiSchemas['ScheduledTaskRunInfo'],
+  ApiSchemas['Run'],
   'claimed_at' | 'finished_at' | 'started_at' | 'worker_id'
 > & {
   claimed_at: number | null;
@@ -85,9 +93,9 @@ type ScheduledTaskRunInfo = Omit<
   started_at: number | null;
   worker_id: string | null;
 };
-type SchedulerWorkerInfo = ApiSchemas['SchedulerWorkerInfo'];
+type SchedulerWorkerInfo = ApiSchemas['Worker'];
 export type SchedulerStatus = Omit<
-  ApiSchemas['SchedulerStatusResponse'],
+  ApiSchemas['Status'],
   'last_checked_at' | 'recent_runs' | 'workers'
 > & {
   last_checked_at: number | null;

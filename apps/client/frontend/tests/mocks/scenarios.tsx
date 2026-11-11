@@ -14,16 +14,16 @@ import weeklyUpdateSummaryJson from '../../../../../tests/data/scenarios/api/wee
 import weeklyUpdatesJson from '../../../../../tests/data/scenarios/api/weekly-updates.json';
 
 type ApiSchemas = components['schemas'];
-type DatePrecision = ApiSchemas['DatePrecision'];
+type DatePrecision = NonNullable<ApiSchemas['Article']['date_precision']>;
 type AuthKind = ApiSchemas['UserResponse']['auth_kind'];
 
 export type LoginScenario = ApiSchemas['LoginResponse'];
 export type AuthUserScenario = ApiSchemas['UserResponse'];
 export type AuthProvidersScenario = ApiSchemas['AuthProvidersResponse'];
-export type ArticlePageScenario = ApiSchemas['ArticlePage'];
-export type WeeklyUpdatesScenario = ApiSchemas['WeeklyUpdatesResponse'];
-export type WeeklyUpdateSummaryScenario = ApiSchemas['WeeklyUpdatesSummaryResponse'];
-export type WeeklyArticlePageScenario = ApiSchemas['WeeklyArticlePage'];
+export type ArticlePageScenario = ApiSchemas['PageArticle'];
+export type WeeklyUpdatesScenario = ApiSchemas['WeeklyResponseWeeklyJournalUpdate'];
+export type WeeklyUpdateSummaryScenario = ApiSchemas['WeeklyResponseWeeklyJournalSummary'];
+export type WeeklyArticlePageScenario = ApiSchemas['PageWeeklyArticle'];
 export type MaskedNotificationSettingsScenario = ApiSchemas['NotificationSettingsResponse'];
 export type ErrorScenario = ProblemDetails;
 

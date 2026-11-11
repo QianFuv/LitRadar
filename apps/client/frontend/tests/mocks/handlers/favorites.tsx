@@ -8,7 +8,7 @@ import type { components } from '@/lib/generated/api-schema';
 
 const API_URL = 'http://localhost/api';
 
-type FolderScenario = components['schemas']['FolderResponse'];
+type FolderScenario = components['schemas']['FavoriteFolder'];
 
 /**
  * Create favorites handlers with a typed folder list.
