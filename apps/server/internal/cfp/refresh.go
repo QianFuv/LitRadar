@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"golang.org/x/sync/errgroup"
 	"log/slog"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	assets "github.com/QianFuv/LitRadar/apps/server/assets/cfp"
@@ -120,32 +120,28 @@ func RefreshSources(ctx context.Context, repository *storage.Repository, configs
 	deadline := time.Now().Add(options.OverallTimeout)
 	results := make([]RefreshResult, len(configs))
 	failures := make([]error, len(configs))
-	var next atomic.Int64
-	var workers sync.WaitGroup
-	for worker := 0; worker < 2; worker++ {
-		workers.Go(func() {
-			for {
-				index := int(next.Add(1) - 1)
-				if index >= len(configs) {
-					return
-				}
-				config := configs[index]
-				if !time.Now().Before(deadline) || ctx.Err() != nil {
-					reason := "Batch deadline or cancellation prevented this attempt"
-					results[index] = RefreshResult{SourceKey: config.SourceKey, CatalogId: config.CatalogIds[0], Status: "not_attempted", Error: &reason}
-					continue
-				}
-				transport := NewLiveTransport(options)
-				sourceDeadline := time.Now().Add(options.SourceTimeout)
-				if sourceDeadline.After(deadline) {
-					sourceDeadline = deadline
-				}
-				results[index], failures[index] = RefreshSource(ctx, repository, config, transport, sourceDeadline)
-				transport.Close()
+	var workers errgroup.Group
+	workers.SetLimit(2)
+	for index, config := range configs {
+		workers.Go(func() error {
+			if !time.Now().Before(deadline) || ctx.Err() != nil {
+				reason := "Batch deadline or cancellation prevented this attempt"
+				results[index] = RefreshResult{SourceKey: config.SourceKey, CatalogId: config.CatalogIds[0], Status: "not_attempted", Error: &reason}
+				return nil
 			}
+			transport := NewLiveTransport(options)
+			sourceDeadline := time.Now().Add(options.SourceTimeout)
+			if sourceDeadline.After(deadline) {
+				sourceDeadline = deadline
+			}
+			results[index], failures[index] = RefreshSource(ctx, repository, config, transport, sourceDeadline)
+			transport.Close()
+			return nil
 		})
 	}
-	workers.Wait()
+	if err := workers.Wait(); err != nil {
+		return nil, err
+	}
 	for _, err := range failures {
 		if err != nil {
 			return nil, err

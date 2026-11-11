@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"golang.org/x/sync/semaphore"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -33,7 +34,7 @@ func DefaultLiveConfig() LiveConfig {
 // LiveTransport owns one upstream session, explicit networking and a shared article deadline.
 type LiveTransport struct{ state *liveState }
 type liveState struct {
-	gate         chan struct{}
+	gate         *semaphore.Weighted
 	redirect     *http.Client
 	allowed      endpoints
 	config       LiveConfig
@@ -55,33 +56,24 @@ func newLiveTransport(config LiveConfig, proxy transport.Proxy, deadline time.Ti
 	config.MaximumDocumentBytes = max(config.MaximumDocumentBytes, 1)
 	jar := platform.NewCookieJar()
 	redirect := &http.Client{Transport: wire, Jar: jar}
-	return &LiveTransport{state: &liveState{gate: make(chan struct{}, 1), redirect: redirect, allowed: allowed, config: config, deadline: deadline, proxy: proxy}}, nil
+	return &LiveTransport{state: &liveState{gate: semaphore.NewWeighted(1), redirect: redirect, allowed: allowed, config: config, deadline: deadline, proxy: proxy}}, nil
 }
 func (live LiveTransport) String() string       { return "LiveZjlibCnkiTransport { session: [REDACTED] }" }
 func (live LiveTransport) GoString() string     { return live.String() }
 func (live LiveTransport) LogValue() slog.Value { return slog.StringValue(live.String()) }
 func (live *LiveTransport) enter(ctx context.Context) error {
-	if ctx.Err() != nil {
+	if err := live.state.gate.Acquire(ctx, 1); err != nil {
 		return &Error{Kind: "Request", Message: transport.ErrArticleDeadline.Error()}
 	}
-	select {
-	case live.state.gate <- struct{}{}:
-		if ctx.Err() != nil {
-			live.leave()
-			return &Error{Kind: "Request", Message: transport.ErrArticleDeadline.Error()}
-		}
-		return nil
-	case <-ctx.Done():
-		return &Error{Kind: "Request", Message: transport.ErrArticleDeadline.Error()}
-	}
+	return nil
 }
-func (live *LiveTransport) leave() { <-live.state.gate }
+func (live *LiveTransport) leave() { live.state.gate.Release(1) }
 
 // Clone shares the original HTTP cookie clients and copies the last search referer.
 func (live *LiveTransport) Clone() *LiveTransport {
-	live.state.gate <- struct{}{}
+	_ = live.state.gate.Acquire(context.Background(), 1)
 	defer live.leave()
-	return &LiveTransport{state: &liveState{gate: make(chan struct{}, 1), redirect: live.state.redirect, allowed: live.state.allowed, config: live.state.config, deadline: live.state.deadline, proxy: live.state.proxy, lastBriefUrl: cloneString(live.state.lastBriefUrl)}}
+	return &LiveTransport{state: &liveState{gate: semaphore.NewWeighted(1), redirect: live.state.redirect, allowed: live.state.allowed, config: live.state.config, deadline: live.state.deadline, proxy: live.state.proxy, lastBriefUrl: cloneString(live.state.lastBriefUrl)}}
 }
 
 // Close releases idle pooled connections without discarding session state.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"golang.org/x/sync/semaphore"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -37,7 +38,7 @@ func (config LiveConfig) LogValue() slog.Value { return slog.StringValue(config.
 // LiveTransport preserves domestic-only network routing, cookies, captcha replay and cooldowns.
 type LiveTransport struct{ state *liveState }
 type liveState struct {
-	gate         chan struct{}
+	gate         *semaphore.Weighted
 	client       *http.Client
 	config       LiveConfig
 	proxy        transport.Proxy
@@ -48,7 +49,7 @@ type liveState struct {
 	solver       func(time.Time) (jfbym.Solver, func(), error)
 }
 type sharedCaptcha struct {
-	gate            chan struct{}
+	gate            *semaphore.Weighted
 	session         *CaptchaSession
 	generation      uint64
 	cooldownMutex   sync.Mutex
@@ -57,24 +58,15 @@ type sharedCaptcha struct {
 }
 
 func newSharedCaptcha() *sharedCaptcha {
-	return &sharedCaptcha{gate: make(chan struct{}, 1), session: NewCaptchaSession(CaptchaSolveBudget)}
+	return &sharedCaptcha{gate: semaphore.NewWeighted(1), session: NewCaptchaSession(CaptchaSolveBudget)}
 }
-func enter(ctx context.Context, gate chan struct{}) error {
-	if ctx.Err() != nil {
+func enter(ctx context.Context, gate *semaphore.Weighted) error {
+	if err := gate.Acquire(ctx, 1); err != nil {
 		return deadlineError()
 	}
-	select {
-	case gate <- struct{}{}:
-		if ctx.Err() != nil {
-			<-gate
-			return deadlineError()
-		}
-		return nil
-	case <-ctx.Done():
-		return deadlineError()
-	}
+	return nil
 }
-func leave(gate chan struct{}) { <-gate }
+func leave(gate *semaphore.Weighted) { gate.Release(1) }
 func deadlineError() error {
 	return &Error{Kind: "Request", Message: transport.ErrArticleDeadline.Error()}
 }
@@ -110,7 +102,7 @@ func NewLiveTransport(config LiveConfig, proxy transport.Proxy, deadline time.Ti
 		return nil, err
 	}
 	config = cloneConfig(config)
-	state := &liveState{gate: make(chan struct{}, 1), client: client, config: config, proxy: proxy, deadline: deadline, shared: newSharedCaptcha(), attempts: []scholarly.Attempt{}}
+	state := &liveState{gate: semaphore.NewWeighted(1), client: client, config: config, proxy: proxy, deadline: deadline, shared: newSharedCaptcha(), attempts: []scholarly.Attempt{}}
 	state.solver = func(deadline time.Time) (jfbym.Solver, func(), error) {
 		solver, err := jfbym.NewLive(valueOrEmpty(config.CaptchaToken), 30, proxy, deadline)
 		if err != nil {
@@ -133,7 +125,7 @@ func (live LiveTransport) LogValue() slog.Value { return slog.StringValue(live.S
 func (live *LiveTransport) Clone() *LiveTransport {
 	_ = enter(context.Background(), live.state.gate)
 	defer leave(live.state.gate)
-	return &LiveTransport{state: &liveState{gate: make(chan struct{}, 1), client: live.state.client, config: cloneConfig(live.state.config), proxy: live.state.proxy, deadline: live.state.deadline, shared: live.state.shared, attempts: live.Attempts(), solver: live.state.solver}}
+	return &LiveTransport{state: &liveState{gate: semaphore.NewWeighted(1), client: live.state.client, config: cloneConfig(live.state.config), proxy: live.state.proxy, deadline: live.state.deadline, shared: live.state.shared, attempts: live.Attempts(), solver: live.state.solver}}
 }
 
 // Close releases idle connections without affecting an active clone's requests.
@@ -261,7 +253,7 @@ func (live *LiveTransport) send(ctx context.Context, deadline time.Time, method,
 		return nil, func() {}, deadlineError()
 	}
 	attempt, cancel := context.WithTimeout(ctx, timeout)
-	response, err := transport.RedirectSequence(attempt, live.state.client.Transport, live.state.client.Jar, live.state.proxy, method, url, string(body), headers, func(next string, previousCount int) error {
+	response, err := transport.RedirectSequence(attempt, live.state.client.Transport, live.state.client.Jar, method, url, string(body), headers, func(next string, previousCount int) error {
 		if previousCount >= 10 {
 			return errors.New("domestic CNKI redirect limit exceeded")
 		}

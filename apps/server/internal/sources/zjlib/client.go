@@ -3,6 +3,7 @@ package zjlib
 import (
 	"context"
 	"fmt"
+	"golang.org/x/sync/semaphore"
 	"log/slog"
 	"strings"
 	"time"
@@ -11,7 +12,7 @@ import (
 // Client serializes session transitions and keeps credentials out of implicit formatting.
 type Client struct{ state *clientState }
 type clientState struct {
-	gate                         chan struct{}
+	gate                         *semaphore.Weighted
 	transport                    Transport
 	token, qrUuid, finalProxyUrl *string
 	warmedAt                     *int64
@@ -20,27 +21,18 @@ type clientState struct {
 
 // NewClient binds a transport to empty, private login state.
 func NewClient(transport Transport) *Client {
-	return &Client{state: &clientState{gate: make(chan struct{}, 1), transport: transport, now: func() int64 { return time.Now().Unix() }}}
+	return &Client{state: &clientState{gate: semaphore.NewWeighted(1), transport: transport, now: func() int64 { return time.Now().Unix() }}}
 }
 func (client Client) String() string       { return "ZhejiangLibraryCnkiClient { session: [REDACTED] }" }
 func (client Client) GoString() string     { return client.String() }
 func (client Client) LogValue() slog.Value { return slog.StringValue(client.String()) }
 func (client *Client) enter(ctx context.Context) error {
-	if ctx.Err() != nil {
+	if err := client.state.gate.Acquire(ctx, 1); err != nil {
 		return &Error{Kind: "Request", Message: "article access deadline expired"}
 	}
-	select {
-	case client.state.gate <- struct{}{}:
-		if ctx.Err() != nil {
-			client.leave()
-			return &Error{Kind: "Request", Message: "article access deadline expired"}
-		}
-		return nil
-	case <-ctx.Done():
-		return &Error{Kind: "Request", Message: "article access deadline expired"}
-	}
+	return nil
 }
-func (client *Client) leave() { <-client.state.gate }
+func (client *Client) leave() { client.state.gate.Release(1) }
 
 // LoadStateData replaces token, QR, warm-up state and cookies using the original permissive projection.
 func (client *Client) LoadStateData(value any) {

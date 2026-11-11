@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/sync/semaphore"
 	"log/slog"
 	"sort"
 	"strings"
@@ -91,8 +92,12 @@ func queryMap(url string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	pairs, err := queryPairs(parsed.Search())
+	if err != nil {
+		return nil, err
+	}
 	values := map[string]string{}
-	for _, pair := range queryPairs(parsed.Search()) {
+	for _, pair := range pairs {
 		values[pair.Name] = pair.Value
 	}
 	return values, nil
@@ -235,14 +240,14 @@ type CaptchaSession struct{ state *captchaState }
 
 type captchaState struct {
 	mutex                      *sync.Mutex
-	solveGate                  chan struct{}
+	solveGate                  *semaphore.Weighted
 	captchaId                  string
 	solveAttempts, solveBudget uint64
 }
 
 // NewCaptchaSession creates a session with at least one fresh puzzle attempt.
 func NewCaptchaSession(budget uint64) *CaptchaSession {
-	return &CaptchaSession{state: &captchaState{mutex: &sync.Mutex{}, solveGate: make(chan struct{}, 1), solveBudget: max(budget, 1)}}
+	return &CaptchaSession{state: &captchaState{mutex: &sync.Mutex{}, solveGate: semaphore.NewWeighted(1), solveBudget: max(budget, 1)}}
 }
 func (session CaptchaSession) String() string {
 	session.state.mutex.Lock()
@@ -263,7 +268,7 @@ func (session *CaptchaSession) RemainingBudget() uint64 {
 func (session *CaptchaSession) Clone() *CaptchaSession {
 	session.state.mutex.Lock()
 	defer session.state.mutex.Unlock()
-	return &CaptchaSession{state: &captchaState{mutex: &sync.Mutex{}, solveGate: make(chan struct{}, 1), captchaId: session.state.captchaId, solveAttempts: session.state.solveAttempts, solveBudget: session.state.solveBudget}}
+	return &CaptchaSession{state: &captchaState{mutex: &sync.Mutex{}, solveGate: semaphore.NewWeighted(1), captchaId: session.state.captchaId, solveAttempts: session.state.solveAttempts, solveBudget: session.state.solveBudget}}
 }
 
 // AttachCaptchaId preserves an existing exact captchaId key and untouched URL query encoding.
@@ -278,7 +283,11 @@ func (session *CaptchaSession) AttachCaptchaId(url string) (string, error) {
 	if id == "" {
 		return parsed.Href(false), nil
 	}
-	for _, pair := range queryPairs(parsed.Search()) {
+	pairs, err := queryPairs(parsed.Search())
+	if err != nil {
+		return "", err
+	}
+	for _, pair := range pairs {
 		if pair.Name == "captchaId" {
 			return parsed.Href(false), nil
 		}
@@ -309,12 +318,10 @@ func (session *CaptchaSession) EnsureAccess(ctx context.Context, text, url strin
 
 // SolveChallenge fetches one fresh puzzle for each candidate and retains only an accepted id.
 func (session *CaptchaSession) SolveChallenge(ctx context.Context, url string, solver jfbym.Solver, fetch func(context.Context, string) (CaptchaPuzzle, error), submit func(context.Context, CaptchaPuzzle, string) (bool, error)) error {
-	select {
-	case session.state.solveGate <- struct{}{}:
-		defer func() { <-session.state.solveGate }()
-	case <-ctx.Done():
+	if err := session.state.solveGate.Acquire(ctx, 1); err != nil {
 		return &Error{Kind: "Request", Message: "article access deadline expired"}
 	}
+	defer session.state.solveGate.Release(1)
 	for {
 		if err := ctx.Err(); err != nil {
 			return &Error{Kind: "Request", Message: "article access deadline expired"}

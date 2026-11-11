@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"golang.org/x/sync/semaphore"
 	"io"
 	"log/slog"
 	"net"
@@ -30,14 +31,16 @@ type HttpTransport struct {
 }
 type requestContextKey struct{}
 
-var dnsSlots = make(chan struct{}, 8)
+const dnsLookupLimit = 8
+
+var dnsSlots = semaphore.NewWeighted(dnsLookupLimit)
 
 // NewHttpTransport bypasses environment proxies and binds each connection to checked public addresses.
 func NewHttpTransport() *HttpTransport {
 	result := &HttpTransport{dial: (&net.Dialer{}).DialContext, lookup: func(host string) ([]netip.Addr, error) {
 		return net.DefaultResolver.LookupNetIP(context.Background(), "ip", host)
 	}}
-	transport := &http.Transport{Proxy: nil, ForceAttemptHTTP2: true, MaxIdleConns: 32, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 8 * time.Second, DisableCompression: true}
+	transport := &http.Transport{Proxy: nil, ForceAttemptHTTP2: true, MaxIdleConns: 32, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 8 * time.Second, DisableCompression: false}
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		return result.connect(ctx, network, address, false)
 	}
@@ -57,17 +60,19 @@ func (transport *HttpTransport) resolve(ctx context.Context, host string) ([]net
 		}
 		return []netip.Addr{address}, nil
 	}
-	select {
-	case dnsSlots <- struct{}{}:
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	if err := dnsSlots.Acquire(ctx, 1); err != nil {
+		return nil, err
 	}
 	type resolution struct {
 		addresses []netip.Addr
 		err       error
 	}
 	completed := make(chan resolution, 1)
-	go func() { addresses, err := transport.lookup(host); <-dnsSlots; completed <- resolution{addresses, err} }()
+	go func() {
+		addresses, err := transport.lookup(host)
+		dnsSlots.Release(1)
+		completed <- resolution{addresses, err}
+	}()
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -123,26 +128,22 @@ func (transport *HttpTransport) FetchBytes(ctx context.Context, config SourceCon
 	if err != nil {
 		return HttpDocument{}, ErrDisallowedUrl
 	}
-	for redirect := 0; redirect <= 5; redirect++ {
-		if err = validateUrl(config, location); err != nil {
-			return HttpDocument{}, err
-		}
-		response, release, err := transport.fetchResponse(ctx, location, deadline)
-		if err != nil {
-			return HttpDocument{}, err
-		}
-		closeResponse := func() { _ = response.Body.Close(); release() }
-		if isRedirectStatus(response.StatusCode) {
-			location, err = redirectLocation(response, location, redirect, closeResponse)
-			if err != nil {
-				return HttpDocument{}, err
-			}
-			continue
-		}
-		return readHttpDocument(response, location, deadline, closeResponse)
+	if err := validateUrl(config, location); err != nil {
+		return HttpDocument{}, err
 	}
-	return HttpDocument{}, ErrDisallowedUrl
+	response, release, err := transport.fetchResponse(ctx, config, location, deadline)
+	if err != nil {
+		return HttpDocument{}, err
+	}
+	closeResponse := func() { _ = response.Body.Close(); release() }
+	final, err := whatwg.NewParser().Parse(response.Request.URL.String())
+	if err != nil {
+		closeResponse()
+		return HttpDocument{}, ErrDisallowedUrl
+	}
+	return readHttpDocument(response, final, deadline, closeResponse)
 }
+
 func isHeaderText(value string) bool {
 	for _, value := range []byte(value) {
 		if value < 32 && value != '\t' || value >= 127 {
@@ -196,7 +197,7 @@ func publicResolvedAddresses(addresses []netip.Addr, err error) ([]netip.Addr, e
 }
 
 // fetchResponse retries only request acquisition and returns cancellation ownership with a response.
-func (transport *HttpTransport) fetchResponse(ctx context.Context, location *whatwg.Url, deadline time.Time) (*http.Response, context.CancelFunc, error) {
+func (transport *HttpTransport) fetchResponse(ctx context.Context, config SourceConfig, location *whatwg.Url, deadline time.Time) (*http.Response, context.CancelFunc, error) {
 	var err error
 	var response *http.Response
 	var release context.CancelFunc
@@ -208,7 +209,16 @@ func (transport *HttpTransport) fetchResponse(ctx context.Context, location *wha
 		requestCtx, cancel := context.WithTimeout(ctx, min(remaining, 20*time.Second))
 		dialCtx := context.WithValue(requestCtx, requestContextKey{}, requestCtx)
 		headers := http.Header{"User-Agent": {"LitRadar/CFP (+original publisher announcements)"}, "Accept": {"text/html,application/pdf,text/plain;q=0.8"}}
-		response, err = wire.RedirectSequence(dialCtx, transport.client.Transport, nil, wire.Proxy{}, http.MethodGet, location.Href(false), "", headers, nil)
+		response, err = wire.RedirectSequence(dialCtx, transport.client.Transport, nil, http.MethodGet, location.Href(false), "", headers, func(next string, hops int) error {
+			if hops > 5 {
+				return ErrDisallowedUrl
+			}
+			location, err := whatwg.NewParser().Parse(next)
+			if err != nil {
+				return ErrDisallowedUrl
+			}
+			return validateUrl(config, location)
+		})
 		if err == nil {
 			release = cancel
 			break
@@ -228,31 +238,6 @@ func (transport *HttpTransport) fetchResponse(ctx context.Context, location *wha
 		return nil, nil, ErrRequest
 	}
 	return response, release, nil
-}
-
-// isRedirectStatus recognizes the original entire 3xx range.
-func isRedirectStatus(status int) bool { return status >= 300 && status < 400 }
-
-// redirectLocation closes the response before admitting the first Location header and parsed target.
-func redirectLocation(response *http.Response, location *whatwg.Url, redirect int, closeResponse func()) (*whatwg.Url, error) {
-	if redirect == 5 {
-		closeResponse()
-		return nil, ErrDisallowedUrl
-	}
-	locations, hasLocation := response.Header["Location"]
-	target := ""
-	if len(locations) > 0 {
-		target = locations[0]
-	}
-	closeResponse()
-	if !hasLocation || len(locations) == 0 || !isHeaderText(target) {
-		return nil, ErrDisallowedUrl
-	}
-	location, err := whatwg.NewParser().ParseRef(location.Href(false), target)
-	if err != nil {
-		return nil, ErrDisallowedUrl
-	}
-	return location, nil
 }
 
 // readHttpDocument preserves status, declared length, bounded read, cleanup and deadline error priority.

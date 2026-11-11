@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/sync/errgroup"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
@@ -153,17 +153,9 @@ func (cache *captureCache) resume(path, sourceKey string) error {
 	}
 	return nil
 }
-func sortedMapKeys[V any](values map[string]V) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	return keys
-}
 func (cache *captureCache) evidence() []map[string]string {
 	documents := []map[string]string{}
-	for _, url := range sortedMapKeys(cache.documents) {
+	for _, url := range slices.Sorted(maps.Keys(cache.documents)) {
 		captured := cache.documents[url]
 		if captured.err != nil {
 			documents = append(documents, map[string]string{"requestedUrl": url, "error": captured.err.Error()})
@@ -226,24 +218,21 @@ func RefreshFullTexts(ctx context.Context, repository *storage.Repository, confi
 	deadline := time.Now().Add(options.OverallTimeout)
 	results := make([]FullTextResult, len(configs))
 	failures := make([]error, len(configs))
-	var next atomic.Int64
-	var workers sync.WaitGroup
-	for worker := 0; worker < 4; worker++ {
-		workers.Go(func() {
-			for {
-				index := int(next.Add(1) - 1)
-				if index >= len(configs) {
-					return
-				}
-				sourceDeadline := time.Now().Add(options.SourceTimeout)
-				if sourceDeadline.After(deadline) {
-					sourceDeadline = deadline
-				}
-				results[index], failures[index] = RefreshFullTextSource(ctx, repository, configs[index], options, sourceDeadline, captureDirectory, shouldResume)
+	var workers errgroup.Group
+	workers.SetLimit(4)
+	for index := range configs {
+		workers.Go(func() error {
+			sourceDeadline := time.Now().Add(options.SourceTimeout)
+			if sourceDeadline.After(deadline) {
+				sourceDeadline = deadline
 			}
+			results[index], failures[index] = RefreshFullTextSource(ctx, repository, configs[index], options, sourceDeadline, captureDirectory, shouldResume)
+			return nil
 		})
 	}
-	workers.Wait()
+	if err := workers.Wait(); err != nil {
+		return nil, err
+	}
 	for _, err := range failures {
 		if err != nil {
 			return nil, err
@@ -397,7 +386,7 @@ func publishRecoveredSources(ctx, databaseCtx context.Context, repository *stora
 
 // saveFullTextEvidence preserves a completed publication when separate evidence persistence fails.
 func saveFullTextEvidence(capturePath string, result FullTextResult, sources []domain.Source, documents []map[string]string, cache *captureCache) error {
-	evidence, err := jsonvalue.EncodeJson(map[string]any{"result": result, "sources": sources, "documents": documents, "browserAttempts": sortedMapKeys(cache.browserAttempts)})
+	evidence, err := jsonvalue.EncodeJson(map[string]any{"result": result, "sources": sources, "documents": documents, "browserAttempts": append([]string{}, slices.Sorted(maps.Keys(cache.browserAttempts))...)})
 	if err != nil {
 		return &storage.PayloadError{Cause: err}
 	}

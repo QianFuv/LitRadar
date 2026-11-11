@@ -1,9 +1,7 @@
 package outbound
 
 import (
-	"bufio"
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -14,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -24,62 +23,26 @@ func localClient(server *httptest.Server) *Client {
 	return client
 }
 
-func TestMalformedRedirectAndOpaquePathPreserveWireContract(t *testing.T) {
+// TestMalformedRedirectAndPathFailWithoutFollowing protects the outbound redirect prohibition.
+func TestMalformedRedirectAndPathFailWithoutFollowing(t *testing.T) {
+	var calls atomic.Int32
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		calls.Add(1)
 		if request.Header.Get("Accept") != "*/*" || request.Header.Get("User-Agent") != "" {
-			t.Errorf("wire contract: path=%q accept=%q agent=%q", request.RequestURI, request.Header.Get("Accept"), request.Header.Get("User-Agent"))
+			t.Error("source defaults changed")
 		}
 		response.Header().Set("Location", "http://[")
 		response.WriteHeader(302)
 	}))
-	defer server.Close()
-	response, err := localClient(server).PostJson(context.Background(), server.URL, nil, map[string]any{}, time.Second)
-	if err != nil || response.StatusCode != 302 {
-		t.Fatalf("original redirect status lost: %+v %v", response, err)
+	t.Cleanup(server.Close)
+	for _, path := range []string{"", "/%GG"} {
+		response, err := localClient(server).PostJson(t.Context(), server.URL+path, nil, map[string]any{}, time.Second)
+		if !errors.Is(err, RequestFailed) || response.StatusCode != 0 {
+			t.Fatalf("malformed request succeeded: %+v %v", response, err)
+		}
 	}
-	listener, err := tls.Listen("tcp", "127.0.0.1:0", server.TLS.Clone())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := listener.Close(); err != nil {
-			t.Errorf("listener.Close: %v", err)
-		}
-	}()
-	requestLines := make(chan string, 1)
-	go func() {
-		connection, err := listener.Accept()
-		if err != nil {
-			requestLines <- "accept failed"
-			return
-		}
-		defer func() {
-			if err := connection.Close(); err != nil {
-				t.Errorf("connection.Close: %v", err)
-			}
-		}()
-		if err := connection.SetDeadline(time.Now().Add(time.Second)); err != nil {
-			t.Errorf("connection.SetDeadline: %v", err)
-		}
-		reader := bufio.NewReader(connection)
-		line, _ := reader.ReadString('\n')
-		requestLines <- line
-		for {
-			header, err := reader.ReadString('\n')
-			if err != nil || header == "\r\n" {
-				break
-			}
-		}
-		if _, err := fmt.Fprint(connection, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"); err != nil {
-			t.Errorf("fmt.Fprint: %v", err)
-		}
-	}()
-	response, err = localClient(server).PostJson(context.Background(), "https://"+listener.Addr().String()+"/%GG", nil, map[string]any{}, time.Second)
-	if err != nil || response.StatusCode != 200 {
-		t.Fatalf("opaque URL: %v %d", err, response.StatusCode)
-	}
-	if line := <-requestLines; line != "POST /%GG HTTP/1.1\r\n" {
-		t.Fatalf("opaque path changed: %q", line)
+	if calls.Load() != 1 {
+		t.Fatal("malformed redirect followed or invalid path sent", calls.Load())
 	}
 }
 
@@ -289,39 +252,41 @@ func TestUrlAndAddressPolicyRejectBeforeDial(t *testing.T) {
 }
 
 func TestTimedOutDnsStillHoldsOneOfEightLookupSlots(t *testing.T) {
-	client := New(time.Second)
-	var active, maximum atomic.Int32
-	release := make(chan struct{})
-	var workers sync.WaitGroup
-	client.lookup = func(context.Context, string, string) ([]netip.Addr, error) {
-		count := active.Add(1)
-		for old := maximum.Load(); count > old && !maximum.CompareAndSwap(old, count); old = maximum.Load() {
-		}
-		<-release
-		active.Add(-1)
-		return []netip.Addr{netip.MustParseAddr("8.8.8.8")}, nil
-	}
-	for range 20 {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
-			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-			defer cancel()
-			if _, err := client.resolve(ctx, "slow.example"); err != TimedOut {
-				t.Error(err)
+	synctest.Test(t, func(t *testing.T) {
+		client := New(time.Second)
+		var active, maximum atomic.Int32
+		release := make(chan struct{})
+		var workers sync.WaitGroup
+		client.lookup = func(context.Context, string, string) ([]netip.Addr, error) {
+			count := active.Add(1)
+			for old := maximum.Load(); count > old && !maximum.CompareAndSwap(old, count); old = maximum.Load() {
 			}
-		}()
-	}
-	workers.Wait()
-	if maximum.Load() != 8 || active.Load() != 8 {
-		t.Fatalf("unbounded lookups: maximum=%d active=%d", maximum.Load(), active.Load())
-	}
-	close(release)
-	deadline := time.Now().Add(time.Second)
-	for len(dnsSlots) > 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if len(dnsSlots) != 0 {
-		t.Fatal("lookup slots not released")
-	}
+			<-release
+			active.Add(-1)
+			return []netip.Addr{netip.MustParseAddr("8.8.8.8")}, nil
+		}
+		for range 20 {
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+				defer cancel()
+				if _, err := client.resolve(ctx, "slow.example"); err != TimedOut {
+					t.Error(err)
+				}
+			}()
+		}
+		workers.Wait()
+		if maximum.Load() != 8 || active.Load() != 8 {
+			t.Fatalf("unbounded lookups: maximum=%d active=%d", maximum.Load(), active.Load())
+		}
+		close(release)
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		if err := dnsSlots.Acquire(ctx, 8); err != nil {
+			t.Fatal("lookup slots not released", err)
+		}
+		dnsSlots.Release(8)
+
+	})
 }

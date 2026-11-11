@@ -93,7 +93,7 @@ func TestLiveDomesticFormsAndCookieClone(t *testing.T) {
 	if _, err := clone.ArticleDetail(context.Background(), KnsBase+"/kcms2/article/abstract?v=id", nil); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"navi.cnki.net POST /knavi/journals/J/yearList pIdx=0&time=a+b%2B%7E&isEpublish=0&pcode=CJFD%2CCCJD", "navi.cnki.net POST /knavi/journals/J/papers yearIssue=opaque+%2B%7E&pageIdx=7&pcode=CJFD%2CCCJD&isEpublish=0&language=CHS&uniplatform=NZKPT", "kns.cnki.net GET /kcms2/article/abstract?v=id "}
+	want := []string{"navi.cnki.net POST /knavi/journals/J/yearList pIdx=0&time=a+b%2B~&isEpublish=0&pcode=CJFD%2CCCJD", "navi.cnki.net POST /knavi/journals/J/papers yearIssue=opaque+%2B~&pageIdx=7&pcode=CJFD%2CCCJD&isEpublish=0&language=CHS&uniplatform=NZKPT", "kns.cnki.net GET /kcms2/article/abstract?v=id "}
 	if !reflect.DeepEqual(captures, want) {
 		t.Fatalf("captures %q", captures)
 	}
@@ -276,7 +276,7 @@ func TestLiveDomesticResetLeavesCloneCookies(t *testing.T) {
 	}
 }
 
-func TestLiveDomesticRedirectUpdatesReferer(t *testing.T) {
+func TestLiveDomesticRedirectPreservesExplicitReferer(t *testing.T) {
 	var mutex sync.Mutex
 	observed := []string{}
 	live := loopbackLive(t, func(writer http.ResponseWriter, request *http.Request) {
@@ -300,7 +300,7 @@ func TestLiveDomesticRedirectUpdatesReferer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"POST " + NaviBase + "/detail application/x-www-form-urlencoded", "GET " + NaviBase + "/knavi/journals/J/yearList ", "GET " + NaviBase + "/first "}
+	want := []string{"POST " + NaviBase + "/detail application/x-www-form-urlencoded", "GET " + NaviBase + "/detail ", "GET " + NaviBase + "/detail "}
 	if !reflect.DeepEqual(observed, want) {
 		t.Fatalf("observed %q want %q", observed, want)
 	}
@@ -312,10 +312,10 @@ func TestLiveDomesticRedirectNormalization(t *testing.T) {
 		calls           int
 		status          int
 	}{
-		{`/kns55/a\b`, KnsBase + "/kns55/a/b", 2, 200},
-		{"/last#oversea", KnsBase + "/last", 2, 200},
-		{"", KnsBase + "/start", 2, 200},
-		{"http://[", KnsBase + "/start", 1, 302},
+		{`/kns55/a\b`, KnsBase + "/kns55/a%5Cb", 2, 200},
+		{"/last#oversea", KnsBase + "/last#oversea", 2, 200},
+		{"", KnsBase + "/start", 1, 302},
+		{"http://[", "", 1, 0},
 	} {
 		t.Run(test.location, func(t *testing.T) {
 			var calls atomic.Int32
@@ -329,8 +329,14 @@ func TestLiveDomesticRedirectNormalization(t *testing.T) {
 					t.Errorf("io.WriteString: %v", err)
 				}
 			}, time.Time{})
-			response, cancel, err := live.send(context.Background(), time.Now().Add(3*time.Second), "GET", KnsBase+"/start", nil, http.Header{})
+			response, cancel, err := live.send(t.Context(), time.Now().Add(3*time.Second), "GET", KnsBase+"/start", nil, http.Header{})
 			defer cancel()
+			if test.status == 0 {
+				if err == nil || response != nil || calls.Load() != 1 {
+					t.Fatal("malformed Location followed", err)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}

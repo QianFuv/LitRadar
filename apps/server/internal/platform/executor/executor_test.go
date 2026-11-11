@@ -4,22 +4,25 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/admission"
 )
 
 func TestQueueDeadlineDoesNotCancelAdmittedWork(t *testing.T) {
-	pool := New(1, 10*time.Millisecond)
-	value, err := Run(context.Background(), pool, func() (int, error) {
-		time.Sleep(40 * time.Millisecond)
-		return 42, nil
-	})
-	if err != nil || value != 42 {
-		t.Fatalf("admitted work: %d %v", value, err)
-	}
-}
+	synctest.Test(t, func(t *testing.T) {
+		pool := New(1, 10*time.Millisecond)
+		value, err := Run(t.Context(), pool, func() (int, error) {
+			time.Sleep(40 * time.Millisecond)
+			return 42, nil
+		})
+		if err != nil || value != 42 {
+			t.Fatalf("admitted work: %d %v", value, err)
+		}
 
+	})
+}
 func TestCancelledRequestRetainsCapacityAndCloseWakesWaiters(t *testing.T) {
 	pool := New(1, time.Second)
 	requestContext, cancel := context.WithCancel(context.Background())

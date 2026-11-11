@@ -21,11 +21,12 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/transport"
 	whatwg "github.com/nlnwa/whatwg-url/url"
 	"golang.org/x/net/http/httpguts"
+	"golang.org/x/sync/semaphore"
 )
 
 const MaxResponseBytes = 2 * 1024 * 1024
 
-var dnsSlots = make(chan struct{}, 8)
+var dnsSlots = semaphore.NewWeighted(8)
 
 // Error identifies a safe network failure without carrying headers, URLs or upstream bodies.
 type Error string
@@ -103,9 +104,7 @@ func (client *Client) resolve(ctx context.Context, host string) ([]netip.Addr, e
 	if address, err := netip.ParseAddr(host); err == nil {
 		return []netip.Addr{address}, nil
 	}
-	select {
-	case dnsSlots <- struct{}{}:
-	case <-ctx.Done():
+	if err := dnsSlots.Acquire(ctx, 1); err != nil {
 		return nil, TimedOut
 	}
 	type lookupResult struct {
@@ -114,7 +113,7 @@ func (client *Client) resolve(ctx context.Context, host string) ([]netip.Addr, e
 	}
 	completed := make(chan lookupResult, 1)
 	go func() {
-		defer func() { <-dnsSlots }()
+		defer dnsSlots.Release(1)
 		addresses, err := client.lookup(context.Background(), "ip", host)
 		completed <- lookupResult{addresses, err}
 	}()
@@ -155,7 +154,7 @@ func (client *Client) PostJson(ctx context.Context, value string, headers http.H
 	defer connection.CloseIdleConnections()
 	var hasConnection atomic.Bool
 	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { hasConnection.Store(true) }})
-	response, err := transport.RedirectSequence(ctx, connection, nil, transport.Proxy{}, http.MethodPost, location.Href(false), string(encoded), headers, nil)
+	response, err := transport.RedirectSequence(ctx, connection, nil, http.MethodPost, location.Href(false), string(encoded), headers, nil)
 	if err != nil {
 		return Response{}, classifyOutboundRequestError(ctx, err, hasConnection.Load())
 	}

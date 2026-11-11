@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -41,35 +42,34 @@ func TestCancellationDoesNotReleaseRunningCapacity(t *testing.T) {
 }
 
 func TestShutdownWaitRetainsCancelledWorkerOwnership(t *testing.T) {
-	gate := New(1)
-	ctx, cancel := context.WithCancel(context.Background())
-	started, release, callerDone := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	go func() {
-		defer close(callerDone)
-		_, _ = Run(ctx, gate, func() (int, error) { close(started); <-release; return 1, nil })
-	}()
-	<-started
-	cancel()
-	<-callerDone
-	gate.Close()
-	waited := make(chan struct{})
-	go func() { gate.Wait(); close(waited) }()
-	select {
-	case <-waited:
-		t.Fatal("shutdown released resources while cancelled work still used them")
-	case <-time.After(20 * time.Millisecond):
-	}
-	close(release)
-	select {
-	case <-waited:
-	case <-time.After(time.Second):
-		t.Fatal("shutdown did not converge after worker completion")
-	}
-	if _, err := Run(context.Background(), gate, func() (int, error) { t.Error("work admitted after shutdown"); return 0, nil }); !errors.Is(err, ErrClosed) {
-		t.Fatal(err)
-	}
-}
+	synctest.Test(t, func(t *testing.T) {
+		gate := New(1)
+		ctx, cancel := context.WithCancel(t.Context())
+		started, release, callerDone := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		go func() {
+			defer close(callerDone)
+			_, _ = Run(ctx, gate, func() (int, error) { close(started); <-release; return 1, nil })
+		}()
+		<-started
+		cancel()
+		<-callerDone
+		gate.Close()
+		waited := make(chan struct{})
+		go func() { gate.Wait(); close(waited) }()
+		synctest.Wait()
+		select {
+		case <-waited:
+			t.Fatal("shutdown released resources while cancelled work still used them")
+		default:
+		}
+		close(release)
+		<-waited
+		if _, err := Run(t.Context(), gate, func() (int, error) { t.Error("work admitted after shutdown"); return 0, nil }); !errors.Is(err, ErrClosed) {
+			t.Fatal(err)
+		}
 
+	})
+}
 func TestConcurrentShutdownCannotRaceNewWorkerOwnership(t *testing.T) {
 	for attempt := 0; attempt < 50; attempt++ {
 		gate := New(4)
