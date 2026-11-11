@@ -748,7 +748,9 @@ async function serializesOneIndexProviderPerCatalog(): Promise<void> {
     name: 'ccf_computer_journals 索引 Provider',
   });
   select.focus();
-  await user.keyboard('{Enter}{Home}{Enter}');
+  await user.keyboard('{Enter}');
+  await screen.findByRole('option', { name: 'cnki' });
+  await user.keyboard('{Home}{Enter}');
   await waitFor(() => expect(select).toHaveTextContent('cnki'));
   await user.click(screen.getByRole('button', { name: '保存配置' }));
 

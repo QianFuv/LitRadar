@@ -2,7 +2,7 @@
  * Serial browser journeys through the real Go listener and disposable SQLite state.
  */
 
-import { expect, test, type Page, type TestInfo } from '@playwright/test';
+import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -84,6 +84,22 @@ async function login(page: Page, username: string, password: string): Promise<vo
 }
 
 /**
+ * Report whether an element receives pointer input at its center, rather than lying under an open
+ * modal dialog that covers it.
+ *
+ * @param locator - Element to hit-test.
+ * @returns Whether the element is topmost at its center.
+ */
+async function isTopmostAtCenter(locator: Locator): Promise<boolean> {
+  return locator.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    return element.contains(
+      document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2),
+    );
+  });
+}
+
+/**
  * Permanently dismiss seeded announcements when the search workspace presents them.
  *
  * @param page - Playwright page.
@@ -98,7 +114,7 @@ async function dismissVisibleAnnouncements(page: Page): Promise<void> {
     .waitFor({ state: 'visible', timeout: 5_000 })
     .then(() => true)
     .catch(() => false);
-  if (!didAppear) {
+  if (!didAppear || !(await isTopmostAtCenter(dismissButtons.first()))) {
     return;
   }
   for (let remaining = await dismissButtons.count(); remaining > 0; remaining -= 1) {

@@ -243,7 +243,9 @@ async function editsRuntimeLoggingSettings(): Promise<void> {
 
   const format = await screen.findByRole('combobox', { name: 'Log format' });
   format.focus();
-  await user.keyboard('{Enter}{End}{Enter}');
+  await user.keyboard('{Enter}');
+  await screen.findByRole('option', { name: 'compact' });
+  await user.keyboard('{End}{Enter}');
   const filter = screen.getByLabelText('Log filter');
   expect(filter).toHaveAttribute('spellcheck', 'false');
   await user.clear(filter);

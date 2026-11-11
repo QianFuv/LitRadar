@@ -82,7 +82,9 @@ async function managesAnnouncementLifecycle(): Promise<void> {
   await user.type(within(createDialog).getByLabelText('公告内容'), 'Available now');
   const createPriority = within(createDialog).getByRole('combobox', { name: '优先级' });
   createPriority.focus();
-  await user.keyboard('{Enter}{Home}{Enter}');
+  await user.keyboard('{Enter}');
+  await screen.findByRole('option', { name: '高优先级' });
+  await user.keyboard('{Home}{Enter}');
   await waitFor(() => expect(createPriority).toHaveTextContent('高优先级'));
   await user.click(within(createDialog).getByRole('button', { name: '创建' }));
 
@@ -108,7 +110,9 @@ async function managesAnnouncementLifecycle(): Promise<void> {
   await user.type(messageInput, 'Updated details');
   const editPriority = within(editDialog).getByRole('combobox', { name: '优先级' });
   editPriority.focus();
-  await user.keyboard('{Enter}{End}{Enter}');
+  await user.keyboard('{Enter}');
+  await screen.findByRole('option', { name: '低优先级' });
+  await user.keyboard('{End}{Enter}');
   await waitFor(() => expect(editPriority).toHaveTextContent('低优先级'));
   await user.click(within(editDialog).getByRole('button', { name: '保存' }));
 
