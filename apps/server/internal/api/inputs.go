@@ -145,7 +145,7 @@ type ListArticlesInput struct {
 	// DB describes database name or filename under data/index.
 	DB optional[string] `query:"db" nullable:"false" maxLength:"255" doc:"Database name or filename under data/index."`
 	// JournalID describes repeated journal identifier filters.
-	JournalID []int64 `query:"journal_id,explode" nullable:"false" maxItems:"500" doc:"Repeated journal identifier filters."`
+	JournalID []contentID `query:"journal_id,explode" nullable:"false" maxItems:"500" doc:"Repeated journal identifier filters."`
 	// Area describes repeated area filters.
 	Area []string `query:"area,explode" nullable:"false" maxItems:"500" doc:"Repeated area filters."`
 	// UTDRating describes repeated exact UTD grades; OR within a system and AND across systems/other filters. Blank values are invalid; all filter items share a 500-item bound.
@@ -157,7 +157,7 @@ type ListArticlesInput struct {
 	// FMSCNRating describes repeated exact FMS China grades.
 	FMSCNRating []string `query:"fmscn_rating,explode" nullable:"false" maxItems:"500" doc:"Repeated exact FMS China grades."`
 	// IssueID describes issue identifier filter.
-	IssueID optional[int64] `query:"issue_id" nullable:"false" format:"int64" doc:"Issue identifier filter."`
+	IssueID contentID `query:"issue_id" nullable:"false" doc:"Issue identifier filter."`
 	// Year describes publication year filter.
 	Year optional[int64] `query:"year" nullable:"false" format:"int64" doc:"Publication year filter."`
 	// InPress describes in-press filter.
@@ -192,7 +192,7 @@ type ListArticlesInput struct {
 type GetArticleInput struct {
 	RequestMetadata
 	// ArticleID describes article identifier.
-	ArticleID int64 `path:"article_id" required:"true" nullable:"false" format:"int64" doc:"Article identifier."`
+	ArticleID contentID `path:"article_id" required:"true" nullable:"false" doc:"Article identifier."`
 	// DB describes database name or filename under 'data/index'.
 	DB optional[string] `query:"db" nullable:"false" doc:"Database name or filename under 'data/index'."`
 }
@@ -201,7 +201,7 @@ type GetArticleInput struct {
 type ListRelatedArticlesInput struct {
 	RequestMetadata
 	// ArticleID describes source article identifier.
-	ArticleID int64 `path:"article_id" required:"true" nullable:"false" format:"int64" doc:"Source article identifier."`
+	ArticleID contentID `path:"article_id" required:"true" nullable:"false" doc:"Source article identifier."`
 	// DB describes database name or filename under 'data/index'.
 	DB optional[string] `query:"db" nullable:"false" doc:"Database name or filename under 'data/index'."`
 	// Limit describes maximum related articles, from 1 to 30. Defaults to 10.
@@ -212,7 +212,7 @@ type ListRelatedArticlesInput struct {
 type RedirectArticleAbstractInput struct {
 	RequestMetadata
 	// ArticleID describes article identifier.
-	ArticleID int64 `path:"article_id" required:"true" nullable:"false" format:"int64" doc:"Article identifier."`
+	ArticleID contentID `path:"article_id" required:"true" nullable:"false" doc:"Article identifier."`
 	// DB describes database name or filename under 'data/index'.
 	DB optional[string] `query:"db" nullable:"false" doc:"Database name or filename under 'data/index'."`
 }
@@ -221,7 +221,7 @@ type RedirectArticleAbstractInput struct {
 type GetArticleAccessInput struct {
 	RequestMetadata
 	// ArticleID describes article identifier.
-	ArticleID int64 `path:"article_id" required:"true" nullable:"false" format:"int64" doc:"Article identifier."`
+	ArticleID contentID `path:"article_id" required:"true" nullable:"false" doc:"Article identifier."`
 	// DB describes database name or filename under 'data/index'.
 	DB optional[string] `query:"db" nullable:"false" doc:"Database name or filename under 'data/index'."`
 }
@@ -230,7 +230,7 @@ type GetArticleAccessInput struct {
 type RedirectArticleFulltextInput struct {
 	RequestMetadata
 	// ArticleID describes article identifier.
-	ArticleID int64 `path:"article_id" required:"true" nullable:"false" format:"int64" doc:"Article identifier."`
+	ArticleID contentID `path:"article_id" required:"true" nullable:"false" doc:"Article identifier."`
 	// DB describes database name or filename under 'data/index'.
 	DB optional[string] `query:"db" nullable:"false" doc:"Database name or filename under 'data/index'."`
 }
@@ -365,7 +365,7 @@ type ClearSessionInput struct {
 type CheckFavoriteInput struct {
 	RequestMetadata
 	// ArticleID describes article identifier.
-	ArticleID int64 `query:"article_id" required:"true" nullable:"false" minimum:"1" format:"int64" doc:"Article identifier."`
+	ArticleID contentID `query:"article_id" required:"true" nullable:"false" doc:"Article identifier."`
 	// DBName describes source database name.
 	DBName optional[string] `query:"db_name" nullable:"false" maxLength:"255" doc:"Source database name."`
 }
@@ -469,7 +469,7 @@ type RemoveFavoriteInput struct {
 	// FolderID describes folder row identifier.
 	FolderID int64 `path:"folder_id" required:"true" nullable:"false" minimum:"1" format:"int64" doc:"Folder row identifier."`
 	// ArticleID describes article identifier.
-	ArticleID int64 `path:"article_id" required:"true" nullable:"false" minimum:"1" format:"int64" doc:"Article identifier."`
+	ArticleID contentID `path:"article_id" required:"true" nullable:"false" doc:"Article identifier."`
 	// DBName describes source database name.
 	DBName optional[string] `query:"db_name" nullable:"false" maxLength:"255" doc:"Source database name."`
 }
@@ -508,7 +508,7 @@ type ListIssuesInput struct {
 	// DB describes database name or filename under 'data/index'.
 	DB optional[string] `query:"db" nullable:"false" doc:"Database name or filename under 'data/index'."`
 	// JournalID describes journal identifier filter.
-	JournalID optional[int64] `query:"journal_id" nullable:"false" format:"int64" doc:"Journal identifier filter."`
+	JournalID contentID `query:"journal_id" nullable:"false" doc:"Journal identifier filter."`
 	// Year describes publication year filter.
 	Year optional[int64] `query:"year" nullable:"false" format:"int64" doc:"Publication year filter."`
 	// Sort describes sort expression.
@@ -523,7 +523,7 @@ type ListIssuesInput struct {
 type GetIssueInput struct {
 	RequestMetadata
 	// IssueID describes issue identifier.
-	IssueID int64 `path:"issue_id" required:"true" nullable:"false" format:"int64" doc:"Issue identifier."`
+	IssueID contentID `path:"issue_id" required:"true" nullable:"false" doc:"Issue identifier."`
 	// DB describes database name or filename under 'data/index'.
 	DB optional[string] `query:"db" nullable:"false" doc:"Database name or filename under 'data/index'."`
 }
@@ -559,7 +559,7 @@ type ListJournalsInput struct {
 type GetJournalInput struct {
 	RequestMetadata
 	// JournalID describes journal identifier.
-	JournalID int64 `path:"journal_id" required:"true" nullable:"false" format:"int64" doc:"Journal identifier."`
+	JournalID contentID `path:"journal_id" required:"true" nullable:"false" doc:"Journal identifier."`
 	// DB describes database name or filename under 'data/index'.
 	DB optional[string] `query:"db" nullable:"false" doc:"Database name or filename under 'data/index'."`
 }
@@ -654,7 +654,7 @@ type GetWeeklyUpdateArticlesInput struct {
 	// DB describes database name or filename under data/index.
 	DB string `query:"db" required:"true" nullable:"false" maxLength:"255" doc:"Database name or filename under data/index."`
 	// JournalID describes positive journal identifier.
-	JournalID int64 `query:"journal_id" required:"true" nullable:"false" minimum:"1" format:"int64" doc:"Positive journal identifier."`
+	JournalID contentID `query:"journal_id" required:"true" nullable:"false" doc:"Positive journal identifier."`
 	// WindowEnd describes rFC3339 fixed weekly window end.
 	WindowEnd string `query:"window_end" required:"true" nullable:"false" doc:"RFC3339 fixed weekly window end."`
 	// Q describes optional simple full-text phrase.

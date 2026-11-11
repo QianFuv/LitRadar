@@ -227,7 +227,7 @@ func (handlers *favoriteHandlers) routes() []route {
 			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (okResponse, error) {
-				changed, err := handlers.repository.RemoveFavorite(workContext, owner, input.FolderID, favorites.Reference{ArticleID: identity.ID(input.ArticleID), DBName: textOr(input.DBName.Pointer(), "")})
+				changed, err := handlers.repository.RemoveFavorite(workContext, owner, input.FolderID, favorites.Reference{ArticleID: identity.ID(input.ArticleID.value), DBName: textOr(input.DBName.Pointer(), "")})
 				return changedResponse(changed, err, "Favorite not found")
 			}, mapBusinessError)
 		}),
@@ -239,7 +239,7 @@ func (handlers *favoriteHandlers) routes() []route {
 			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() ([]favorites.Membership, error) {
-				return handlers.repository.IsFavorited(workContext, owner, favorites.Reference{ArticleID: identity.ID(input.ArticleID), DBName: textOr(input.DBName.Pointer(), "")})
+				return handlers.repository.IsFavorited(workContext, owner, favorites.Reference{ArticleID: identity.ID(input.ArticleID.value), DBName: textOr(input.DBName.Pointer(), "")})
 			}, mapBusinessError)
 		}),
 		typedRoute(openapi.Operation{Method: "POST", Path: "/api/favorites/check/batch", ID: "check_favorites_batch"}, func(ctx context.Context, input *CheckFavoritesBatchInput) (*output[[]favorites.BatchMembership], error) {

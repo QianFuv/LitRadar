@@ -32,7 +32,7 @@ type Journal struct {
 
 // Issue preserves absent fields and derives date precision without rewriting stored text.
 type Issue struct {
-	IssueID         int64       `json:"issue_id" nullable:"false" format:"int64"`
+	IssueID         identity.ID `json:"issue_id" nullable:"false" pattern:"^[1-9][0-9]*$"`
 	JournalID       identity.ID `json:"journal_id" nullable:"false"`
 	PublicationYear *int64      `json:"publication_year" required:"false" nullable:"true" format:"int64"`
 	Title           *string     `json:"title" required:"false" nullable:"true"`

@@ -69,7 +69,7 @@ func issueFromRow(scanner scanner) (domain.Issue, error) {
 }
 
 func decodeIssue(row querydb.Issue) domain.Issue {
-	result := domain.Issue{IssueID: int64(row.IssueID), JournalID: identity.ID(row.JournalID), PublicationYear: (*int64)(row.PublicationYear), Title: (*string)(row.Title), Volume: (*string)(row.Volume), Number: (*string)(row.Number), Date: (*string)(row.Date)}
+	result := domain.Issue{IssueID: identity.ID(row.IssueID), JournalID: identity.ID(row.JournalID), PublicationYear: (*int64)(row.PublicationYear), Title: (*string)(row.Title), Volume: (*string)(row.Volume), Number: (*string)(row.Number), Date: (*string)(row.Date)}
 	if result.Date != nil {
 		result.DatePrecision = domain.DatePrecision(*result.Date)
 	}

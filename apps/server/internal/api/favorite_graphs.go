@@ -30,7 +30,7 @@ func (handlers *favoriteHandlers) graphRoutes() []route {
 			owner := current.authorization.User.ID
 			workContext := context.WithoutCancel(ctx)
 			return admitted(ctx, handlers.pool, func() (*favorites.Graph, error) {
-				return handlers.repository.CreateGraph(workContext, owner, favorites.GraphCreate{Title: input.Body.Title, DBName: input.Body.DBName, RootArticleID: input.Body.RootArticleID, NodeCount: input.Body.NodeCount, Graph: input.Body.Graph})
+				return handlers.repository.CreateGraph(workContext, owner, favorites.GraphCreate{Title: input.Body.Title, DBName: input.Body.DBName, RootArticleID: int64(input.Body.RootArticleID), NodeCount: input.Body.NodeCount, Graph: input.Body.Graph})
 			}, mapBusinessError)
 		}),
 		typedRoute(openapi.Operation{Method: "GET", Path: "/api/favorites/graphs/{graph_id}", ID: "get_relation_graph_favorite"}, func(ctx context.Context, input *GetRelationGraphFavoriteInput) (*output[*favorites.Graph], error) {

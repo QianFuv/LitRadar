@@ -57,7 +57,9 @@ OpenAPI 由 Go 类型生成：`apps/server/internal/api/` 用 huma 注册各操�
 
 ### ID 与分页
 
-文章和期刊 ID 在 JSON 中序列化为十进制字符串，避免 JavaScript 丢失 64 位整数精度；路径参数和查询参数仍使用十进制文本。
+文章、期刊、期次的 63 位哈希 ID 在 JSON 字段、路径参数和查询参数的 OpenAPI schema 中统一为十进制字符串，图谱收藏的 `root_article_id` 也使用字符串。合法格式为 `^[1-9][0-9]*$`，范围为 `1` 至 `9223372036854775807`；不允许符号、前导零、小数、指数或空白，格式错误和越界返回 `422`。`journal_id` 数组使用重复查询参数，每个元素均为字符串。客户端应直接传递字符串，禁止转换为 JavaScript `number`。服务端和 SQLite 内部继续使用精确的 `int64`，无需迁移已有索引或图谱记录。
+
+自增的用户、文件夹、令牌、图谱、公告、任务和邀请码路径参数保持整数类型。MCP 的文章、期刊 ID 及 `search_articles.issue_id` 同样使用十进制字符串；MCP 没有图谱收藏工具。
 
 列表接口通常采用 `limit` + `offset`。`GET /api/articles` 还支持游标分页：
 

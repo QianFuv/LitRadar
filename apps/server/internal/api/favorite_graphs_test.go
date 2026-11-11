@@ -21,7 +21,7 @@ func graphFixture(t *testing.T) (*authHandlers, *favoriteHandlers, *http.ServeMu
 }
 
 func graphRequestBody(title string, count int, graph string) string {
-	return fmt.Sprintf(`{"title":%q,"db_name":"source","root_article_id":42,"node_count":%d,"graph":%s}`, title, count, graph)
+	return fmt.Sprintf(`{"title":%q,"db_name":"source","root_article_id":"42","node_count":%d,"graph":%s}`, title, count, graph)
 }
 
 func requireGraphRequest(t *testing.T, router http.Handler, token, method, path, body string, status int) *httptest.ResponseRecorder {

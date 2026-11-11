@@ -344,7 +344,7 @@ func fetchLegacyWeeklyArticles(ctx context.Context, filename string, ids []int64
 			if err != nil {
 				return domain.WeeklyArticle{}, err
 			}
-			result := domain.WeeklyArticle{ArticleID: identity.ID(id), JournalID: identity.ID(journal), IssueID: issue.Value, Title: string(title), PublicationYear: year.Value, Date: date.Value, Authors: names, Abstract: abstract.Value, Doi: doi.Value, OpenAccess: optionalBoolean(openAccess.Value), InPress: optionalBoolean(inPress.Value), JournalTitle: string(journalTitle), Volume: volume.Value, Number: number.Value}
+			result := domain.WeeklyArticle{ArticleID: identity.ID(id), JournalID: identity.ID(journal), IssueID: (*identity.ID)(issue.Value), Title: string(title), PublicationYear: year.Value, Date: date.Value, Authors: names, Abstract: abstract.Value, Doi: doi.Value, OpenAccess: optionalBoolean(openAccess.Value), InPress: optionalBoolean(inPress.Value), JournalTitle: string(journalTitle), Volume: volume.Value, Number: number.Value}
 			if result.Date != nil {
 				result.DatePrecision = domain.DatePrecision(*result.Date)
 			}

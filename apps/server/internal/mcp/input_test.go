@@ -5,6 +5,32 @@ import (
 	"testing"
 )
 
+func TestIssueFilterPreserves63BitDecimalID(t *testing.T) {
+	const decimal = "9223361829786370983"
+	schema := declaredInputSchema(t, "search_articles")
+	input, err := decodeInput(json.RawMessage(`{"issue_id":"`+decimal+`"}`), schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, params := input.articles()
+	if input.err != nil || params.IssueID == nil || *params.IssueID != 9223361829786370983 {
+		t.Fatal("issue ID precision lost", input.err, params.IssueID)
+	}
+	if _, err := decodeInput(json.RawMessage(`{"issue_id":`+decimal+`}`), schema); err == nil {
+		t.Fatal("numeric issue ID accepted")
+	}
+	for _, decimal := range []string{"0", "01", "+1", " 1", "9223372036854775808"} {
+		input, err := decodeInput(json.RawMessage(`{"issue_id":"`+decimal+`"}`), schema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		input.articles()
+		if input.err == nil {
+			t.Fatal("noncanonical issue ID accepted", decimal)
+		}
+	}
+}
+
 // TestDeclaredInputSchemasAcceptNullableAndStringOrStringsFields checks supported tool inputs.
 func TestDeclaredInputSchemasAcceptNullableAndStringOrStringsFields(t *testing.T) {
 	for _, raw := range []string{

@@ -275,9 +275,10 @@ func (input *toolInput) strings(name string) []string {
 }
 
 func (input *toolInput) positiveID(name, value string) int64 {
+	raw := value
 	value = input.requiredText(name, value)
 	id, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || id <= 0 {
+	if err != nil || id <= 0 || raw != strconv.FormatInt(id, 10) {
 		input.fail(name + " must be a positive integer")
 	}
 	return id
@@ -329,7 +330,10 @@ func (input *toolInput) articles() (*string, query.ArticleListParams) {
 		params.Area[index] = input.requiredText("area", value)
 	}
 	params.Ratings = input.ratings()
-	params.IssueID, params.Year = input.nonnegative("issue_id"), input.nonnegative("year")
+	if value, ok := input.fields["issue_id"].(string); ok {
+		params.IssueID = new(input.positiveID("issue_id", value))
+	}
+	params.Year = input.nonnegative("year")
 	params.InPress, params.OpenAccess = input.boolean("in_press"), input.boolean("open_access")
 	params.DateFrom, params.DateTo = input.text("date_from"), input.text("date_to")
 	params.Doi, params.Pmid, params.Query = input.text("doi"), input.text("pmid"), input.text("q")

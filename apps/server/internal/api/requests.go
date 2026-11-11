@@ -179,7 +179,7 @@ type RelationGraphFavoriteCreate struct {
 	// DBName describes source index database name.
 	DBName string `json:"db_name" nullable:"false" maxLength:"255"`
 	// RootArticleID contains the root article id value.
-	RootArticleID int64 `json:"root_article_id" nullable:"false" minimum:"1" format:"int64"`
+	RootArticleID identity.ID `json:"root_article_id" nullable:"false" pattern:"^[1-9][0-9]*$"`
 	// NodeCount contains the node count value.
 	NodeCount int64 `json:"node_count" nullable:"false" minimum:"1" maximum:"500"`
 	// Graph describes verbatim JSON object snapshot, at most 2 MiB encoded.

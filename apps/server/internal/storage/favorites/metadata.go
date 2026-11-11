@@ -21,7 +21,7 @@ type Article struct {
 	Favorite
 	MetadataStatus  string       `json:"metadata_status" nullable:"false" enum:"available,missing,unavailable"`
 	JournalID       *identity.ID `json:"journal_id" required:"false" nullable:"true"`
-	IssueID         *int64       `json:"issue_id" required:"false" nullable:"true" format:"int64"`
+	IssueID         *identity.ID `json:"issue_id" required:"false" nullable:"true" pattern:"^[1-9][0-9]*$"`
 	Title           *string      `json:"title" required:"false" nullable:"true"`
 	PublicationYear *int64       `json:"publication_year" required:"false" nullable:"true" format:"int64"`
 	Date            *string      `json:"date" required:"false" nullable:"true"`
@@ -291,7 +291,7 @@ func metadataArticleFromRow(row scanner) (identity.ID, Article, error) {
 	if err != nil {
 		return 0, Article{}, err
 	}
-	item := Article{MetadataStatus: "available", IssueID: issue.Value, Title: title.Value, PublicationYear: year.Value, Date: date.Value, Authors: &names, Abstract: abstract.Value, Doi: doi.Value, JournalTitle: journalTitle.Value, OpenAccess: boolValue(openAccess.Value), InPress: boolValue(inPress.Value), Volume: volume.Value, Number: number.Value, Issn: issn.Value, Eissn: eissn.Value}
+	item := Article{MetadataStatus: "available", IssueID: (*identity.ID)(issue.Value), Title: title.Value, PublicationYear: year.Value, Date: date.Value, Authors: &names, Abstract: abstract.Value, Doi: doi.Value, JournalTitle: journalTitle.Value, OpenAccess: boolValue(openAccess.Value), InPress: boolValue(inPress.Value), Volume: volume.Value, Number: number.Value, Issn: issn.Value, Eissn: eissn.Value}
 	if journal.Value != nil {
 		value := identity.ID(*journal.Value)
 		item.JournalID = &value

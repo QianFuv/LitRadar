@@ -75,7 +75,7 @@ func (handlers *indexHandlers) routes() []route {
 				return nil, failure.problem()
 			}
 			return admitted(ctx, handlers.pool, func() (domain.Journal, error) {
-				return query.GetJournal(ctx, handlers.storage, cleanText(input.DB.Pointer()), input.JournalID)
+				return query.GetJournal(ctx, handlers.storage, cleanText(input.DB.Pointer()), input.JournalID.value)
 			}, mapIndexError)
 		}),
 		typedRoute(openapi.Operation{Method: "GET", Path: "/api/issues/{issue_id}", ID: "get_issue"}, func(ctx context.Context, input *GetIssueInput) (*output[domain.Issue], error) {
@@ -83,7 +83,7 @@ func (handlers *indexHandlers) routes() []route {
 				return nil, failure.problem()
 			}
 			return admitted(ctx, handlers.pool, func() (domain.Issue, error) {
-				return query.GetIssue(ctx, handlers.storage, cleanText(input.DB.Pointer()), input.IssueID)
+				return query.GetIssue(ctx, handlers.storage, cleanText(input.DB.Pointer()), input.IssueID.value)
 			}, mapIndexError)
 		}),
 		typedRoute(openapi.Operation{Method: "GET", Path: "/api/articles/{article_id}", ID: "get_article"}, func(ctx context.Context, input *GetArticleInput) (*output[domain.Article], error) {
@@ -91,7 +91,7 @@ func (handlers *indexHandlers) routes() []route {
 				return nil, failure.problem()
 			}
 			return admitted(ctx, handlers.pool, func() (domain.Article, error) {
-				return query.GetArticle(ctx, handlers.storage, cleanText(input.DB.Pointer()), input.ArticleID)
+				return query.GetArticle(ctx, handlers.storage, cleanText(input.DB.Pointer()), input.ArticleID.value)
 			}, mapIndexError)
 		}),
 		typedRoute(openapi.Operation{Method: "GET", Path: "/api/articles/{article_id}/related", ID: "list_related_articles"}, func(ctx context.Context, input *ListRelatedArticlesInput) (*output[[]domain.Article], error) {
@@ -99,7 +99,7 @@ func (handlers *indexHandlers) routes() []route {
 				return nil, failure.problem()
 			}
 			return admitted(ctx, handlers.pool, func() ([]domain.Article, error) {
-				return query.RelatedArticles(ctx, handlers.storage, cleanText(input.DB.Pointer()), input.ArticleID, numberOr(input.Limit.Pointer(), 10))
+				return query.RelatedArticles(ctx, handlers.storage, cleanText(input.DB.Pointer()), input.ArticleID.value, numberOr(input.Limit.Pointer(), 10))
 			}, mapIndexError)
 		}),
 		typedRoute(openapi.Operation{Method: "GET", Path: "/api/journals", ID: "list_journals"}, func(ctx context.Context, input *ListJournalsInput) (*output[domain.Page[domain.Journal]], error) {
@@ -116,7 +116,7 @@ func (handlers *indexHandlers) routes() []route {
 				return nil, failure.problem()
 			}
 			return admitted(ctx, handlers.pool, func() (domain.Page[domain.Issue], error) {
-				params := query.IssueListParams{JournalID: input.JournalID.Pointer(), Year: input.Year.Pointer(), Sort: cleanText(input.Sort.Pointer()), Limit: numberOr(input.Limit.Pointer(), 50), Offset: numberOr(input.Offset.Pointer(), 0)}
+				params := query.IssueListParams{JournalID: input.JournalID.pointer(), Year: input.Year.Pointer(), Sort: cleanText(input.Sort.Pointer()), Limit: numberOr(input.Limit.Pointer(), 50), Offset: numberOr(input.Offset.Pointer(), 0)}
 				return query.ListIssues(ctx, handlers.storage, cleanText(input.DB.Pointer()), params)
 			}, mapIndexError)
 		}),
@@ -126,10 +126,13 @@ func (handlers *indexHandlers) routes() []route {
 			}
 			return admitted(ctx, handlers.pool, func() (domain.Page[domain.Article], error) {
 				params := query.DefaultArticleListParams()
-				params.JournalID = input.JournalID
+				params.JournalID = make([]int64, len(input.JournalID))
+				for index, id := range input.JournalID {
+					params.JournalID[index] = id.value
+				}
 				params.Area = input.Area
 				params.Ratings = domain.JournalRatings{UtdRating: input.UTDRating, AbsRating: input.ABSRating, FmsRating: input.FMSRating, FmscnRating: input.FMSCNRating}
-				params.IssueID = input.IssueID.Pointer()
+				params.IssueID = input.IssueID.pointer()
 				params.Year = input.Year.Pointer()
 				params.InPress = input.InPress.Pointer()
 				params.OpenAccess = input.OpenAccess.Pointer()
@@ -172,7 +175,7 @@ func (handlers *indexHandlers) routes() []route {
 				return nil, failure.problem()
 			}
 			return admitted(ctx, handlers.pool, func() (domain.Page[domain.WeeklyArticle], error) {
-				params := query.WeeklyArticlePageParams{DBName: input.DB, JournalID: input.JournalID, WindowEnd: input.WindowEnd, Query: cleanText(input.Q.Pointer()), Limit: numberOr(input.Limit.Pointer(), 50), Cursor: cleanText(input.Cursor.Pointer())}
+				params := query.WeeklyArticlePageParams{DBName: input.DB, JournalID: input.JournalID.value, WindowEnd: input.WindowEnd, Query: cleanText(input.Q.Pointer()), Limit: numberOr(input.Limit.Pointer(), 50), Cursor: cleanText(input.Cursor.Pointer())}
 				return query.WeeklyArticles(ctx, handlers.storage, params, handlers.cache)
 			}, mapIndexError)
 		}),

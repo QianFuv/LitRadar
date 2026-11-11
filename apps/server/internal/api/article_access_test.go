@@ -241,7 +241,7 @@ func TestArticleHttpExtractionAndResponseHeaders(t *testing.T) {
 	for _, scenario := range []struct {
 		path, bearer string
 		status       int
-	}{{"/api/articles/bad/access", "", 422}, {"/api/articles/1/access?db=a&db=b", "", 401}, {"/api/articles/0/access", "", 401}, {"/api/articles/-1/access", token, 404}} {
+	}{{"/api/articles/bad/access", "", 422}, {"/api/articles/1/access?db=a&db=b", "", 401}, {"/api/articles/0/access", "", 422}, {"/api/articles/-1/access", token, 422}} {
 		response := authRequest(router, "GET", scenario.path, "", scenario.bearer)
 		if response.Code != scenario.status {
 			t.Fatal(scenario.path, response.Code, response.Body.String())

@@ -77,7 +77,7 @@ func resolvedArticleOutput(resolved domain.ArticleFullTextResolution) *articleOu
 func (handlers *articleHandlers) routes() []route {
 	return []route{
 		typedRoute(openapi.Operation{Method: "GET", Path: "/api/articles/{article_id}/access", ID: "get_article_access"}, func(ctx context.Context, input *GetArticleAccessInput) (*output[*articleAccess], error) {
-			located, err := handlers.locate(ctx, input.RequestMetadata, input.ArticleID, input.DB.Pointer())
+			located, err := handlers.locate(ctx, input.RequestMetadata, input.ArticleID.value, input.DB.Pointer())
 			if err != nil {
 				return nil, err
 			}
@@ -88,10 +88,10 @@ func (handlers *articleHandlers) routes() []route {
 			return &output[*articleAccess]{Body: status}, nil
 		}),
 		typedRoute(openapi.Operation{Method: "GET", Path: "/api/articles/{article_id}/abstract", ID: "redirect_article_abstract"}, func(ctx context.Context, input *RedirectArticleAbstractInput) (*articleOutput, error) {
-			return handlers.articleContent(ctx, input.RequestMetadata, input.ArticleID, input.DB.Pointer(), "abstract")
+			return handlers.articleContent(ctx, input.RequestMetadata, input.ArticleID.value, input.DB.Pointer(), "abstract")
 		}),
 		typedRoute(openapi.Operation{Method: "GET", Path: "/api/articles/{article_id}/fulltext", ID: "redirect_article_fulltext"}, func(ctx context.Context, input *RedirectArticleFulltextInput) (*articleOutput, error) {
-			return handlers.articleContent(ctx, input.RequestMetadata, input.ArticleID, input.DB.Pointer(), "fulltext")
+			return handlers.articleContent(ctx, input.RequestMetadata, input.ArticleID.value, input.DB.Pointer(), "fulltext")
 		}),
 	}
 }

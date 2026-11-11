@@ -21,13 +21,13 @@ const MaxGraphBytes = 2 * 1024 * 1024
 
 // GraphSummary describes an owned graph without loading its snapshot.
 type GraphSummary struct {
-	ID            int64   `json:"id" nullable:"false" format:"int64"`
-	Title         string  `json:"title" nullable:"false"`
-	DBName        string  `json:"db_name" nullable:"false"`
-	RootArticleID int64   `json:"root_article_id" nullable:"false" format:"int64"`
-	NodeCount     int64   `json:"node_count" nullable:"false" format:"int64"`
-	CreatedAt     float64 `json:"created_at" nullable:"false" format:"double"`
-	UpdatedAt     float64 `json:"updated_at" nullable:"false" format:"double"`
+	ID            int64       `json:"id" nullable:"false" format:"int64"`
+	Title         string      `json:"title" nullable:"false"`
+	DBName        string      `json:"db_name" nullable:"false"`
+	RootArticleID identity.ID `json:"root_article_id" nullable:"false" pattern:"^[1-9][0-9]*$"`
+	NodeCount     int64       `json:"node_count" nullable:"false" format:"int64"`
+	CreatedAt     float64     `json:"created_at" nullable:"false" format:"double"`
+	UpdatedAt     float64     `json:"updated_at" nullable:"false" format:"double"`
 }
 
 // Graph includes the original JSON object snapshot with its summary.
@@ -255,5 +255,5 @@ func decodeGraph(row graphsdb.GraphRow, err error) (*Graph, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Graph{GraphSummary: GraphSummary{row.ID, row.Title, row.DBName, row.RootArticleID, row.NodeCount, row.CreatedAt, row.UpdatedAt}, Graph: json.RawMessage(row.Graph)}, nil
+	return &Graph{GraphSummary: GraphSummary{row.ID, row.Title, row.DBName, identity.ID(row.RootArticleID), row.NodeCount, row.CreatedAt, row.UpdatedAt}, Graph: json.RawMessage(row.Graph)}, nil
 }

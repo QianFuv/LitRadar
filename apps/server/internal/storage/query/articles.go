@@ -314,7 +314,7 @@ func articleFromRow(row scanner) (domain.Article, error) {
 	if err != nil {
 		return domain.Article{}, err
 	}
-	result := domain.Article{ArticleID: identity.ID(id), JournalID: identity.ID(journal), IssueID: issue.Value, Title: string(title), PublicationYear: year.Value, Date: date.Value, Authors: names, StartPage: start.Value, EndPage: end.Value, Abstract: abstract.Value, Doi: doi.Value, Pmid: pmid.Value, InPress: optionalBoolean(inPress.Value), OpenAccess: optionalBoolean(openAccess.Value), RetractionDois: []string{}, JournalTitle: string(journalTitle), Volume: volume.Value, Number: number.Value}
+	result := domain.Article{ArticleID: identity.ID(id), JournalID: identity.ID(journal), IssueID: (*identity.ID)(issue.Value), Title: string(title), PublicationYear: year.Value, Date: date.Value, Authors: names, StartPage: start.Value, EndPage: end.Value, Abstract: abstract.Value, Doi: doi.Value, Pmid: pmid.Value, InPress: optionalBoolean(inPress.Value), OpenAccess: optionalBoolean(openAccess.Value), RetractionDois: []string{}, JournalTitle: string(journalTitle), Volume: volume.Value, Number: number.Value}
 	if date.Value != nil {
 		result.DatePrecision = domain.DatePrecision(*date.Value)
 	}
