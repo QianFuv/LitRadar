@@ -1,6 +1,7 @@
 package weekly
 
 import (
+	"container/list"
 	"slices"
 	"sync"
 	"time"
@@ -20,15 +21,16 @@ type cacheEntry struct {
 	fingerprint fileFingerprint
 	manifest    *Manifest
 	loadedAt    time.Time
-	lastAccess  uint64
+	element     *list.Element
 }
 
 // Cache bounds parsed publication retention without hiding filesystem or parsing failures.
 type Cache struct {
-	mutex                         sync.Mutex
-	entries                       map[string]cacheEntry
-	articleIds                    int
-	parseAttempts, accessSequence uint64
+	mutex         sync.Mutex
+	entries       map[string]cacheEntry
+	articleIds    int
+	parseAttempts uint64
+	order         list.List
 }
 
 // CacheStats exposes only non-content verification counters.
@@ -58,6 +60,7 @@ func articleCount(value *Manifest) int {
 func (cache *Cache) remove(path string) {
 	if entry, exists := cache.entries[path]; exists {
 		cache.articleIds -= articleCount(entry.manifest)
+		cache.order.Remove(entry.element)
 		delete(cache.entries, path)
 	}
 }
@@ -86,6 +89,7 @@ func (cache *Cache) readAt(filename string, now time.Time) (*Manifest, error) {
 	if err != nil {
 		cache.mutex.Lock()
 		cache.entries = nil
+		cache.order.Init()
 		cache.articleIds = 0
 		cache.mutex.Unlock()
 		return nil, err
@@ -121,10 +125,8 @@ func (cache *Cache) readAt(filename string, now time.Time) (*Manifest, error) {
 // lookupLocked updates LRU hits or counts a parse attempt while the caller owns the mutex.
 func (cache *Cache) lookupLocked(path string, before fileFingerprint, now time.Time) (*Manifest, bool) {
 	cache.prune(now)
-	cache.accessSequence++
 	if entry, exists := cache.entries[path]; exists && entry.fingerprint == before {
-		entry.lastAccess = cache.accessSequence
-		cache.entries[path] = entry
+		cache.order.MoveToBack(entry.element)
 		result := cloneManifest(entry.manifest)
 		return result, true
 	}
@@ -141,24 +143,17 @@ func (cache *Cache) retainLocked(path string, before fileFingerprint, parsed *Ma
 	if cache.entries == nil {
 		cache.entries = map[string]cacheEntry{}
 	}
-	cache.accessSequence++
-	cache.entries[path] = cacheEntry{before, cloneManifest(parsed), now, cache.accessSequence}
+	cache.entries[path] = cacheEntry{before, cloneManifest(parsed), now, cache.order.PushBack(path)}
 	cache.articleIds += count
 }
 
-// evictLocked enforces entry and article limits using the existing least-recent-access sequence.
+// evictLocked enforces entry and article limits in least-recently-used order.
 func (cache *Cache) evictLocked(count int) {
 	for len(cache.entries) >= cacheCapacity || cache.articleIds+count > cacheArticleLimit {
-		oldest := ""
-		var sequence uint64
-		for key, entry := range cache.entries {
-			if oldest == "" || entry.lastAccess < sequence {
-				oldest, sequence = key, entry.lastAccess
-			}
-		}
-		if oldest == "" {
+		oldest := cache.order.Front()
+		if oldest == nil {
 			break
 		}
-		cache.remove(oldest)
+		cache.remove(oldest.Value.(string))
 	}
 }
