@@ -3,7 +3,6 @@ package transport
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -73,14 +72,14 @@ func TestHttpsProxyConnectRetainsTlsVerification(t *testing.T) {
 		calls.Add(1)
 		var copying sync.WaitGroup
 		copying.Go(func() {
-			if _, err := io.Copy(upstream, buffer); err != nil && !errors.Is(err, net.ErrClosed) {
+			if _, err := io.Copy(upstream, buffer); !isExpectedCloseError(err) {
 				t.Errorf("io.Copy: %v", err)
 			}
 			if err := upstream.Close(); !isExpectedCloseError(err) {
 				t.Errorf("upstream.Close: %v", err)
 			}
 		})
-		if _, err := io.Copy(connection, upstream); err != nil && !errors.Is(err, net.ErrClosed) {
+		if _, err := io.Copy(connection, upstream); !isExpectedCloseError(err) {
 			t.Errorf("io.Copy: %v", err)
 		}
 		if err := connection.Close(); !isExpectedCloseError(err) {
