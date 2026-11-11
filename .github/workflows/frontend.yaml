@@ -18,6 +18,7 @@ jobs:
   # Stage 2: quality, including the production frontend build and full-stack acceptance.
   frontend:
     runs-on: ubuntu-26.04
+    timeout-minutes: 90
     defaults:
       run:
         working-directory: apps/client/frontend
@@ -65,7 +66,8 @@ jobs:
           started_at="$(date +%s)"
           set +e
           pnpm generate:api:check \
-            && pnpm check
+            && pnpm check \
+            && pnpm knip
           status="$?"
           set -e
           echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
@@ -90,6 +92,7 @@ jobs:
 
       - name: Test browser-native components
         id: browser_components
+        timeout-minutes: 30
         env:
           LITRADAR_VITEST_JUNIT: ./test-results/vitest-browser/junit.xml
         run: |
@@ -103,6 +106,7 @@ jobs:
 
       - name: Test fixture-backed browser flows
         id: fixture_smoke
+        timeout-minutes: 30
         run: |
           started_at="$(date +%s)"
           set +e
@@ -114,6 +118,7 @@ jobs:
 
       - name: Build and test real-backend browser flows
         id: full_stack_smoke
+        timeout-minutes: 30
         run: |
           started_at="$(date +%s)"
           set +e
