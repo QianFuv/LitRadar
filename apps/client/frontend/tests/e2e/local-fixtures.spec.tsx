@@ -3261,6 +3261,169 @@ test('supports the administrator center across desktop and mobile', administrato
 test('unfolds a new invite code row without overshooting', inviteRowUnfoldTest);
 test('supports three deep-linkable root workspaces', unifiedRootWorkspacesTest);
 test('supports accessible navigation and theme selection', userMenuNavigationTest);
+
+/**
+ * Serve journal, area, rating, and year options so every search filter panel has choices.
+ *
+ * @param page - Playwright browser page.
+ */
+async function serveFilterOptions(page: Page): Promise<void> {
+  await page.route('**/api/meta/journals**', (route) =>
+    fulfillJson(
+      route,
+      Array.from({ length: 40 }, (_, index) => ({
+        journal_id: hashedId(index + 1),
+        title: `Journal of Filters ${index + 1}`,
+      })),
+    ),
+  );
+  await page.route('**/api/meta/areas**', (route) =>
+    fulfillJson(
+      route,
+      Array.from({ length: 14 }, (_, index) => ({ value: `area_${index + 1}`, count: index + 1 })),
+    ),
+  );
+  await page.route('**/api/meta/ratings**', (route) =>
+    fulfillJson(route, {
+      utd_rating: [{ value: 'UTD24', count: 3 }],
+      abs_rating: [
+        { value: '4', count: 1 },
+        { value: '3', count: 2 },
+      ],
+      fms_rating: [{ value: 'A', count: 1 }],
+      fmscn_rating: [],
+    }),
+  );
+  await page.route('**/api/years**', (route) =>
+    fulfillJson(route, [{ year: 2024 }, { year: 2025 }, { year: 2026 }]),
+  );
+}
+
+/**
+ * Read whether a control would take the pointer at its center and the background it paints.
+ *
+ * @param control - Control to probe.
+ * @returns Whether the control is the hit target and its computed background color.
+ */
+async function readPointerTarget(
+  control: Locator,
+): Promise<{ isHit: boolean; background: string }> {
+  return control.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+    return {
+      isHit: hit !== null && element.contains(hit),
+      background: getComputedStyle(element).backgroundColor,
+    };
+  });
+}
+
+/**
+ * Keep exactly one highlighted control while a popup is open: the open filter panel or account
+ * menu shuts out pointer hover on every other control instead of letting a second one light up.
+ * Outside controls are located by CSS because an open modal popup hides them from the
+ * accessibility tree.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function singlePopupHighlightTest({ page }: { page: Page }): Promise<void> {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.route('**/api/**', serveArticleSettingsApi);
+  await serveFilterOptions(page);
+  await page.goto('/?q=graph');
+  const filters = page.locator('fieldset[aria-label="筛选条件"]');
+  const pill = (name: string) => filters.locator(`[aria-label^="${name}"]`).first();
+  await expect(pill('领域')).toBeVisible();
+  const idle = await readPointerTarget(pill('领域'));
+  const idleTime = await readPointerTarget(pill('发表时间'));
+
+  for (const [opened, other, otherIdle] of [
+    ['期刊评级', '领域', idle],
+    ['期刊', '领域', idle],
+    ['领域', '发表时间', idleTime],
+    ['发表时间', '领域', idle],
+  ] as const) {
+    const openedPill = opened === '期刊' ? filters.locator('[aria-label="期刊"]') : pill(opened);
+    await openedPill.click();
+    await expect(openedPill).toHaveAttribute('aria-expanded', 'true');
+    const box = await pill(other).boundingBox();
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2, { steps: 4 });
+    await expect
+      .poll(() => readPointerTarget(pill(other)))
+      .toEqual({
+        isHit: false,
+        background: otherIdle.background,
+      });
+    await page.keyboard.press('Escape');
+    await expect(openedPill).toHaveAttribute('aria-expanded', 'false');
+  }
+
+  const weekly = page
+    .locator('nav[aria-label="页面导航"]')
+    .first()
+    .locator('a', { hasText: '周报' });
+  const weeklyIdle = await readPointerTarget(weekly);
+  await page
+    .getByRole('button', { name: /^打开账号菜单：/ })
+    .first()
+    .click();
+  await expect(page.getByRole('menu')).toBeVisible();
+  const weeklyBox = await weekly.boundingBox();
+  await page.mouse.move(weeklyBox!.x + weeklyBox!.width / 2, weeklyBox!.y + weeklyBox!.height / 2, {
+    steps: 4,
+  });
+  await expect
+    .poll(() => readPointerTarget(weekly))
+    .toEqual({
+      isHit: false,
+      background: weeklyIdle.background,
+    });
+}
+
+test('keeps one highlighted control while a popup is open', singlePopupHighlightTest);
+
+/**
+ * Report whether the highlight surface marking an item covers the item's highlight container.
+ *
+ * @param item - Highlighted item.
+ * @returns Whether the surface exists, has a size, and matches its container.
+ */
+async function hasFullHighlightSurface(item: Locator): Promise<boolean> {
+  return item.evaluate((element) => {
+    const container = element.closest('[data-slot="motion-highlight-item-container"]');
+    const surface = container?.querySelector('[data-slot="motion-highlight"]');
+    if (!container || !surface) return false;
+    const outer = container.getBoundingClientRect();
+    const inner = surface.getBoundingClientRect();
+    return (
+      inner.width > 0 &&
+      Math.abs(inner.width - outer.width) <= 1 &&
+      Math.abs(inner.height - outer.height) <= 1
+    );
+  });
+}
+
+/**
+ * Paint the selected favorite folder tab and the current rail item on a surface of their own
+ * size, so the selected folder's light name stays readable on its dark pill.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function selectedHighlightSurfaceTest({ page }: { page: Page }): Promise<void> {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.route('**/api/**', serveLongSidebarApi);
+  await page.goto('/?view=favorites&folder=4');
+  const activeFolder = page.locator('[data-motion-folder-key="4"]');
+  await expect(activeFolder).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => hasFullHighlightSurface(activeFolder)).toBe(true);
+  const currentRailItem = page
+    .getByRole('navigation', { name: '页面导航' })
+    .first()
+    .locator('[aria-current="page"]');
+  await expect.poll(() => hasFullHighlightSurface(currentRailItem)).toBe(true);
+}
+
+test('paints selected folder and navigation highlights at full size', selectedHighlightSurfaceTest);
 test('polishes search targets and restrained control feedback', interfacePolishControlsTest);
 test('keeps the search suggestion keyboard contract', searchSuggestionKeyboardTest);
 test('polishes stable and semantic favorite feedback', interfacePolishFavoriteTest);
