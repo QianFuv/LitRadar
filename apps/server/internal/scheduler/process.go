@@ -119,7 +119,11 @@ func executeProcess(ctx context.Context, command scheduledProcess, claim store.C
 		errorKind = "spawn_or_assign_failed"
 		return processResult{domain.Error, command.command + ": process supervision failed (" + errorKind + ")"}
 	}
-	defer child.Close()
+	defer func() {
+		if err := child.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "child.Close", "error", err)
+		}
+	}()
 	waitScheduledProcess(ctx, child, command.command, deadline, heartbeatInterval, heartbeat, &result, &errorKind, &exitCode)
 	if err := child.Close(); err != nil {
 		result.status = domain.Error

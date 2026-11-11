@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,12 +58,20 @@ func TestDeliveryCrashChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	}()
 	accounts, err := auth.Open(input.AuthPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer accounts.Close()
+	defer func() {
+		if err := accounts.Close(); err != nil {
+			t.Errorf("accounts.Close: %v", err)
+		}
+	}()
 	codec, err := secrets.NewCodec(make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +118,11 @@ func TestDeliveryProcessKillPreservesEffectsAndQuarantinesAmbiguity(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer logFile.Close()
+			defer func() {
+				if err := logFile.Close(); err != nil {
+					t.Errorf("logFile.Close: %v", err)
+				}
+			}()
 			command.Stdout = logFile
 			command.Stderr = logFile
 			if err = command.Start(); err != nil {
@@ -119,8 +132,15 @@ func TestDeliveryProcessKillPreservesEffectsAndQuarantinesAmbiguity(t *testing.T
 			go func() { done <- command.Wait() }()
 			t.Cleanup(func() {
 				if command.ProcessState == nil {
-					command.Process.Kill()
-					<-done
+					if err := command.Process.Kill(); err != nil {
+						t.Errorf("command.Process.Kill: %v", err)
+					}
+					if err := <-done; err != nil {
+						var exitError *exec.ExitError
+						if !errors.As(err, &exitError) {
+							t.Error(err)
+						}
+					}
 				}
 			})
 			deadline := time.Now().Add(15 * time.Second)
@@ -135,8 +155,15 @@ func TestDeliveryProcessKillPreservesEffectsAndQuarantinesAmbiguity(t *testing.T
 				default:
 				}
 				if time.Now().After(deadline) {
-					command.Process.Kill()
-					<-done
+					if err := command.Process.Kill(); err != nil {
+						t.Errorf("command.Process.Kill: %v", err)
+					}
+					if err := <-done; err != nil {
+						var exitError *exec.ExitError
+						if !errors.As(err, &exitError) {
+							t.Error(err)
+						}
+					}
 					t.Fatal("child boundary deadline exceeded")
 				}
 				time.Sleep(10 * time.Millisecond)

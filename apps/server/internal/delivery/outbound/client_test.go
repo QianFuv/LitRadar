@@ -41,7 +41,11 @@ func TestMalformedRedirectAndOpaquePathPreserveWireContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() {
+		if err := listener.Close(); err != nil {
+			t.Errorf("listener.Close: %v", err)
+		}
+	}()
 	requestLines := make(chan string, 1)
 	go func() {
 		connection, err := listener.Accept()
@@ -49,8 +53,14 @@ func TestMalformedRedirectAndOpaquePathPreserveWireContract(t *testing.T) {
 			requestLines <- "accept failed"
 			return
 		}
-		defer connection.Close()
-		connection.SetDeadline(time.Now().Add(time.Second))
+		defer func() {
+			if err := connection.Close(); err != nil {
+				t.Errorf("connection.Close: %v", err)
+			}
+		}()
+		if err := connection.SetDeadline(time.Now().Add(time.Second)); err != nil {
+			t.Errorf("connection.SetDeadline: %v", err)
+		}
 		reader := bufio.NewReader(connection)
 		line, _ := reader.ReadString('\n')
 		requestLines <- line
@@ -60,7 +70,9 @@ func TestMalformedRedirectAndOpaquePathPreserveWireContract(t *testing.T) {
 				break
 			}
 		}
-		fmt.Fprint(connection, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+		if _, err := fmt.Fprint(connection, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"); err != nil {
+			t.Errorf("fmt.Fprint: %v", err)
+		}
 	}()
 	response, err = localClient(server).PostJson(context.Background(), "https://"+listener.Addr().String()+"/%GG", nil, map[string]any{}, time.Second)
 	if err != nil || response.StatusCode != 200 {
@@ -101,7 +113,9 @@ func TestConnectionDeadlineIncludesDnsAndDoesNotLimitResponseBody(t *testing.T) 
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		time.Sleep(100 * time.Millisecond)
 		response.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(response, "{}")
+		if _, err := fmt.Fprint(response, "{}"); err != nil {
+			t.Errorf("fmt.Fprint: %v", err)
+		}
 	}))
 	defer server.Close()
 	client = localClient(server)
@@ -116,7 +130,11 @@ func TestDualStackFallbackEscapesUnreachablePreferredFamily(t *testing.T) {
 	defer cancel()
 	preferredStopped := make(chan struct{})
 	peer, expected := net.Pipe()
-	defer peer.Close()
+	defer func() {
+		if err := peer.Close(); err != nil {
+			t.Errorf("peer.Close: %v", err)
+		}
+	}()
 	dial := func(ctx context.Context, network, address string) (net.Conn, error) {
 		if strings.HasPrefix(address, "[") {
 			<-ctx.Done()
@@ -130,7 +148,11 @@ func TestDualStackFallbackEscapesUnreachablePreferredFamily(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connection.Close()
+	defer func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("connection.Close: %v", err)
+		}
+	}()
 	if connection != expected || time.Since(started) < 290*time.Millisecond {
 		t.Fatal("fallback did not honor family delay")
 	}
@@ -226,7 +248,9 @@ func TestOutboundSuccessHeaderAndBodyBoundaries(t *testing.T) {
 				}
 				response.WriteHeader(200)
 				response.(http.Flusher).Flush()
-				fmt.Fprint(response, test.body)
+				if _, err := fmt.Fprint(response, test.body); err != nil {
+					t.Errorf("fmt.Fprint: %v", err)
+				}
 			}))
 			defer server.Close()
 			client := localClient(server)

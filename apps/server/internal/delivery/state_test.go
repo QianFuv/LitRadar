@@ -23,12 +23,20 @@ func durableFixture(t *testing.T) (*store.Repository, *sql.DB, RunConfig) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { repository.Close() })
+	t.Cleanup(func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	})
 	database, err := platform.Open(platform.Config{Filename: filename, Mode: "rwc", MaxConnections: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { database.Close() })
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	})
 	if _, err := database.Exec("INSERT INTO users(id,username,password_hash,salt,created_at,updated_at) VALUES(1,'reader','hash','salt',1,1)"); err != nil {
 		t.Fatal(err)
 	}

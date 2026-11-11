@@ -36,9 +36,18 @@ func TestMain(tests *testing.M) {
 		code, _ := strconv.Atoi(os.Getenv("LITRADAR_SCHEDULER_TEST_EXIT"))
 		os.Exit(code)
 	case "output":
-		os.Stdout.Write(bytes.Repeat([]byte("x"), 2047))
-		os.Stdout.Write([]byte{0xe4, 0xb8, 0xad})
-		os.Stdout.Write(bytes.Repeat([]byte("y"), 100000))
+		if _, err := os.Stdout.Write(bytes.Repeat([]byte("x"), 2047)); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(36)
+		}
+		if _, err := os.Stdout.Write([]byte{0xe4, 0xb8, 0xad}); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(36)
+		}
+		if _, err := os.Stdout.Write(bytes.Repeat([]byte("y"), 100000)); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(36)
+		}
 		fmt.Fprint(os.Stderr, "scheduler-private-diagnostic")
 		os.Exit(0)
 	case "sequence":
@@ -140,7 +149,9 @@ func assertDescendantStopped(t *testing.T, address string) {
 	t.Helper()
 	connection, err := net.DialTimeout("tcp", address, 200*time.Millisecond)
 	if err == nil {
-		connection.Close()
+		if err := connection.Close(); err != nil {
+			t.Fatalf("connection.Close: %v", err)
+		}
 		t.Fatal("descendant survived tree cleanup")
 	}
 }
@@ -162,7 +173,11 @@ func TestSchedulerTreeTermination(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer child.Close()
+				defer func() {
+					if err := child.Close(); err != nil {
+						t.Errorf("child.Close: %v", err)
+					}
+				}()
 				address = waitDescendant(t, directory)
 				deadline := time.Now().Add(5 * time.Second)
 				if reason == "timeout" {
@@ -240,7 +255,9 @@ func TestSchedulerCommandsSequenceAndSharedDeadline(t *testing.T) {
 					Args []string
 					Cwd  string
 				}
-				json.Unmarshal(line, &record)
+				if err := json.Unmarshal(line, &record); err != nil {
+					t.Errorf("json.Unmarshal: %v", err)
+				}
 				if record.Cwd != cwd || record.Args[0] != []string{"index", "notify", "push"}[index] || strings.Join(record.Args[len(record.Args)-2:], " ") != ParentRunIdArgument+" 42" {
 					t.Fatalf("wrong command %#v", record)
 				}
@@ -268,8 +285,12 @@ func runClaimCrashFixture(directory string) {
 			os.Exit(44)
 		}
 	}
-	repository.Close()
-	os.WriteFile(filepath.Join(directory, "barrier"), []byte(boundary), 0600)
+	if err := repository.Close(); err != nil {
+		os.Exit(99)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "barrier"), []byte(boundary), 0600); err != nil {
+		os.Exit(99)
+	}
 	time.Sleep(24 * time.Hour)
 }
 
@@ -282,9 +303,15 @@ func writeStartedCrashEffect(repository *store.Repository, claim store.Claim, di
 	if err != nil {
 		os.Exit(43)
 	}
-	file.WriteString("executed")
-	file.Sync()
-	file.Close()
+	if _, err := file.WriteString("executed"); err != nil {
+		os.Exit(99)
+	}
+	if err := file.Sync(); err != nil {
+		os.Exit(99)
+	}
+	if err := file.Close(); err != nil {
+		os.Exit(99)
+	}
 }
 
 // runProcessSequenceFixture records exact argv and working directory before delay or selected exit.
@@ -295,9 +322,15 @@ func runProcessSequenceFixture(directory string) {
 	}
 	cwd, _ := os.Getwd()
 	body, _ := json.Marshal(map[string]any{"args": os.Args[1:], "cwd": cwd})
-	file.Write(append(body, '\n'))
-	file.Sync()
-	file.Close()
+	if _, err := file.Write(append(body, '\n')); err != nil {
+		os.Exit(99)
+	}
+	if err := file.Sync(); err != nil {
+		os.Exit(99)
+	}
+	if err := file.Close(); err != nil {
+		os.Exit(99)
+	}
 	if os.Getenv("LITRADAR_SCHEDULER_TEST_DELAY") == "yes" {
 		time.Sleep(8 * time.Second)
 	}
@@ -352,6 +385,8 @@ func runProcessDescendantFixture(directory string) {
 		if err != nil {
 			os.Exit(34)
 		}
-		connection.Close()
+		if err := connection.Close(); err != nil {
+			os.Exit(99)
+		}
 	}
 }

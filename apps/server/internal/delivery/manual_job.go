@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"runtime"
 
@@ -14,12 +15,16 @@ import (
 )
 
 // RunManualDeliveryJob claims an existing dispatcher job and persists its terminal result using current ownership.
-func RunManualDeliveryJob(ctx context.Context, config storageconfig.Config, codec *secrets.Codec, runId int64, owner string) (*store.RunRecord, error) {
+func RunManualDeliveryJob(ctx context.Context, config storageconfig.Config, codec *secrets.Codec, runId int64, owner string) (resultValue1 *store.RunRecord, resultError error) {
 	repository, err := store.Open(config.AuthDbPath)
 	if err != nil {
 		return nil, err
 	}
-	defer repository.Close()
+	defer func() {
+		if closeError := repository.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close repository: %w", closeError))
+		}
+	}()
 	return runManualDeliveryJob(ctx, repository, config, codec, runId, owner, RunManualWeeklyPush)
 }
 

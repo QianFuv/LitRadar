@@ -3,6 +3,7 @@ package outbound
 import (
 	"context"
 	"crypto/tls"
+	"log/slog"
 	"net"
 	"net/netip"
 	"time"
@@ -34,7 +35,9 @@ func (client *Client) connect(ctx, requestContext context.Context, network, addr
 	}
 	secured := tls.Client(socket, configuration)
 	if err := secured.HandshakeContext(ctx); err != nil {
-		socket.Close()
+		if err := socket.Close(); err != nil {
+			slog.Warn("cleanup.failed", "operation", "socket.Close", "error", err)
+		}
 		return nil, err
 	}
 	return secured, nil
@@ -90,7 +93,9 @@ func dialResolved(ctx context.Context, network, port string, addresses []netip.A
 			case results <- result{socket, err}:
 			case <-ctx.Done():
 				if socket != nil {
-					socket.Close()
+					if err := socket.Close(); err != nil {
+						slog.Warn("cleanup.failed", "operation", "socket.Close", "error", err)
+					}
 				}
 			}
 		}()

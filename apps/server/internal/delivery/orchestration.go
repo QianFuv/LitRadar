@@ -75,7 +75,7 @@ func runRecommendationDelivery(ctx context.Context, config RunConfig, userId *in
 	})
 }
 
-func openAndExecuteDelivery(ctx context.Context, config RunConfig, userId *int64, manifest *recommend.ChangeManifest) (RunOutcome, error) {
+func openAndExecuteDelivery(ctx context.Context, config RunConfig, userId *int64, manifest *recommend.ChangeManifest) (resultValue1 RunOutcome, resultError error) {
 	if manifest == nil && config.ChangesFile != nil {
 		loaded, err := recommend.LoadChangeManifest(*config.ChangesFile, config.DbName)
 		if err != nil {
@@ -87,12 +87,20 @@ func openAndExecuteDelivery(ctx context.Context, config RunConfig, userId *int64
 	if err != nil {
 		return RunOutcome{}, classified("delivery_storage", err)
 	}
-	defer repository.Close()
+	defer func() {
+		if closeError := repository.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close repository: %w", closeError))
+		}
+	}()
 	accounts, err := auth.Open(config.AuthDbPath)
 	if err != nil {
 		return RunOutcome{}, classified("auth_storage", err)
 	}
-	defer accounts.Close()
+	defer func() {
+		if closeError := accounts.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close accounts: %w", closeError))
+		}
+	}()
 	policy := settings.New(accounts, config.SecretCodec)
 	timeout := time.Duration(min(max(config.TimeoutSeconds, 1), uint64((1<<63-1)/int64(time.Second)))) * time.Second
 	selector := recommend.NewSelector(policy, timeout, config.RetryAttempts, config.ExecutionControl)

@@ -33,8 +33,12 @@ func TestSchedulerRealCrashRecovery(t *testing.T) {
 			didWait := false
 			defer func() {
 				if !didWait {
-					command.Process.Kill()
-					command.Wait()
+					if err := command.Process.Kill(); err != nil {
+						t.Errorf("command.Process.Kill: %v", err)
+					}
+					if err := command.Wait(); err != nil {
+						t.Errorf("command.Wait: %v", err)
+					}
 				}
 			}()
 			hasReached := false

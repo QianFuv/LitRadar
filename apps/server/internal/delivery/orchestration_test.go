@@ -49,7 +49,9 @@ func workflowFixture(t *testing.T, workflow store.Workflow) (*deliveryEngine, *s
 		t.Fatal(err)
 	}
 	_, err = index.Exec(`CREATE TABLE journals(journal_id INTEGER PRIMARY KEY,title TEXT); CREATE TABLE articles(article_id INTEGER PRIMARY KEY,journal_id INTEGER,issue_id INTEGER,title TEXT,abstract_text TEXT,date TEXT,open_access INTEGER,in_press INTEGER,doi TEXT); INSERT INTO journals VALUES(1,'Journal'); INSERT INTO articles VALUES(7,1,2,'science title','abstract','2026-10-01',1,0,NULL),(8,1,2,'science second','abstract','2026-10-02',0,0,NULL);`)
-	index.Close()
+	if err := index.Close(); err != nil {
+		t.Fatalf("index.Close: %v", err)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +59,11 @@ func workflowFixture(t *testing.T, workflow store.Workflow) (*deliveryEngine, *s
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { accounts.Close() })
+	t.Cleanup(func() {
+		if err := accounts.Close(); err != nil {
+			t.Errorf("accounts.Close: %v", err)
+		}
+	})
 	folders := favorites.New(accounts)
 	engine := &deliveryEngine{repository: repository, settings: settings.New(accounts, codec), selectArticles: func(_ context.Context, request recommend.SelectionRequest) (recommend.SelectionOutcome, error) {
 		accepted := []domain.RankedSelection{}
@@ -373,7 +379,9 @@ func insertWorkflowRetryArticle(t *testing.T, config RunConfig) {
 		t.Fatal(err)
 	}
 	_, err = index.Exec(`INSERT INTO articles VALUES(9,1,2,'science third','abstract','2026-10-03',0,0,NULL)`)
-	index.Close()
+	if err := index.Close(); err != nil {
+		t.Fatalf("index.Close: %v", err)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

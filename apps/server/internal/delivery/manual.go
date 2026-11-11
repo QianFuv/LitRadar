@@ -91,7 +91,11 @@ func runManualWeeklyPush(ctx context.Context, config ManualWeeklyPushConfig, del
 	if err != nil {
 		return result, classified("business_storage", err)
 	}
-	defer repository.Close()
+	defer func() {
+		if closeError := repository.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close repository: %w", closeError))
+		}
+	}()
 	preferences, err := repository.GetNotificationSettings(ctx, config.SecretCodec, config.UserId)
 	if err != nil {
 		return result, classified("business_storage", err)
@@ -107,7 +111,11 @@ func runManualWeeklyPush(ctx context.Context, config ManualWeeklyPushConfig, del
 	if err != nil {
 		return result, classified("business_storage", err)
 	}
-	defer accounts.Close()
+	defer func() {
+		if closeError := accounts.Close(); closeError != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close accounts: %w", closeError))
+		}
+	}()
 	folder, err := favorites.New(accounts).TrackingFolder(ctx, identity.Id(config.UserId))
 	if err != nil {
 		return result, classified("business_storage", err)

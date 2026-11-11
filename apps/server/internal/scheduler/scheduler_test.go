@@ -22,7 +22,11 @@ func schedulerFixture(t *testing.T) (*store.Repository, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { repository.Close() })
+	t.Cleanup(func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("repository.Close: %v", err)
+		}
+	})
 	return repository, filename
 }
 func fixtureSql(t *testing.T, filename, statement string, args ...any) {
@@ -31,7 +35,11 @@ func fixtureSql(t *testing.T, filename, statement string, args ...any) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("database.Close: %v", err)
+		}
+	}()
 	if _, err := database.Exec(statement, args...); err != nil {
 		t.Fatal(err)
 	}

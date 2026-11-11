@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"math"
 	"reflect"
 	"time"
@@ -90,7 +91,9 @@ func (run *durableRun) failBestEffort(ctx context.Context, repository *store.Rep
 			run.run = updated
 		}
 	}
-	repository.ReleaseLease(ctx, run.workflow, run.dbName, run.run.Id, run.owner, run.lease.Revision, now)
+	if _, err := repository.ReleaseLease(ctx, run.workflow, run.dbName, run.run.Id, run.owner, run.lease.Revision, now); err != nil {
+		slog.Warn("cleanup.failed", "operation", "repository.ReleaseLease", "error", err)
+	}
 }
 
 func admitDurableRun(ctx context.Context, repository *store.Repository, config RunConfig, userId *int64, externalId string, now float64) (*durableRun, *store.RunRecord, error) {
@@ -141,7 +144,9 @@ func claimCandidate(ctx context.Context, repository *store.Repository, candidate
 		return nil, false, ErrBusy
 	}
 	if candidate.Status == store.RunStatusQueued {
-		repository.CancelRun(ctx, candidate.Id, candidate.Revision, now)
+		if _, err := repository.CancelRun(ctx, candidate.Id, candidate.Revision, now); err != nil {
+			slog.Warn("cleanup.failed", "operation", "repository.CancelRun", "error", err)
+		}
 	}
 	active := claim.Run
 	if active.LeaseExpiresAt == nil || *active.LeaseExpiresAt > now {
@@ -163,7 +168,9 @@ func acceptsDeliveryClaim(claim store.RunOutcome) bool {
 
 func validateRecoveredDelivery(ctx context.Context, repository *store.Repository, config RunConfig, userId *int64, claimed *store.RunRecord, owner string, now float64) error {
 	if claimed.Mode != config.Mode || claimed.TriggerKind != config.Trigger || !reflect.DeepEqual(claimed.UserId, userId) {
-		repository.FinalizeRun(ctx, claimed.Id, owner, claimed.Revision, store.RunStatusFailed, nil, pointer("recovery_context_mismatch"), now)
+		if _, err := repository.FinalizeRun(ctx, claimed.Id, owner, claimed.Revision, store.RunStatusFailed, nil, pointer("recovery_context_mismatch"), now); err != nil {
+			slog.Warn("cleanup.failed", "operation", "repository.FinalizeRun", "error", err)
+		}
 		return errors.New("Recovered delivery run does not match the current invocation")
 	}
 	return nil
@@ -214,7 +221,9 @@ func acquireDeliveryWorkflowLease(ctx context.Context, repository *store.Reposit
 		return store.LeaseOutcome{}, err
 	}
 	if lease.Kind == "busy" {
-		repository.FinalizeRun(ctx, claimed.Id, owner, claimed.Revision, store.RunStatusSkipped, nil, pointer("workflow_lease_busy"), now)
+		if _, err := repository.FinalizeRun(ctx, claimed.Id, owner, claimed.Revision, store.RunStatusSkipped, nil, pointer("workflow_lease_busy"), now); err != nil {
+			slog.Warn("cleanup.failed", "operation", "repository.FinalizeRun", "error", err)
+		}
 		return store.LeaseOutcome{}, ErrBusy
 	}
 	return lease, nil

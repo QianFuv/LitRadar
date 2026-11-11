@@ -35,7 +35,9 @@ func manualWeeklyFixture(t *testing.T, names []string) ManualWeeklyPushConfig {
 			t.Fatal(err)
 		}
 		_, err = index.Exec(`CREATE TABLE journals(journal_id INTEGER PRIMARY KEY); CREATE TABLE article_listing(article_id INTEGER PRIMARY KEY,journal_id INTEGER); INSERT INTO journals VALUES(1); INSERT INTO article_listing VALUES(7,1),(8,1);`)
-		index.Close()
+		if err := index.Close(); err != nil {
+			t.Fatalf("index.Close: %v", err)
+		}
 		if err != nil {
 			t.Fatal(err)
 		}

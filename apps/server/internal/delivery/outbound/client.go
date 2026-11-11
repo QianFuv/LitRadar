@@ -159,7 +159,7 @@ func (client *Client) PostJson(ctx context.Context, value string, headers http.H
 	if err != nil {
 		return Response{}, classifyOutboundRequestError(ctx, err, hasConnection.Load())
 	}
-	defer response.Body.Close()
+	defer func(closeBody func() error) { _ = closeBody() }(response.Body.Close)
 	return client.readOutboundResponse(ctx, response)
 }
 

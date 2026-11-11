@@ -60,7 +60,9 @@ func TestOutboundRequestKeepsCallerHeaderAndTlsOwnership(t *testing.T) {
 			t.Error("explicit empty Accept or default content type changed")
 		}
 		response.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(response, "{}")
+		if _, err := fmt.Fprint(response, "{}"); err != nil {
+			t.Errorf("fmt.Fprint: %v", err)
+		}
 	}))
 	defer server.Close()
 	client := localClient(server)
