@@ -120,7 +120,7 @@ function emitsAllowlistedLocalEvents(): void {
   const consoleReport = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   const fetchReport = vi.spyOn(globalThis, 'fetch');
   const error = Object.assign(new TypeError(messageSentinel), {
-    digest: 'digest-123',
+    digest: 'digest-never-log',
     requestId: 'request-123',
     stack: stackSentinel,
   });
@@ -134,7 +134,6 @@ function emitsAllowlistedLocalEvents(): void {
   expect(Object.isFrozen(events[0])).toBe(true);
   expect(events[0]).toEqual({
     component: 'browser',
-    digest: 'digest-123',
     error_kind: 'type_error',
     event: 'client.error',
     level: 'error',
@@ -355,9 +354,7 @@ function managesGlobalListenerLifecycle(): void {
  */
 async function deduplicatesRouteBoundaryEffects(): Promise<void> {
   const consoleReport = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-  const error = Object.assign(new Error('route-message-secret-never-log'), {
-    digest: 'route-digest-789',
-  });
+  const error = new Error('route-message-secret-never-log');
 
   await renderWithQuery(
     <StrictMode>
@@ -368,7 +365,6 @@ async function deduplicatesRouteBoundaryEffects(): Promise<void> {
   const events = clientErrorPayloads(consoleReport.mock.calls);
   expect(events).toHaveLength(1);
   expect(events[0]).toMatchObject({
-    digest: 'route-digest-789',
     error_kind: 'error',
     source: 'route_boundary',
   });
@@ -380,16 +376,13 @@ async function deduplicatesRouteBoundaryEffects(): Promise<void> {
  */
 function reportsGlobalBoundaryEffects(): void {
   const consoleReport = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-  const error = Object.assign(new Error('global-message-secret-never-log'), {
-    digest: 'global-digest-987',
-  });
+  const error = new Error('global-message-secret-never-log');
 
   render(<GlobalError error={error} reset={vi.fn()} />);
 
   const events = clientErrorPayloads(consoleReport.mock.calls);
   expect(events).toHaveLength(1);
   expect(events[0]).toMatchObject({
-    digest: 'global-digest-987',
     error_kind: 'error',
     source: 'global_boundary',
   });

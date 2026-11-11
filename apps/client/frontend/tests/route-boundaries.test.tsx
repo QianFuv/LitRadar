@@ -112,7 +112,7 @@ async function resetsRouteErrors(): Promise<void> {
   const user = userEvent.setup();
   const reset = vi.fn();
   const report = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-  const error = Object.assign(new Error('sensitive route detail'), { digest: 'route-digest' });
+  const error = new Error('sensitive route detail');
   await renderWithQuery(<RouteError error={error} reset={reset} />);
 
   const alert = screen.getByRole('alert');
@@ -126,7 +126,6 @@ async function resetsRouteErrors(): Promise<void> {
   expect(report.mock.calls[0][0]).toBe('[client.error] route_boundary: error');
   expect(report.mock.calls[0][1]).toMatchObject({
     component: 'browser',
-    digest: 'route-digest',
     error_kind: 'error',
     event: 'client.error',
     route: '/',
@@ -139,7 +138,7 @@ async function resetsRouteErrors(): Promise<void> {
  * Verify the global failure screen is self-contained and does not expose error details.
  */
 function rendersGlobalFailureScreen(): void {
-  const error = Object.assign(new Error('sensitive global detail'), { digest: 'global-digest' });
+  const error = new Error('sensitive global detail');
   const markup = renderToStaticMarkup(<GlobalError error={error} reset={vi.fn()} />);
 
   expect(markup).not.toContain('<html');

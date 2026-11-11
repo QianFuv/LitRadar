@@ -162,7 +162,7 @@ compact 只改变显示形式，不改变事件选择或隐私规则。一次本
 }
 ```
 
-`source` 只允许 `route_boundary`、`global_boundary`、`window_error` 或 `unhandled_rejection`。可选 `digest` 和 `request_id` 必须是最长 128 个字符的安全标识；`route` 只保留 pathname。记录器不枚举原错误，不包含 message、stack、promise reason、query、请求/响应 body、token 或浏览器存储。相同 Error 对象只报告一次，React Strict Mode 的 listener 会成对安装和清理。
+`source` 只允许 `route_boundary`、`global_boundary`、`window_error` 或 `unhandled_rejection`。可选 `request_id` 必须是最长 128 个字符的安全标识；`route` 只保留 pathname。记录器不枚举原错误，不包含 message、stack、promise reason、query、请求/响应 body、token 或浏览器存储。相同 Error 对象只报告一次，React Strict Mode 的 listener 会成对安装和清理。
 
 ## 队列与丢失语义
 

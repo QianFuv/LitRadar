@@ -11,14 +11,12 @@ export type ClientErrorSource =
   | 'window_error';
 
 export interface ClientErrorContext {
-  readonly digest?: unknown;
   readonly requestId?: unknown;
   readonly routePathname?: string;
 }
 
 export interface ClientErrorEvent {
   readonly component: 'browser';
-  readonly digest?: string;
   readonly error_kind: string;
   readonly event: 'client.error';
   readonly level: 'error';
@@ -62,7 +60,7 @@ function isObject(value: unknown): value is object {
  * @param property - Allowlisted property name.
  * @returns Property value, or undefined when access fails.
  */
-function readAllowedProperty(value: unknown, property: 'digest' | 'name' | 'requestId'): unknown {
+function readAllowedProperty(value: unknown, property: 'name' | 'requestId'): unknown {
   if (!isObject(value)) {
     return undefined;
   }
@@ -74,7 +72,7 @@ function readAllowedProperty(value: unknown, property: 'digest' | 'name' | 'requ
 }
 
 /**
- * Normalize an optional digest or request identifier to a bounded symbolic token.
+ * Normalize an optional request identifier to a bounded symbolic token.
  *
  * @param value - Candidate identifier.
  * @returns Safe identifier or undefined.
@@ -174,7 +172,6 @@ function buildClientErrorEvent(
   error: unknown,
   context: ClientErrorContext = {},
 ): ClientErrorEvent {
-  const digest = normalizeIdentifier(context.digest ?? readAllowedProperty(error, 'digest'));
   const requestId = normalizeIdentifier(
     context.requestId ?? readAllowedProperty(error, 'requestId'),
   );
@@ -189,7 +186,6 @@ function buildClientErrorEvent(
     route,
     source,
     timestamp: new Date().toISOString(),
-    ...(digest ? { digest } : {}),
     ...(requestId ? { request_id: requestId } : {}),
   };
   return Object.freeze(event);
