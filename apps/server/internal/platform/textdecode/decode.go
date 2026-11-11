@@ -6,7 +6,6 @@ import (
 	_ "embed"
 	"encoding/binary"
 	"errors"
-	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -15,9 +14,6 @@ import (
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
-
-var charsetPattern = regexp.MustCompile(`(?i)charset\s*=\s*["']?\s*([a-z0-9_-]+)`)
-var metaPattern = regexp.MustCompile(`(?is)<meta\b[^>]*>`)
 
 // ErrEncoding reports an unknown charset or malformed byte sequence.
 var ErrEncoding = errors.New("invalid text encoding")
@@ -39,26 +35,13 @@ func correctedGb18030(unit []byte) (rune, bool) {
 	return int32(binary.BigEndian.Uint32(gb18030Corrections[index*8+4:])), true
 }
 
-// Html selects BOM, then HTTP charset, then the first charset in a meta tag within 4096 bytes.
+// Html detects the HTML encoding using the WHATWG algorithm and decodes strictly.
 func Html(body []byte, contentType string) (string, error) {
-	label := "utf-8"
-	if bytes.HasPrefix(body, []byte{0xef, 0xbb, 0xbf}) {
-		return Decode(body[3:], "utf-8")
-	}
-	if bytes.HasPrefix(body, []byte{0xff, 0xfe}) {
-		return Decode(body[2:], "utf-16le")
-	}
-	if bytes.HasPrefix(body, []byte{0xfe, 0xff}) {
-		return Decode(body[2:], "utf-16be")
-	}
-	if match := charsetPattern.FindStringSubmatch(contentType); match != nil {
-		label = match[1]
-	} else {
-		for _, tag := range metaPattern.FindAll(body[:min(len(body), 4096)], -1) {
-			if match := charsetPattern.FindSubmatch(tag); match != nil {
-				label = string(match[1])
-				break
-			}
+	_, label, _ := charset.DetermineEncoding(body, contentType)
+	for _, marker := range [][]byte{{0xef, 0xbb, 0xbf}, {0xff, 0xfe}, {0xfe, 0xff}} {
+		if bytes.HasPrefix(body, marker) {
+			body = body[len(marker):]
+			break
 		}
 	}
 	return Decode(body, label)

@@ -2,11 +2,9 @@ package textdecode
 
 import (
 	"encoding/hex"
-
 	"io"
 	"net/http"
 	"net/http/httptest"
-
 	"strings"
 	"testing"
 
@@ -63,7 +61,20 @@ func TestHttpCharsetPrecedenceAndUtf8Dom(t *testing.T) {
 	if _, err := Html(body, "text/html;charset=utf-8"); err == nil {
 		t.Fatal("HTTP charset did not override meta")
 	}
-	if _, err := Html([]byte("plain"), "text/plain;charset=unknown"); err == nil {
-		t.Fatal("unknown charset accepted")
+	if actual, err := Html([]byte("plain"), "text/plain;charset=unknown"); err != nil || actual != "plain" {
+		t.Fatal("unknown charset did not use HTML fallback", actual, err)
+	}
+}
+
+func TestHtmlUsesWHATWGMetaAndFallbackRules(t *testing.T) {
+	for _, prefix := range []string{
+		`<!-- <meta charset="utf-8"> --><meta charset="windows-1252">`,
+		strings.Repeat(" ", 1024) + `<meta charset="utf-8">`,
+	} {
+		body := append([]byte(prefix), 0xe9)
+		value, err := Html(body, "text/html; charset=unknown")
+		if err != nil || value != prefix+"é" {
+			t.Fatal(value, err)
+		}
 	}
 }
