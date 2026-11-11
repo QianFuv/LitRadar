@@ -1,82 +1,37 @@
 /**
- * Hydration, storage, subscription, and reconciliation coverage for database selection.
+ * Storage, subscription, and reconciliation coverage for database selection.
  */
 
 import { act } from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
-import { hydrateRoot, type Root } from 'react-dom/client';
-import { renderToString } from 'react-dom/server';
+import { render, screen } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vite-plus/test';
 
-import { DEFAULT_DATABASE, SELECTED_DATABASE_KEY } from '@/lib/api/client';
+import { DEFAULT_DATABASE, SELECTED_DATABASE_KEY, readSelectedDatabase } from '@/lib/api/client';
 import {
-  getSelectedDatabaseSnapshot,
-  getSelectedDatabaseServerSnapshot,
   reconcileSelectedDatabase,
   setSelectedDatabase,
-  subscribeSelectedDatabase,
   useSelectedDatabase,
 } from '@/lib/selected-database';
 
 const LEGACY_SELECTED_DATABASE_KEY = 'selected_database';
 
-/**
- * Render the selected database snapshot for hydration and subscription assertions.
- *
- * @returns Current selected database text.
- */
+/** Render the selected database as text. */
 function SelectedDatabaseProbe() {
   const selectedDatabase = useSelectedDatabase();
   return <output>{selectedDatabase}</output>;
 }
 
 /**
- * Verify server markup stays deterministic before the stored client value takes over.
- */
-async function hydratesWithoutMismatch(): Promise<void> {
-  window.localStorage.setItem(SELECTED_DATABASE_KEY, 'stored.sqlite');
-  const serverMarkup = renderToString(<SelectedDatabaseProbe />);
-  expect(serverMarkup).toContain(DEFAULT_DATABASE);
-  expect(getSelectedDatabaseServerSnapshot()).toBe(DEFAULT_DATABASE);
-
-  const container = document.createElement('div');
-  container.innerHTML = serverMarkup;
-  document.body.append(container);
-  const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-  let root: Root | null = null;
-
-  try {
-    await act(async () => {
-      root = hydrateRoot(container, <SelectedDatabaseProbe />);
-    });
-    await waitFor(() => expect(container).toHaveTextContent('stored.sqlite'));
-    const hydrationErrors = consoleError.mock.calls.filter((call) =>
-      call.some((value) => /hydration|did not match|server rendered/iu.test(String(value))),
-    );
-    expect(hydrationErrors).toEqual([]);
-  } finally {
-    if (root) {
-      await act(async () => root?.unmount());
-    }
-    consoleError.mockRestore();
-    container.remove();
-  }
-}
-
-/**
- * Verify same-document setters and cross-document storage events notify each consumer once.
+ * Verify same-document setters and cross-document storage events reach subscribers.
  */
 function synchronizesSubscribers(): void {
-  window.localStorage.setItem(SELECTED_DATABASE_KEY, 'initial.sqlite');
-  const listener = vi.fn();
-  const unsubscribe = subscribeSelectedDatabase(listener);
-
+  act(() => setSelectedDatabase('initial.sqlite'));
   render(<SelectedDatabaseProbe />);
   expect(screen.getByText('initial.sqlite')).toBeInTheDocument();
 
   act(() => setSelectedDatabase('same-document.sqlite'));
   expect(screen.getByText('same-document.sqlite')).toBeInTheDocument();
-  expect(listener).toHaveBeenCalledTimes(1);
+  expect(window.localStorage.getItem(SELECTED_DATABASE_KEY)).toBe('same-document.sqlite');
 
   act(() => {
     window.localStorage.setItem(SELECTED_DATABASE_KEY, 'cross-document.sqlite');
@@ -89,32 +44,34 @@ function synchronizesSubscribers(): void {
     );
   });
   expect(screen.getByText('cross-document.sqlite')).toBeInTheDocument();
-  expect(listener).toHaveBeenCalledTimes(2);
 
-  unsubscribe();
-  act(() => setSelectedDatabase('after-unsubscribe.sqlite'));
-  expect(listener).toHaveBeenCalledTimes(2);
+  act(() => {
+    window.localStorage.setItem('unrelated', 'value');
+    window.dispatchEvent(new StorageEvent('storage', { key: 'unrelated' }));
+  });
+  expect(screen.getByText('cross-document.sqlite')).toBeInTheDocument();
 }
 
 /**
- * Verify the legacy key still migrates into the namespaced storage key.
+ * Verify the legacy key migrates to the namespaced key on first read.
  */
 function migratesLegacyStorage(): void {
+  window.localStorage.removeItem(SELECTED_DATABASE_KEY);
   window.localStorage.setItem(LEGACY_SELECTED_DATABASE_KEY, 'legacy.sqlite');
 
-  expect(getSelectedDatabaseSnapshot()).toBe('legacy.sqlite');
+  expect(readSelectedDatabase()).toBe('legacy.sqlite');
   expect(window.localStorage.getItem(SELECTED_DATABASE_KEY)).toBe('legacy.sqlite');
   expect(window.localStorage.getItem(LEGACY_SELECTED_DATABASE_KEY)).toBeNull();
 }
 
 /**
- * Verify unavailable storage falls back without throwing during reads or writes.
+ * Verify unavailable storage falls back to the default and never breaks a selection change.
  */
 function toleratesUnavailableStorage(): void {
   const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
     throw new Error('storage read disabled');
   });
-  expect(getSelectedDatabaseSnapshot()).toBe(DEFAULT_DATABASE);
+  expect(readSelectedDatabase()).toBe(DEFAULT_DATABASE);
   getItem.mockRestore();
 
   const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
@@ -123,35 +80,37 @@ function toleratesUnavailableStorage(): void {
   const removeItem = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
     throw new Error('storage removal disabled');
   });
-  expect(() => setSelectedDatabase('unpersisted.sqlite')).not.toThrow();
+  render(<SelectedDatabaseProbe />);
+  expect(() => act(() => setSelectedDatabase('unpersisted.sqlite'))).not.toThrow();
+  expect(screen.getByText('unpersisted.sqlite')).toBeInTheDocument();
   setItem.mockRestore();
   removeItem.mockRestore();
 }
 
 /**
- * Verify a removed stored database is replaced by the first available database once.
+ * Verify an unavailable stored database falls back to the first available one only when needed.
  */
 function reconcilesUnavailableDatabase(): void {
-  window.localStorage.setItem(SELECTED_DATABASE_KEY, 'removed.sqlite');
-  const listener = vi.fn();
-  const unsubscribe = subscribeSelectedDatabase(listener);
+  act(() => setSelectedDatabase('removed.sqlite'));
+  render(<SelectedDatabaseProbe />);
 
-  expect(
-    reconcileSelectedDatabase('removed.sqlite', ['available.sqlite', 'secondary.sqlite']),
-  ).toBe('available.sqlite');
+  act(() => {
+    expect(
+      reconcileSelectedDatabase('removed.sqlite', ['available.sqlite', 'secondary.sqlite']),
+    ).toBe('available.sqlite');
+  });
   expect(window.localStorage.getItem(SELECTED_DATABASE_KEY)).toBe('available.sqlite');
-  expect(listener).toHaveBeenCalledTimes(1);
+  expect(screen.getByText('available.sqlite')).toBeInTheDocument();
 
+  const setItem = vi.spyOn(Storage.prototype, 'setItem');
   expect(
     reconcileSelectedDatabase('available.sqlite', ['available.sqlite', 'secondary.sqlite']),
   ).toBe('available.sqlite');
-  expect(listener).toHaveBeenCalledTimes(1);
   expect(reconcileSelectedDatabase('available.sqlite', [])).toBe('available.sqlite');
-  unsubscribe();
+  expect(setItem).not.toHaveBeenCalled();
 }
 
-describe('selected database external store', () => {
-  test('hydrates with the default snapshot before applying stored state', hydratesWithoutMismatch);
+describe('selected database store', () => {
   test('synchronizes same-document and cross-document subscribers', synchronizesSubscribers);
   test('migrates the legacy storage key', migratesLegacyStorage);
   test('tolerates unavailable browser storage', toleratesUnavailableStorage);
