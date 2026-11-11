@@ -11,10 +11,12 @@ linters:
     - ineffassign
     - staticcheck
     - unused
+    - gocritic
+    - modernize
   settings:
     staticcheck:
       checks:
-        - SA*
+        - all
   exclusions:
     # Generated sqlc output is checked through its source queries and sqlc diff.
     generated: strict
