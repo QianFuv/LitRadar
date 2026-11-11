@@ -5,3 +5,5 @@
 /scripts/smoke-release.sh text eol=lf
 /apps/client/frontend/** text=auto eol=lf
 /patches/** -text
+/apps/server/internal/storage/sqlc/** text eol=lf
+/apps/server/sqlc.yaml text eol=lf
