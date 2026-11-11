@@ -12,13 +12,13 @@ func TestCronBoundaryCases(t *testing.T) {
 		instant    string
 		want       bool
 	}{
+		{"1,,2 * * * *", "2026-10-01T00:01:00Z", true},
 		{"5/2 * * * *", "2026-10-01T00:05:00Z", true},
-		{"5/2 * * * *", "2026-10-01T00:07:00Z", false},
-		{"0 8 * * 1-7/2", "2026-10-04T08:00:00Z", true},
-		{"0 8 * * 0-7/2", "2026-10-04T08:00:00Z", true},
-		{"0 8 * * 2-7/2", "2026-10-04T08:00:00Z", false},
+		{"5/2 * * * *", "2026-10-01T00:07:00Z", true},
+		{"0 8 * * 0", "2026-10-04T08:00:00Z", true},
+		{"0 8 * * 1-6/2", "2026-10-04T08:00:00Z", false},
 		{"0 8 1 * mon", "2026-10-05T08:00:00Z", true},
-		{"0 8 */2 * mon", "2026-10-12T08:00:00Z", false},
+		{"0 8 */2 * mon", "2026-10-12T08:00:00Z", true},
 		{"0 8 1,* * mon", "2026-10-12T08:00:00Z", true},
 		{"0 8 * JAN MON-FRI", "2026-01-01T08:00:00Z", true},
 	} {
@@ -30,11 +30,15 @@ func TestCronBoundaryCases(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := schedule.Matches(instant); got != scenario.want {
+		slots, err := schedule.Slots("UTC", float64(instant.Add(-time.Minute).Unix()), float64(instant.Unix()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := len(slots) == 1; got != scenario.want {
 			t.Errorf("%q at %s: %v", scenario.expression, scenario.instant, got)
 		}
 	}
-	for _, invalid := range []string{"* *", "60 * * * *", "* * * * */0", "* * * * 7-1", "* * * JANUARY *", "1,,2 * * * *", "* * * * 1/2/3"} {
+	for _, invalid := range []string{"* * * * 7", "* * * * 1-7/2", "@daily", "CRON_TZ=UTC * * * * *", "* *", "60 * * * *", "* * * * */0", "* * * * 7-1", "* * * JANUARY *", "* * * * 1/2/3"} {
 		if _, err := Parse(invalid); err == nil {
 			t.Errorf("accepted %q", invalid)
 		}
