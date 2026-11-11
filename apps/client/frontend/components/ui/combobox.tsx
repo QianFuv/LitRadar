@@ -15,6 +15,8 @@ import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
 const Combobox = ComboboxPrimitive.Root;
 const ComboboxTrigger = ComboboxPrimitive.Trigger;
+/** Read the root's items after filtering, in display order; used to render virtualized lists. */
+const useComboboxFilteredItems = ComboboxPrimitive.useFilteredItems;
 type ComboboxContentProps = React.ComponentProps<typeof ComboboxPrimitive.Popup> & {
   align?: 'start' | 'center' | 'end';
   sideOffset?: number;
@@ -160,6 +162,7 @@ export {
   ComboboxItem,
   ComboboxList,
   ComboboxTrigger,
+  useComboboxFilteredItems,
 };
 
 const styles = stylex.create({

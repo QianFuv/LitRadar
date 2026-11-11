@@ -5,7 +5,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, X } from '@/components/ui/animated-icons';
 import { useSearch } from '@tanstack/react-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useVirtualizer, type Virtualizer } from '@tanstack/react-virtual';
+import { useEffect, useImperativeHandle, useMemo, useRef, useState, type RefObject } from 'react';
 
 import {
   DatabasePill,
@@ -23,6 +24,7 @@ import {
   ComboboxItem,
   ComboboxList,
   ComboboxTrigger,
+  useComboboxFilteredItems,
 } from '@/components/ui/combobox';
 import {
   MultiSelect,
@@ -604,6 +606,125 @@ function renderRatingFacet(state: SearchFilterState) {
 /** Shared empty option list for closed pickers. */
 const NO_OPTION_IDS: string[] = [];
 
+/** Virtualizer over the journal option list's scroll element. */
+type JournalOptionVirtualizer = Virtualizer<HTMLDivElement, Element>;
+
+/** Height of a one-line journal option before it is measured, in pixels. */
+const JOURNAL_OPTION_ESTIMATED_HEIGHT = 36;
+/** Rows rendered beyond each edge of the visible range, so keyboard steps land on mounted rows. */
+const JOURNAL_OPTION_OVERSCAN = 8;
+/** Block padding of the option list, kept inside the virtualized scroll range, in pixels. */
+const JOURNAL_LIST_PADDING_BLOCK = 6;
+
+/**
+ * Scroll a highlighted journal into view when it may not be mounted yet.
+ *
+ * Mounted rows are scrolled into view by the combobox itself; highlights that jump past the
+ * rendered range, such as wrapping from the first row to the last, need the virtualizer.
+ *
+ * @param virtualizer - Virtualizer of the open option list, or null while it is unmounted.
+ * @param details - Highlight reason and the highlighted row's index in the filtered list.
+ */
+function scrollHighlightedJournal(
+  virtualizer: JournalOptionVirtualizer | null,
+  details: { reason: string; index: number },
+): void {
+  const { reason, index } = details;
+  if (!virtualizer || index < 0) {
+    return;
+  }
+  const isEnd = index === virtualizer.options.count - 1;
+  if (reason === 'none' || (reason === 'keyboard' && (index === 0 || isEnd))) {
+    queueMicrotask(() => virtualizer.scrollToIndex(index, { align: isEnd ? 'start' : 'end' }));
+  }
+}
+
+/**
+ * Measure one mounted journal row by its layout height.
+ *
+ * Layout height ignores the popup's opening scale transform. A row without layout, such as one
+ * inside a hidden list, keeps the estimate so the visible range does not grow to every row.
+ *
+ * @param element - Mounted row element.
+ * @returns Row height in pixels.
+ */
+function measureJournalRow(element: Element): number {
+  const height = element instanceof HTMLElement ? element.offsetHeight : 0;
+  return height || JOURNAL_OPTION_ESTIMATED_HEIGHT;
+}
+
+type JournalOptionListProps = {
+  /** Display title per journal id. */
+  journalLabelMap: ReadonlyMap<string, string>;
+  /** Receives the virtualizer so the combobox can scroll highlighted rows into view. */
+  virtualizerRef: RefObject<JournalOptionVirtualizer | null>;
+};
+
+/**
+ * Render only the visible rows of the filtered journal options.
+ *
+ * Rows keep their position in the full filtered list for keyboard navigation and announce it
+ * through `aria-setsize` and `aria-posinset`, since most rows are not in the DOM. React Compiler
+ * is opted out because the virtualizer is a mutable instance whose reads must not be memoized.
+ *
+ * @param props - Journal titles and the virtualizer handle.
+ * @returns Virtualized option list, empty when no journal matches.
+ */
+function JournalOptionList({ journalLabelMap, virtualizerRef }: JournalOptionListProps) {
+  'use no memo';
+  const filteredIds = useComboboxFilteredItems<string>();
+  const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
+  // oxlint-disable-next-line react/incompatible-library -- 'use no memo' keeps its reads fresh.
+  const virtualizer = useVirtualizer({
+    count: filteredIds.length,
+    getScrollElement: () => scrollElement,
+    getItemKey: (index) => filteredIds[index] ?? index,
+    estimateSize: () => JOURNAL_OPTION_ESTIMATED_HEIGHT,
+    measureElement: measureJournalRow,
+    overscan: JOURNAL_OPTION_OVERSCAN,
+    paddingStart: JOURNAL_LIST_PADDING_BLOCK,
+    paddingEnd: JOURNAL_LIST_PADDING_BLOCK,
+    scrollPaddingStart: JOURNAL_LIST_PADDING_BLOCK,
+    scrollPaddingEnd: JOURNAL_LIST_PADDING_BLOCK,
+  });
+  useImperativeHandle(virtualizerRef, () => virtualizer, [virtualizer]);
+
+  return (
+    <ComboboxList
+      ref={setScrollElement}
+      data-slot="journal-options"
+      xstyle={[styles.journalOptions, styles.journalOptionsVirtualized]}
+    >
+      {filteredIds.length > 0 && (
+        <div
+          role="presentation"
+          {...stylex.props(styles.journalRows(`${virtualizer.getTotalSize()}px`))}
+        >
+          {virtualizer.getVirtualItems().map((row) => {
+            const id = filteredIds[row.index];
+            const label = journalLabelMap.get(id) ?? id;
+            return (
+              <ComboboxItem
+                key={row.key}
+                ref={virtualizer.measureElement}
+                index={row.index}
+                data-index={row.index}
+                value={id}
+                title={label}
+                aria-setsize={filteredIds.length}
+                aria-posinset={row.index + 1}
+                xstyle={styles.journalRow(`${row.start}px`)}
+              >
+                {label}
+              </ComboboxItem>
+            );
+          })}
+        </div>
+      )}
+    </ComboboxList>
+  );
+}
+
 /**
  * Render the searchable journal multi-select; options are only built while it is open.
  *
@@ -621,6 +742,7 @@ function JournalFacet({ state }: { state: SearchFilterState }) {
     selectedJournalLabels,
   } = state;
   const [isOpen, setIsOpen] = useState(false);
+  const virtualizerRef = useRef<JournalOptionVirtualizer | null>(null);
   const orderedJournalIds = useMemo(() => {
     if (!isOpen || !journalOptions) {
       return NO_OPTION_IDS;
@@ -645,11 +767,16 @@ function JournalFacet({ state }: { state: SearchFilterState }) {
   return (
     <Combobox
       multiple
+      virtualized
       open={isOpen}
       onOpenChange={setIsOpen}
       items={orderedJournalIds}
       value={journalIds}
       onValueChange={(ids: string[]) => handleJournalsChange(ids)}
+      onInputValueChange={() => virtualizerRef.current?.scrollToOffset(0)}
+      onItemHighlighted={(_id, details) =>
+        scrollHighlightedJournal(virtualizerRef.current, details)
+      }
       itemToStringLabel={(id: string) => journalLabelMap.get(id) ?? id}
     >
       <ComboboxTrigger
@@ -674,13 +801,7 @@ function JournalFacet({ state }: { state: SearchFilterState }) {
         >
           <ComboboxInput aria-label="搜索期刊" name="journal_search" placeholder="搜索期刊" />
           <ComboboxEmpty>未找到期刊。</ComboboxEmpty>
-          <ComboboxList data-slot="journal-options" xstyle={styles.journalOptions}>
-            {(id: string) => (
-              <ComboboxItem key={id} value={id} title={journalLabelMap.get(id) ?? id}>
-                {journalLabelMap.get(id) ?? id}
-              </ComboboxItem>
-            )}
-          </ComboboxList>
+          <JournalOptionList journalLabelMap={journalLabelMap} virtualizerRef={virtualizerRef} />
         </RevealItem>
       </ComboboxContent>
     </Combobox>
@@ -1025,6 +1146,20 @@ const styles = stylex.create({
   journalOptions: {
     maxHeight: 'min(50vh, 18rem)',
   },
+  journalOptionsVirtualized: {
+    paddingBlock: 0,
+  },
+  journalRows: (height: string) => ({
+    position: 'relative',
+    width: '100%',
+    height,
+  }),
+  journalRow: (offset: string) => ({
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    transform: `translateY(${offset})`,
+  }),
   areaOptions: {
     maxHeight: 'min(55vh, 22rem)',
   },

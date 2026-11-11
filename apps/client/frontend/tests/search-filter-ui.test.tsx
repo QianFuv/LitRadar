@@ -62,6 +62,19 @@ function currentUserResponse(): Response {
   );
 }
 
+/** Viewport height of the journal option list, matching its `18rem` cap. */
+const JOURNAL_LIST_VIEWPORT_PX = 288;
+
+/**
+ * Give the virtualized journal option list a viewport height, since jsdom has no layout and
+ * the list mounts only the rows that fit its viewport.
+ */
+function stubJournalListViewport(): void {
+  vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(function (this: Element) {
+    return this.getAttribute('data-slot') === 'journal-options' ? JOURNAL_LIST_VIEWPORT_PX : 0;
+  });
+}
+
 /** Return an explicit empty rating response for unrelated sidebar scenarios. */
 function emptyRatingsResponse(): Response {
   return HttpResponse.json({ utd_rating: [], abs_rating: [], fms_rating: [], fmscn_rating: [] });
@@ -576,6 +589,7 @@ async function readsHistoryOnlyForNavigation(): Promise<void> {
  * loaded developer machine; its timeout keeps twice that headroom.
  */
 async function defersClosedJournalOptions(): Promise<void> {
+  stubJournalListViewport();
   setSelectedDatabase('fixture.sqlite');
   server.use(
     http.get('http://localhost/api/meta/ratings', emptyRatingsResponse),
@@ -616,7 +630,7 @@ async function defersClosedJournalOptions(): Promise<void> {
   const user = userEvent.setup();
   const journalPanel = await openFilterPanel(user, /^期刊$/);
   expect(
-    await within(journalPanel).findByRole('option', { name: 'Journal 99' }),
+    await within(journalPanel).findByRole('option', { name: 'Journal 0' }),
   ).toBeInTheDocument();
   expect(mapOptions).toHaveBeenCalled();
   await user.type(within(journalPanel).getByRole('combobox', { name: '搜索期刊' }), 'Journal 99');
@@ -643,6 +657,7 @@ async function defersClosedJournalOptions(): Promise<void> {
  * runs about 26 seconds on a loaded developer machine; its timeout keeps twice that headroom.
  */
 async function indexesSelectedJournalMembership(): Promise<void> {
+  stubJournalListViewport();
   setSelectedDatabase('fixture.sqlite');
   const selected = Array.from({ length: 100 }, (_, index) => String(index * 2 + 1));
   const selectedAreas = Array.from({ length: 40 }, (_, index) => `PerfArea${index * 2 + 1}`);
@@ -683,18 +698,22 @@ async function indexesSelectedJournalMembership(): Promise<void> {
         <SearchFilters />
       </AuthProvider>,
     );
-    await openFilterPanel(user, /^期刊：已选 100 本/);
-    await waitFor(() =>
-      expect(screen.getByRole('option', { name: 'Journal 199' })).toHaveAttribute(
-        'aria-selected',
-        'true',
-      ),
+    const journalPanel = await openFilterPanel(user, /^期刊：已选 100 本/);
+    const journalSearch = within(journalPanel).getByRole('combobox', { name: '搜索期刊' });
+    await waitFor(() => expect(screen.getAllByRole('option')[0]).toHaveAccessibleName('Journal 1'));
+    expect(screen.getAllByRole('option')[0]).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getAllByRole('option')[0]).toHaveAttribute('aria-setsize', '200');
+    await user.type(journalSearch, 'Journal 199');
+    expect(await screen.findByRole('option', { name: 'Journal 199' })).toHaveAttribute(
+      'aria-selected',
+      'true',
     );
-    expect(screen.getByRole('option', { name: 'Journal 0' })).toHaveAttribute(
+    await user.clear(journalSearch);
+    await user.type(journalSearch, 'Journal 0');
+    expect(await screen.findByRole('option', { name: 'Journal 0' })).toHaveAttribute(
       'aria-selected',
       'false',
     );
-    expect(screen.getAllByRole('option')[0]).toHaveAccessibleName('Journal 1');
     await closeFilterPanel(user);
     await openFilterPanel(user, /^领域：已选 40 个/);
     await waitFor(
@@ -726,18 +745,17 @@ async function indexesSelectedJournalMembership(): Promise<void> {
     'false',
   );
   await closeFilterPanel(user);
-  await openFilterPanel(user, /^期刊：已选 100 本/);
-  await user.click(screen.getByRole('option', { name: 'Journal 199' }));
-  expect(screen.getByRole('option', { name: 'Journal 199' })).toHaveAttribute(
-    'aria-selected',
-    'false',
-  );
-  await user.click(screen.getByRole('option', { name: 'Journal 0' }));
-  expect(screen.getByRole('option', { name: 'Journal 0' })).toHaveAttribute(
-    'aria-selected',
-    'true',
-  );
-  expect(screen.getAllByRole('option')[0]).toHaveAccessibleName('Journal 0');
+  const reopenedPanel = await openFilterPanel(user, /^期刊：已选 100 本/);
+  const reopenedSearch = within(reopenedPanel).getByRole('combobox', { name: '搜索期刊' });
+  await waitFor(() => expect(screen.getAllByRole('option')[0]).toHaveAccessibleName('Journal 1'));
+  await user.type(reopenedSearch, 'Journal 199');
+  await user.click(await screen.findByRole('option', { name: 'Journal 199' }));
+  expect(await findFilterPill(/^期刊：已选 99 本/)).toBeInTheDocument();
+  await user.type(reopenedSearch, 'Journal 0');
+  await user.click(await screen.findByRole('option', { name: 'Journal 0' }));
+  expect(await findFilterPill(/^期刊：已选 100 本/)).toBeInTheDocument();
+  await waitFor(() => expect(screen.getAllByRole('option')[0]).toHaveAccessibleName('Journal 0'));
+  expect(screen.getAllByRole('option')[0]).toHaveAttribute('aria-selected', 'true');
 }
 
 describe('search and filter UI', () => {
