@@ -2,7 +2,14 @@
  * Article metadata and responsive, accessible detail actions.
  */
 
-import { useEffect, useRef, useState, type MouseEventHandler, type ReactNode } from 'react';
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MouseEventHandler,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearch } from '@tanstack/react-router';
 import {
@@ -148,6 +155,27 @@ type ArticleTrailProps = {
 };
 
 /**
+ * Scroll the reader holding an article view back to its very top when the view mounts. Every way
+ * of showing another article in the same reader mounts a new view: picking a list row, a related
+ * article, going back, or another relation-graph node. The nearest scrolling ancestor is reset
+ * directly rather than with `scrollIntoView`, which aligns the view's own edge and would leave the
+ * reader's top padding scrolled out of sight.
+ *
+ * @param viewRef - Root element of the mounted article view.
+ */
+function useReaderScrollTopOnMount(viewRef: RefObject<HTMLElement | null>): void {
+  useLayoutEffect(() => {
+    for (let element = viewRef.current?.parentElement; element; element = element.parentElement) {
+      const { overflowY } = getComputedStyle(element);
+      if (overflowY === 'auto' || overflowY === 'scroll') {
+        element.scrollTo?.({ top: 0, behavior: 'instant' });
+        return;
+      }
+    }
+  }, [viewRef]);
+}
+
+/**
  * Track related articles opened on top of the selected article.
  *
  * @returns Current related article, the related article below it, and navigation actions.
@@ -259,7 +287,7 @@ export function ArticleDetailDialogContent(props: ArticleDetailDialogContentProp
 }
 
 /**
- * Render one article inside the narrow-screen sheet.
+ * Render one article inside the narrow-screen sheet, opening at the top of the sheet.
  *
  * @param props - Article detail configuration and trail callbacks.
  * @returns Sheet body for one article.
@@ -267,10 +295,7 @@ export function ArticleDetailDialogContent(props: ArticleDetailDialogContentProp
 function ArticleDialogBodyView(props: ArticleDetailDialogContentProps & ArticleTrailProps) {
   const state = useArticleDetailViewState(props);
   const rootRef = useRef<HTMLDivElement>(null);
-  const isRelated = Boolean(props.onBack);
-  useEffect(() => {
-    if (isRelated) rootRef.current?.scrollIntoView?.({ block: 'start' });
-  }, [isRelated]);
+  useReaderScrollTopOnMount(rootRef);
   return <div ref={rootRef}>{renderArticleDetailBody(state, 'dialog', props.onOpenRelated)}</div>;
 }
 
@@ -351,7 +376,7 @@ export function ArticleDetailPane(props: ArticleDetailDialogContentProps) {
 
 /**
  * Render one article in the docked reader with its sticky toolbar, clearing in like a tab panel
- * each time the reader switches to it.
+ * each time the reader switches to it and opening at the top of the reader.
  *
  * The pane owns its presence boundary because it is portaled out of list rows whose presence
  * context keeps `initial: false` from the list's first render, which would block this entrance.
@@ -362,10 +387,7 @@ export function ArticleDetailPane(props: ArticleDetailDialogContentProps) {
 function ArticlePaneView(props: ArticleDetailDialogContentProps & ArticleTrailProps) {
   const state = useArticleDetailViewState(props);
   const articleRef = useRef<HTMLElement>(null);
-  const isRelated = Boolean(props.onBack);
-  useEffect(() => {
-    if (isRelated) articleRef.current?.scrollIntoView?.({ block: 'start' });
-  }, [isRelated]);
+  useReaderScrollTopOnMount(articleRef);
   return (
     <MotionPresence initial>
       <MotionArticle
