@@ -4586,8 +4586,13 @@ async function expandedCfpSourceStatesTest({ page }: { page: Page }): Promise<vo
 
 test('shows original CFP timelines and scoped publisher statements', expandedCfpSourceStatesTest);
 
-/** Keep navigation and filters visible while alphabetized journal groups scroll independently. */
-async function cfpGroupedSidebarTest({ page }: { page: Page }): Promise<void> {
+/**
+ * Serve a CFP catalog grouped into 24 current journals, two inactive and two unadapted ones, so
+ * the current list scrolls on its own.
+ *
+ * @param page - Playwright browser page.
+ */
+async function serveGroupedCfpJournals(page: Page): Promise<void> {
   const base = CFP_FIXTURE_PAGES['issn-1949-3045'];
   const journals: CfpJournalSummary[] = [
     { ...base.journal, catalogId: 'z-inactive', title: 'Zulu Inactive', currentCount: 0 },
@@ -4618,6 +4623,11 @@ async function cfpGroupedSidebarTest({ page }: { page: Page }): Promise<void> {
     }
     await serveCfpApi(route);
   });
+}
+
+/** Keep navigation and filters visible while alphabetized journal groups scroll independently. */
+async function cfpGroupedSidebarTest({ page }: { page: Page }): Promise<void> {
+  await serveGroupedCfpJournals(page);
   await page.setViewportSize({ width: 1500, height: 900 });
   await page.emulateMedia({ colorScheme: 'light' });
   await page.goto('/?view=cfp-tracking');
@@ -4700,6 +4710,45 @@ test(
   'groups CFP journals and pins sidebar controls above independently scrolling lists',
   cfpGroupedSidebarTest,
 );
+
+/**
+ * Keep the sliding hover surface of a CFP journal row inside the scrolling list that holds the row:
+ * it moves with the row when the list scrolls under a resting pointer, and never reaches past the
+ * list, so a narrower layout cannot inherit a surface that overflows the page.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function cfpHoverSurfaceScrollTest({ page }: { page: Page }): Promise<void> {
+  await serveGroupedCfpJournals(page);
+  await page.setViewportSize({ width: 1500, height: 900 });
+  await page.goto('/?view=cfp-tracking');
+  const list = page
+    .getByRole('region', { name: '征稿期刊', exact: true })
+    .getByRole('region', { name: '正在征稿期刊' });
+  const row = list.getByRole('button').nth(2);
+  await expect(row).toBeVisible();
+  const rowBox = (await settledBoundingBox(row))!;
+  await page.mouse.move(rowBox.x + rowBox.width / 2, rowBox.y + rowBox.height / 2);
+  const surface = page.locator('[data-slot="trigger-highlight"]:not([data-leaving])');
+  const readOffset = () =>
+    Promise.all([row.boundingBox(), surface.boundingBox()]).then(([rowNow, surfaceNow]) => ({
+      top: Math.round((surfaceNow?.y ?? Number.NaN) - (rowNow?.y ?? Number.NaN)),
+      left: Math.round((surfaceNow?.x ?? Number.NaN) - (rowNow?.x ?? Number.NaN)),
+    }));
+  await expect.poll(readOffset).toEqual({ top: 0, left: 0 });
+
+  await list.evaluate((element) => element.scrollBy({ top: 12, behavior: 'instant' }));
+  await expect.poll(() => list.evaluate((element) => element.scrollTop)).toBe(12);
+  expect(await readOffset()).toEqual({ top: 0, left: 0 });
+  expect(
+    await surface.evaluate(
+      (element, listElement) => listElement!.contains(element),
+      await list.elementHandle(),
+    ),
+  ).toBe(true);
+}
+
+test('keeps a CFP row hover surface on its row while the list scrolls', cfpHoverSurfaceScrollTest);
 
 /**
  * Match the accessible name of an article card, which starts with a hidden action prefix and the
