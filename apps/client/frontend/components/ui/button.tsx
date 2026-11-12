@@ -144,7 +144,10 @@ const styles = stylex.create({
     lineHeight: lineHeights.textSm,
     fontWeight: 500,
     whiteSpace: 'nowrap',
-    transitionProperty: 'background-color, border-color, color, box-shadow, opacity',
+    transitionProperty: {
+      default: 'background-color, border-color, color, box-shadow, opacity',
+      ':is([data-sidebar="menu-button"])': 'border-color, color, box-shadow, opacity',
+    },
     transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
     transitionDuration: '200ms',
     outlineStyle: 'none',

@@ -8,12 +8,14 @@ import type { RadioGroupProps } from '@base-ui/react/radio-group';
 import { Radio } from '@animate-ui/react/primitives/base-ui/radio';
 import { Check } from 'lucide-react';
 
+import { HoverHighlightGroup, hoverHighlightItemProps } from '@/components/ui/hover-highlight';
 import { PresenceBoundary } from '@/components/ui/motion';
 import * as stylex from '@stylexjs/stylex';
 import { colors } from '@/lib/theme.stylex';
 
 /**
- * Render the radio group root.
+ * Render the radio group root as a hover highlight group, so card choices share one sliding
+ * hover surface.
  *
  * @param props - Base UI radio group properties and style overrides.
  * @returns Radio group root.
@@ -25,12 +27,18 @@ function RadioGroup<Value extends string>({
   xstyle?: stylex.StyleXStyles;
 }) {
   return (
-    <RadioGroupPrimitive<Value> data-slot="radio-group" {...stylex.props(xstyle)} {...props} />
+    <RadioGroupPrimitive<Value>
+      data-slot="radio-group"
+      render={<HoverHighlightGroup />}
+      {...stylex.props(xstyle)}
+      {...props}
+    />
   );
 }
 
 /**
- * Render one card-style choice whose animated check marks the selection.
+ * Render one card-style choice whose animated check marks the selection and whose hover surface
+ * slides between the cards of its group.
  *
  * @param props - Base UI radio properties, the visible choice content, and style overrides.
  * @returns Selectable choice.
@@ -48,6 +56,7 @@ function RadioGroupCard({
         nativeButton
         render={(props) => <button {...props} type="button" />}
         data-slot="radio-group-card"
+        {...hoverHighlightItemProps}
         {...stylex.props(styles.radioGroupCard, xstyle)}
         {...props}
       >
@@ -109,7 +118,7 @@ const styles = stylex.create({
       },
       ':is([data-checked])': `inset 0 0 0 1px ${colors.primary}`,
     },
-    transitionProperty: 'background-color, box-shadow',
+    transitionProperty: 'box-shadow',
     transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
     transitionDuration: '200ms',
     outlineStyle: 'none',
