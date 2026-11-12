@@ -343,7 +343,7 @@ const styles = stylex.create({
       default: 'none',
       '@media (forced-colors: active)': 'solid',
     },
-    transitionProperty: 'background-color, color',
+    transitionProperty: 'color',
     transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
     transitionDuration: '200ms',
     userSelect: 'none',
