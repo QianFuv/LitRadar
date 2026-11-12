@@ -153,6 +153,20 @@ Button、CopyButton、菜单项和 Select 通过 `IconStyleProvider` 给内部�
 
 Select、MultiSelect、Combobox 与 DropdownMenu 的选项高亮由 Animate UI 的滑动高亮面绘制：选项自身的 `[data-highlighted]` 底色只是高亮面读取的颜色来源，Animate UI 随即把它清为透明。因此这些选项只过渡文字颜色、不过渡 `background-color`，否则被清除的底色会用 200 ms 慢慢褪去，指针快速划过时旧选项的底色还没消失、高亮面已经滑到新选项，同时出现一快一慢两个高亮。高亮面以 `z-index: -1` 画在选项文字下方，前提是选项本身不形成层叠上下文：虚拟列表的行（期刊列表）用 `top` 定位而不用 `transform`，否则每行各自成为层叠上下文，DOM 中靠后的行里滑动的高亮面会盖住它经过的前面各行的文字。`tests/e2e/local-fixtures.spec.tsx` 的快速划过用例在指针上下划过、键盘移动和滚动时逐帧检查期刊与领域列表：始终只有一个高亮行，且没有任何选项文字被高亮面盖住。
 
+所有成组的可悬停控件共用同一种滑动悬停高亮。弹层列表（Select、MultiSelect、Combobox、DropdownMenu、账号菜单）用 Animate UI primitive 内置的选项高亮；页面内的控件组用 `components/ui/hover-highlight.tsx`：`HoverHighlightGroup` 包住一组控件，控件加上 `hoverHighlightItemProps`（Animate UI sidebar `Highlight` 的 `data-sidebar="menu-button"` 约定）。两者是同一套高亮引擎：读取控件自己在 `:hover`（`@media (hover: hover)`）下的底色与圆角作为高亮面，用同一个弹簧在控件之间滑动，所以颜色和圆角跟随各控件；开启「减少动态效果」时不滑动，触屏点按不会留下悬停面。目前覆盖筛选胶囊栏（检索、周报、征稿）、导航轨与设置/管理入口、收藏夹标签与收藏夹工具栏、设置/管理分类、文章操作工具栏、收藏弹层的收藏夹列表、发表时间预设卡片、征稿期刊目录（分组标题与期刊行）、关系图的候选文章与节点列表、关系图工具栏、相关文章、关系图收藏列表和推送数据库列表。
+
+使用约束：
+
+- 加入高亮的控件不过渡 `background-color`（`Button` 带上该属性时自动去掉），理由同上。
+- 高亮面放在控件的父元素里、`z-index: -1`，组本身是 `position: relative` 加 `isolation: isolate`；控件的父元素不能形成层叠上下文，否则滑动中的高亮面会盖住它经过的文字。
+- 横向滚动的组（筛选胶囊栏、收藏夹标签）放在 `ScrollFade` 滚动容器里面一层：`ScrollFade` 观察滚动容器的每个直接子元素，高亮面如果是其中之一，打开的胶囊因选择摘要变宽时会触发 ResizeObserver 循环。
+- 同时是 Animate UI 选中面 `HighlightItem` 子元素的控件（导航轨链接、收藏夹标签）用 `selectionHighlightChildProps`：`HighlightItem` 会给子元素写入 `data-disabled="false"`，悬停高亮会把任何 `data-disabled` 当作禁用。
+- 带动画图标的导航链接、入口和分类标签，图标设为不响应指针：图标第一次触发时会从静态 svg 换成动画 svg，替换若发生在按下与抬起之间，浏览器不会派发 click。
+- 搜索建议是 Base UI Autocomplete，焦点留在输入框，悬停高亮无法跟随方向键；这里改用 Animate UI `Highlight` 的 parent 模式，值跟随 Base UI 当前高亮的建议，指针和方向键都会滑动。parent 模式始终只有一个高亮面；children 模式在快速切换时会留下多个仍在淡出的副本。
+- 不加滑动高亮：文章卡片（多行大卡片，列表项带进入动画的 `filter`，各自形成层叠上下文，滑动面会盖住相邻卡片文字；选中卡片已用 `accent` 底色）、成对的行内操作按钮与对话框底部按钮（混有填充色和危险色按钮）、单独的控件，以及手机底栏和分段控件（悬停只改文字颜色，分段控件的选中面本来就会滑动）。
+
+`tests/e2e/local-fixtures.spec.tsx` 的 `slides one hover highlight across in-page control groups` 在上述大部分控件组中快速来回划过，逐帧检查：始终只有一个高亮面、确实发生了滑动、没有文字被盖住、控件不过渡 `background-color`；搜索建议另外检查方向键移动。`resizes an open filter pill without resize observer loops` 检查打开的胶囊改变宽度时没有 ResizeObserver 循环。
+
 Animate UI `Highlight` 在 children 模式下只给高亮面设置 `position: absolute`，尺寸由调用方提供，样式必须包含 `inset: 0`（或明确的 inset 值），否则高亮面为零尺寸，依赖它作底色的选中项（如收藏夹标签的浅色文字）会看不见。
 
 Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制，避免 `content-visibility: auto` 的绘制裁剪截断边缘。
