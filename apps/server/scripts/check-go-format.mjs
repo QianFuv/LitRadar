@@ -1,20 +1,12 @@
 /** Check formatting of authored Go application and test sources. */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import fs from "node:fs/promises";
-import path from "node:path";
-const files = [];
-/** Collect authored Go sources without vendored dependency rewrites. */
-async function collect(directory) {
-  for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
-    const filename = path.join(directory, entry.name);
-    if (entry.isDirectory()) await collect(filename);
-    else if (entry.isFile() && entry.name.endsWith(".go")) files.push(filename);
-  }
-}
-for (const directory of ["apps/server"]) await collect(directory);
-files.push("version.go");
-const result = spawnSync("gofmt", ["-l", ...files.sort()], {
+/**
+ * Authored Go roots. gofmt walks directories itself, so the command line stays short on Windows,
+ * whose argument limit a per-file list exceeds.
+ */
+const roots = ["apps/server", "version.go"];
+const result = spawnSync("gofmt", ["-l", ...roots], {
   encoding: "utf8",
   windowsHide: true,
   timeout: 60000,
@@ -26,4 +18,4 @@ assert.equal(
   "",
   `Unformatted Go source:\n${result.stdout}`,
 );
-console.log(`Go formatting passed: ${files.length} files`);
+console.log(`Go formatting passed: ${roots.join(", ")}`);
