@@ -3798,10 +3798,12 @@ async function expectDarkDatabasePillOutsideSlide(page: Page): Promise<void> {
 
 /**
  * Give every in-page group of sibling controls the sliding hover highlight of the popup lists.
+ * Marked slow because it sweeps a dozen groups across several pages, about 25s on CI runners.
  *
  * @param fixtures - Playwright page fixture.
  */
 async function slidingHoverGroupsTest({ page }: { page: Page }): Promise<void> {
+  test.slow();
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.route('**/api/**', serveArticleSettingsApi);
   await serveFilterOptions(page);
