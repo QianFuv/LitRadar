@@ -3,7 +3,6 @@
  */
 
 import { Menu as DropdownMenuPrimitive } from '@animate-ui/react/primitives/base-ui/menu';
-import { Menu } from '@base-ui/react/menu';
 import {
   AlertTriangle,
   IconStyleProvider,
@@ -119,36 +118,35 @@ function FixedLogoutRevocationNotice({ warning }: { warning: LogoutRevocationWar
 }
 
 /**
- * Render an account menu item whose icon plays while it is hovered or tapped. It uses the plain
- * Base UI item, so hover paints the item's own background instead of a highlight sliding between
- * items.
+ * Render an account menu item whose icon plays while it is hovered or tapped. It uses the Animate
+ * UI item, so its highlight slides between items like every other popup list.
  *
- * @param props - Base UI menu item properties.
+ * @param props - Animate UI menu item properties.
  * @returns Account menu item.
  */
-function UserMenuItem(props: ComponentProps<typeof Menu.Item>) {
+function UserMenuItem(props: ComponentProps<typeof DropdownMenuPrimitive.Item>) {
   const { isTriggered, triggerHandlers } = useIconTrigger(props);
   return (
     <IconTriggerProvider isTriggered={isTriggered}>
       <IconStyleProvider xstyle={[controlIconStyle, menuItemIconStyle]}>
-        <Menu.Item data-slot="user-menu-item" {...props} {...triggerHandlers} />
+        <DropdownMenuPrimitive.Item data-slot="user-menu-item" {...props} {...triggerHandlers} />
       </IconStyleProvider>
     </IconTriggerProvider>
   );
 }
 
 /**
- * Render a theme choice whose icon plays while it is hovered or tapped, painted like
+ * Render a theme choice whose icon plays while it is hovered or tapped, highlighted like
  * `UserMenuItem`.
  *
- * @param props - Base UI menu radio item properties.
+ * @param props - Animate UI menu radio item properties.
  * @returns Theme radio item.
  */
-function ThemeRadioItem(props: ComponentProps<typeof Menu.RadioItem>) {
+function ThemeRadioItem(props: ComponentProps<typeof DropdownMenuPrimitive.RadioItem>) {
   const { isTriggered, triggerHandlers } = useIconTrigger(props);
   return (
     <IconTriggerProvider isTriggered={isTriggered}>
-      <Menu.RadioItem {...props} {...triggerHandlers} />
+      <DropdownMenuPrimitive.RadioItem {...props} {...triggerHandlers} />
     </IconTriggerProvider>
   );
 }
@@ -340,7 +338,7 @@ function renderUserThemeControls(state: UserMenuViewState) {
         <SunMoon xstyle={styles.renderUserThemeControlsSunMoon} aria-hidden="true" />
         <span>外观主题</span>
       </span>
-      <Menu.RadioGroup
+      <DropdownMenuPrimitive.RadioGroup
         aria-label="外观主题"
         value={selectedTheme}
         onValueChange={handleThemeChange}
@@ -362,7 +360,7 @@ function renderUserThemeControls(state: UserMenuViewState) {
             </ThemeRadioItem>
           );
         })}
-      </Menu.RadioGroup>
+      </DropdownMenuPrimitive.RadioGroup>
     </div>
   );
 }
@@ -601,7 +599,7 @@ const styles = stylex.create({
       default: 'none',
       '@media (forced-colors: active)': 'solid',
     },
-    transitionProperty: 'background-color, color',
+    transitionProperty: 'color',
     transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
     transitionDuration: '200ms',
     userSelect: 'none',
@@ -718,7 +716,7 @@ const styles = stylex.create({
       ':is([data-highlighted])': colors.foreground,
       ':is([data-checked])': colors.foreground,
     },
-    transitionProperty: 'background-color, color, box-shadow',
+    transitionProperty: 'color, box-shadow',
     transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
     transitionDuration: '200ms',
     outlineStyle: 'none',

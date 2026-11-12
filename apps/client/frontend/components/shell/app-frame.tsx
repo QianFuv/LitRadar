@@ -16,6 +16,7 @@ import { UserMenu } from '@/components/feature/user-menu';
 import { SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE } from '@/components/feature/sectioned-dialog';
 import { preloadAdminCenter, preloadSettingsCenter } from '@/components/shell/lazy-workspaces';
 import { RailNavigation, TabNavigation } from '@/components/shell/primary-navigation';
+import { HoverHighlightGroup, hoverHighlightItemProps } from '@/components/ui/hover-highlight';
 import { parseAdminSection, withAdminSection } from '@/lib/admin-center';
 import { useAuth } from '@/lib/auth-context';
 import { WORKSPACE_ROUTE_ID, type WorkspaceSearch } from '@/lib/search-params';
@@ -77,6 +78,7 @@ function RailShortcut({
           onIntent();
           triggerHandlers.onPointerDown(event);
         }}
+        {...hoverHighlightItemProps}
         {...stylex.props(styles.railShortcutLink, isCurrent && styles.railShortcutLinkCurrent)}
       >
         <Icon xstyle={styles.railShortcutIcon} strokeWidth={1.7} aria-hidden="true" />
@@ -118,7 +120,7 @@ function AppRail() {
 
       <RailNavigation />
 
-      <div {...stylex.props(styles.appRailDiv)}>
+      <HoverHighlightGroup xstyle={styles.appRailDiv}>
         <RailShortcut
           search={withSettingsSection(search, 'general')}
           icon={Settings}
@@ -138,7 +140,7 @@ function AppRail() {
         <div {...stylex.props(styles.appRailDiv2)}>
           <UserMenu placement="rail" />
         </div>
-      </div>
+      </HoverHighlightGroup>
     </aside>
   );
 }
@@ -192,7 +194,7 @@ const styles = stylex.create({
         '@media (hover: hover)': colors.railActive,
       },
     },
-    transitionProperty: 'background-color, color',
+    transitionProperty: 'color',
     transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
     transitionDuration: '200ms',
     outlineStyle: 'none',
@@ -225,6 +227,7 @@ const styles = stylex.create({
     },
   },
   railShortcutIcon: {
+    pointerEvents: 'none',
     width: '1.25rem',
     height: '1.25rem',
   },

@@ -22,6 +22,7 @@ import {
 } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { HoverHighlightGroup, hoverHighlightItemProps } from '@/components/ui/hover-highlight';
 import {
   Dialog,
   DialogClose,
@@ -129,14 +130,20 @@ function SectionNavigationTab({
   );
   return (
     <IconTriggerProvider isTriggered={isTriggered}>
-      <Tabs.Tab {...props} {...triggerHandlers} data-section-active={isActive ? 'true' : 'false'} />
+      <Tabs.Tab
+        {...props}
+        {...triggerHandlers}
+        {...hoverHighlightItemProps}
+        data-section-active={isActive ? 'true' : 'false'}
+      />
     </IconTriggerProvider>
   );
 }
 
 /**
  * Render section navigation as horizontal pills on phones and a vertical list on wider screens,
- * with Animate UI's highlight sliding between the active categories.
+ * with Animate UI's indicator sliding to the active category and the shared hover highlight
+ * sliding between hovered categories.
  *
  * @param props - Section definitions, active state, selection action, and layout styles.
  * @returns Accessible category navigation.
@@ -152,6 +159,7 @@ function SectionedDialogNavigation<SectionId extends string>({
     <ScrollFade orientation="horizontal" shrink={0} asChild>
       <Tabs.List
         ref={attachHorizontalWheelScroll}
+        render={<HoverHighlightGroup />}
         aria-label={label}
         {...stylex.props(styles.sectionedDialogNavigationList, xstyle)}
       >
@@ -401,7 +409,7 @@ const styles = stylex.create({
       '@media (min-width: 48rem)': '0.875rem',
     },
     whiteSpace: 'nowrap',
-    transitionProperty: 'background-color, color, box-shadow',
+    transitionProperty: 'color, box-shadow',
     transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
     transitionDuration: '200ms',
     outlineStyle: 'none',
@@ -461,6 +469,7 @@ const styles = stylex.create({
     },
   },
   sectionedDialogNavigationIcon: {
+    pointerEvents: 'none',
     width: '1rem',
     height: '1rem',
     flexShrink: 0,

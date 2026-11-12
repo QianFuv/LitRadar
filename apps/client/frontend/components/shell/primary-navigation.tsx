@@ -17,6 +17,7 @@ import { Link, useSearch } from '@tanstack/react-router';
 import type { ComponentProps, PointerEvent } from 'react';
 
 import { preloadWorkspaceView } from '@/components/shell/lazy-workspaces';
+import { HoverHighlightGroup, selectionHighlightChildProps } from '@/components/ui/hover-highlight';
 import { WORKSPACE_ROUTE_ID } from '@/lib/search-params';
 import {
   DEFAULT_WORKSPACE_VIEW,
@@ -126,45 +127,48 @@ export function RailNavigation() {
   const view = useCurrentWorkspaceView();
 
   return (
-    <nav aria-label="页面导航" {...stylex.props(styles.railNavigationNav)}>
-      <Highlight
-        controlledItems
-        value={view}
-        click={false}
-        {...stylex.props(styles.railNavigationHighlight)}
-      >
-        {PRIMARY_NAVIGATION_ITEMS.map((item) => {
-          const Icon = item.icon;
-          const isCurrent = item.view === view;
+    <nav aria-label="页面导航">
+      <HoverHighlightGroup xstyle={styles.railNavigationNav}>
+        <Highlight
+          controlledItems
+          value={view}
+          click={false}
+          {...stylex.props(styles.railNavigationHighlight)}
+        >
+          {PRIMARY_NAVIGATION_ITEMS.map((item) => {
+            const Icon = item.icon;
+            const isCurrent = item.view === view;
 
-          return (
-            <HighlightItem key={item.view} value={item.view}>
-              <NavigationItemLink
-                key={item.view}
-                view={item.view}
-                aria-label={getNavigationAccessibleName(item)}
-                isCurrent={isCurrent}
-                onIntent={() => preloadWorkspaceView(item.view)}
-                title={item.label}
-                {...stylex.props(
-                  styles.railNavigationNavigationItemLink,
-                  isCurrent && styles.railNavigationNavigationItemLinkCurrent,
-                )}
-              >
-                {isCurrent && (
-                  <span aria-hidden="true" {...stylex.props(styles.railNavigationSpan)} />
-                )}
-                <Icon
-                  xstyle={styles.railNavigationIcon}
-                  strokeWidth={isCurrent ? 2.1 : 1.7}
-                  aria-hidden="true"
-                />
-                <span {...stylex.props(styles.railNavigationSpan2)}>{item.shortLabel}</span>
-              </NavigationItemLink>
-            </HighlightItem>
-          );
-        })}
-      </Highlight>
+            return (
+              <HighlightItem key={item.view} value={item.view}>
+                <NavigationItemLink
+                  key={item.view}
+                  view={item.view}
+                  aria-label={getNavigationAccessibleName(item)}
+                  isCurrent={isCurrent}
+                  onIntent={() => preloadWorkspaceView(item.view)}
+                  title={item.label}
+                  {...selectionHighlightChildProps}
+                  {...stylex.props(
+                    styles.railNavigationNavigationItemLink,
+                    isCurrent && styles.railNavigationNavigationItemLinkCurrent,
+                  )}
+                >
+                  {isCurrent && (
+                    <span aria-hidden="true" {...stylex.props(styles.railNavigationSpan)} />
+                  )}
+                  <Icon
+                    xstyle={styles.railNavigationIcon}
+                    strokeWidth={isCurrent ? 2.1 : 1.7}
+                    aria-hidden="true"
+                  />
+                  <span {...stylex.props(styles.railNavigationSpan2)}>{item.shortLabel}</span>
+                </NavigationItemLink>
+              </HighlightItem>
+            );
+          })}
+        </Highlight>
+      </HoverHighlightGroup>
     </nav>
   );
 }
@@ -252,7 +256,7 @@ const styles = stylex.create({
         '@media (hover: hover)': colors.railActive,
       },
     },
-    transitionProperty: 'background-color, color',
+    transitionProperty: 'color',
     transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
     transitionDuration: '200ms',
     outlineStyle: 'none',
@@ -289,6 +293,7 @@ const styles = stylex.create({
     backgroundColor: colors.primary,
   },
   railNavigationIcon: {
+    pointerEvents: 'none',
     width: '1.25rem',
     height: '1.25rem',
   },
