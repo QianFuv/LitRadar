@@ -3382,57 +3382,100 @@ async function singlePopupHighlightTest({ page }: { page: Page }): Promise<void>
 
 test('keeps one highlighted control while a popup is open', singlePopupHighlightTest);
 
+/** Highlight state of the open option list in one animation frame. */
+type HighlightFrame = {
+  /** Rows showing a highlight: the sliding Animate UI surface or the row's own background. */
+  highlightedRows: number;
+  /** Rows whose label text is painted over by a highlight surface. */
+  coveredLabels: number;
+};
+
 /**
- * Sweep the pointer quickly down the rows of the open option list and, on every animation frame,
- * count the rows that show a highlight: the sliding Animate UI surface or the row's own background.
+ * Sample the open option list on every animation frame while `drive` runs. Each frame counts the
+ * highlighted rows and hit-tests the middle of every row's label: the highlight surfaces are made
+ * hit-testable for that synchronous check only, so a surface painted above a label is the element
+ * found there.
  *
  * @param page - Playwright browser page.
- * @returns Highlighted row count per sampled frame.
+ * @param drive - Pointer, keyboard, or scroll input to sample.
+ * @returns Sampled frames.
  */
-async function sweepHighlightedRowCounts(page: Page): Promise<number[]> {
-  const rows = page.locator('[role="listbox"] [role="option"]').filter({ visible: true });
-  await expect.poll(() => rows.nth(6).boundingBox()).not.toBeNull();
-  const firstBox = (await rows.first().boundingBox())!;
-  const lastBox = (await rows.nth(6).boundingBox())!;
-  await page.mouse.move(firstBox.x + 20, firstBox.y + firstBox.height / 2);
-  await page.waitForTimeout(300);
+async function sampleHighlightFrames(
+  page: Page,
+  drive: () => Promise<void>,
+): Promise<HighlightFrame[]> {
   await page.evaluate(() => {
     const isPainted = (element: Element) => {
       const style = getComputedStyle(element);
       const alpha = /rgba\([^)]*,\s*([\d.]+)\)$/.exec(style.backgroundColor)?.[1];
       return Number(style.opacity) > 0.02 && (alpha === undefined || Number(alpha) > 0.02);
     };
-    const sampler = window as unknown as { highlightCounts: number[]; isSampling: boolean };
-    sampler.highlightCounts = [];
+    const labelPoint = (row: Element) => {
+      const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (!node.textContent?.trim()) continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const box = range.getBoundingClientRect();
+        if (box.width > 0) return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+      }
+      return null;
+    };
+    const sampler = window as unknown as { highlightFrames: unknown[]; isSampling: boolean };
+    sampler.highlightFrames = [];
     sampler.isSampling = true;
     const sample = () => {
-      const visibleRows = Array.from(
-        document.querySelectorAll('[role="listbox"] [role="option"]'),
-      ).filter((row) => row.checkVisibility());
-      sampler.highlightCounts.push(
-        visibleRows.filter(
+      const rows = Array.from(document.querySelectorAll('[role="listbox"] [role="option"]')).filter(
+        (row) => row.checkVisibility(),
+      );
+      const surfaces = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-slot="item-highlight"]'),
+      );
+      for (const surface of surfaces) surface.style.pointerEvents = 'auto';
+      const coveredLabels = rows.filter((row) => {
+        const point = labelPoint(row);
+        const hit = point && document.elementFromPoint(point.x, point.y);
+        return hit?.closest('[data-slot="item-highlight"]') != null;
+      }).length;
+      for (const surface of surfaces) surface.style.pointerEvents = 'none';
+      sampler.highlightFrames.push({
+        highlightedRows: rows.filter(
           (row) =>
             isPainted(row) ||
             Array.from(row.querySelectorAll('[data-slot="item-highlight"]')).some(isPainted),
         ).length,
-      );
+        coveredLabels,
+      });
       if (sampler.isSampling) requestAnimationFrame(sample);
     };
     requestAnimationFrame(sample);
   });
-  await page.mouse.move(lastBox.x + 20, lastBox.y + lastBox.height / 2, { steps: 6 });
+  await drive();
   await page.waitForTimeout(400);
   return page.evaluate(() => {
-    const sampler = window as unknown as { highlightCounts: number[]; isSampling: boolean };
+    const sampler = window as unknown as { highlightFrames: HighlightFrame[]; isSampling: boolean };
     sampler.isSampling = false;
-    return sampler.highlightCounts;
+    return sampler.highlightFrames;
   });
 }
 
 /**
- * Keep exactly one highlighted row while the pointer sweeps fast through a filter list: the row
- * left behind must not fade out on its own background while the sliding surface already marks
- * the next row.
+ * Expect every sampled frame to show at most one highlighted row and no covered label.
+ *
+ * @param frames - Sampled frames.
+ * @param context - Input that produced the frames, for failure messages.
+ */
+function expectSingleUncoveredHighlight(frames: HighlightFrame[], context: string): void {
+  expect(frames.length, context).toBeGreaterThan(10);
+  expect(Math.max(...frames.map((frame) => frame.highlightedRows)), context).toBe(1);
+  expect(Math.max(...frames.map((frame) => frame.coveredLabels)), context).toBe(0);
+}
+
+/**
+ * Keep exactly one highlighted row, painted beneath every label, while the pointer sweeps fast
+ * through a filter list, while the keyboard steps through it, and while it scrolls: the row left
+ * behind must not fade out on its own background while the sliding surface already marks the
+ * next row, and the sliding surface must never paint over the text of the rows it crosses.
  *
  * @param fixtures - Playwright page fixture.
  */
@@ -3442,23 +3485,50 @@ async function fastSweepSingleHighlightTest({ page }: { page: Page }): Promise<v
   await serveFilterOptions(page);
   await page.goto('/?q=graph');
   const filters = page.locator('fieldset[aria-label="筛选条件"]');
-  for (const opener of [
-    filters.locator('[aria-label^="领域"]').first(),
-    filters.locator('[aria-label="期刊"]'),
-  ]) {
+  const rows = page.locator('[role="listbox"] [role="option"]').filter({ visible: true });
+  for (const [name, opener] of [
+    ['areas', filters.locator('[aria-label^="领域"]').first()],
+    ['journals', filters.locator('[aria-label="期刊"]')],
+  ] as const) {
     await opener.click();
     await expect(opener).toHaveAttribute('aria-expanded', 'true');
-    await expect(
-      page.locator('[role="listbox"] [role="option"]').filter({ visible: true }).nth(6),
-    ).toBeVisible();
-    const counts = await sweepHighlightedRowCounts(page);
-    expect(counts.length).toBeGreaterThan(10);
-    expect(Math.max(...counts)).toBe(1);
+    await expect.poll(() => rows.nth(6).boundingBox()).not.toBeNull();
+    const firstBox = (await rows.first().boundingBox())!;
+    const lastBox = (await rows.nth(6).boundingBox())!;
+    await page.mouse.move(firstBox.x + 20, firstBox.y + firstBox.height / 2);
+    await page.waitForTimeout(300);
+    expectSingleUncoveredHighlight(
+      await sampleHighlightFrames(page, () =>
+        page.mouse.move(lastBox.x + 20, lastBox.y + lastBox.height / 2, { steps: 6 }),
+      ),
+      `${name} pointer sweep down`,
+    );
+    expectSingleUncoveredHighlight(
+      await sampleHighlightFrames(page, () =>
+        page.mouse.move(firstBox.x + 20, firstBox.y + firstBox.height / 2, { steps: 6 }),
+      ),
+      `${name} pointer sweep up`,
+    );
+    await page.mouse.move(firstBox.x - 40, firstBox.y - 40);
+    expectSingleUncoveredHighlight(
+      await sampleHighlightFrames(page, async () => {
+        for (let step = 0; step < 6; step += 1) await page.keyboard.press('ArrowDown');
+      }),
+      `${name} keyboard`,
+    );
+    expectSingleUncoveredHighlight(
+      await sampleHighlightFrames(page, async () => {
+        await page.mouse.move(firstBox.x + 20, firstBox.y + firstBox.height / 2);
+        for (let step = 0; step < 6; step += 1) {
+          await page.mouse.wheel(0, 60);
+          await page.waitForTimeout(16);
+        }
+      }),
+      `${name} scroll`,
+    );
     await page.keyboard.press('Escape');
     await expect(opener).toHaveAttribute('aria-expanded', 'false');
-    await expect(
-      page.locator('[role="listbox"] [role="option"]').filter({ visible: true }),
-    ).toHaveCount(0);
+    await expect(rows).toHaveCount(0);
   }
 }
 

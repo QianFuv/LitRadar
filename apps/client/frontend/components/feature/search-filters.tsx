@@ -655,6 +655,9 @@ type JournalOptionListProps = {
  * Rows keep their position in the full filtered list for keyboard navigation and announce it
  * through `aria-setsize` and `aria-posinset`, since most rows are not in the DOM. React Compiler
  * is opted out because the virtualizer is a mutable instance whose reads must not be memoized.
+ * Rows are placed with `top`, not a transform: a transform would make every row its own stacking
+ * context, so the highlight surface sliding inside a later row would paint over the labels of the
+ * earlier rows it crosses instead of beneath them.
  *
  * @param props - Journal titles and the virtualizer handle.
  * @returns Virtualized option list, empty when no journal matches.
@@ -1139,9 +1142,8 @@ const styles = stylex.create({
   }),
   journalRow: (offset: string) => ({
     position: 'absolute',
-    top: 0,
+    top: offset,
     left: 0,
-    transform: `translateY(${offset})`,
   }),
   areaOptions: {
     maxHeight: 'min(55vh, 22rem)',
