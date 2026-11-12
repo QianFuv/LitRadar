@@ -328,7 +328,9 @@ func hasSidecarDatabase(name string, databases []sourceDatabase) bool {
 	}
 	return false
 }
-func sourceVersion(ctx context.Context, source sourceDatabase) (int64, error) {
+
+// sourceVersion retains the original version but refreshes the baseline only when preflight migrates it.
+func sourceVersion(ctx context.Context, source *sourceDatabase) (int64, error) {
 	version := int64(0)
 	if source.size > 0 {
 		database, err := storage.Open(source.path, true, 1)
@@ -348,8 +350,17 @@ func sourceVersion(ctx context.Context, source sourceDatabase) (int64, error) {
 	if version < indexschema.MinimumSupportedVersion || version > indexschema.Version {
 		return 0, Failure{Code: "unsupported_schema", Message: fmt.Sprintf("index database %s uses unsupported schema version %d; supported versions are %d through %d", source.name, version, indexschema.MinimumSupportedVersion, indexschema.Version)}
 	}
-	if _, err := migration.Preflight(ctx, source.path); err != nil {
+	scope, err := migration.Preflight(ctx, source.path)
+	if err != nil {
 		return 0, validation(source.name, fmt.Sprintf("exact schema preflight: %v", err))
+	}
+	if scope == "full_integrity" {
+		info, err := os.Stat(source.path)
+		if err != nil {
+			return 0, err
+		}
+		source.size = uint64(info.Size())
+		source.modified = info.ModTime()
 	}
 	return version, nil
 }

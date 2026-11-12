@@ -155,6 +155,8 @@ litradar admin index optimize-storage
 
 运行前必须停止 `serve`、独立 `index`/投递命令和计划任务子进程，等待 API/worker/调度心跳超过 90 秒，并等待所有 batch/catalog lease 到期或由正常退出释放。先创建并独立验证带 `--include-indexes` 的备份；需要旧二进制降级时，必须保留受目标旧二进制支持的优化前索引备份。可用空间至少按 `2 × source_bytes + 64 MiB` 预留；命令也会在复制前记录 `temporary_bytes_required` 估计。
 
+暂存和 rollback 目录位于项目的 `data/` 内，与 `index/` 同盘；上述数值是容量预留估计，不会在 `/tmp` 预分配对应大小。兼容性 preflight 若迁移了源库，后续文件变更检测和 `source_bytes` 以迁移后的文件为准，`source_schema_version` 仍报告迁移前版本。
+
 成功 stdout 为一行 JSON：
 
 - 顶层 `status` 为 `optimized` 或空索引目录的 `noop`，`report.outcome` 使用相同 snake-case 值；

@@ -89,14 +89,16 @@ func inspectOptimizationSource(configuration config.Config) (directorySnapshot, 
 	return inspectDirectory(configuration)
 }
 
-// identifySourceVersions records each admitted source version in inventory order.
+// identifySourceVersions records original versions and accounts for any preflight migration writes.
 func identifySourceVersions(ctx context.Context, source *directorySnapshot) error {
+	source.bytes = 0
 	for index := range source.databases {
-		version, err := sourceVersion(ctx, source.databases[index])
+		version, err := sourceVersion(ctx, &source.databases[index])
 		if err != nil {
 			return err
 		}
 		source.databases[index].version = version
+		source.bytes += source.databases[index].size
 	}
 	return nil
 }
