@@ -7,8 +7,11 @@ The root `VERSION` file is the release source of truth. It contains a stable
 ## Publish a version
 
 1. Change `VERSION`, for example from `0.1.0` to `0.1.1`.
-2. Commit that change together with the intended release contents and push to `main`.
-3. CI compares the versions before and after the entire push, runs the backend, frontend and
+2. Regenerate the frontend API artifact with `pnpm --filter litradar-frontend generate:api`. The
+   checked-in `apps/client/frontend/lib/generated/openapi.json` records the version in
+   `info.version`, and the frontend quality check fails when it differs from the generated document.
+3. Commit both changes together with the intended release contents and push to `main`.
+4. CI compares the versions before and after the entire push, runs the backend, frontend and
    client quality checks, and builds only when the version increases.
 
 Ordinary pushes run quality checks without building release images or archives.
