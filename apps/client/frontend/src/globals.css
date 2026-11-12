@@ -229,6 +229,11 @@
     position: relative;
   }
 
+  /* The sliding hover highlight (components/ui/hover-highlight.tsx) places its surface in each control's parent. A positioned parent keeps the surface inside the scroll and clip containers that hold the control, so it scrolls with the control and never paints past them. */
+  :where(:has(> [data-sidebar='menu-button'])) {
+    position: relative;
+  }
+
   /* Animate UI's text primitives (ShimmeringText, SlidingNumber, SplittingText) put their accessible copy in a `sr-only` span. */
   .sr-only {
     position: absolute;
