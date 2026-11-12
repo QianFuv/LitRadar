@@ -165,7 +165,7 @@ litradar admin index optimize-storage
 
 优化器在任何目录切换前验证源库 `quick_check`、外键、FTS rowid 和固定查询语料；候选还必须通过精确 v10 schema、权威表计数/键集合、无影子表和 freelist 不超过 1%。切换后会再次执行完整验证，失败时自动回滚；成功后才删除 rollback 和维护标记。
 
-失败 stdout 先输出 `{"status":"failed","error":...}`，命令随后非零退出。稳定 `error.code` 包括：
+维护失败时 stdout 先输出 `{"status":"failed","error":...}`，stderr 的 `cli.command.failed` 和 `process.failed` 事件同时通过 `diagnostic` 记录相同的公开维护错误消息，命令随后非零退出。稳定 `error.code` 包括：
 
 - `confirmation_required`、`active_target`、`active_lease`；
 - `interrupted_state`、`invalid_layout`、`unsupported_schema`；

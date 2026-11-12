@@ -17,6 +17,7 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/runtime/logfilter"
 	"github.com/QianFuv/LitRadar/apps/server/internal/runtime/observability"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/delivery"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/maintenance"
 )
 
 const applicationUsage = "Usage: litradar <COMMAND> [OPTIONS]\n\nCommands:\n  serve      Run HTTP and scheduling as one service\n  admin      Manage administrators, secrets, and backups\n  index      Build or update searchable article indexes\n  cfp        Import or refresh original journal calls for papers\n  notify     Deliver recommendation notifications\n  push       Push tracking updates\n  scheduler  Validate or run scheduled tasks manually\n  openapi    Emit the generated OpenAPI document"
@@ -63,8 +64,8 @@ func Run(ctx context.Context, values []string, executable string, input io.Reade
 		duration := logfilter.DebugValue(strconv.FormatInt(time.Since(started).Milliseconds(), 10))
 		if result != nil {
 			attributes := []any{"event", "process.failed", "component", "runtime", "outcome", "failure", "error_kind", "command_failed", "duration_ms", duration}
-			if failure, ok := errors.AsType[*diagnosticError](result); ok {
-				attributes = append(attributes, "diagnostic", failure.diagnostic)
+			if diagnostic := commandDiagnostic(result); diagnostic != "" {
+				attributes = append(attributes, "diagnostic", diagnostic)
 			}
 			slog.ErrorContext(ctx, "process.failed", attributes...)
 		} else {
@@ -100,11 +101,22 @@ func runCommand(ctx context.Context, command string, operation func(context.Cont
 	slog.InfoContext(ctx, "cli.command.started", "event", "cli.command.started", "component", "cli", "command", command)
 	err := operation(ctx)
 	if err != nil {
-		slog.ErrorContext(ctx, "cli.command.failed", "event", "cli.command.failed", "component", "cli", "command", command, "outcome", "failure", "error_kind", "command_failed", "duration_ms", time.Since(started).Milliseconds())
+		slog.ErrorContext(ctx, "cli.command.failed", "event", "cli.command.failed", "component", "cli", "command", command, "outcome", "failure", "error_kind", "command_failed", "diagnostic", commandDiagnostic(err), "duration_ms", time.Since(started).Milliseconds())
 	} else {
 		slog.InfoContext(ctx, "cli.command.completed", "event", "cli.command.completed", "component", "cli", "command", command, "outcome", "success", "duration_ms", time.Since(started).Milliseconds())
 	}
 	return err
+}
+
+// commandDiagnostic reuses public usage or maintenance JSON diagnostics without logging private causes.
+func commandDiagnostic(err error) string {
+	if failure, ok := errors.AsType[*diagnosticError](err); ok {
+		return failure.diagnostic
+	}
+	if failure, ok := errors.AsType[maintenance.Failure](err); ok {
+		return failure.Error()
+	}
+	return ""
 }
 
 func runOpenapi(values []string, output io.Writer) error {
