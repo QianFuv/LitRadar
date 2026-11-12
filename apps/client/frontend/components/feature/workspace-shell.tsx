@@ -276,7 +276,10 @@ export function WorkspaceShell({
         <Dialog open={reader.isSheetOpen} onOpenChange={reader.onSheetOpenChange}>
           <DialogContent
             placement="right"
-            xstyle={styles.workspaceShellDialogContent}
+            xstyle={[
+              styles.workspaceShellDialogContent,
+              isListEmphasized ? readerSheetWidths.list : readerSheetWidths.reader,
+            ]}
             initialFocus={() => {
               sheetReturnFocusRef.current =
                 document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -317,6 +320,30 @@ export function WorkspaceShell({
     </ArticleReaderContext.Provider>
   );
 }
+
+const readerSheetWidths = stylex.create({
+  list: {
+    width: {
+      default: '100%',
+      '@media (min-width: 48rem)': 'min(calc((80rem - 4rem) * 2 / 5), calc(100vw - 5rem))',
+    },
+  },
+  reader: {
+    width: {
+      default: '100%',
+      '@media (min-width: 48rem)': 'min(calc(80rem - 4rem - 460px), calc(100vw - 5rem))',
+    },
+  },
+});
+
+/**
+ * Width of the narrow-screen article detail sheet: the list-emphasized reading desk's width at
+ * the 80rem dock breakpoint, where the 4rem navigation rail leaves 76rem that the desk shares
+ * with the list 2 : 3. Workspace sheets use the same rule per emphasis (`reader` sits beside a
+ * 460px directory), so details keep one width whether they slide in or dock; phones keep the
+ * full-width sheet, and a 5rem strip of the page always stays visible beside it.
+ */
+export const listReaderSheetWidthStyle = readerSheetWidths.list;
 
 const styles = stylex.create({
   listContent: {

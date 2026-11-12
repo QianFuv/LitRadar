@@ -30,6 +30,7 @@ import {
 } from '@/lib/api';
 import { FavoriteButton } from '@/components/feature/favorite-button';
 import { RelatedArticles } from '@/components/feature/related-articles';
+import { listReaderSheetWidthStyle } from '@/components/feature/workspace-shell';
 import { useAuth } from '@/lib/auth-context';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -191,7 +192,8 @@ function RelatedArticleFavoriteState({
 }
 
 /**
- * Render article details as a right-side sheet on narrow screens.
+ * Render article details as a right-side sheet on narrow screens, as wide as the docked detail
+ * panel of the list-emphasized workspaces that list articles.
  *
  * @param props - Article detail configuration.
  * @returns Article detail dialog content.
@@ -199,7 +201,10 @@ function RelatedArticleFavoriteState({
 export function ArticleDetailDialogContent(props: ArticleDetailDialogContentProps) {
   const trail = useRelatedArticleTrail();
   return (
-    <DialogContent placement="right" xstyle={styles.articleDetailDialogContentDialogContent}>
+    <DialogContent
+      placement="right"
+      xstyle={[styles.articleDetailDialogContentDialogContent, listReaderSheetWidthStyle]}
+    >
       <div {...stylex.props(styles.articleDetailDialogContentDiv)}>
         <DialogClose
           render={
