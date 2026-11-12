@@ -32,16 +32,16 @@ func TestParentLossBeforeGuardStopsWholeGroup(t *testing.T) {
 	if err := owner.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { owner.Process.Kill(); owner.Wait() })
+	t.Cleanup(func() { _ = owner.Process.Kill(); _ = owner.Wait() })
 	worker := awaitFixture(t, directory, "late-guard")
 	grandchild := awaitFixture(t, directory, "grandchild")
-	t.Cleanup(func() { syscall.Kill(-worker.Pid, syscall.SIGKILL) })
+	t.Cleanup(func() { _ = syscall.Kill(-worker.Pid, syscall.SIGKILL) })
 	requireReachable(t, worker)
 	requireReachable(t, grandchild)
 	if err := owner.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
-	owner.Wait()
+	_ = owner.Wait()
 	if err := os.WriteFile(filepath.Join(directory, "release-guard"), nil, 0600); err != nil {
 		t.Fatal(err)
 	}

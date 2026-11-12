@@ -25,7 +25,7 @@ func StartParentGuard() (func(), error) {
 		return nil, fmt.Errorf("worker parent ownership is invalid")
 	}
 	if os.Getppid() != parent {
-		syscall.Kill(-os.Getpid(), syscall.SIGKILL)
+		_ = syscall.Kill(-os.Getpid(), syscall.SIGKILL)
 		os.Exit(1)
 	}
 	stop, done := make(chan struct{}), make(chan struct{})
@@ -40,7 +40,7 @@ func StartParentGuard() (func(), error) {
 				return
 			case <-ticker.C:
 				if os.Getppid() != parent {
-					syscall.Kill(-os.Getpid(), syscall.SIGKILL)
+					_ = syscall.Kill(-os.Getpid(), syscall.SIGKILL)
 					os.Exit(1)
 				}
 			}
