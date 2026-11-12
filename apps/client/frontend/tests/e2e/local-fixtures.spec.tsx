@@ -3383,6 +3383,160 @@ async function singlePopupHighlightTest({ page }: { page: Page }): Promise<void>
 test('keeps one highlighted control while a popup is open', singlePopupHighlightTest);
 
 /**
+ * Sweep the pointer quickly down the rows of the open option list and, on every animation frame,
+ * count the rows that show a highlight: the sliding Animate UI surface or the row's own background.
+ *
+ * @param page - Playwright browser page.
+ * @returns Highlighted row count per sampled frame.
+ */
+async function sweepHighlightedRowCounts(page: Page): Promise<number[]> {
+  const rows = page.locator('[role="listbox"] [role="option"]').filter({ visible: true });
+  await expect.poll(() => rows.nth(6).boundingBox()).not.toBeNull();
+  const firstBox = (await rows.first().boundingBox())!;
+  const lastBox = (await rows.nth(6).boundingBox())!;
+  await page.mouse.move(firstBox.x + 20, firstBox.y + firstBox.height / 2);
+  await page.waitForTimeout(300);
+  await page.evaluate(() => {
+    const isPainted = (element: Element) => {
+      const style = getComputedStyle(element);
+      const alpha = /rgba\([^)]*,\s*([\d.]+)\)$/.exec(style.backgroundColor)?.[1];
+      return Number(style.opacity) > 0.02 && (alpha === undefined || Number(alpha) > 0.02);
+    };
+    const sampler = window as unknown as { highlightCounts: number[]; isSampling: boolean };
+    sampler.highlightCounts = [];
+    sampler.isSampling = true;
+    const sample = () => {
+      const visibleRows = Array.from(
+        document.querySelectorAll('[role="listbox"] [role="option"]'),
+      ).filter((row) => row.checkVisibility());
+      sampler.highlightCounts.push(
+        visibleRows.filter(
+          (row) =>
+            isPainted(row) ||
+            Array.from(row.querySelectorAll('[data-slot="item-highlight"]')).some(isPainted),
+        ).length,
+      );
+      if (sampler.isSampling) requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
+  await page.mouse.move(lastBox.x + 20, lastBox.y + lastBox.height / 2, { steps: 6 });
+  await page.waitForTimeout(400);
+  return page.evaluate(() => {
+    const sampler = window as unknown as { highlightCounts: number[]; isSampling: boolean };
+    sampler.isSampling = false;
+    return sampler.highlightCounts;
+  });
+}
+
+/**
+ * Keep exactly one highlighted row while the pointer sweeps fast through a filter list: the row
+ * left behind must not fade out on its own background while the sliding surface already marks
+ * the next row.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function fastSweepSingleHighlightTest({ page }: { page: Page }): Promise<void> {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.route('**/api/**', serveArticleSettingsApi);
+  await serveFilterOptions(page);
+  await page.goto('/?q=graph');
+  const filters = page.locator('fieldset[aria-label="筛选条件"]');
+  for (const opener of [
+    filters.locator('[aria-label^="领域"]').first(),
+    filters.locator('[aria-label="期刊"]'),
+  ]) {
+    await opener.click();
+    await expect(opener).toHaveAttribute('aria-expanded', 'true');
+    await expect(
+      page.locator('[role="listbox"] [role="option"]').filter({ visible: true }).nth(6),
+    ).toBeVisible();
+    const counts = await sweepHighlightedRowCounts(page);
+    expect(counts.length).toBeGreaterThan(10);
+    expect(Math.max(...counts)).toBe(1);
+    await page.keyboard.press('Escape');
+    await expect(opener).toHaveAttribute('aria-expanded', 'false');
+    await expect(
+      page.locator('[role="listbox"] [role="option"]').filter({ visible: true }),
+    ).toHaveCount(0);
+  }
+}
+
+test('keeps one highlighted row during a fast pointer sweep', fastSweepSingleHighlightTest);
+
+/**
+ * Read the rendered width of an element.
+ *
+ * @param locator - Element to measure.
+ * @returns Rendered width in CSS pixels.
+ */
+async function readRenderedWidth(locator: Locator): Promise<number> {
+  const box = await locator.boundingBox();
+  expect(box).not.toBeNull();
+  return box!.width;
+}
+
+/**
+ * Slide details in below the dock breakpoint at the width of the docked side panel they stand in
+ * for, both beside article lists and beside the CFP directory, and keep full-width phone sheets.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function readerSheetWidthTest({ page }: { page: Page }): Promise<void> {
+  await page.route('**/api/**', serveArticleSettingsApi);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/?q=graph');
+  const desk = page.getByRole('region', { name: '阅读台' });
+  await expect(desk).toBeVisible();
+  const articleDeskWidth = await readRenderedWidth(desk);
+
+  await page.setViewportSize({ width: 1100, height: 800 });
+  await expect(desk).toBeHidden();
+  await page
+    .getByRole('button', { name: /^查看文章详情：/ })
+    .first()
+    .click();
+  const articleSheet = page.getByRole('dialog');
+  await expect(articleSheet).toHaveAttribute('data-motion-placement', 'right');
+  expect(Math.abs((await readRenderedWidth(articleSheet)) - articleDeskWidth)).toBeLessThanOrEqual(
+    1,
+  );
+  await page.keyboard.press('Escape');
+  await expect(articleSheet).toBeHidden();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page
+    .getByRole('button', { name: /^查看文章详情：/ })
+    .first()
+    .click();
+  await expect(articleSheet).toHaveAttribute('data-motion-placement', 'right');
+  expect(Math.abs((await readRenderedWidth(articleSheet)) - 390)).toBeLessThanOrEqual(1);
+  await page.keyboard.press('Escape');
+  await expect(articleSheet).toBeHidden();
+
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+  await page.clock.setFixedTime(new Date('2026-09-15T12:00:00Z'));
+  await page.route('**/api/**', serveCfpApi);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/?view=cfp-tracking&cfp_journal=issn-1949-3045');
+  await expect(desk).toBeVisible();
+  const cfpDeskWidth = await readRenderedWidth(desk);
+  expect(cfpDeskWidth).toBeGreaterThan(articleDeskWidth);
+
+  await page.setViewportSize({ width: 1100, height: 800 });
+  await expect(desk).toBeHidden();
+  await page
+    .getByRole('region', { name: '征稿期刊', exact: true })
+    .getByRole('button', { name: /IEEE Transactions on Affective Computing/ })
+    .click();
+  const cfpSheet = page.getByRole('dialog', { name: 'IEEE Transactions on Affective Computing' });
+  await expect(cfpSheet).toHaveAttribute('data-motion-placement', 'right');
+  expect(Math.abs((await readRenderedWidth(cfpSheet)) - cfpDeskWidth)).toBeLessThanOrEqual(1);
+}
+
+test('slides narrow-window details in at the docked panel width', readerSheetWidthTest);
+
+/**
  * Report whether the highlight surface marking an item covers the item's highlight container.
  *
  * @param item - Highlighted item.
