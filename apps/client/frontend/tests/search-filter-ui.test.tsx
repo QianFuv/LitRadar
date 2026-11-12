@@ -174,10 +174,9 @@ async function operatesSearchHistoryFromKeyboard(): Promise<void> {
 
   await user.click(input);
   expect(await screen.findByRole('group', { name: '最近搜索' })).toBeInTheDocument();
-  expect(screen.getByRole('option', { name: 'first query' }).parentElement).toHaveAttribute(
-    'data-motion-history-key',
-    'first query',
-  );
+  expect(
+    screen.getByRole('option', { name: 'first query' }).closest('[data-motion-history-key]'),
+  ).toHaveAttribute('data-motion-history-key', 'first query');
   await user.keyboard('{ArrowDown}');
   const firstQuery = screen.getByRole('option', { name: 'first query' });
   expect(firstQuery).toHaveAttribute('data-highlighted');

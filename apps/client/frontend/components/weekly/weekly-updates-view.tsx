@@ -41,6 +41,7 @@ import {
   PANEL_VARIANTS,
   REVEAL_VARIANTS,
 } from '@/components/ui/motion';
+import { HoverHighlightGroup, hoverHighlightItemProps } from '@/components/ui/hover-highlight';
 import { RevealItem } from '@/components/ui/reveal';
 import { attachHorizontalWheelScroll } from '@/lib/horizontal-wheel-scroll';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -225,6 +226,7 @@ function WeeklyJournalFacet({
         aria-label={accessibleName}
         title={accessibleName}
         size="sm"
+        {...hoverHighlightItemProps}
         xstyle={[
           filterPillStyles(false),
           styles.weeklyJournalTrigger,
@@ -332,9 +334,9 @@ export function WeeklyUpdatesView() {
             queryParam="weekly_q"
             placeholder="在本周新文章中检索…"
           />
-          <div
+          <HoverHighlightGroup
             ref={attachHorizontalWheelScroll}
-            {...stylex.props(styles.weeklyUpdatesViewDivItem, styles.weeklyUpdatesViewDiv4)}
+            xstyle={[styles.weeklyUpdatesViewDivItem, styles.weeklyUpdatesViewDiv4]}
           >
             <RevealItem
               isReady={weeklyState !== 'loading'}
@@ -361,7 +363,7 @@ export function WeeklyUpdatesView() {
                 onSelectJournal={(journalId) => setSelectedJournalId(journalId)}
               />
             </RevealItem>
-          </div>
+          </HoverHighlightGroup>
         </div>
       }
       readerPlaceholder={

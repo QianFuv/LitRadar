@@ -48,6 +48,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { HoverHighlightGroup, hoverHighlightItemProps } from '@/components/ui/hover-highlight';
 import { RevealItem } from '@/components/ui/reveal';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -130,23 +131,25 @@ export function SearchFilters({ xstyle }: { xstyle?: stylex.StyleXStyles }) {
     <fieldset aria-label="筛选条件" {...stylex.props(styles.layoutFreeGroup)}>
       <ScrollFade orientation="horizontal" shrink={0} asChild>
         <div ref={attachHorizontalWheelScroll} {...stylex.props(styles.searchFiltersDiv, xstyle)}>
-          {renderDatabaseFacet(state)}
-          <span {...stylex.props(styles.searchFiltersSpan)} aria-hidden="true" />
-          <TimeFacet state={state} />
-          {renderRatingFacet(state)}
-          <JournalFacet state={state} />
-          <AreaFacet state={state} />
-          {appliedFilterCount > 0 && (
-            <button
-              type="button"
-              title="清空全部筛选"
-              {...stylex.props(styles.searchFiltersButton)}
-              onClick={handleClearAll}
-            >
-              <X xstyle={styles.searchFiltersX} aria-hidden="true" />
-              清除筛选
-            </button>
-          )}
+          <HoverHighlightGroup xstyle={styles.searchFiltersRow}>
+            {renderDatabaseFacet(state)}
+            <span {...stylex.props(styles.searchFiltersSpan)} aria-hidden="true" />
+            <TimeFacet state={state} />
+            {renderRatingFacet(state)}
+            <JournalFacet state={state} />
+            <AreaFacet state={state} />
+            {appliedFilterCount > 0 && (
+              <button
+                type="button"
+                title="清空全部筛选"
+                {...stylex.props(styles.searchFiltersButton)}
+                onClick={handleClearAll}
+              >
+                <X xstyle={styles.searchFiltersX} aria-hidden="true" />
+                清除筛选
+              </button>
+            )}
+          </HoverHighlightGroup>
         </div>
       </ScrollFade>
     </fieldset>
@@ -537,6 +540,7 @@ function renderRatingFacet(state: SearchFilterState) {
         title={accessibleName}
         data-active={isActive ? 'true' : 'false'}
         {...stylex.props(filterPillStyles(isActive))}
+        {...hoverHighlightItemProps}
       >
         <span {...stylex.props(styles.renderRatingFacetSpan)}>
           <MultiSelectValue>{() => visibleText}</MultiSelectValue>
@@ -775,6 +779,7 @@ function JournalFacet({ state }: { state: SearchFilterState }) {
         title={accessibleName}
         data-active={isActive ? 'true' : 'false'}
         {...stylex.props(filterPillStyles(isActive))}
+        {...hoverHighlightItemProps}
       >
         <FilterPillLabel text={visibleText} />
       </ComboboxTrigger>
@@ -848,6 +853,7 @@ function AreaFacet({ state }: { state: SearchFilterState }) {
         title={accessibleName}
         data-active={isActive ? 'true' : 'false'}
         {...stylex.props(filterPillStyles(isActive))}
+        {...hoverHighlightItemProps}
       >
         <FilterPillLabel text={visibleText} />
       </ComboboxTrigger>
@@ -976,8 +982,6 @@ const styles = stylex.create({
     },
     marginBlock: '-0.25rem',
     display: 'flex',
-    alignItems: 'center',
-    gap: '0.5rem',
     overflowX: 'auto',
     paddingInline: {
       default: '1rem',
@@ -989,6 +993,12 @@ const styles = stylex.create({
     '::-webkit-scrollbar': {
       display: 'none',
     },
+  },
+  searchFiltersRow: {
+    display: 'flex',
+    flexShrink: 0,
+    alignItems: 'center',
+    gap: '0.5rem',
   },
   searchFiltersSpan: {
     height: '1.25rem',

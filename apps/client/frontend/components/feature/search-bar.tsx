@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Search, X, Clock, SlidersHorizontal, Wand2 } from '@/components/ui/animated-icons';
 import { Button } from '@/components/ui/button';
 import { Autocomplete } from '@base-ui/react/autocomplete';
+import { Highlight, HighlightItem } from '@animate-ui/react/primitives/effects/highlight';
 import { SearchBuilderDialog } from '@/components/feature/search-builder-dialog';
 import { useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
@@ -228,6 +229,7 @@ export function SearchBar({
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [canHighlightOnOpen, setCanHighlightOnOpen] = useState(true);
+  const [highlightedOptionId, setHighlightedOptionId] = useState<string | null>(null);
   const [isBuilderOpen, setIsBuilderOpen] = useState(false);
   const [storedBuilder, setStoredBuilder] = useState<StoredSearchBuilder | null>(() =>
     hasSyntaxAssist ? readStoredSearchBuilder() : null,
@@ -265,6 +267,7 @@ export function SearchBar({
   const closeHistory = () => {
     setShowHistory(false);
     setCanHighlightOnOpen(true);
+    setHighlightedOptionId(null);
   };
 
   /**
@@ -413,7 +416,9 @@ export function SearchBar({
 
   /**
    * Render one option row; Base UI highlights it on hover and arrow keys and presses it on click
-   * or Enter.
+   * or Enter. One Animate UI highlight surface, in parent mode so a fast sweep never leaves a copy
+   * behind, slides to whichever row Base UI highlights; rows are positioned so their labels paint
+   * above it.
    *
    * @param option - Option to render.
    * @param content - Row content.
@@ -425,14 +430,15 @@ export function SearchBar({
     content: ReactNode,
     optionXstyle?: stylex.StyleXStyles,
   ) => (
-    <Autocomplete.Item
-      key={option.id}
-      value={option}
-      {...stylex.props(styles.renderOptionButtonButton, stylex.defaultMarker(), optionXstyle)}
-      onClick={() => applyOption(option)}
-    >
-      {content}
-    </Autocomplete.Item>
+    <HighlightItem key={option.id} value={option.id}>
+      <Autocomplete.Item
+        value={option}
+        {...stylex.props(styles.renderOptionButtonButton, stylex.defaultMarker(), optionXstyle)}
+        onClick={() => applyOption(option)}
+      >
+        {content}
+      </Autocomplete.Item>
+    </HighlightItem>
   );
 
   return (
@@ -452,6 +458,7 @@ export function SearchBar({
               autoHighlight={canHighlightOnOpen}
               onItemHighlighted={(option) => {
                 if (option !== undefined) setCanHighlightOnOpen(false);
+                setHighlightedOptionId(option?.id ?? null);
               }}
               loopFocus={false}
               itemToStringValue={getAssistOptionId}
@@ -498,105 +505,116 @@ export function SearchBar({
                               aria-label="搜索建议"
                               {...stylex.props(styles.searchBarDiv3)}
                             >
-                              {rewriteOptions.length > 0 && (
-                                <Autocomplete.Group {...stylex.props(styles.searchBarSection)}>
-                                  <Autocomplete.GroupLabel {...stylex.props(styles.searchBarP)}>
-                                    改写当前输入
-                                  </Autocomplete.GroupLabel>
-                                  {rewriteOptions.map((option) =>
-                                    renderOptionButton(
-                                      option,
+                              <Highlight
+                                mode="parent"
+                                controlledItems
+                                value={highlightedOptionId}
+                                click={false}
+                                {...stylex.props(styles.optionHighlight)}
+                              >
+                                {rewriteOptions.length > 0 && (
+                                  <Autocomplete.Group {...stylex.props(styles.searchBarSection)}>
+                                    <Autocomplete.GroupLabel {...stylex.props(styles.searchBarP)}>
+                                      改写当前输入
+                                    </Autocomplete.GroupLabel>
+                                    {rewriteOptions.map((option) =>
+                                      renderOptionButton(
+                                        option,
+                                        <>
+                                          <Wand2
+                                            xstyle={styles.searchBarWand2}
+                                            aria-hidden="true"
+                                          />
+                                          <span {...stylex.props(styles.searchBarSpan)}>
+                                            {option.suggestion.value}
+                                          </span>
+                                          <span {...stylex.props(styles.searchBarSpan2)}>
+                                            {option.suggestion.label}
+                                          </span>
+                                        </>,
+                                      ),
+                                    )}
+                                  </Autocomplete.Group>
+                                )}
+                                {historyOptions.length > 0 && (
+                                  <Autocomplete.Group
+                                    {...stylex.props(
+                                      rewriteOptions.length > 0 && styles.searchBarSectionDivided,
+                                      styles.searchBarSection,
+                                    )}
+                                  >
+                                    <div {...stylex.props(styles.searchBarDiv4)}>
+                                      <Autocomplete.GroupLabel
+                                        {...stylex.props(styles.searchBarSpan3)}
+                                      >
+                                        <Clock xstyle={styles.searchBarClock} aria-hidden="true" />
+                                        最近搜索
+                                      </Autocomplete.GroupLabel>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        static
+                                        xstyle={styles.searchBarButton}
+                                        onMouseDown={(event) => event.preventDefault()}
+                                        onClick={handleClearHistory}
+                                      >
+                                        清空
+                                      </Button>
+                                    </div>
+                                    <MotionPresence>
+                                      {historyOptions.map((option) => (
+                                        <MotionDiv
+                                          key={option.query}
+                                          data-motion-history-key={option.query}
+                                          variants={SWAP_VARIANTS}
+                                          initial="hidden"
+                                          animate="visible"
+                                          exit="exit"
+                                        >
+                                          {renderOptionButton(
+                                            option,
+                                            <>
+                                              <span {...stylex.props(styles.searchBarSpan4)}>
+                                                {option.query}
+                                              </span>
+                                              <Search
+                                                aria-hidden="true"
+                                                xstyle={styles.searchBarSearch2}
+                                              />
+                                            </>,
+                                            styles.optionButtonSpread,
+                                          )}
+                                        </MotionDiv>
+                                      ))}
+                                    </MotionPresence>
+                                  </Autocomplete.Group>
+                                )}
+                                {builderOption && (
+                                  <Autocomplete.Group
+                                    aria-label="高级检索构建器"
+                                    {...stylex.props(
+                                      options.length > 1 && styles.searchBarSectionDivided,
+                                    )}
+                                  >
+                                    {renderOptionButton(
+                                      builderOption,
                                       <>
-                                        <Wand2 xstyle={styles.searchBarWand2} aria-hidden="true" />
-                                        <span {...stylex.props(styles.searchBarSpan)}>
-                                          {option.suggestion.value}
+                                        <SlidersHorizontal
+                                          xstyle={styles.searchBarSlidersHorizontal}
+                                          aria-hidden="true"
+                                        />
+                                        <span {...stylex.props(styles.searchBarSpan5)}>
+                                          使用高级检索构建器
                                         </span>
-                                        <span {...stylex.props(styles.searchBarSpan2)}>
-                                          {option.suggestion.label}
+                                        <span {...stylex.props(styles.searchBarSpan6)}>
+                                          按字段组合条件，无需手写语法
                                         </span>
                                       </>,
-                                    ),
-                                  )}
-                                </Autocomplete.Group>
-                              )}
-                              {historyOptions.length > 0 && (
-                                <Autocomplete.Group
-                                  {...stylex.props(
-                                    rewriteOptions.length > 0 && styles.searchBarSectionDivided,
-                                    styles.searchBarSection,
-                                  )}
-                                >
-                                  <div {...stylex.props(styles.searchBarDiv4)}>
-                                    <Autocomplete.GroupLabel
-                                      {...stylex.props(styles.searchBarSpan3)}
-                                    >
-                                      <Clock xstyle={styles.searchBarClock} aria-hidden="true" />
-                                      最近搜索
-                                    </Autocomplete.GroupLabel>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="sm"
-                                      static
-                                      xstyle={styles.searchBarButton}
-                                      onMouseDown={(event) => event.preventDefault()}
-                                      onClick={handleClearHistory}
-                                    >
-                                      清空
-                                    </Button>
-                                  </div>
-                                  <MotionPresence>
-                                    {historyOptions.map((option) => (
-                                      <MotionDiv
-                                        key={option.query}
-                                        data-motion-history-key={option.query}
-                                        variants={SWAP_VARIANTS}
-                                        initial="hidden"
-                                        animate="visible"
-                                        exit="exit"
-                                      >
-                                        {renderOptionButton(
-                                          option,
-                                          <>
-                                            <span {...stylex.props(styles.searchBarSpan4)}>
-                                              {option.query}
-                                            </span>
-                                            <Search
-                                              aria-hidden="true"
-                                              xstyle={styles.searchBarSearch2}
-                                            />
-                                          </>,
-                                          styles.optionButtonSpread,
-                                        )}
-                                      </MotionDiv>
-                                    ))}
-                                  </MotionPresence>
-                                </Autocomplete.Group>
-                              )}
-                              {builderOption && (
-                                <Autocomplete.Group
-                                  aria-label="高级检索构建器"
-                                  {...stylex.props(
-                                    options.length > 1 && styles.searchBarSectionDivided,
-                                  )}
-                                >
-                                  {renderOptionButton(
-                                    builderOption,
-                                    <>
-                                      <SlidersHorizontal
-                                        xstyle={styles.searchBarSlidersHorizontal}
-                                        aria-hidden="true"
-                                      />
-                                      <span {...stylex.props(styles.searchBarSpan5)}>
-                                        使用高级检索构建器
-                                      </span>
-                                      <span {...stylex.props(styles.searchBarSpan6)}>
-                                        按字段组合条件，无需手写语法
-                                      </span>
-                                    </>,
-                                  )}
-                                </Autocomplete.Group>
-                              )}
+                                    )}
+                                  </Autocomplete.Group>
+                                )}
+                              </Highlight>
                             </Autocomplete.List>
                             {hasSyntaxAssist && (
                               <div {...stylex.props(styles.searchBarDiv5)}>
@@ -730,6 +748,7 @@ const styles = stylex.create({
     justifyContent: 'space-between',
   },
   renderOptionButtonButton: {
+    position: 'relative',
     display: 'flex',
     minHeight: {
       default: '2.75rem',
@@ -745,20 +764,16 @@ const styles = stylex.create({
     textAlign: 'left',
     fontSize: '0.875rem',
     lineHeight: lineHeights.textSm,
-    transitionProperty: 'background-color, color',
+    transitionProperty: 'color',
     transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
     transitionDuration: '200ms',
     outlineStyle: 'none',
     cursor: 'default',
     userSelect: 'none',
-    backgroundColor: {
-      default: null,
-      ':is([data-highlighted])': colors.accent,
-      ':hover': {
-        default: null,
-        '@media (hover: hover)': colors.accent,
-      },
-    },
+  },
+  optionHighlight: {
+    borderRadius: '6px',
+    backgroundColor: colors.accent,
   },
   searchBarDiv: {
     width: '100%',

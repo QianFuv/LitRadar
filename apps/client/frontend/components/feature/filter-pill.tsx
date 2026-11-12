@@ -6,6 +6,7 @@ import { ChevronDown, Layers } from '@/components/ui/animated-icons';
 import type { ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { hoverHighlightItemProps } from '@/components/ui/hover-highlight';
 import { MotionPresence, MotionSpan, SWAP_VARIANTS } from '@/components/ui/motion';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
@@ -161,6 +162,7 @@ export function FilterFacet({
             title={accessibleName}
             data-active={isActive ? 'true' : 'false'}
             {...stylex.props(filterPillStyles(isActive))}
+            {...hoverHighlightItemProps}
           />
         }
       >
@@ -227,6 +229,7 @@ export function DatabasePill({
       <SelectTrigger
         aria-label={ariaLabel}
         size="sm"
+        {...hoverHighlightItemProps}
         xstyle={styles.databasePillSelectTrigger}
         iconXstyle={styles.databasePillIcon}
       >
@@ -275,7 +278,7 @@ const styles = stylex.create({
       default: `inset 0 0 0 1px ${colors.border}`,
       ':focus-visible': `0 0 0 2px ${colors.ring}, inset 0 0 0 1px ${colors.border}`,
     },
-    transitionProperty: 'background-color, color, box-shadow',
+    transitionProperty: 'color, box-shadow',
     transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
     transitionDuration: '200ms',
     outlineStyle: 'none',
@@ -407,6 +410,7 @@ const styles = stylex.create({
       },
     },
     lineHeight: 'inherit',
+    transitionProperty: 'color, box-shadow',
   },
   databasePillLayers: {
     width: '0.875rem',
