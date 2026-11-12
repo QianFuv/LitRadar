@@ -39,6 +39,44 @@ func TestRelatedTermsKeepContentWordsAndHanBigrams(t *testing.T) {
 	}
 }
 
+// TestRelatedTermsIgnorePublisherMarkup keeps XML attributes from displacing topic terms.
+func TestRelatedTermsIgnorePublisherMarkup(t *testing.T) {
+	markup := `<mml:math xmlns:mml="http://www.w3.org/1998/Math/MathML" display="inline" id="d1e232" altimg="si13.svg"><mml:mi>H</mml:mi></mml:math> stability of neural networks`
+	if terms := relatedTerms(markup); !reflect.DeepEqual(terms, []string{"stability", "neural", "networks"}) {
+		t.Fatal("publisher attributes displaced substantive title terms", terms)
+	}
+	if terms := relatedTerms(`Graph <i>neural</i> networks &amp; applications`); !reflect.DeepEqual(terms, []string{"graph", "neural", "networks", "applications"}) {
+		t.Fatal("inline markup did not preserve displayed words", terms)
+	}
+	for _, title := range []string{"Comparison x<y and z>w", "Eigenvalues < 0 and kernels > 1"} {
+		if got := relatedPlainTitle(title); got != title {
+			t.Fatal("plain mathematical comparison was interpreted as publisher markup", title, got)
+		}
+	}
+}
+
+// TestRelatedBudgetPreservesHanRecall avoids narrowing recall to accidental Han boundaries.
+func TestRelatedBudgetPreservesHanRecall(t *testing.T) {
+	for _, testCase := range []struct {
+		terms []string
+		want  int
+	}{
+		{[]string{"graph", "neural"}, 3000},
+		{[]string{"信息", "效率"}, 30000},
+		{[]string{"graph", "网络"}, 30000},
+	} {
+		if got := relatedBudget(testCase.terms); got != testCase.want {
+			t.Fatal("wrong language-specific recall budget", testCase.terms, got)
+		}
+	}
+	if got := relatedExpression([]string{"graph", "networks"}, []int{1000, 4000}); got != `{title abstract_text} : (("graph") AND ("graph" OR "networks"))` {
+		t.Fatal("Latin recall must retain only the affordable anchor", got)
+	}
+	if got := relatedExpression([]string{"graph", "网络"}, []int{1000, 4000}); got != `{title abstract_text} : ("graph" OR "网 络")` {
+		t.Fatal("mixed Han recall must preserve the broader anchor set", got)
+	}
+}
+
 // TestRelatedArticlesRankBySimilarityAndExcludeSource seeds titles and abstracts with known
 // overlap and checks bm25 ordering, source and duplicate-title exclusion, and validation.
 func TestRelatedArticlesRankBySimilarityAndExcludeSource(t *testing.T) {
@@ -114,7 +152,7 @@ func TestRelatedExpressionRecallsWithRareTermsWithinBudget(t *testing.T) {
 		costs []int
 		want  string
 	}{
-		{[]string{"a", "b", "c", "d"}, []int{100, 29000, 50, 3000}, `{title abstract_text} : (("c" OR "a" OR "d") AND ("c" OR "a" OR "d" OR "b"))`},
+		{[]string{"a", "b", "c", "d"}, []int{100, 2900, 50, 300}, `{title abstract_text} : (("c" OR "a" OR "d") AND ("c" OR "a" OR "d" OR "b"))`},
 		{[]string{"经济", "物元", "增长"}, []int{40000, 400, 40000}, `{title abstract_text} : ("物 元")`},
 		{[]string{"a", "b", "c"}, []int{40000, 31000, 50000}, `{title abstract_text} : ("b" AND ("a" OR "c"))`},
 		{[]string{"a"}, []int{90000}, `{title abstract_text} : ("a")`},
@@ -144,16 +182,21 @@ INSERT INTO article_search(rowid,title,abstract_text) VALUES
 	if err != nil {
 		t.Fatal(err)
 	}
-	cost, err := relatedTermCost(t.Context(), connection, nil, "common")
-	hanCost, hanError := relatedTermCost(t.Context(), connection, nil, "数字")
+	cache := &relatedDatabaseCosts{values: map[relatedCostKey]int{}}
+	cost, err := relatedTermCost(t.Context(), connection, cache, "common", relatedRecallBudget)
+	broaderCost, broaderError := relatedTermCost(t.Context(), connection, cache, "common", relatedHanRecallBudget)
+	if broaderError != nil || broaderCost != 30001 {
+		t.Fatalf("mixed-title counts must not reuse the Latin count cap: %d, %v", broaderCost, broaderError)
+	}
+	hanCost, hanError := relatedTermCost(t.Context(), connection, nil, "数字", relatedHanRecallBudget)
 	if hanError != nil || hanCost != 30004 {
 		t.Fatalf("Han phrase count must stop at 7501 documents: %d, %v", hanCost, hanError)
 	}
 	if closeError := connection.Close(); closeError != nil {
 		t.Error(closeError)
 	}
-	if err != nil || cost != 30001 {
-		t.Fatalf("broad term count must stop past the 30000 budget: %d, %v", cost, err)
+	if err != nil || cost != 3001 {
+		t.Fatalf("broad term count must stop past the 3000 budget: %d, %v", cost, err)
 	}
 	ids, err := relatedArticleIds(t.Context(), database, t.TempDir(), "unusual common", 200001, 30)
 	if err != nil || !reflect.DeepEqual(ids, []int64{200002}) {

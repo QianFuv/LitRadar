@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/search"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 	"github.com/QianFuv/LitRadar/apps/server/internal/telemetry"
+	"golang.org/x/net/html"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -28,9 +30,12 @@ const relatedTermLimit = 16
 // relatedCandidateFactor over-fetches ranked candidates so duplicate titles can be dropped.
 const relatedCandidateFactor = 3
 
-// relatedRecallBudget bounds the bm25 work of one recall. Ranking cost grows with the number of
-// matches, so recall uses the rarest terms whose combined costs fit this budget.
-const relatedRecallBudget = 30000
+// relatedRecallBudget bounds non-Han recall after removing publisher markup.
+const relatedRecallBudget = 3000
+
+// relatedHanRecallBudget retains broader Han recall because rare character-boundary
+// bigrams are not necessarily meaningful words.
+const relatedHanRecallBudget = 30000
 
 // relatedMmapLimit is SQLite's default maximum mapping size on 64-bit platforms.
 const relatedMmapLimit = 0x7fff0000
@@ -72,6 +77,7 @@ func init() {
 // short Han runs as phrases, and longer Han runs as overlapping bigrams without particles or
 // generic academic bigrams. At most sixteen terms are kept in title order.
 func relatedTerms(title string) []string {
+	title = relatedPlainTitle(title)
 	terms := []string{}
 	seen := map[string]bool{}
 	add := func(term string) bool {
@@ -131,6 +137,33 @@ func relatedTerms(title string) []string {
 	return terms
 }
 
+// relatedPlainTitle extracts displayed publisher HTML/MathML text so tag names,
+// attributes, and formula IDs cannot displace substantive title terms.
+func relatedPlainTitle(title string) string {
+	if !strings.Contains(title, "</") && !strings.Contains(title, "<mml:") && !strings.Contains(title, "<math") {
+		return title
+	}
+	tokenizer := html.NewTokenizer(strings.NewReader(title))
+	var text strings.Builder
+	for {
+		switch tokenizer.Next() {
+		case html.ErrorToken:
+			return text.String()
+		case html.TextToken:
+			text.WriteString(string(tokenizer.Text()))
+			text.WriteByte(' ')
+		}
+	}
+}
+
+// relatedBudget retains broader recall whenever the source contains Han phrases.
+func relatedBudget(terms []string) int {
+	if slices.ContainsFunc(terms, relatedIsHan) {
+		return relatedHanRecallBudget
+	}
+	return relatedRecallBudget
+}
+
 // relatedMatch builds an FTS5 expression matching any term in titles or abstracts.
 func relatedMatch(terms []string) string {
 	return "{title abstract_text} : (" + relatedAny(terms) + ")"
@@ -148,6 +181,7 @@ func relatedAny(terms []string) string {
 // relatedExpression recalls with the cheapest terms whose combined costs fit the recall budget.
 // When even the cheapest term is too common, it requires that term together with any other.
 func relatedExpression(terms []string, costs []int) string {
+	budget := relatedBudget(terms)
 	order := make([]int, len(terms))
 	for index := range order {
 		order[index] = index
@@ -155,7 +189,7 @@ func relatedExpression(terms []string, costs []int) string {
 	sort.SliceStable(order, func(left, right int) bool { return costs[order[left]] < costs[order[right]] })
 	selected, total := []string{}, 0
 	for _, index := range order {
-		if total+costs[index] > relatedRecallBudget {
+		if total+costs[index] > budget {
 			break
 		}
 		total += costs[index]
@@ -190,8 +224,8 @@ func relatedIsHan(term string) bool {
 
 // relatedTermCost returns the recall cost of a term: its document count in titles and abstracts,
 // weighted for Han phrases. Counting stops just past the budget, and results are cached.
-func relatedTermCost(ctx context.Context, connection *sql.Conn, cache *relatedDatabaseCosts, term string) (int, error) {
-	if cost, found := cache.get(term); found {
+func relatedTermCost(ctx context.Context, connection *sql.Conn, cache *relatedDatabaseCosts, term string, budget int) (int, error) {
+	if cost, found := cache.get(term, budget); found {
 		return cost, nil
 	}
 	weight := 1
@@ -199,11 +233,11 @@ func relatedTermCost(ctx context.Context, connection *sql.Conn, cache *relatedDa
 		weight = relatedHanCostFactor
 	}
 	var count int
-	if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM (SELECT 1 FROM article_search WHERE article_search MATCH ? LIMIT ?)", relatedMatch([]string{term}), relatedRecallBudget/weight+1).Scan(&count); err != nil {
+	if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM (SELECT 1 FROM article_search WHERE article_search MATCH ? LIMIT ?)", relatedMatch([]string{term}), budget/weight+1).Scan(&count); err != nil {
 		return 0, err
 	}
 	cost := count * weight
-	cache.put(term, cost)
+	cache.put(term, budget, cost)
 	return cost, nil
 }
 
@@ -211,13 +245,14 @@ func relatedTermCost(ctx context.Context, connection *sql.Conn, cache *relatedDa
 // ranking connection also counts terms, preserving single-connection fixture support.
 func relatedTermCosts(ctx context.Context, database *sql.DB, connection *sql.Conn, cache *relatedDatabaseCosts, terms []string, shouldMap bool) ([]int, error) {
 	costs := make([]int, len(terms))
+	budget := relatedBudget(terms)
 	if len(terms) == 1 {
 		return costs, nil
 	}
 	missing := []int{}
 	for index, term := range terms {
 		var found bool
-		if costs[index], found = cache.get(term); !found {
+		if costs[index], found = cache.get(term, budget); !found {
 			missing = append(missing, index)
 		}
 	}
@@ -246,7 +281,7 @@ func relatedTermCosts(ctx context.Context, database *sql.DB, connection *sql.Con
 			for offset := worker; offset < len(missing); offset += workers {
 				index := missing[offset]
 				var err error
-				if costs[index], err = relatedTermCost(workContext, current, cache, terms[index]); err != nil {
+				if costs[index], err = relatedTermCost(workContext, current, cache, terms[index], budget); err != nil {
 					return err
 				}
 			}

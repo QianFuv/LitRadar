@@ -19,8 +19,8 @@ func TestRelatedCostCacheTracksDatabaseGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := relatedCostsForFile(filename)
-	first.put("term", 42)
-	if cost, found := relatedCostsForFile(filename).get("term"); !found || cost != 42 {
+	first.put("term", relatedRecallBudget, 42)
+	if cost, found := relatedCostsForFile(filename).get("term", relatedRecallBudget); !found || cost != 42 {
 		t.Fatal("unchanged index did not reuse exact cost", cost, found)
 	}
 	info, err := os.Stat(filename)
@@ -36,12 +36,12 @@ func TestRelatedCostCacheTracksDatabaseGeneration(t *testing.T) {
 	if err := os.Chtimes(filename, info.ModTime(), info.ModTime()); err != nil {
 		t.Fatal(err)
 	}
-	if _, found := relatedCostsForFile(filename).get("term"); found {
+	if _, found := relatedCostsForFile(filename).get("term", relatedRecallBudget); found {
 		t.Fatal("replacement index reused stale costs")
 	}
 	for _, suffix := range []string{"-wal", "-journal"} {
 		cache := relatedCostsForFile(filename)
-		cache.put("term", 12)
+		cache.put("term", relatedRecallBudget, 12)
 		if err := os.WriteFile(filename+suffix, []byte("uncheckpointed"), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -51,7 +51,7 @@ func TestRelatedCostCacheTracksDatabaseGeneration(t *testing.T) {
 		if err := os.Remove(filename + suffix); err != nil {
 			t.Fatal(err)
 		}
-		if _, found := relatedCostsForFile(filename).get("term"); found {
+		if _, found := relatedCostsForFile(filename).get("term", relatedRecallBudget); found {
 			t.Fatal("journal invalidation retained old costs", suffix)
 		}
 	}
