@@ -2,11 +2,15 @@ package query
 
 import (
 	"os"
+	"slices"
 	"sync"
 )
 
 // relatedCostCacheLimit bounds each of the at most sixteen database cost maps.
 const relatedCostCacheLimit = 4096
+
+// relatedCandidateCacheLimit bounds ranked candidate lists within one file generation.
+const relatedCandidateCacheLimit = 256
 
 // relatedCostKey separates capped counts computed under different recall budgets.
 type relatedCostKey struct {
@@ -14,15 +18,23 @@ type relatedCostKey struct {
 	budget int
 }
 
-// relatedDatabaseCosts retains bounded term costs for one observed database generation.
-type relatedDatabaseCosts struct {
-	sync.Mutex
-	file   os.FileInfo
-	values map[relatedCostKey]int
+// relatedResultKey includes every input that changes ranked candidate membership or order.
+type relatedResultKey struct {
+	title string
+	id    int64
+	limit int64
 }
 
-// relatedCounts owns file identities as well as costs, so replacing an index at the
-// same pathname cannot reuse the previous index's document frequencies.
+// relatedDatabaseCosts retains bounded costs and candidate IDs for one database generation.
+type relatedDatabaseCosts struct {
+	sync.Mutex
+	file    os.FileInfo
+	values  map[relatedCostKey]int
+	results map[relatedResultKey][]int64
+}
+
+// relatedCounts owns file identities, costs, and ranked candidates so replacing an
+// index at the same pathname cannot reuse the previous generation.
 var relatedCounts = struct {
 	sync.Mutex
 	files map[string]*relatedDatabaseCosts
@@ -51,7 +63,7 @@ func relatedCostsForFile(filename string) *relatedDatabaseCosts {
 		if len(relatedCounts.files) >= 16 {
 			clear(relatedCounts.files)
 		}
-		cache = &relatedDatabaseCosts{file: info, values: map[relatedCostKey]int{}}
+		cache = &relatedDatabaseCosts{file: info, values: map[relatedCostKey]int{}, results: map[relatedResultKey][]int64{}}
 		relatedCounts.files[filename] = cache
 	}
 	return cache
@@ -79,4 +91,28 @@ func (cache *relatedDatabaseCosts) put(term string, budget int, cost int) {
 		clear(cache.values)
 	}
 	cache.values[relatedCostKey{term, budget}] = cost
+}
+
+// getResult returns owned candidate IDs so callers cannot mutate cached rankings.
+func (cache *relatedDatabaseCosts) getResult(key relatedResultKey) ([]int64, bool) {
+	if cache == nil {
+		return nil, false
+	}
+	cache.Lock()
+	defer cache.Unlock()
+	ids, found := cache.results[key]
+	return slices.Clone(ids), found
+}
+
+// putResult stores only completed rankings and follows the existing bounded-map policy.
+func (cache *relatedDatabaseCosts) putResult(key relatedResultKey, ids []int64) {
+	if cache == nil {
+		return
+	}
+	cache.Lock()
+	defer cache.Unlock()
+	if len(cache.results) >= relatedCandidateCacheLimit {
+		clear(cache.results)
+	}
+	cache.results[key] = slices.Clone(ids)
 }

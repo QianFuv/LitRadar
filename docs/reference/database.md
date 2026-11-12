@@ -193,7 +193,7 @@ Related-article title terms are extracted from displayed HTML/MathML text, exclu
 
 Single-term titles skip counting because the count cannot change their expression. Up to four connections count independent terms concurrently. Databases no larger than SQLite's default 2 GiB mmap limit use connection-local mapped reads; larger files retain ordinary paging. Pools close at the end of each request.
 
-Each observed database generation retains at most 4,096 exact term costs in a standard-library bounded map keyed by term and budget, with at most 16 database generations retained globally. File identity, size, or modification-time changes replace the generation; nonempty WAL or rollback-journal files bypass and invalidate the cache. No final-result cache or long-lived database handle is added.
+Each observed database generation retains at most 4,096 exact term costs and 256 ranked candidate-ID lists using standard-library bounded maps, with at most 16 database generations retained globally. Candidate keys include source article ID, original title, and candidate limit. Returned slices are cloned. File identity, size, or modification-time changes replace the generation; nonempty WAL or rollback-journal files bypass and invalidate both caches. Failed rankings are not cached. Cache hits still fetch canonical article fields and run title deduplication; no complete article-response cache or long-lived database handle is added.
 
 FTS scans and temporary bm25 sorting in `EXPLAIN QUERY PLAN` are expected; ordinary `sqlite_stat1` statistics cannot eliminate candidate scoring. Offline optimization remains subject to the existing shutdown, backup, and maintenance gates; related queries do not run `ANALYZE` or `optimize`.
 

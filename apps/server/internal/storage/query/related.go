@@ -397,7 +397,12 @@ func relatedArticleIds(ctx context.Context, database *sql.DB, filename string, t
 			collector.Record(time.Now(), shape, time.Since(started))
 		}()
 	}
-	costs, err := relatedTermCosts(ctx, database, connection, relatedCostsForFile(filename), terms, shouldMap)
+	cache := relatedCostsForFile(filename)
+	key := relatedResultKey{title: title, id: id, limit: limit}
+	if ids, found := cache.getResult(key); found {
+		return ids, nil
+	}
+	costs, err := relatedTermCosts(ctx, database, connection, cache, terms, shouldMap)
 	if err != nil {
 		return nil, err
 	}
@@ -418,5 +423,9 @@ func relatedArticleIds(ctx context.Context, database *sql.DB, filename string, t
 		}
 		ids = append(ids, related)
 	}
-	return ids, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	cache.putResult(key, ids)
+	return ids, nil
 }
