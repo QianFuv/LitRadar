@@ -201,7 +201,7 @@ async function waitForReadiness(url, child, label) {
  * @returns {Promise<void>} Promise resolved after the child exits.
  */
 async function terminateProcessTree(child) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) {
+  if (!child) {
     return;
   }
   const existing = terminationPromises.get(child);
@@ -217,26 +217,118 @@ async function terminateProcessTree(child) {
 /**
  * Perform one process-tree termination attempt.
  *
- * @param {import('node:child_process').ChildProcess} child - Live child process.
+ * @param {import('node:child_process').ChildProcess} child - Owned process group leader.
  * @returns {Promise<void>} Promise resolved after termination handling.
  */
 async function terminateProcessTreeOnce(child) {
-  if (process.platform === 'win32' && child.pid) {
-    const killer = spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
-      shell: false,
-      stdio: 'ignore',
-    });
-    await waitForExit(killer).catch(() => undefined);
-  } else {
-    child.kill('SIGTERM');
+  try {
+    if (!child.pid) {
+      return;
+    }
+    if (process.platform === 'win32') {
+      if (child.exitCode !== null || child.signalCode !== null) {
+        return;
+      }
+      const killer = spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+        shell: false,
+        windowsHide: true,
+        stdio: 'ignore',
+      });
+      try {
+        if (!(await waitForExitWithin(killer, SHUTDOWN_TIMEOUT_MS))) {
+          killer.kill();
+          throw new Error(`taskkill timed out for process ${child.pid}`);
+        }
+      } finally {
+        killer.unref();
+      }
+    } else {
+      signalProcessGroup(child.pid, 'SIGTERM');
+    }
+    const hasExited = await waitForExitWithin(child, SHUTDOWN_TIMEOUT_MS);
+    if (process.platform !== 'win32') {
+      signalProcessGroup(child.pid, 'SIGKILL');
+    } else if (!hasExited) {
+      child.kill('SIGKILL');
+    }
+    if (!hasExited && !(await waitForExitWithin(child, SHUTDOWN_TIMEOUT_MS))) {
+      throw new Error(`process ${child.pid} did not exit after termination`);
+    }
+  } finally {
+    child.stdin?.destroy();
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    child.unref();
   }
-  const gracefulExit = await Promise.race([
-    waitForExit(child).then(() => true),
-    delay(SHUTDOWN_TIMEOUT_MS).then(() => false),
-  ]).catch(() => true);
-  if (!gracefulExit && child.exitCode === null && child.signalCode === null) {
-    child.kill('SIGKILL');
-    await waitForExit(child).catch(() => undefined);
+}
+
+/**
+ * Signal an owned Unix process group even after its leader has exited.
+ *
+ * @param {number} pid - Process group ID created with detached spawn.
+ * @param {NodeJS.Signals} signal - Termination signal.
+ * @returns {void}
+ */
+function signalProcessGroup(pid, signal) {
+  try {
+    process.kill(-pid, signal);
+  } catch (error) {
+    if (error.code !== 'ESRCH') {
+      throw error;
+    }
+  }
+}
+
+/**
+ * Bound a child exit wait and release its timer and listeners on every outcome.
+ *
+ * @param {import('node:child_process').ChildProcess} child - Child process.
+ * @param {number} timeoutMs - Maximum wait in milliseconds.
+ * @returns {Promise<boolean>} Whether the child exited before the deadline.
+ */
+async function waitForExitWithin(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return true;
+  }
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    const onExit = () => finish(true);
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      child.off('exit', onExit);
+      child.off('error', onError);
+    };
+    const finish = (hasExited) => {
+      cleanup();
+      resolve(hasExited);
+    };
+    child.once('exit', onExit);
+    child.once('error', onError);
+  });
+}
+
+/**
+ * Attempt every owned process cleanup before reporting any failure.
+ *
+ * @param {{port: number | undefined, label: string}[]} ports - Listeners to verify after termination.
+ * @returns {Promise<void>} Promise resolved when all cleanup checks succeed.
+ */
+async function cleanupProcesses(ports = []) {
+  const results = await Promise.allSettled(
+    [testProcess, previewProcess, serviceProcess].map(terminateProcessTree),
+  );
+  results.push(
+    ...(await Promise.allSettled(ports.map(({ port, label }) => waitForPortClosure(port, label)))),
+  );
+  const errors = results
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason);
+  if (errors.length) {
+    throw new AggregateError(errors, errors.map((error) => error.message).join('; '));
   }
 }
 
@@ -265,10 +357,11 @@ async function isPortClosed(port) {
 /**
  * Verify that the service listener closes within the cleanup bound.
  *
- * @param {number | undefined} port - Service TCP port.
+ * @param {number | undefined} port - Owned TCP port.
+ * @param {string} label - Listener label used in diagnostics.
  * @returns {Promise<void>} Promise resolved after closure.
  */
-async function waitForPortClosure(port) {
+async function waitForPortClosure(port, label = 'service') {
   if (!port) {
     return;
   }
@@ -279,7 +372,7 @@ async function waitForPortClosure(port) {
     }
     await delay(POLL_INTERVAL_MS);
   }
-  throw new Error(`service port ${port} remained open after cleanup`);
+  throw new Error(`${label} port ${port} remained open after cleanup`);
 }
 
 /**
@@ -339,6 +432,8 @@ function startPreview(port, backendUrl) {
       cwd: APP_ROOT,
       env: { ...process.env, LITRADAR_BACKEND_URL: backendUrl },
       shell: false,
+      detached: process.platform !== 'win32',
+      windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   );
@@ -373,11 +468,12 @@ async function runPlaywright(baseUrl, playwrightArguments) {
         LITRADAR_CFP_FIXTURE_SEEDER: SEEDER_BINARY,
       },
       shell: false,
+      detached: process.platform !== 'win32',
+      windowsHide: true,
       stdio: 'inherit',
     },
   );
   const result = await waitForExit(testProcess);
-  testProcess = undefined;
   if (result.signal) {
     throw new Error(`Playwright exited from signal ${result.signal}`);
   }
@@ -436,6 +532,8 @@ async function main(playwrightArguments) {
       cwd: WORKSPACE_ROOT,
       env: process.env,
       shell: false,
+      detached: process.platform !== 'win32',
+      windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   );
@@ -453,43 +551,43 @@ async function main(playwrightArguments) {
     process.stdout.write(`[full-stack] Client preview ready at ${previewUrl}\n`);
     return await runPlaywright(previewUrl, playwrightArguments);
   } finally {
-    await terminateProcessTree(testProcess);
-    await terminateProcessTree(previewProcess);
-    previewProcess = undefined;
-    await terminateProcessTree(serviceProcess);
-    serviceProcess = undefined;
-    await waitForPortClosure(previewPort);
-    await waitForPortClosure(port);
+    await cleanupProcesses([
+      { port: previewPort, label: 'Vite preview' },
+      { port, label: 'Go service' },
+    ]);
   }
 }
 
-for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.once(signal, () => {
-    shutdownSignal = signal;
-    void terminateProcessTree(testProcess);
-    void terminateProcessTree(previewProcess);
-    void terminateProcessTree(serviceProcess);
-  });
-}
+export { terminateProcessTree, waitForPortClosure };
 
-try {
-  const playwrightArguments = process.argv.slice(process.argv[2] === '--' ? 3 : 2);
-  process.exitCode = await main(playwrightArguments);
-} catch (error) {
-  process.stderr.write(
-    `[full-stack] ${sanitizeDiagnostic(error instanceof Error ? (error.stack ?? error.message) : String(error))}\n`,
-  );
-  process.exitCode = shutdownSignal === 'SIGINT' ? 130 : shutdownSignal === 'SIGTERM' ? 143 : 1;
-} finally {
+if (import.meta.main) {
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.once(signal, () => {
+      shutdownSignal = signal;
+      void cleanupProcesses().catch(() => undefined);
+    });
+  }
+
   try {
-    await terminateProcessTree(testProcess);
-    await terminateProcessTree(previewProcess);
-    await terminateProcessTree(serviceProcess);
-    await removeFixtureRoot();
+    const playwrightArguments = process.argv.slice(process.argv[2] === '--' ? 3 : 2);
+    process.exitCode = await main(playwrightArguments);
   } catch (error) {
     process.stderr.write(
-      `[full-stack] cleanup failed: ${sanitizeDiagnostic(error instanceof Error ? error.message : String(error))}\n`,
+      `[full-stack] ${sanitizeDiagnostic(error instanceof Error ? (error.stack ?? error.message) : String(error))}\n`,
     );
-    process.exitCode = 1;
+    process.exitCode = shutdownSignal === 'SIGINT' ? 130 : shutdownSignal === 'SIGTERM' ? 143 : 1;
+  } finally {
+    try {
+      try {
+        await cleanupProcesses();
+      } finally {
+        await removeFixtureRoot();
+      }
+    } catch (error) {
+      process.stderr.write(
+        `[full-stack] cleanup failed: ${sanitizeDiagnostic(error instanceof Error ? error.message : String(error))}\n`,
+      );
+      process.exitCode = 1;
+    }
   }
 }
