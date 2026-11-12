@@ -20,6 +20,7 @@ import {
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { HoverHighlightGroup, hoverHighlightItemProps } from '@/components/ui/hover-highlight';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { RevealItem } from '@/components/ui/reveal';
 import { readFreshFavoriteCheck } from '@/components/feature/use-favorite-checks';
@@ -264,6 +265,7 @@ function renderFavoriteButton(state: FavoriteButtonViewState) {
               variant="outline"
               size="sm"
               static
+              {...hoverHighlightItemProps}
               xstyle={[
                 styles.renderFavoriteButtonButton,
                 isFav && styles.renderFavoriteButtonButtonFav,
@@ -349,6 +351,7 @@ function renderFavoriteToggle(state: FavoriteButtonViewState, folderId: number) 
         aria-pressed={isInFolder}
         aria-label={label}
         title={isInFolder ? '取消收藏' : '收藏到此收藏夹'}
+        {...hoverHighlightItemProps}
         xstyle={[
           styles.renderFavoriteButtonButton,
           isInFolder && styles.renderFavoriteButtonButtonFav,
@@ -410,6 +413,7 @@ function renderFavoriteFolderButton(state: FavoriteButtonViewState, folder: Fold
       key={folder.id}
       type="button"
       aria-pressed={isInFolder}
+      {...hoverHighlightItemProps}
       {...stylex.props(
         styles.renderFavoriteFolderButtonButton,
         isInFolder
@@ -484,7 +488,11 @@ function FavoriteLookupContent({ state }: { state: FavoriteButtonViewState }) {
     return (
       <div {...stylex.props(styles.favoriteLookupDiv)}>暂无收藏夹，请先在「我的收藏」中创建</div>
     );
-  return folders.map((folder) => renderFavoriteFolderButton(state, folder));
+  return (
+    <HoverHighlightGroup xstyle={styles.renderFavoriteButtonDiv}>
+      {folders.map((folder) => renderFavoriteFolderButton(state, folder))}
+    </HoverHighlightGroup>
+  );
 }
 
 /** Resolve visible membership from checks before optimistic, cached and initial values. */
@@ -504,7 +512,10 @@ const styles = stylex.create({
   renderFavoriteButtonButton: {
     backgroundColor: {
       default: 'transparent',
-      ':hover': colors.accent,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
     },
     boxShadow: {
       default: 'none',
@@ -627,7 +638,7 @@ const styles = stylex.create({
     paddingBlock: '0.375rem',
     fontSize: '0.875rem',
     lineHeight: lineHeights.textSm,
-    transitionProperty: 'background-color, color, box-shadow',
+    transitionProperty: 'color, box-shadow',
     transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
     transitionDuration: '200ms',
     outlineStyle: 'none',

@@ -30,6 +30,7 @@ import {
 } from '@/lib/api';
 import { FavoriteButton } from '@/components/feature/favorite-button';
 import { RelatedArticles } from '@/components/feature/related-articles';
+import { HoverHighlightGroup, hoverHighlightItemProps } from '@/components/ui/hover-highlight';
 import { listReaderSheetWidthStyle } from '@/components/feature/workspace-shell';
 import { useAuth } from '@/lib/auth-context';
 import { Badge } from '@/components/ui/badge';
@@ -641,11 +642,19 @@ function renderArticleActions(state: ArticleDetailViewState, variant: ArticleDet
         variant === 'pane' ? styles.paneActions : styles.renderArticleActionsDivNotPane,
       )}
     >
-      {renderArticleFavoriteAction(state)}
-      {renderArticleInfoCopy(state)}
-      {renderArticleAccessActions(state, variant)}
-      {state.extraActions}
-      {renderArticleRelationAction(state, variant)}
+      <HoverHighlightGroup
+        xstyle={[
+          styles.renderArticleActionsDiv,
+          styles.articleActionsGroup,
+          variant === 'pane' ? styles.paneActions : styles.renderArticleActionsDivNotPane,
+        ]}
+      >
+        {renderArticleFavoriteAction(state)}
+        {renderArticleInfoCopy(state)}
+        {renderArticleAccessActions(state, variant)}
+        {state.extraActions}
+        {renderArticleRelationAction(state, variant)}
+      </HoverHighlightGroup>
     </fieldset>
   );
 }
@@ -663,6 +672,7 @@ function renderArticleRelationAction(state: ArticleDetailViewState, variant: Art
       asChild
       variant="outline"
       size="sm"
+      {...hoverHighlightItemProps}
       xstyle={[
         styles.articleActionButton,
         variant === 'pane' && styles.renderArticleRelationActionButtonPane,
@@ -813,7 +823,13 @@ function renderArticleAbstractAction(state: ArticleDetailViewState) {
 
   return (
     abstractUrl && (
-      <Button asChild variant="outline" size="sm" xstyle={styles.articleActionButton}>
+      <Button
+        asChild
+        variant="outline"
+        size="sm"
+        {...hoverHighlightItemProps}
+        xstyle={styles.articleActionButton}
+      >
         <a
           href={abstractUrl}
           target="_blank"
@@ -839,7 +855,13 @@ function renderArticleFulltextAction(state: ArticleDetailViewState) {
   return (
     canShowAccessActions &&
     fullTextUrl && (
-      <Button asChild variant="outline" size="sm" xstyle={styles.articleActionButton}>
+      <Button
+        asChild
+        variant="outline"
+        size="sm"
+        {...hoverHighlightItemProps}
+        xstyle={styles.articleActionButton}
+      >
         <a
           href={fullTextUrl}
           target="_blank"
@@ -903,6 +925,7 @@ function renderArticleAccessActions(state: ArticleDetailViewState, variant: Arti
               <Button
                 variant="outline"
                 size="sm"
+                {...hoverHighlightItemProps}
                 xstyle={styles.articleActionButton}
                 aria-label="访问状态失败"
                 disabled
@@ -948,7 +971,13 @@ function renderDataSourceSettingsLink(
   onClick?: MouseEventHandler<HTMLAnchorElement>,
 ) {
   return (
-    <Button asChild variant="outline" size="sm" xstyle={styles.articleActionButton}>
+    <Button
+      asChild
+      variant="outline"
+      size="sm"
+      {...hoverHighlightItemProps}
+      xstyle={styles.articleActionButton}
+    >
       <Link to="/" search={search} aria-label="去设置登录" title="去设置登录" onClick={onClick}>
         <Settings xstyle={styles.renderArticleRelationActionShare2} aria-hidden="true" />
         {renderActionLabel('去设置登录', '登录')}
@@ -976,6 +1005,7 @@ function renderArticleFavoriteAction(state: ArticleDetailViewState) {
           <Button
             variant="outline"
             size="sm"
+            {...hoverHighlightItemProps}
             xstyle={styles.articleActionButton}
             aria-label="加载收藏…"
             disabled
@@ -1007,6 +1037,7 @@ function renderArticleInfoCopy(state: ArticleDetailViewState) {
     <CopyButton
       variant="outline"
       size="sm"
+      {...hoverHighlightItemProps}
       xstyle={styles.articleActionButton}
       aria-label={copyStatus === 'info' ? '已复制' : '复制信息'}
       title={copyStatus === 'info' ? '已复制' : '复制信息'}
@@ -1136,6 +1167,7 @@ function renderArticleAccessLoading(state: ArticleDetailViewState) {
       <Button
         variant="outline"
         size="sm"
+        {...hoverHighlightItemProps}
         xstyle={styles.articleActionButton}
         aria-label={isAccessPending ? '加载访问' : '刷新访问'}
         disabled
@@ -1507,10 +1539,17 @@ const styles = stylex.create({
     minWidth: '0px',
     flexWrap: 'wrap',
   },
+  articleActionsGroup: {
+    flex: '1',
+    minWidth: '0px',
+  },
   articleActionButton: {
     backgroundColor: {
       default: 'transparent',
-      ':hover': colors.accent,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
     },
     boxShadow: {
       default: 'none',

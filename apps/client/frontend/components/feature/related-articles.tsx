@@ -4,6 +4,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 
+import { HoverHighlightGroup, hoverHighlightItemProps } from '@/components/ui/hover-highlight';
 import { RevealItem } from '@/components/ui/reveal';
 import { Skeleton } from '@/components/ui/skeleton';
 import { relatedArticlesQuery, type Article } from '@/lib/api';
@@ -74,27 +75,30 @@ export function RelatedArticles({ article, dbName, onOpen }: RelatedArticlesProp
         ) : related.length === 0 ? (
           <p {...stylex.props(styles.relatedArticlesP)}>暂未找到相关文章。</p>
         ) : (
-          <ul {...stylex.props(styles.relatedArticlesUl)}>
-            {related.map((candidate) => (
-              <li
-                {...stylex.props(styles.relatedArticlesUlItem)}
-                key={String(candidate.article_id)}
-              >
-                <button
-                  type="button"
-                  {...stylex.props(styles.relatedArticlesButton)}
-                  onClick={() => onOpen(candidate)}
+          <HoverHighlightGroup>
+            <ul {...stylex.props(styles.relatedArticlesUl)}>
+              {related.map((candidate) => (
+                <li
+                  {...stylex.props(styles.relatedArticlesUlItem)}
+                  key={String(candidate.article_id)}
                 >
-                  <span {...stylex.props(styles.relatedArticlesSpan3)}>
-                    {getArticleDisplayTitle(candidate)}
-                  </span>
-                  <span {...stylex.props(styles.relatedArticlesSpan4)}>
-                    {[candidate.journal_title, candidate.date].filter(Boolean).join(' · ')}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
+                  <button
+                    type="button"
+                    {...hoverHighlightItemProps}
+                    {...stylex.props(styles.relatedArticlesButton)}
+                    onClick={() => onOpen(candidate)}
+                  >
+                    <span {...stylex.props(styles.relatedArticlesSpan3)}>
+                      {getArticleDisplayTitle(candidate)}
+                    </span>
+                    <span {...stylex.props(styles.relatedArticlesSpan4)}>
+                      {[candidate.journal_title, candidate.date].filter(Boolean).join(' · ')}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </HoverHighlightGroup>
         )}
       </RevealItem>
     </section>
@@ -205,8 +209,7 @@ const styles = stylex.create({
     paddingInline: '0.5rem',
     paddingBlock: '0.75rem',
     textAlign: 'left',
-    transitionProperty:
-      'color, background-color, border-color, outline-color, text-decoration-color, fill, stroke',
+    transitionProperty: 'color, border-color, outline-color, text-decoration-color, fill, stroke',
     transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
     transitionDuration: '200ms',
     outlineStyle: 'none',

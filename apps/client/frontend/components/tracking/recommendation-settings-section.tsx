@@ -19,6 +19,7 @@ import {
 import type { TrackingPageViewModel } from '@/components/tracking/use-tracking-page';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { HoverHighlightGroup, hoverHighlightItemProps } from '@/components/ui/hover-highlight';
 import { NumberInput } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
@@ -697,24 +698,27 @@ function renderDatabaseSelectionState(state: Pick<RecommendationViewState, 'data
           设为全部数据库
         </Button>
       </SettingsRow>
-      {databaseSelection.available.map((databaseName) => {
-        const isChecked =
-          databaseSelection.allSelected ||
-          databaseSelection.effectiveSelected.includes(databaseName);
-        return (
-          <label
-            key={databaseName}
-            {...stylex.props(settingsGroupItemStyle, styles.renderDatabaseSelectionStateLabel)}
-          >
-            <Layers xstyle={styles.renderDatabaseSelectionStateLayers} aria-hidden="true" />
-            <span {...stylex.props(styles.renderDatabaseSelectionStateSpan)}>{databaseName}</span>
-            <Checkbox
-              checked={isChecked}
-              onCheckedChange={(checked) => databaseSelection.setSelected(databaseName, checked)}
-            />
-          </label>
-        );
-      })}
+      <HoverHighlightGroup xstyle={settingsGroupItemStyle}>
+        {databaseSelection.available.map((databaseName) => {
+          const isChecked =
+            databaseSelection.allSelected ||
+            databaseSelection.effectiveSelected.includes(databaseName);
+          return (
+            <label
+              key={databaseName}
+              {...hoverHighlightItemProps}
+              {...stylex.props(settingsGroupItemStyle, styles.renderDatabaseSelectionStateLabel)}
+            >
+              <Layers xstyle={styles.renderDatabaseSelectionStateLayers} aria-hidden="true" />
+              <span {...stylex.props(styles.renderDatabaseSelectionStateSpan)}>{databaseName}</span>
+              <Checkbox
+                checked={isChecked}
+                onCheckedChange={(checked) => databaseSelection.setSelected(databaseName, checked)}
+              />
+            </label>
+          );
+        })}
+      </HoverHighlightGroup>
       <div {...stylex.props(settingsGroupItemStyle, styles.renderDatabaseSelectionStateDiv)}>
         <span>
           当前范围:{' '}
@@ -1025,15 +1029,14 @@ const styles = stylex.create({
     paddingBlock: '0.75rem',
     fontSize: '0.875rem',
     lineHeight: lineHeights.textSm,
-    transitionProperty:
-      'color, background-color, border-color, outline-color, text-decoration-color, fill, stroke',
+    transitionProperty: 'color, border-color, outline-color, text-decoration-color, fill, stroke',
     transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
     transitionDuration: '200ms',
     contentVisibility: 'auto',
     containIntrinsicSize: '0 40px',
     backgroundColor: {
       default: null,
-      ':focus-within': `color-mix(in oklab, ${colors.accent} 60%, transparent)`,
+      ':has(:focus-visible)': `color-mix(in oklab, ${colors.accent} 60%, transparent)`,
       ':hover': {
         default: null,
         '@media (hover: hover)': `color-mix(in oklab, ${colors.accent} 60%, transparent)`,

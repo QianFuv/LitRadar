@@ -25,6 +25,11 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  HoverHighlightGroup,
+  hoverHighlightItemProps,
+  selectionHighlightChildProps,
+} from '@/components/ui/hover-highlight';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Dialog,
@@ -254,61 +259,64 @@ function renderFolderTabs(state: FavoritesViewState) {
               data-slot="favorite-folder-tabs"
               {...stylex.props(styles.favoriteFolderTabs)}
             >
-              <Highlight
-                controlledItems
-                value={activeFolderId === null ? null : String(activeFolderId)}
-                click={false}
-                {...stylex.props(styles.renderFolderTabsHighlight)}
-              >
-                {folders.map((folder) => {
-                  const isActive = activeFolderId === folder.id;
-                  return (
-                    <HighlightItem
-                      key={folder.id}
-                      value={String(folder.id)}
-                      {...stylex.props(styles.renderFolderTabsHighlightItem)}
-                    >
-                      <button
-                        type="button"
-                        data-motion-folder-key={folder.id}
-                        aria-pressed={isActive}
-                        title={folder.is_tracking ? `${folder.name}（追踪文件夹）` : folder.name}
-                        onClick={() => handleSelectFolder(folder.id)}
-                        {...stylex.props(
-                          styles.renderFolderTabsButton,
-                          isActive
-                            ? styles.renderFolderTabsButtonActive
-                            : styles.renderFolderTabsButtonNotActive,
-                        )}
+              <HoverHighlightGroup xstyle={styles.favoriteFolderTabsRow}>
+                <Highlight
+                  controlledItems
+                  value={activeFolderId === null ? null : String(activeFolderId)}
+                  click={false}
+                  {...stylex.props(styles.renderFolderTabsHighlight)}
+                >
+                  {folders.map((folder) => {
+                    const isActive = activeFolderId === folder.id;
+                    return (
+                      <HighlightItem
+                        key={folder.id}
+                        value={String(folder.id)}
+                        {...stylex.props(styles.renderFolderTabsHighlightItem)}
                       >
-                        {folder.is_tracking && (
-                          <Radar
-                            xstyle={[
-                              styles.renderFolderTabsRadar,
-                              isActive
-                                ? styles.renderFolderTabsRadarActive
-                                : styles.renderFolderTabsRadarNotActive,
-                            ]}
-                            aria-hidden="true"
-                          />
-                        )}
-                        <span {...stylex.props(styles.renderFolderTabsSpan)}>{folder.name}</span>
-                        <span
-                          aria-hidden="true"
+                        <button
+                          type="button"
+                          data-motion-folder-key={folder.id}
+                          {...selectionHighlightChildProps}
+                          aria-pressed={isActive}
+                          title={folder.is_tracking ? `${folder.name}（追踪文件夹）` : folder.name}
+                          onClick={() => handleSelectFolder(folder.id)}
                           {...stylex.props(
-                            styles.renderFolderTabsSpan2,
+                            styles.renderFolderTabsButton,
                             isActive
-                              ? styles.renderFolderTabsSpanActive
-                              : styles.renderFolderTabsSpanNotActive,
+                              ? styles.renderFolderTabsButtonActive
+                              : styles.renderFolderTabsButtonNotActive,
                           )}
                         >
-                          {folder.article_count}
-                        </span>
-                      </button>
-                    </HighlightItem>
-                  );
-                })}
-              </Highlight>
+                          {folder.is_tracking && (
+                            <Radar
+                              xstyle={[
+                                styles.renderFolderTabsRadar,
+                                isActive
+                                  ? styles.renderFolderTabsRadarActive
+                                  : styles.renderFolderTabsRadarNotActive,
+                              ]}
+                              aria-hidden="true"
+                            />
+                          )}
+                          <span {...stylex.props(styles.renderFolderTabsSpan)}>{folder.name}</span>
+                          <span
+                            aria-hidden="true"
+                            {...stylex.props(
+                              styles.renderFolderTabsSpan2,
+                              isActive
+                                ? styles.renderFolderTabsSpanActive
+                                : styles.renderFolderTabsSpanNotActive,
+                            )}
+                          >
+                            {folder.article_count}
+                          </span>
+                        </button>
+                      </HighlightItem>
+                    );
+                  })}
+                </Highlight>
+              </HoverHighlightGroup>
             </div>
           </ScrollFade>
         </fieldset>
@@ -340,7 +348,7 @@ function renderFolderToolbar(
           {selectedFolder.is_tracking && ' · 每周推送会自动收藏到此处'}
         </p>
       </div>
-      <div {...stylex.props(styles.renderFolderToolbarDiv2)}>
+      <HoverHighlightGroup xstyle={styles.renderFolderToolbarDiv2}>
         {renderFavoriteExport(state, selectedFolder)}
         <DropdownMenu>
           <DropdownMenuTrigger
@@ -348,6 +356,7 @@ function renderFolderToolbar(
               <Button
                 variant="ghost"
                 size="icon-sm"
+                {...hoverHighlightItemProps}
                 aria-label={`管理收藏夹 ${selectedFolder.name}`}
                 title="管理收藏夹"
               />
@@ -392,7 +401,7 @@ function renderFolderToolbar(
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-      </div>
+      </HoverHighlightGroup>
     </div>
   );
 }
@@ -479,6 +488,7 @@ function renderFavoriteExport(
           <Button
             variant="ghost"
             size="sm"
+            {...hoverHighlightItemProps}
             xstyle={styles.renderFavoriteExportButton}
             aria-label="导出收藏夹"
           />
@@ -1112,7 +1122,6 @@ const styles = stylex.create({
     },
     marginBlock: '-0.25rem',
     display: 'flex',
-    gap: '0.375rem',
     overflowX: 'auto',
     paddingInline: {
       default: '1rem',
@@ -1123,6 +1132,11 @@ const styles = stylex.create({
     '::-webkit-scrollbar': {
       display: 'none',
     },
+  },
+  favoriteFolderTabsRow: {
+    display: 'flex',
+    flexShrink: 0,
+    gap: '0.375rem',
   },
   renderFolderTabsHighlight: {
     inset: 0,
@@ -1148,7 +1162,7 @@ const styles = stylex.create({
       '@media (min-width: 48rem)': '0.75rem',
     },
     fontSize: '13px',
-    transitionProperty: 'background-color, color, box-shadow',
+    transitionProperty: 'color, box-shadow',
     transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
     transitionDuration: '200ms',
     outlineStyle: 'none',

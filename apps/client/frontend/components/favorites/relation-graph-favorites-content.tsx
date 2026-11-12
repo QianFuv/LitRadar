@@ -26,6 +26,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { HoverHighlightGroup, hoverHighlightItemProps } from '@/components/ui/hover-highlight';
 import { Input } from '@/components/ui/input';
 import { RevealItem } from '@/components/ui/reveal';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -264,55 +265,61 @@ function renderRelationGraphFavoriteList(
   }
   return (
     <>
-      <ul aria-label="收藏的关系图">
-        {favorites.map((favorite) => (
-          <li
-            key={favorite.id}
-            {...stylex.props(styles.renderRelationGraphFavoriteListLi, stylex.defaultMarker())}
-          >
-            <span aria-hidden="true" {...stylex.props(styles.renderRelationGraphFavoriteListSpan)}>
-              <Share2 xstyle={styles.renderRelationGraphFavoriteListShare2} />
-            </span>
-            <div {...stylex.props(styles.renderRelationGraphFavoriteListDiv)}>
-              <Link
-                to="/"
-                search={buildSavedRelationSearch(favorite)}
-                {...stylex.props(styles.renderRelationGraphFavoriteListLink)}
+      <HoverHighlightGroup>
+        <ul aria-label="收藏的关系图">
+          {favorites.map((favorite) => (
+            <li
+              key={favorite.id}
+              {...hoverHighlightItemProps}
+              {...stylex.props(styles.renderRelationGraphFavoriteListLi, stylex.defaultMarker())}
+            >
+              <span
+                aria-hidden="true"
+                {...stylex.props(styles.renderRelationGraphFavoriteListSpan)}
               >
-                {favorite.title}
-              </Link>
-              <p {...stylex.props(styles.renderRelationGraphFavoriteListP)}>
-                {favorite.node_count} 篇 · {favorite.db_name} · 更新于{' '}
-                {formatSavedTime(favorite.updated_at)}
-              </p>
-            </div>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    xstyle={styles.renderRelationGraphFavoriteListButton}
-                    aria-label={`管理关系图 ${favorite.title}`}
+                <Share2 xstyle={styles.renderRelationGraphFavoriteListShare2} />
+              </span>
+              <div {...stylex.props(styles.renderRelationGraphFavoriteListDiv)}>
+                <Link
+                  to="/"
+                  search={buildSavedRelationSearch(favorite)}
+                  {...stylex.props(styles.renderRelationGraphFavoriteListLink)}
+                >
+                  {favorite.title}
+                </Link>
+                <p {...stylex.props(styles.renderRelationGraphFavoriteListP)}>
+                  {favorite.node_count} 篇 · {favorite.db_name} · 更新于{' '}
+                  {formatSavedTime(favorite.updated_at)}
+                </p>
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      xstyle={styles.renderRelationGraphFavoriteListButton}
+                      aria-label={`管理关系图 ${favorite.title}`}
+                    />
+                  }
+                >
+                  <MoreHorizontal
+                    xstyle={styles.renderRelationGraphFavoriteListShare2}
+                    aria-hidden="true"
                   />
-                }
-              >
-                <MoreHorizontal
-                  xstyle={styles.renderRelationGraphFavoriteListShare2}
-                  aria-hidden="true"
-                />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => onRename(favorite)}>重命名</DropdownMenuItem>
-                <DropdownMenuItem isDestructive onClick={() => onDelete(favorite)}>
-                  删除
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </li>
-        ))}
-      </ul>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => onRename(favorite)}>重命名</DropdownMenuItem>
+                  <DropdownMenuItem isDestructive onClick={() => onDelete(favorite)}>
+                    删除
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </li>
+          ))}
+        </ul>
+      </HoverHighlightGroup>
       {pagesQuery.hasNextPage && (
         <div {...stylex.props(styles.renderRelationGraphFavoriteListDiv2)}>
           <Button
@@ -407,9 +414,6 @@ const styles = stylex.create({
       '@media (min-width: 40rem)': '1.25rem',
     },
     paddingBlock: '1rem',
-    transitionProperty: 'background-color',
-    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
-    transitionDuration: '200ms',
     backgroundColor: {
       default: null,
       ':hover': {

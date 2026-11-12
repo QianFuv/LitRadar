@@ -28,6 +28,7 @@ import { WorkspaceShell } from '@/components/feature/workspace-shell';
 import { RelationCanvas } from '@/components/relations/relation-canvas';
 import { RelationGraphFavoriteControls } from '@/components/relations/relation-graph-favorite-controls';
 import { Button } from '@/components/ui/button';
+import { HoverHighlightGroup, hoverHighlightItemProps } from '@/components/ui/hover-highlight';
 import { IconTooltip } from '@/components/ui/tooltip';
 import { Dialog } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -249,24 +250,27 @@ function RelationPicker({ onPick }: { onPick: (article: Article, dbName: string)
           <p {...stylex.props(styles.relationPickerP)}>没有找到匹配的文章。</p>
         )}
         {resultsQuery.data && resultsQuery.data.items.length > 0 && (
-          <ul aria-label="候选中心文章" {...stylex.props(styles.relationPickerUl)}>
-            {resultsQuery.data.items.map((article) => (
-              <li {...stylex.props(styles.relationPickerUlItem)} key={relationNodeId(article)}>
-                <button
-                  type="button"
-                  {...stylex.props(styles.relationPickerButton2)}
-                  onClick={() => onPick(article, dbName)}
-                >
-                  <span {...stylex.props(styles.relationPickerSpan)}>
-                    {getArticleDisplayTitle(article)}
-                  </span>
-                  <span {...stylex.props(styles.relationPickerSpan2)}>
-                    {[article.journal_title, article.date].filter(Boolean).join(' · ')}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <HoverHighlightGroup>
+            <ul aria-label="候选中心文章" {...stylex.props(styles.relationPickerUl)}>
+              {resultsQuery.data.items.map((article) => (
+                <li {...stylex.props(styles.relationPickerUlItem)} key={relationNodeId(article)}>
+                  <button
+                    type="button"
+                    {...hoverHighlightItemProps}
+                    {...stylex.props(styles.relationPickerButton2)}
+                    onClick={() => onPick(article, dbName)}
+                  >
+                    <span {...stylex.props(styles.relationPickerSpan)}>
+                      {getArticleDisplayTitle(article)}
+                    </span>
+                    <span {...stylex.props(styles.relationPickerSpan2)}>
+                      {[article.journal_title, article.date].filter(Boolean).join(' · ')}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </HoverHighlightGroup>
         )}
       </div>
     </WorkspaceShell>
@@ -297,7 +301,9 @@ function RelationHeading({
           {subtitleElement}
         </RevealItem>
       </div>
-      {children && <div {...stylex.props(styles.relationHeadingDiv3)}>{children}</div>}
+      {children && (
+        <HoverHighlightGroup xstyle={styles.relationHeadingDiv3}>{children}</HoverHighlightGroup>
+      )}
     </div>
   );
 }
@@ -501,6 +507,7 @@ function RelationExplorer({
               type="button"
               variant="ghost"
               size="icon"
+              {...hoverHighlightItemProps}
               xstyle={styles.headerButton}
               aria-label="重新排列"
               onClick={relayout}
@@ -515,6 +522,7 @@ function RelationExplorer({
               type="button"
               variant="ghost"
               size="icon"
+              {...hoverHighlightItemProps}
               xstyle={styles.headerButton}
               aria-label="适应窗口"
               onClick={() => void fitView({ duration: 300, padding: 0.2 })}
@@ -655,57 +663,60 @@ function RelationList({
 }) {
   const nodes = useMemo(() => listRelationNodes(graph), [graph]);
   return (
-    <ul aria-label="关系节点列表" {...stylex.props(styles.relationListUl)}>
-      {nodes.map((node) => {
-        const title = getArticleDisplayTitle(node.article);
-        const isExpanded = graph.expandedIds.includes(node.id);
-        const isLoading = loadingIds.has(node.id);
-        return (
-          <li
-            key={node.id}
-            {...stylex.props(styles.relationListLi, styles.indent(`${16 + node.depth * 22}px`))}
-          >
-            <button
-              type="button"
-              aria-label={`${isExpanded ? '收起' : '展开'}相关文章：${title}`}
-              aria-expanded={isExpanded}
-              disabled={isLoading}
-              {...stylex.props(styles.relationListButton)}
-              onClick={() => onToggle(node.id)}
+    <HoverHighlightGroup xstyle={styles.relationListGroup}>
+      <ul aria-label="关系节点列表" {...stylex.props(styles.relationListUl)}>
+        {nodes.map((node) => {
+          const title = getArticleDisplayTitle(node.article);
+          const isExpanded = graph.expandedIds.includes(node.id);
+          const isLoading = loadingIds.has(node.id);
+          return (
+            <li
+              key={node.id}
+              {...stylex.props(styles.relationListLi, styles.indent(`${16 + node.depth * 22}px`))}
             >
-              {isLoading ? (
-                <Loader2 xstyle={styles.relationListLoader2} aria-hidden="true" />
-              ) : isExpanded ? (
-                <Minus xstyle={styles.headerIcon} aria-hidden="true" />
-              ) : (
-                <Plus xstyle={styles.headerIcon} aria-hidden="true" />
-              )}
-            </button>
-            <button
-              type="button"
-              aria-pressed={node.id === selectedId}
-              {...stylex.props(
-                styles.relationListButton2,
-                node.id === selectedId && styles.relationListButtonSelectedId,
-              )}
-              onClick={() => onSelect(node.id)}
-            >
-              <span
-                {...stylex.props(
-                  styles.relationListSpan,
-                  node.depth === 0 ? styles.relationListSpanRoot : styles.relationListSpanChild,
-                )}
+              <button
+                type="button"
+                aria-label={`${isExpanded ? '收起' : '展开'}相关文章：${title}`}
+                aria-expanded={isExpanded}
+                disabled={isLoading}
+                {...stylex.props(styles.relationListButton)}
+                onClick={() => onToggle(node.id)}
               >
-                {title}
-              </span>
-              <span {...stylex.props(styles.relationListSpan2)}>
-                {[node.article.journal_title, node.article.date].filter(Boolean).join(' · ')}
-              </span>
-            </button>
-          </li>
-        );
-      })}
-    </ul>
+                {isLoading ? (
+                  <Loader2 xstyle={styles.relationListLoader2} aria-hidden="true" />
+                ) : isExpanded ? (
+                  <Minus xstyle={styles.headerIcon} aria-hidden="true" />
+                ) : (
+                  <Plus xstyle={styles.headerIcon} aria-hidden="true" />
+                )}
+              </button>
+              <button
+                type="button"
+                aria-pressed={node.id === selectedId}
+                {...hoverHighlightItemProps}
+                {...stylex.props(
+                  styles.relationListButton2,
+                  node.id === selectedId && styles.relationListButtonSelectedId,
+                )}
+                onClick={() => onSelect(node.id)}
+              >
+                <span
+                  {...stylex.props(
+                    styles.relationListSpan,
+                    node.depth === 0 ? styles.relationListSpanRoot : styles.relationListSpanChild,
+                  )}
+                >
+                  {title}
+                </span>
+                <span {...stylex.props(styles.relationListSpan2)}>
+                  {[node.article.journal_title, node.article.date].filter(Boolean).join(' · ')}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </HoverHighlightGroup>
   );
 }
 
@@ -779,8 +790,7 @@ const styles = stylex.create({
     paddingInline: '0.25rem',
     paddingBlock: '0.75rem',
     textAlign: 'left',
-    transitionProperty:
-      'color, background-color, border-color, outline-color, text-decoration-color, fill, stroke',
+    transitionProperty: 'color, border-color, outline-color, text-decoration-color, fill, stroke',
     transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
     transitionDuration: '200ms',
     outlineStyle: 'none',
@@ -930,6 +940,12 @@ const styles = stylex.create({
     animationTimingFunction: 'linear',
     animationIterationCount: 'infinite',
   },
+  relationListGroup: {
+    display: 'flex',
+    minHeight: '0px',
+    flex: '1',
+    flexDirection: 'column',
+  },
   relationListUl: {
     minHeight: '0px',
     flex: '1',
@@ -985,8 +1001,7 @@ const styles = stylex.create({
     paddingInline: '0.5rem',
     paddingBlock: '0.375rem',
     textAlign: 'left',
-    transitionProperty:
-      'color, background-color, border-color, outline-color, text-decoration-color, fill, stroke',
+    transitionProperty: 'color, border-color, outline-color, text-decoration-color, fill, stroke',
     transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
     transitionDuration: '200ms',
     outlineStyle: 'none',

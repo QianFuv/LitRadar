@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { ChevronDown } from '@/components/ui/animated-icons';
 
 import { READER_ITEM_ATTRIBUTE } from '@/components/feature/article-reader-context';
+import { HoverHighlightGroup, hoverHighlightItemProps } from '@/components/ui/hover-highlight';
 import type { CfpJournalSummary } from '@/lib/api';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
@@ -60,7 +61,7 @@ export function CfpJournalList({
   const [mountedGroups, setMountedGroups] = useState(expandedGroups);
 
   return (
-    <div data-slot="cfp-journal-groups" {...stylex.props(styles.cfpJournalGroups)}>
+    <HoverHighlightGroup data-slot="cfp-journal-groups" xstyle={styles.cfpJournalGroups}>
       {isSearching && groups.every((group) => group.journals.length === 0) && (
         <p {...stylex.props(styles.cfpJournalListP)}>未找到匹配期刊</p>
       )}
@@ -86,7 +87,10 @@ export function CfpJournalList({
                 : styles.cfpJournalListSectionNotExpanded,
             )}
           >
-            <Collapsible.Trigger {...stylex.props(styles.cfpJournalListButton)}>
+            <Collapsible.Trigger
+              {...hoverHighlightItemProps}
+              {...stylex.props(styles.cfpJournalListButton)}
+            >
               <ChevronDown
                 xstyle={[
                   styles.cfpJournalListChevronDown,
@@ -117,6 +121,7 @@ export function CfpJournalList({
                           <button
                             type="button"
                             {...{ [READER_ITEM_ATTRIBUTE]: '' }}
+                            {...hoverHighlightItemProps}
                             data-selected={isSelected ? 'true' : 'false'}
                             aria-pressed={isSelected}
                             title={journal.title}
@@ -171,7 +176,7 @@ export function CfpJournalList({
           </Collapsible.Root>
         );
       })}
-    </div>
+    </HoverHighlightGroup>
   );
 }
 
@@ -226,8 +231,7 @@ const styles = stylex.create({
         '@media (hover: hover)': colors.foreground,
       },
     },
-    transitionProperty:
-      'color, background-color, border-color, outline-color, text-decoration-color, fill, stroke',
+    transitionProperty: 'color, border-color, outline-color, text-decoration-color, fill, stroke',
     transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
     transitionDuration: '200ms',
     backgroundColor: {
@@ -318,8 +322,7 @@ const styles = stylex.create({
     paddingInline: '0.625rem',
     paddingBlock: '0.75rem',
     textAlign: 'left',
-    transitionProperty:
-      'color, background-color, border-color, outline-color, text-decoration-color, fill, stroke',
+    transitionProperty: 'color, border-color, outline-color, text-decoration-color, fill, stroke',
     transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
     transitionDuration: '200ms',
     backgroundColor: {

@@ -9,6 +9,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { useEffect, useEffectEvent, useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { hoverHighlightItemProps } from '@/components/ui/hover-highlight';
 import { IconTooltip } from '@/components/ui/tooltip';
 import {
   Dialog,
@@ -255,6 +256,7 @@ function RelationGraphFavoriteButtons({
             type="button"
             variant="ghost"
             size="icon"
+            {...hoverHighlightItemProps}
             xstyle={styles.relationGraphFavoriteButtonsButton}
             aria-label="收藏关系图"
             disabled={isBusy}
@@ -280,6 +282,7 @@ function RelationGraphFavoriteButtons({
                   type="button"
                   variant="ghost"
                   size="icon"
+                  {...hoverHighlightItemProps}
                   xstyle={styles.relationGraphFavoriteButtonsButton2}
                   aria-label={
                     isDirty ? '已收藏的关系图操作（有未保存的改动）' : '已收藏的关系图操作'
