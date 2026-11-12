@@ -209,7 +209,8 @@ function buildAssistOptions(
  * The suggestions are a Base UI Autocomplete. Its automatic highlight stays on only from the moment
  * the panel closes until an option is highlighted or the user types, so ArrowDown and ArrowUp open
  * the panel on the first and last option, while typing never highlights an option and Enter keeps
- * searching the typed draft.
+ * searching the typed draft. The clear button submits an empty query, so it returns the list to
+ * its unsearched state rather than only emptying the draft.
  *
  * @param props - Optional styles, URL query parameter override, and syntax assistant flag.
  * @returns Search form and syntax-help popover.
@@ -637,7 +638,7 @@ export function SearchBar({
                 static
                 aria-label="清空搜索输入"
                 onClick={() => {
-                  setInputValue('');
+                  handleSearch('');
                   inputRef.current?.focus();
                 }}
                 xstyle={styles.searchBarButton2}

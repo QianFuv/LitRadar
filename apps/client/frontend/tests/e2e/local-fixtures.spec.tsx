@@ -1955,7 +1955,7 @@ async function interfacePolishControlsTest({ page }: { page: Page }): Promise<vo
   await page.mouse.up();
   await expect(input).toBeFocused();
   await expect(input).toHaveValue('');
-  await expect(page).toHaveURL('/?q=graph');
+  await expect(page).toHaveURL('/');
   await submit.hover();
   await page.mouse.down();
   await expect(submit).toHaveCSS('scale', 'none');

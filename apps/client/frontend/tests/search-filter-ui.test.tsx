@@ -104,9 +104,10 @@ function normalizesMonthRanges(): void {
 }
 
 /**
- * Verify clearing edits only the draft until an explicit empty submission.
+ * Verify typing edits only the draft, while the clear button also clears the submitted query so
+ * the list returns to its unsearched state, and keeps focus in the input.
  */
-async function keepsSearchDraftSeparate(): Promise<void> {
+async function clearsSubmittedSearch(): Promise<void> {
   const user = userEvent.setup();
   await renderWithQuery(
     <>
@@ -118,12 +119,13 @@ async function keepsSearchDraftSeparate(): Promise<void> {
   const input = screen.getByRole('combobox', { name: '搜索文章' });
 
   expect(input).toHaveValue('applied');
-  await user.click(screen.getByRole('button', { name: '清空搜索输入' }));
-  expect(input).toHaveValue('');
+  await user.type(input, ' edited');
   expect(screen.getByTestId('query-value')).toHaveTextContent('applied');
 
-  await user.click(screen.getByRole('button', { name: '搜索' }));
-  await waitFor(() => expect(screen.getByTestId('query-value')).toHaveTextContent(''));
+  await user.click(screen.getByRole('button', { name: '清空搜索输入' }));
+  expect(input).toHaveValue('');
+  expect(input).toHaveFocus();
+  await waitFor(() => expect(screen.getByTestId('query-value')).toBeEmptyDOMElement());
 
   await user.type(input, 'new query');
   await user.keyboard('{Enter}');
@@ -767,7 +769,7 @@ describe('search and filter UI', () => {
     15000,
   );
   test('normalizes month range values and recent shortcuts', normalizesMonthRanges);
-  test('keeps draft clearing separate from query submission', keepsSearchDraftSeparate);
+  test('clears the submitted query from the clear button', clearsSubmittedSearch);
   test('synchronizes external query changes without an effect', synchronizesExternalSearchQuery);
   test(
     'operates search history with Arrow keys, Enter, and Escape',
