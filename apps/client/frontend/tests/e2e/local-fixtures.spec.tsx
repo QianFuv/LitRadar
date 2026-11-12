@@ -2783,6 +2783,103 @@ test(
 );
 
 /**
+ * Serve six related articles for any article, enough rows that every reader scrolls.
+ *
+ * @param page - Playwright browser page.
+ */
+async function serveLongRelatedArticles(page: Page): Promise<void> {
+  await page.route('**/api/articles/*/related**', (route) =>
+    fulfillJson(
+      route,
+      Array.from({ length: 6 }, (_, index) => ({
+        article_id: String(9223361829786307301n + BigInt(index)),
+        journal_id: hashedId(1),
+        title: `Related reading ${index + 1}`,
+        abstract: 'A related abstract that keeps the reader scrolling. '.repeat(4),
+        authors: ['张三'],
+        journal_title: '数量经济研究',
+        date: '2021-03-12',
+      })),
+    ),
+  );
+}
+
+/**
+ * Read the scroll offset of the nearest scrolling ancestor of an element.
+ *
+ * @param locator - Element inside the reader.
+ * @returns Scroll offset of the reader that holds it.
+ */
+async function readReaderScrollTop(locator: Locator): Promise<number> {
+  return locator.evaluate((element) => {
+    for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+      const { overflowY } = getComputedStyle(parent);
+      if (overflowY === 'auto' || overflowY === 'scroll') return parent.scrollTop;
+    }
+    return -1;
+  });
+}
+
+/**
+ * Scroll a reader to its related articles, open one, and expect the new article at the very top
+ * of the reader, staying there once its own related articles load; going back lands at the top
+ * too.
+ *
+ * @param page - Playwright browser page.
+ * @param reader - Docked reading desk or narrow sheet.
+ */
+async function expectRelatedArticleOpensAtTop(page: Page, reader: Locator): Promise<void> {
+  const related = reader.getByRole('region', { name: '相关文章' });
+  const target = related.getByRole('button', { name: /Related reading 6/ });
+  await expect(target).toBeAttached();
+  await target.scrollIntoViewIfNeeded();
+  await expect(target).toBeInViewport();
+  expect(await readReaderScrollTop(target)).toBeGreaterThan(100);
+
+  await target.click();
+  const back = reader.getByRole('button', { name: '返回上一篇' });
+  await expect(back).toBeVisible();
+  await expect.poll(() => readReaderScrollTop(related)).toBe(0);
+  await expect(related.getByRole('button', { name: /Related/ })).toHaveCount(6);
+  await page.waitForTimeout(300);
+  expect(await readReaderScrollTop(related)).toBe(0);
+
+  await target.scrollIntoViewIfNeeded();
+  expect(await readReaderScrollTop(target)).toBeGreaterThan(100);
+  await back.click();
+  await expect(back).toBeHidden();
+  await expect.poll(() => readReaderScrollTop(related)).toBe(0);
+}
+
+/**
+ * Open related articles at the top of the narrow sheet and of the docked reading desk.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function relatedArticleScrollTopTest({ page }: { page: Page }): Promise<void> {
+  await page.route('**/api/**', serveArticleSettingsApi);
+  await serveLongRelatedArticles(page);
+
+  await page.setViewportSize({ width: 1100, height: 600 });
+  await page.goto('/?q=graph');
+  await page
+    .getByRole('button', { name: /^查看文章详情：/ })
+    .first()
+    .click();
+  await expectRelatedArticleOpensAtTop(page, page.getByRole('dialog'));
+
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.goto('/?q=graph');
+  await page
+    .getByRole('button', { name: /^查看文章详情：/ })
+    .first()
+    .click();
+  await expectRelatedArticleOpensAtTop(page, page.getByRole('region', { name: '阅读台' }));
+}
+
+test('opens related articles at the top of the reader', relatedArticleScrollTopTest);
+
+/**
  * Keep the toolbar on one row when the favorite lookup fails and the compact label is shown.
  *
  * @param fixtures - Playwright page fixture.
