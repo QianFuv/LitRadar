@@ -393,7 +393,7 @@ func verifyBlockedSignalTrial(t *testing.T, ctx context.Context, binary, working
 				t.Error(err)
 			}
 		}
-		if err := input.Close(); err != nil {
+		if err := input.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
 			t.Fatalf("input.Close: %v", err)
 		}
 		if err := logfile.Close(); err != nil {
@@ -410,7 +410,7 @@ func verifyBlockedSignalTrial(t *testing.T, ctx context.Context, binary, working
 				t.Error(err)
 			}
 		}
-		if err := input.Close(); err != nil {
+		if err := input.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
 			t.Fatalf("input.Close: %v", err)
 		}
 		if err := logfile.Close(); err != nil {
@@ -435,7 +435,7 @@ func verifyBlockedSignalTrial(t *testing.T, ctx context.Context, binary, working
 		}
 		t.Errorf("bootstrap swallowed %v while blocked on stdin", termination)
 	}
-	if err := input.Close(); err != nil {
+	if err := input.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
 		t.Fatalf("input.Close: %v", err)
 	}
 	if err := logfile.Close(); err != nil {
