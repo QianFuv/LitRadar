@@ -126,6 +126,41 @@ func TestRelatedExpressionRecallsWithRareTermsWithinBudget(t *testing.T) {
 	}
 }
 
+// TestRelatedRecallDropsBroadTerms keeps a common title word from expanding rare-term recall.
+func TestRelatedRecallDropsBroadTerms(t *testing.T) {
+	_, database := queryFixture(t)
+	if _, err := database.Exec(`
+WITH RECURSIVE documents(id) AS (
+ VALUES(1) UNION ALL SELECT id+1 FROM documents WHERE id<40000
+)
+INSERT INTO article_search(rowid,title,abstract_text)
+ SELECT 100000+id,'common 数 字','' FROM documents;
+INSERT INTO article_search(rowid,title,abstract_text) VALUES
+ (200001,'unusual common',''),(200002,'unusual','');
+`); err != nil {
+		t.Fatal(err)
+	}
+	connection, err := database.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cost, err := relatedTermCost(t.Context(), connection, nil, "common")
+	hanCost, hanError := relatedTermCost(t.Context(), connection, nil, "数字")
+	if hanError != nil || hanCost != 30004 {
+		t.Fatalf("Han phrase count must stop at 7501 documents: %d, %v", hanCost, hanError)
+	}
+	if closeError := connection.Close(); closeError != nil {
+		t.Error(closeError)
+	}
+	if err != nil || cost != 30001 {
+		t.Fatalf("broad term count must stop past the 30000 budget: %d, %v", cost, err)
+	}
+	ids, err := relatedArticleIds(t.Context(), database, t.TempDir(), "unusual common", 200001, 30)
+	if err != nil || !reflect.DeepEqual(ids, []int64{200002}) {
+		t.Fatalf("expected only the rare-term candidate, got %v, %v", ids, err)
+	}
+}
+
 // TestRelatedArticlesPreferTitleOverlapToAbstractMentions keeps title-to-title similarity ahead
 // of an unrelated title whose abstract happens to mention every source title word.
 func TestRelatedArticlesPreferTitleOverlapToAbstractMentions(t *testing.T) {

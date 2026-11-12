@@ -148,12 +148,15 @@ huma 在调用业务 handler 之前解码并按 OpenAPI schema 校验 typed path
 | `GET` | `/api/issues/{issue_id}`              | 单个期次                         |
 | `GET` | `/api/articles`                       | 文章过滤、全文检索与分页         |
 | `GET` | `/api/articles/{article_id}`          | 单篇文章                         |
+| `GET` | `/api/articles/{article_id}/related`  | 按标题与摘要的 FTS5 bm25 相似度排序 |
 | `GET` | `/api/articles/{article_id}/access`   | 本地计算摘要页和全文能力         |
 | `GET` | `/api/articles/{article_id}/abstract` | 在线解析并 307 跳转到摘要页      |
 | `GET` | `/api/articles/{article_id}/fulltext` | 在线解析并返回 307 或有界 PDF    |
 | `GET` | `/api/weekly-updates`                 | 按数据库和期刊聚合变更清单       |
 | `GET` | `/api/weekly-updates/summary`         | 不含文章正文的周更分组计数       |
 | `GET` | `/api/weekly-updates/articles`        | 固定周更窗口的文章游标页         |
+
+相关文章从源文章标题中取最多 16 个内容词，在标题和摘要中召回：加权召回预算为 30,000（汉字短语计数乘 4），由最稀有的词驱动召回，其余词仍参与 `bm25(article_search,0,10,1,0,0,1,0)` 排序，标题权重高于摘要。各词计数最多并发使用 4 个只读连接，排序表达式、权重、三倍候选、排除源文章和按规范化标题去重均不变。默认返回最多 10 篇，`limit` 上限 30。只有一个常见词时保留原有回退，因此预算不是候选数量或执行时间的硬上限。
 
 周更接口读取 `data/push_state/*.changes.json` 及受管 history 中七日窗口内的可通知文章，不会临时重新抓取数据。兼容接口 `/api/weekly-updates` 在窗口内每个数据库去重后的文章引用合计不超过 2,000 条时保持原响应结构；第 2,001 条会在加载完整文章元数据前使请求返回 `413`，调用方应迁移到下述有界接口。
 

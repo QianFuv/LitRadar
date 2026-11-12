@@ -189,6 +189,10 @@ Schema v10 adds nonunique covering indexes on `(doi, date, article_id)` and `(pm
 
 ### `article_search`
 
+Related-article term counts stop at 30,001 documents for Latin terms or 7,501 for Han phrases (weighted by four), preserving the 30,000 recall budget and the original bm25 ranking. Single-term titles skip counting because the count cannot change their expression. Up to four connections count independent terms concurrently, with ranking and enrichment still performed in their original order. Databases no larger than SQLite's default 2 GiB mmap limit use connection-local mapped reads; larger files retain ordinary paging. The experimental 8 MiB page-cache override is not used. Pools close at the end of each request.
+
+Exact term costs use bounded standard-library maps, keyed by database file identity, size, and modification time. Replacing or changing the main file invalidates its costs; nonempty WAL or rollback-journal files bypass and invalidate the cache. No final-result cache or long-lived database handle is added. The MATCH expressions, phrase semantics, bm25 weights, and ordered candidate limits are unchanged. FTS scans and temporary bm25 sorting in `EXPLAIN QUERY PLAN` are expected; ordinary `sqlite_stat1` statistics cannot eliminate candidate scoring. Offline optimization remains subject to the existing shutdown, backup, and maintenance gates; related queries do not run `ANALYZE` or `optimize`.
+
 FTS5 的 v6、v7 和 v8 都使用内置 `unicode61 remove_diacritics 2`，字段为：
 
 - `article_id UNINDEXED`；

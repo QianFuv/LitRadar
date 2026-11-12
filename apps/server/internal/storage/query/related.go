@@ -5,17 +5,19 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/storage"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/search"
+	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 	"github.com/QianFuv/LitRadar/apps/server/internal/telemetry"
+	"golang.org/x/sync/errgroup"
 )
 
 // RelatedArticleMaxLimit bounds related-article responses.
@@ -30,19 +32,15 @@ const relatedCandidateFactor = 3
 // matches, so recall uses the rarest terms whose combined costs fit this budget.
 const relatedRecallBudget = 30000
 
+// relatedMmapLimit is SQLite's default maximum mapping size on 64-bit platforms.
+const relatedMmapLimit = 0x7fff0000
+
+// relatedCountWorkers bounds independent term counts within a related request.
+const relatedCountWorkers = 4
+
 // relatedHanCostFactor weights Han phrases, which the per-character index matches by comparing
 // character positions and which therefore cost several times more per match than Latin words.
 const relatedHanCostFactor = 4
-
-// relatedCountCacheLimit bounds the per-process document count cache.
-const relatedCountCacheLimit = 100000
-
-// relatedCounts caches term recall costs by database file and term. Costs only steer term
-// selection, so slightly stale values after an index update are harmless.
-var relatedCounts = struct {
-	sync.Mutex
-	values map[string]int
-}{values: map[string]int{}}
 
 // relatedRanking weights the FTS5 columns (article_id, title, abstract_text, doi, pmid, authors,
 // journal_title) so title-to-title overlap dominates and abstract overlap mainly breaks ties.
@@ -192,12 +190,8 @@ func relatedIsHan(term string) bool {
 
 // relatedTermCost returns the recall cost of a term: its document count in titles and abstracts,
 // weighted for Han phrases. Counting stops just past the budget, and results are cached.
-func relatedTermCost(ctx context.Context, connection *sql.Conn, filename string, term string) (int, error) {
-	key := filename + "\x00" + term
-	relatedCounts.Lock()
-	cost, found := relatedCounts.values[key]
-	relatedCounts.Unlock()
-	if found {
+func relatedTermCost(ctx context.Context, connection *sql.Conn, cache *relatedDatabaseCosts, term string) (int, error) {
+	if cost, found := cache.get(term); found {
 		return cost, nil
 	}
 	weight := 1
@@ -208,14 +202,68 @@ func relatedTermCost(ctx context.Context, connection *sql.Conn, filename string,
 	if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM (SELECT 1 FROM article_search WHERE article_search MATCH ? LIMIT ?)", relatedMatch([]string{term}), relatedRecallBudget/weight+1).Scan(&count); err != nil {
 		return 0, err
 	}
-	cost = count * weight
-	relatedCounts.Lock()
-	if len(relatedCounts.values) >= relatedCountCacheLimit {
-		relatedCounts.values = map[string]int{}
-	}
-	relatedCounts.values[key] = cost
-	relatedCounts.Unlock()
+	cost := count * weight
+	cache.put(term, cost)
 	return cost, nil
+}
+
+// relatedTermCosts counts independent phrases on at most four physical connections. The
+// ranking connection also counts terms, preserving single-connection fixture support.
+func relatedTermCosts(ctx context.Context, database *sql.DB, connection *sql.Conn, cache *relatedDatabaseCosts, terms []string, shouldMap bool) ([]int, error) {
+	costs := make([]int, len(terms))
+	if len(terms) == 1 {
+		return costs, nil
+	}
+	missing := []int{}
+	for index, term := range terms {
+		var found bool
+		if costs[index], found = cache.get(term); !found {
+			missing = append(missing, index)
+		}
+	}
+	workers := min(relatedCountWorkers, len(missing))
+	if workers < relatedCountWorkers && workers > 0 {
+		workers = 1
+	}
+	if capacity := database.Stats().MaxOpenConnections; capacity > 0 {
+		workers = min(workers, capacity)
+	}
+	group, workContext := errgroup.WithContext(ctx)
+	for worker := range workers {
+		group.Go(func() (failure error) {
+			current := connection
+			if worker != 0 {
+				var err error
+				current, err = database.Conn(workContext)
+				if err != nil {
+					return err
+				}
+				defer func() { failure = errors.Join(failure, current.Close()) }()
+				if err := configureRelatedConnection(workContext, current, shouldMap); err != nil {
+					return err
+				}
+			}
+			for offset := worker; offset < len(missing); offset += workers {
+				index := missing[offset]
+				var err error
+				if costs[index], err = relatedTermCost(workContext, current, cache, terms[index]); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+	return costs, group.Wait()
+}
+
+// configureRelatedConnection maps databases that fit SQLite's mapping limit. Larger files
+// retain normal paging, since their FTS segments may lie beyond the mapped prefix.
+func configureRelatedConnection(ctx context.Context, connection *sql.Conn, shouldMap bool) error {
+	if !shouldMap {
+		return nil
+	}
+	_, err := connection.ExecContext(ctx, "PRAGMA mmap_size=2147418112")
+	return err
 }
 
 // RelatedArticles returns articles ranked by FTS5 bm25 similarity to the source article title.
@@ -227,7 +275,7 @@ func RelatedArticles(ctx context.Context, configuration config.Config, name *str
 	if err != nil {
 		return nil, err
 	}
-	database, err := open(configuration, name)
+	database, err := storage.Open(filename, false, relatedCountWorkers)
 	if err != nil {
 		return nil, err
 	}
@@ -284,7 +332,7 @@ func relatedTitleKey(title string) string {
 }
 
 // relatedArticleIds ranks matching rowids on a connection that is released before enrichment,
-// because index databases are opened with a single connection.
+// while term counting may use the other bounded pool connections.
 func relatedArticleIds(ctx context.Context, database *sql.DB, filename string, title string, id int64, limit int64) (result []int64, failure error) {
 	connection, err := database.Conn(ctx)
 	if err != nil {
@@ -295,6 +343,11 @@ func relatedArticleIds(ctx context.Context, database *sql.DB, filename string, t
 			failure = errors.Join(failure, fmt.Errorf("close connection: %w", closeError))
 		}
 	}()
+	info, statError := os.Stat(filename)
+	shouldMap := statError == nil && info.Size() <= relatedMmapLimit
+	if err := configureRelatedConnection(ctx, connection, shouldMap); err != nil {
+		return nil, err
+	}
 	terms := relatedTerms(title)
 	if len(terms) == 0 {
 		return []int64{}, nil
@@ -309,11 +362,9 @@ func relatedArticleIds(ctx context.Context, database *sql.DB, filename string, t
 			collector.Record(time.Now(), shape, time.Since(started))
 		}()
 	}
-	costs := make([]int, len(terms))
-	for index, term := range terms {
-		if costs[index], err = relatedTermCost(ctx, connection, filename, term); err != nil {
-			return nil, err
-		}
+	costs, err := relatedTermCosts(ctx, database, connection, relatedCostsForFile(filename), terms, shouldMap)
+	if err != nil {
+		return nil, err
 	}
 	rows, err := connection.QueryContext(ctx, "SELECT rowid FROM article_search WHERE article_search MATCH ? AND rowid<>? ORDER BY "+relatedRanking+" LIMIT ?", relatedExpression(terms, costs), id, limit)
 	if err != nil {
