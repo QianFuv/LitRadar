@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, X } from '@/components/ui/animated-icons';
 import { useSearch } from '@tanstack/react-router';
 import { useVirtualizer, type Virtualizer } from '@tanstack/react-virtual';
-import { useEffect, useImperativeHandle, useRef, useState, type RefObject } from 'react';
+import { useImperativeHandle, useRef, useState, type RefObject } from 'react';
 
 import {
   DatabasePill,
@@ -75,12 +75,7 @@ import {
   type JournalRatingKey,
 } from '@/lib/journal-ratings';
 import { useUpdateWorkspaceSearch, WORKSPACE_ROUTE_ID } from '@/lib/search-params';
-import {
-  reconcileSelectedDatabase,
-  resolveAvailableSelectedDatabase,
-  setSelectedDatabase,
-  useSelectedDatabase,
-} from '@/lib/selected-database';
+import { setSelectedDatabase, useActiveDatabase } from '@/lib/selected-database';
 import * as stylex from '@stylexjs/stylex';
 import { colors, lineHeights } from '@/lib/theme.stylex';
 
@@ -164,7 +159,6 @@ function useSearchFilterState() {
   const search = useSearch({ from: WORKSPACE_ROUTE_ID });
   const updateSearch = useUpdateWorkspaceSearch();
 
-  const selectedDb = useSelectedDatabase();
   const areas = search.area ?? [];
   const journalIds = search.journal_id ?? [];
   const monthRange = search.month_range ?? null;
@@ -183,25 +177,22 @@ function useSearchFilterState() {
     ...databasesQuery(),
     enabled: !!user,
   });
-  const activeDb = resolveAvailableSelectedDatabase(selectedDb, databases ?? []);
-
-  useEffect(() => {
-    reconcileSelectedDatabase(selectedDb, databases ?? []);
-  }, [databases, selectedDb]);
+  const activeDb = useActiveDatabase() ?? '';
+  const canQueryDatabase = !!user && activeDb !== '';
 
   const { data: areaOptions, isLoading: loadingAreas } = useQuery({
     ...areasQuery(activeDb),
-    enabled: !!user,
+    enabled: canQueryDatabase,
   });
 
   const { data: journalOptions, isLoading: loadingJournals } = useQuery({
     ...journalOptionsQuery(activeDb),
-    enabled: !!user,
+    enabled: canQueryDatabase,
   });
 
   const { data: yearData, isLoading: loadingYears } = useQuery({
     ...yearsQuery(activeDb),
-    enabled: !!user,
+    enabled: canQueryDatabase,
   });
 
   const {
@@ -211,7 +202,7 @@ function useSearchFilterState() {
     refetch: refetchRatings,
   } = useQuery({
     ...journalRatingsQuery(activeDb),
-    enabled: !!user && !!activeDb,
+    enabled: canQueryDatabase,
   });
 
   const handleDatabaseChange = (dbName: string) => {
@@ -300,12 +291,12 @@ function useSearchFilterState() {
     loadingDatabases,
     activeDb,
     areaOptions,
-    loadingAreas,
+    loadingAreas: loadingAreas || !activeDb,
     journalOptions,
-    loadingJournals,
-    loadingYears,
+    loadingJournals: loadingJournals || !activeDb,
+    loadingYears: loadingYears || !activeDb,
     ratingOptions,
-    isLoadingRatings,
+    isLoadingRatings: isLoadingRatings || !activeDb,
     isRatingError,
     refetchRatings,
     ratingSelectionCount,

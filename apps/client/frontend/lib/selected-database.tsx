@@ -5,7 +5,12 @@
  * `storage` events bring changes made in other documents into this one.
  */
 
+import { useQuery } from '@tanstack/react-query';
 import { createAtom, useSelector } from '@tanstack/react-store';
+import { useEffect } from 'react';
+
+import { databasesQuery } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 
 import {
   SELECTED_DATABASE_KEY,
@@ -53,7 +58,7 @@ export function setSelectedDatabase(dbName: string): void {
  * @param availableDatabases - Databases returned by the metadata endpoint.
  * @returns Current value when valid, otherwise the first available value.
  */
-export function resolveAvailableSelectedDatabase(
+function resolveAvailableSelectedDatabase(
   selectedDatabase: string,
   availableDatabases: readonly string[],
 ): string {
@@ -88,4 +93,30 @@ export function reconcileSelectedDatabase(
  */
 export function useSelectedDatabase(): string {
   return useSelector(selectedDatabaseAtom);
+}
+
+/**
+ * Resolve the database that database-scoped queries should use: the stored selection once the
+ * server's database list confirms it, or the list's first database when the stored one (or the
+ * built-in default) is not offered, which is then persisted. Until the list arrives the result is
+ * null, so dependent queries wait instead of sending a request for a database that may be
+ * replaced a moment later. When the list fails to load the stored selection is used as is.
+ *
+ * @returns Effective database name, or null while the database list is loading.
+ */
+export function useActiveDatabase(): string | null {
+  const { user } = useAuth();
+  const selectedDatabase = useSelectedDatabase();
+  const { data: databases, isError } = useQuery({ ...databasesQuery(), enabled: !!user });
+
+  useEffect(() => {
+    if (databases) {
+      reconcileSelectedDatabase(selectedDatabase, databases);
+    }
+  }, [databases, selectedDatabase]);
+
+  if (databases) {
+    return resolveAvailableSelectedDatabase(selectedDatabase, databases);
+  }
+  return isError ? selectedDatabase : null;
 }

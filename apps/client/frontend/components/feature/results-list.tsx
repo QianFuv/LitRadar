@@ -24,7 +24,7 @@ import { useMemo, type ComponentProps, type ReactNode } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { getMonthRangeDateBounds } from '@/lib/article-filters';
 import { useFtsHighlighter } from '@/lib/fts-highlight';
-import { useSelectedDatabase } from '@/lib/selected-database';
+import { useActiveDatabase } from '@/lib/selected-database';
 import { useFavoriteChecks } from '@/components/feature/use-favorite-checks';
 import {
   JOURNAL_RATING_SYSTEMS,
@@ -167,7 +167,7 @@ function useResultsViewState() {
   const searchKey = useLocation({ select: (location) => location.searchStr });
 
   const articleQuery = getResultsArticleQuery(q, areas, journalIds, ratings, monthRange);
-  const currentDb = useSelectedDatabase();
+  const currentDb = useActiveDatabase() ?? '';
   const queryKey = articlePagesQueryKey(articleQuery, currentDb);
 
   const { data, isLoading, isError, error, fetchNextPage, hasNextPage, isFetchingNextPage } =
@@ -187,6 +187,7 @@ function useResultsViewState() {
       },
       initialPageParam: null,
       getNextPageParam: getNextArticlePageParam,
+      enabled: currentDb !== '',
       staleTime: 5 * 60 * 1000,
       gcTime: 10 * 60 * 1000,
     });
@@ -225,7 +226,7 @@ function useResultsViewState() {
   return {
     user,
     currentDb,
-    isLoading,
+    isLoading: isLoading || currentDb === '',
     isError,
     error,
     isFetchingNextPage,

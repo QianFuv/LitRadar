@@ -3537,6 +3537,40 @@ async function readerSheetWidthTest({ page }: { page: Page }): Promise<void> {
 test('slides narrow-window details in at the docked panel width', readerSheetWidthTest);
 
 /**
+ * Send every database-scoped request of a first search-page visit once, with the database the
+ * server offers, instead of first using the built-in default and aborting it a moment later.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function firstLoadDatabaseRequestsTest({ page }: { page: Page }): Promise<void> {
+  const databaseRequests: string[] = [];
+  const failedRequests: string[] = [];
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith('/api/') && url.searchParams.has('db')) {
+      databaseRequests.push(`${url.pathname}?db=${url.searchParams.get('db')}`);
+    }
+  });
+  page.on('requestfailed', (request) => failedRequests.push(request.url()));
+  await page.route('**/api/**', serveArticleSettingsApi);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/?q=graph');
+  await expect(page.getByRole('region', { name: '阅读台' }).getByRole('article')).toBeVisible();
+  await expect(page.locator('fieldset[aria-label="筛选条件"] [aria-label^="领域"]')).toBeVisible();
+  await page.waitForLoadState('networkidle');
+
+  expect(databaseRequests.length).toBeGreaterThan(0);
+  expect(databaseRequests.filter((request) => !request.endsWith('db=fixture.sqlite'))).toEqual([]);
+  expect(new Set(databaseRequests).size).toBe(databaseRequests.length);
+  expect(failedRequests).toEqual([]);
+}
+
+test(
+  'sends first-load database requests once with the offered database',
+  firstLoadDatabaseRequestsTest,
+);
+
+/**
  * Report whether the highlight surface marking an item covers the item's highlight container.
  *
  * @param item - Highlighted item.

@@ -62,7 +62,7 @@ import {
   type RelationPoint,
 } from '@/lib/relation-graph';
 import { useUpdateWorkspaceSearch, WORKSPACE_ROUTE_ID } from '@/lib/search-params';
-import { useSelectedDatabase } from '@/lib/selected-database';
+import { useActiveDatabase } from '@/lib/selected-database';
 import { READER_DOCK_MEDIA_QUERY, useMediaQuery } from '@/lib/use-media-query';
 import { LoadingText } from '@/components/ui/loading-text';
 import * as stylex from '@stylexjs/stylex';
@@ -180,14 +180,14 @@ function resolveInitialRelationGraph(
  * @returns Empty-state workspace with search.
  */
 function RelationPicker({ onPick }: { onPick: (article: Article, dbName: string) => void }) {
-  const dbName = useSelectedDatabase();
+  const dbName = useActiveDatabase() ?? '';
   const [draft, setDraft] = useState('');
   const [query, setQuery] = useState('');
   const resultsQuery = useQuery({
     queryKey: articlePagesQueryKey({ q: query, limit: RELATION_PICKER_LIMIT }, dbName),
     queryFn: ({ signal }) =>
       getArticles({ q: query, limit: RELATION_PICKER_LIMIT }, null, dbName, signal),
-    enabled: query.length > 0,
+    enabled: query.length > 0 && dbName !== '',
     staleTime: 60 * 1000,
   });
 

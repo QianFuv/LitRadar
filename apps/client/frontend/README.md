@@ -167,6 +167,8 @@ apps/client/frontend/
 | 表单草稿               | TanStack Form（`lib/form.tsx` 的 `useAppForm`，规则用 Zod schema）                   |
 | 主题                   | next-themes 的 `class` 属性与系统偏好                                                |
 
+按数据库查询的请求（文章列表、领域、期刊、年份、评级与关系图选文）使用 `lib/selected-database.tsx` 的 `useActiveDatabase`：`GET /api/meta/databases` 返回前它为 `null`，这些查询保持 `enabled: false`；列表返回后存储值不在其中时改用第一个数据库并写回存储，因此首次进入页面时每个请求只按正确的数据库发送一次。数据库列表加载失败时沿用存储值。
+
 浏览器 API 请求默认 `credentials: include`，登录令牌只存在后端设置的 `litradar_session` HttpOnly Cookie 中。设置中心创建的 Bearer 访问令牌用于外部客户端，不作为前端登录态存入 Web Storage。
 
 旧版搜索历史键 `search_history` 和数据库选择键 `selected_database` 会迁移到对应的新命名空间并删除；其他升级前的浏览器键不会被读取或复制。升级后用户需要重新登录。

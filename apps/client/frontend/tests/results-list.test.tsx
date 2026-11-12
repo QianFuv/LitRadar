@@ -458,6 +458,11 @@ async function rejectsRepeatedCursor(): Promise<void> {
 
 beforeEach(() => {
   setSelectedDatabase('scenario.sqlite');
+  server.use(
+    http.get('http://localhost/api/meta/databases', () =>
+      HttpResponse.json(['scenario.sqlite', 'other.sqlite']),
+    ),
+  );
   resultsListMocks.favoriteChecksByArticle = {
     '9223361829786370983': [{ folder_id: 7, folder_name: 'Reading' }],
   };
@@ -490,9 +495,11 @@ async function reusesHighlightsForFavoriteChanges(): Promise<void> {
     ),
   ).toHaveLength(0);
   await act(async () => {
-    const queryKey = view.queryClient
-      .getQueryCache()
-      .find({ queryKey: apiPathKey('get', '/api/articles'), exact: false })!.queryKey;
+    const queryKey = view.queryClient.getQueryCache().find({
+      queryKey: apiPathKey('get', '/api/articles'),
+      exact: false,
+      type: 'active',
+    })!.queryKey;
     view.queryClient.setQueryData(queryKey, {
       pages: [createArticlePage([{ ...SHARED_ARTICLE, title: 'Updated Fixture title' }])],
       pageParams: [null],

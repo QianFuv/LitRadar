@@ -1,17 +1,25 @@
 /**
- * Storage, subscription, and reconciliation coverage for database selection.
+ * Storage, subscription, reconciliation, and effective-database coverage for database selection.
  */
 
 import { act } from 'react';
 import { render, screen } from '@testing-library/react';
+import { http, HttpResponse } from 'msw';
 import { describe, expect, test, vi } from 'vite-plus/test';
 
 import { DEFAULT_DATABASE, SELECTED_DATABASE_KEY, readSelectedDatabase } from '@/lib/api/client';
 import {
   reconcileSelectedDatabase,
   setSelectedDatabase,
+  useActiveDatabase,
   useSelectedDatabase,
 } from '@/lib/selected-database';
+import { server } from '@/tests/mocks/server';
+import { renderWithQuery } from '@/tests/render';
+
+vi.mock('@/lib/auth-context', () => ({
+  useAuth: () => ({ user: { id: 1, username: 'database_user', is_admin: false } }),
+}));
 
 const LEGACY_SELECTED_DATABASE_KEY = 'selected_database';
 
@@ -110,9 +118,59 @@ function reconcilesUnavailableDatabase(): void {
   expect(setItem).not.toHaveBeenCalled();
 }
 
+/** Render the effective database, or `pending` while it is unknown. */
+function ActiveDatabaseProbe() {
+  const activeDatabase = useActiveDatabase();
+  return <output>{activeDatabase ?? 'pending'}</output>;
+}
+
+/**
+ * Verify the effective database stays unknown until the server's list arrives, then resolves to an
+ * offered database and persists it in place of an unavailable stored one.
+ */
+async function waitsForOfferedDatabase(): Promise<void> {
+  act(() => setSelectedDatabase('removed.sqlite'));
+  let releaseDatabases: (() => void) | undefined;
+  const pending = new Promise<void>((resolve) => {
+    releaseDatabases = resolve;
+  });
+  server.use(
+    http.get('http://localhost/api/meta/databases', async () => {
+      await pending;
+      return HttpResponse.json(['offered.sqlite', 'secondary.sqlite']);
+    }),
+  );
+  await renderWithQuery(<ActiveDatabaseProbe />);
+
+  expect(screen.getByText('pending')).toBeInTheDocument();
+  releaseDatabases?.();
+  expect(await screen.findByText('offered.sqlite')).toBeInTheDocument();
+  expect(window.localStorage.getItem(SELECTED_DATABASE_KEY)).toBe('offered.sqlite');
+}
+
+/**
+ * Verify a failed database list leaves the stored selection usable instead of blocking queries.
+ */
+async function keepsStoredDatabaseWhenListFails(): Promise<void> {
+  act(() => setSelectedDatabase('stored.sqlite'));
+  server.use(
+    http.get('http://localhost/api/meta/databases', () =>
+      HttpResponse.json(
+        { title: 'Internal Server Error', status: 500, detail: 'unavailable' },
+        { status: 500, headers: { 'Content-Type': 'application/problem+json' } },
+      ),
+    ),
+  );
+  await renderWithQuery(<ActiveDatabaseProbe />);
+
+  expect(await screen.findByText('stored.sqlite')).toBeInTheDocument();
+}
+
 describe('selected database store', () => {
   test('synchronizes same-document and cross-document subscribers', synchronizesSubscribers);
   test('migrates the legacy storage key', migratesLegacyStorage);
   test('tolerates unavailable browser storage', toleratesUnavailableStorage);
   test('reconciles unavailable stored databases', reconcilesUnavailableDatabase);
+  test('waits for the offered database list', waitsForOfferedDatabase);
+  test('keeps the stored database when the list fails', keepsStoredDatabaseWhenListFails);
 });
