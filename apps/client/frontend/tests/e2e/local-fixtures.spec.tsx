@@ -3649,6 +3649,55 @@ async function expectSlidingHoverGroup(
 }
 
 /**
+ * Move from a light filter pill onto the dark database pill and check, frame by frame, that no
+ * sliding surface ever reaches the database pill, which paints its own dark hover instead.
+ *
+ * @param page - Playwright browser page showing the search filters.
+ */
+async function expectDarkDatabasePillOutsideSlide(page: Page): Promise<void> {
+  const databasePill = page.getByRole('combobox', { name: '检索数据库' });
+  const lightPill = page
+    .locator('fieldset[aria-label="筛选条件"] [data-sidebar="menu-button"]')
+    .filter({ visible: true })
+    .first();
+  const from = (await lightPill.boundingBox())!;
+  const to = (await databasePill.boundingBox())!;
+  await page.mouse.move(1, 1);
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.waitForTimeout(300);
+  await page.evaluate(
+    ({ surfaces, target }) => {
+      const sampler = window as unknown as { databaseOverlaps: number; isSampling: boolean };
+      sampler.databaseOverlaps = 0;
+      sampler.isSampling = true;
+      const sample = () => {
+        for (const surface of document.querySelectorAll<HTMLElement>(surfaces)) {
+          const box = surface.getBoundingClientRect();
+          const overlap =
+            Math.min(box.right, target.x + target.width) - Math.max(box.left, target.x);
+          const isPainted =
+            surface.checkVisibility() && Number(getComputedStyle(surface).opacity) > 0.02;
+          if (isPainted && box.width > 0 && overlap > target.width / 2)
+            sampler.databaseOverlaps += 1;
+        }
+        if (sampler.isSampling) requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    },
+    { surfaces: HIGHLIGHT_SURFACES, target: to },
+  );
+  await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 8 });
+  await page.waitForTimeout(400);
+  const overlaps = await page.evaluate(() => {
+    const sampler = window as unknown as { databaseOverlaps: number; isSampling: boolean };
+    sampler.isSampling = false;
+    return sampler.databaseOverlaps;
+  });
+  expect(overlaps, 'sliding surface reached the dark database pill').toBe(0);
+  await page.mouse.move(1, 1);
+}
+
+/**
  * Give every in-page group of sibling controls the sliding hover highlight of the popup lists.
  *
  * @param fixtures - Playwright page fixture.
@@ -3664,6 +3713,7 @@ async function slidingHoverGroupsTest({ page }: { page: Page }): Promise<void> {
     'filter pills',
     'fieldset[aria-label="筛选条件"] [data-sidebar="menu-button"]',
   );
+  await expectDarkDatabasePillOutsideSlide(page);
   await expectSlidingHoverGroup(
     page,
     'rail navigation',
@@ -3735,12 +3785,6 @@ async function slidingHoverGroupsTest({ page }: { page: Page }): Promise<void> {
     page,
     'favorite folder toolbar',
     'button[data-sidebar="menu-button"]:is([aria-label="导出收藏夹"], [aria-label^="管理收藏夹 "])',
-  );
-  await page.goto('/?view=weekly-updates');
-  await expectSlidingHoverGroup(
-    page,
-    'weekly pills',
-    'button[data-sidebar="menu-button"]:is([aria-label="周报数据库"], [aria-label^="期刊"])',
   );
 
   await page.unrouteAll({ behavior: 'ignoreErrors' });

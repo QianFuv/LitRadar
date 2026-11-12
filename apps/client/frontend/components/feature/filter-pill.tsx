@@ -206,7 +206,9 @@ function formatDatabaseFileName(database: string): string {
 }
 
 /**
- * Render the current database as a dark context pill backed by an accessible select.
+ * Render the current database as a dark context pill backed by an accessible select. It stays out
+ * of the sliding hover group: a shared surface gliding from the light pills onto this dark one
+ * would morph between the two colors mid-slide.
  *
  * @param props - Accessible label, options, label formatter, and change handler.
  * @returns Layers select pill.
@@ -229,7 +231,6 @@ export function DatabasePill({
       <SelectTrigger
         aria-label={ariaLabel}
         size="sm"
-        {...hoverHighlightItemProps}
         xstyle={styles.databasePillSelectTrigger}
         iconXstyle={styles.databasePillIcon}
       >
@@ -410,7 +411,6 @@ const styles = stylex.create({
       },
     },
     lineHeight: 'inherit',
-    transitionProperty: 'color, box-shadow',
   },
   databasePillLayers: {
     width: '0.875rem',

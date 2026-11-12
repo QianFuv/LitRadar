@@ -18,7 +18,6 @@ import { WORKSPACE_SEARCH_ATTRIBUTE } from '@/components/feature/article-reader-
 import { WorkspaceShell } from '@/components/feature/workspace-shell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { HoverHighlightGroup } from '@/components/ui/hover-highlight';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { RevealItem } from '@/components/ui/reveal';
@@ -457,9 +456,7 @@ function renderCfpHeader(state: CfpViewState) {
         <h1 {...stylex.props(styles.renderCfpHeaderH1)}>征稿追踪</h1>
         <p {...stylex.props(styles.renderCfpHeaderP)}>按期刊发现征稿主题与投稿要求</p>
       </div>
-      <HoverHighlightGroup
-        xstyle={[styles.renderCfpNoticeContentDivItem, styles.renderCfpHeaderDiv]}
-      >
+      <div {...stylex.props(styles.renderCfpNoticeContentDivItem, styles.renderCfpHeaderDiv)}>
         <RevealItem
           isReady={!databasesResult.isLoading}
           xstyle={styles.renderCfpHeaderRevealItem}
@@ -481,7 +478,7 @@ function renderCfpHeader(state: CfpViewState) {
         >
           <span {...stylex.props(styles.renderCfpHeaderSpan)}>{journals.length} 本期刊</span>
         </RevealItem>
-      </HoverHighlightGroup>
+      </div>
       <div {...stylex.props(styles.renderCfpNoticeContentDivItem, styles.renderCfpHeaderDiv2)}>
         <Search xstyle={styles.renderCfpHeaderSearch} aria-hidden="true" />
         <Input
