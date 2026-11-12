@@ -151,7 +151,7 @@ Button、CopyButton、菜单项和 Select 通过 `IconStyleProvider` 给内部�
 
 浮层的 Portal 容器统一使用 `components/ui/popup-layer.tsx` 的 `popupLayerStyle`（`z-index` 50 的层叠上下文）。Base UI 把 modal 浮层的外部点击遮罩渲染在定位器旁边而不是里面，没有这一层时，带 `z-index` 的应用区域（列表栏头部、导航轨）会盖在遮罩之上，继续响应悬停和点击。筛选栏的所有面板（数据库、发表时间、评级、期刊、领域）都是 modal：面板打开时只有它的胶囊和选项高亮，其他控件不响应指针，同一时刻只有一个高亮项。
 
-Select、MultiSelect、Combobox 与 DropdownMenu 的选项高亮由 Animate UI 的滑动高亮面绘制：选项自身的 `[data-highlighted]` 底色只是高亮面读取的颜色来源，Animate UI 随即把它清为透明。因此这些选项只过渡文字颜色、不过渡 `background-color`，否则被清除的底色会用 200 ms 慢慢褪去，指针快速划过时旧选项的底色还没消失、高亮面已经滑到新选项，同时出现一快一慢两个高亮。`tests/e2e/local-fixtures.spec.tsx` 的快速划过用例逐帧检查期刊与领域列表中始终只有一个高亮行。
+Select、MultiSelect、Combobox 与 DropdownMenu 的选项高亮由 Animate UI 的滑动高亮面绘制：选项自身的 `[data-highlighted]` 底色只是高亮面读取的颜色来源，Animate UI 随即把它清为透明。因此这些选项只过渡文字颜色、不过渡 `background-color`，否则被清除的底色会用 200 ms 慢慢褪去，指针快速划过时旧选项的底色还没消失、高亮面已经滑到新选项，同时出现一快一慢两个高亮。高亮面以 `z-index: -1` 画在选项文字下方，前提是选项本身不形成层叠上下文：虚拟列表的行（期刊列表）用 `top` 定位而不用 `transform`，否则每行各自成为层叠上下文，DOM 中靠后的行里滑动的高亮面会盖住它经过的前面各行的文字。`tests/e2e/local-fixtures.spec.tsx` 的快速划过用例在指针上下划过、键盘移动和滚动时逐帧检查期刊与领域列表：始终只有一个高亮行，且没有任何选项文字被高亮面盖住。
 
 Animate UI `Highlight` 在 children 模式下只给高亮面设置 `position: absolute`，尺寸由调用方提供，样式必须包含 `inset: 0`（或明确的 inset 值），否则高亮面为零尺寸，依赖它作底色的选中项（如收藏夹标签的浅色文字）会看不见。
 
