@@ -3692,7 +3692,9 @@ test('keeps one highlighted row during a fast pointer sweep', fastSweepSingleHig
 
 /**
  * Sweep the pointer fast across one in-page group of controls and back, expecting one sliding hover
- * surface beneath every label, and no control fading its own background.
+ * surface beneath every label, and no control fading its own background. The sweep path is measured
+ * once the controls stop moving, so a group that is still entering (the settings center slides up)
+ * is not swept at positions it is about to leave.
  *
  * @param page - Playwright browser page.
  * @param name - Group name for failure messages.
@@ -3708,8 +3710,8 @@ async function expectSlidingHoverGroup(
   const controls = page.locator(items).filter({ visible: true });
   await expect.poll(() => controls.count(), name).toBeGreaterThan(1);
   const count = await controls.count();
-  const first = (await controls.first().boundingBox())!;
-  const last = (await controls.nth(Math.min(count, 6) - 1).boundingBox())!;
+  const first = (await settledBoundingBox(controls.first()))!;
+  const last = (await settledBoundingBox(controls.nth(Math.min(count, 6) - 1)))!;
   const transitions = await controls.evaluateAll((elements) =>
     elements.map((element) => getComputedStyle(element).transitionProperty),
   );
