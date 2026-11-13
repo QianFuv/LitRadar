@@ -1,6 +1,6 @@
 # LitRadar 前端包
 
-`apps/client/frontend/` 是 LitRadar 的 Vite + React 单页客户端源码，负责登录、检索、收藏、每周更新、征稿追踪、聚合设置中心和管理后台。发布构建输出静态 `dist/`，由 `apps/client` 的 Wails v3 Server Build 嵌入并提供（SPA 回退与安全响应头）；Go API 服务不再托管网页，生产环境由外部反向代理把 `/api*`、`/mcp*`、`/docs*`、`/openapi.json`、`/openapi.yaml`、`/health/*` 转发到 Go 服务、其余路径转发到 Web 客户端。本页只说明前端包的开发边界：
+`apps/client/frontend/` 是 LitRadar 的 Vite + React 单页客户端源码，负责登录、检索、收藏、每周更新、征稿追踪、聚合设置中心和管理后台。发布构建输出静态 `dist/`，由 `apps/client` 的 Wails v3 Server Build 嵌入并提供（SPA 回退与安全响应头）；Go API 服务只提供 API，不托管网页，生产环境由 Caddy 反向代理把 `/api*`、`/mcp*`、`/docs*`、`/openapi.json`、`/openapi.yaml`、`/health/*` 转发到 Go 服务、其余路径转发到 Web 客户端。本页只说明前端包的开发边界：
 
 - 系统进程与数据流见[系统架构](../../../docs/architecture/README.md)。
 - REST 契约与认证方式见[API 参考](../../../docs/reference/api.md)。
@@ -11,12 +11,10 @@
 
 ## 工具链
 
-CI 与前端构建阶段使用：
+Node.js、pnpm 与 Go 的固定版本见[开发指南](../../../docs/guides/development.md#工具链)（Go 用于生成 OpenAPI、启动后端和 full-stack e2e）。前端专用工具链：
 
 | 工具              | 版本                                                                                      |
 | ----------------- | ----------------------------------------------------------------------------------------- |
-| Node.js           | 26.11.1                                                                                   |
-| pnpm              | 12.16.1                                                                                   |
 | Vite+（`vp`）     | 1.5.x；内含 Vite 8、Vitest 5、Oxlint、Oxfmt，版本随 Vite+ 锁定                            |
 | TanStack Router   | 1.x（代码式路由树，search 用 Zod 4 校验）                                                 |
 | React / React DOM | 19.2.3                                                                                    |
@@ -24,41 +22,16 @@ CI 与前端构建阶段使用：
 | Motion for React  | 14.x                                                                                      |
 | TypeScript        | 7.x                                                                                       |
 | StyleX            | 0.19.x（`@stylexjs/unplugin` 编译为原子 CSS，经 Lightning CSS 处理）                      |
-| Go                | 1.27.3；生成 OpenAPI、启动后端和 full-stack e2e 时需要，不需要 C 编译器                   |
 
-依赖由仓库根目录的 pnpm workspace `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Router（含按需加载的 `lazyRouteComponent`）、TanStack Query、openapi-fetch 与 openapi-react-query（业务 API 请求与查询 key）、TanStack Pacer（防抖与短暂提示的复位）、TanStack Hotkeys（工作区快捷键）、TanStack Store（跨组件共享的当前数据库）、TanStack Form（表单状态与校验）、TanStack Charts（统计图表）、Temporal（`@js-temporal/polyfill`，日期计算）、Zod、next-themes、Base UI（经 Animate UI primitives 封装）、StyleX、Motion 和 lucide-react；元素可见性用原生 IntersectionObserver（`lib/use-in-view.tsx`）。根目录 `.gitattributes` 让 `apps/client/frontend/**` 在所有平台以 LF 换行签出，与 Oxfmt 的格式检查一致。样式写在各组件文件末尾的 `stylex.create`，颜色与阴影引用 `lib/theme.stylex.tsx` 的 token；接受样式覆盖的组件使用 `xstyle` 属性（类型为 `stylex.StyleXStyles`），不再接受 `className`。Motion 只通过 `components/ui/motion.tsx` 的 `LazyMotion` / `domAnimation` 封装进入业务代码；Base UI 浮层的进出场由 Animate UI primitives 内置的 Motion 过渡驱动。
+依赖由仓库根目录的 pnpm workspace `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Router（含按需加载的 `lazyRouteComponent`）、TanStack Query、openapi-fetch 与 openapi-react-query（业务 API 请求与查询 key）、TanStack Pacer（防抖与短暂提示的复位）、TanStack Hotkeys（工作区快捷键）、TanStack Store（跨组件共享的当前数据库）、TanStack Form（表单状态与校验）、TanStack Charts（统计图表）、Temporal（`@js-temporal/polyfill`，日期计算）、Zod、next-themes、Base UI（经 Animate UI primitives 封装）、StyleX、Motion 和 lucide-react；元素可见性用原生 IntersectionObserver（`lib/use-in-view.tsx`）。根目录 `.gitattributes` 让 `apps/client/frontend/**` 在所有平台以 LF 换行签出，与 Oxfmt 的格式检查一致。样式写在各组件文件末尾的 `stylex.create`，颜色与阴影引用 `lib/theme.stylex.tsx` 的 token；接受样式覆盖的组件使用 `xstyle` 属性（类型为 `stylex.StyleXStyles`），不接受 `className`。Motion 只通过 `components/ui/motion.tsx` 的封装进入业务代码，动效变体建立在 Animate UI 的 motion token（`@animate-ui/react/utils/motion`）之上；Base UI 浮层的进出场由 Animate UI primitives 内置的 Motion 过渡驱动。
 
 ## 本地运行
 
-准备好前端依赖和仓库部署密钥后，在仓库根目录运行 `pnpm dev`（即 `node scripts/dev.mjs`），即可一起启动 Vite 与 Go 服务；Go 服务的 `--project-root` 固定为仓库根目录。按 `Ctrl+C` 一起关闭；启动失败或任一进程意外退出也会清理另一进程。无需先运行 `pnpm build`，也无需建立静态资源目录连接。完整准备步骤和隔离数据目录参数见[开发指南](../../../docs/guides/development.md)。
+准备好前端依赖和仓库部署密钥后，在仓库根目录运行 `pnpm dev`（即 `node scripts/dev.mjs`），即可一起启动 Vite 与 Go 服务；Go 服务的 `--project-root` 默认为仓库根目录。完整准备步骤、进程管理和隔离数据目录参数见[开发指南](../../../docs/guides/development.md#一条命令启动前后端)。
 
-需要分开启动时，使用以下命令。
+需要分开启动时，先按[开发指南](../../../docs/guides/development.md#统一应用服务)在 loopback 8001 启动 Go 服务，再在仓库根目录运行 `pnpm --filter litradar-frontend dev`。
 
-在仓库根目录启动只监听 loopback 8001 的统一 Go 应用（工具链见[开发指南](../../../docs/guides/development.md#工具链)）；HTTP 和内嵌调度共享该进程：
-
-```bash
-go run ./apps/server serve \
-  --development \
-  --host 127.0.0.1 \
-  --port 8001 \
-  --secret-key-file secrets/litradar.key
-```
-
-再在仓库根目录安装 workspace 依赖，并在本目录运行 Vite：
-
-```bash
-npm install --global pnpm@12.16.1
-pnpm install --frozen-lockfile
-pnpm --filter litradar-frontend dev
-```
-
-默认浏览器入口统一为 `http://localhost:8000`。Vite 开发服务器保留 HMR，并把 `/api`、`/mcp`（含 SSE）、`/docs`、`/openapi.json`、`/openapi.yaml` 和 `/health` 代理到内部 Go 地址 `http://127.0.0.1:8001`（可用 `LITRADAR_BACKEND_URL` 覆盖）；`pnpm preview` 使用同一代理。浏览器不需要访问第二个端口。
-
-- Web：`http://localhost:8000/`
-- REST API：`http://localhost:8000/api`
-- API 文档：`http://localhost:8000/docs`（huma 内置文档页，页面脚本从公共 CDN 加载）
-- OpenAPI JSON：`http://localhost:8000/openapi.json`
-- MCP：`http://localhost:8000/mcp`
+默认浏览器入口统一为 `http://localhost:8000`，各入口地址见[开发指南](../../../docs/guides/development.md#统一应用服务)。Vite 开发服务器保留 HMR，并把 `/api`、`/mcp`（含 SSE）、`/docs`、`/openapi.json`、`/openapi.yaml` 和 `/health` 代理到内部 Go 地址 `http://127.0.0.1:8001`（可用 `LITRADAR_BACKEND_URL` 覆盖）；`pnpm preview` 使用同一代理。浏览器不需要访问第二个端口。
 
 发布构建执行 `pnpm build`（`vp build`）并写入 `dist/`；类型检查由 `pnpm check` 负责。兼容基线为去年 1 月 1 日以来发布的全部浏览器版本：`vite.config.ts` 按当前年份生成 browserslist 查询 `since <去年>-01-01`，并由它派生 `build.target` 与 `cssTarget`（2026 年为 Chromium 132、Firefox 134、Safari/iOS 18.3 起）。`apps/client` 中的 `wails3 task build:server` 与 `build:docker` 把它嵌入静态 linux/amd64 Web 主机和 distroless 镜像。
 
@@ -74,7 +47,7 @@ pnpm --filter litradar-frontend dev
 - 非 2xx 响应体按 RFC 9457 `application/problem+json` 用 Zod 解析为 `ApiError`：`errors[]` 中带 `body`/`path`/`query`/`header`/`cookie` 校验位置的条目（如 422）拼成"请求参数无效：字段（原因）"的中文提示，最多列 3 条；其余情况以 `detail` 作为显示文本（缺失时使用 `lib/api/endpoint-messages.tsx` 中该端点的中文回退文案），`type`、`title`、`instance` 与 `errors[]` 原样保留，`findErrorDetail(location)` 读取 `errors[]` 中某个 `location` 的 `message`（例如 CNKI 工作流的 `code` 与 `phase`）。只有带 `Retry-After` 的 429/503 响应才标记为 `retryable`；格式异常的成员按缺失处理。
 - `pnpm dev` / `pnpm preview` 只使用 `vite.config.ts` 中的开发代理。
 - 生产环境由外部反向代理让网页与 API 共用一个 Origin。
-- 浏览器跨源直连和构建时 API 地址覆盖不再受支持；需要不同公网入口时，应在同一 Origin 前部署反向代理。
+- 不支持浏览器跨源直连或构建时 API 地址覆盖；需要不同公网入口时，应在同一 Origin 前部署反向代理。
 
 ## 路由
 
@@ -85,20 +58,21 @@ pnpm --filter litradar-frontend dev
 | `/?view=favorites`      | 已登录   | 文件夹、收藏、批量操作与引文导出              |
 | `/?view=weekly-updates` | 已登录   | 按数据库和期刊浏览本周变化                    |
 | `/?view=cfp-tracking`   | 已登录   | 按维护期刊浏览征稿原文、状态和截止日期        |
+| `/?view=relations`      | 已登录   | 以一篇文章为中心浏览相关文章关系图            |
 | `?settings=<section>`   | 已登录   | 在当前受保护工作区上打开聚合设置中心          |
 | `?admin=<section>`      | 管理员   | 在当前受保护工作区上打开分栏管理面板          |
 
 路由树位于 `src/router.tsx`（TanStack Router 代码式路由，不生成路由树文件）：根路由提供错误页与 404，`/login` 是公开页，无路径的工作区布局（route id `/_workspace`）承载受保护的首页。除 `/login` 外，页面都在 `src/routes/require-auth.tsx` 守卫之下，它通过 `AuthProvider` 恢复当前用户，并在认证状态变化时把未登录访问一次性重定向到 `/login?next=...`。管理面板只由全局 Dialog 提供；账号菜单入口与手工添加的 `admin` query 都检查 `is_admin`，普通用户的管理参数会被移除且不会挂载管理数据组件。
 
-根路由通过 `view` 参数切换检索、收藏、每周更新和征稿工作区。省略 `view` 或传入未知值时显示检索；四个固定入口分别使用 `/`、`/?view=favorites`、`/?view=weekly-updates` 和 `/?view=cfp-tracking`，因此可直接访问、刷新并使用浏览器前进/后退。切换固定入口会清除上一工作区的私有参数；收藏继续使用 `folder`，周报继续使用 `db`、`journal` 和 `weekly_q`；征稿使用独立的 `cfp_db`、`cfp_journal`，不覆盖文章检索的数据库偏好。`/favorites` 与 `/weekly-updates` 已直接删除，访问时返回普通 404，不提供重定向或兼容页面。
+根路由通过 `view` 参数切换检索、收藏、每周更新、征稿和关系图工作区（取值定义在 `lib/workspace-view.tsx`）。省略 `view` 或传入未知值时显示检索；五个固定入口分别使用 `/`、`/?view=favorites`、`/?view=weekly-updates`、`/?view=cfp-tracking` 和 `/?view=relations`，因此可直接访问、刷新并使用浏览器前进/后退。切换固定入口会清除上一工作区的私有参数；收藏使用 `folder`，周报使用 `db`、`journal` 和 `weekly_q`；征稿使用独立的 `cfp_db`、`cfp_journal`，不覆盖文章检索的数据库偏好；关系图使用 `db` 和 `article`。`/favorites` 与 `/weekly-updates` 不是页面路由，访问时返回普通 404。
 
-设置中心由受保护布局全局挂载，合法分类为 `general`、`tracking`、`notifications`、`data-sources`、`account` 和 `tokens`。管理面板同样由该布局挂载，合法分类为 `overview`、`users`、`invite-codes`、`runtime-settings`、`scheduled-tasks` 和 `announcements`。打开、切换与关闭只修改对应的 `settings` 或 `admin` 参数并保留其他工作区状态；两个中心互斥，未知分类会被移除。`/admin`、`/settings` 和 `/tracking` 都不是页面路由，访问时返回普通 404，不提供重定向或兼容页面。
+设置中心由受保护布局全局挂载，合法分类为 `general`、`tracking`、`notifications`、`data-sources`、`account` 和 `tokens`。管理面板同样由该布局挂载，合法分类为 `overview`、`users`、`invite-codes`、`runtime-settings`、`scheduled-tasks` 和 `announcements`。打开、切换与关闭只修改对应的 `settings` 或 `admin` 参数并保留其他工作区状态；两个中心互斥，未知分类会被移除。`/admin`、`/settings` 和 `/tracking` 都不是页面路由，访问时返回普通 404。
 
-URL search 的契约集中在 `lib/search-params.tsx`：工作区与登录页各有一个 Zod schema，非法值按缺失处理，未知参数原样保留。查询串保持普通的 `key=value` 形式，列表参数（`area`、`journal_id` 与四个评级）以逗号连接、元素内的逗号转义为 `%2C`，与迁移前的链接兼容。组件用 `useSearch({ from: WORKSPACE_ROUTE_ID })` 读取、用 `useUpdateWorkspaceSearch()` 写入；写入替换当前历史记录且不重置滚动位置，空字符串和空列表不会出现在 URL 中。
+URL search 的契约集中在 `lib/search-params.tsx`：工作区与登录页各有一个 Zod schema，非法值按缺失处理，未知参数原样保留。查询串保持普通的 `key=value` 形式，列表参数（`area`、`journal_id` 与四个评级）以逗号连接、元素内的逗号转义为 `%2C`。组件用 `useSearch({ from: WORKSPACE_ROUTE_ID })` 读取、用 `useUpdateWorkspaceSearch()` 写入；写入替换当前历史记录且不重置滚动位置，空字符串和空列表不会出现在 URL 中。
 
-`index.html` 提供默认标题与描述；四个查询参数工作区和管理 Dialog 共用它，登录页与 404 页通过 React 19 `<title>`/`<meta>` 覆盖。未知路由使用自定义 404 页面；路由错误边界（`src/error-boundary.tsx`）提供重试和首页入口并在导航后复位，Router 或 Providers 失败时由不依赖 Providers 的独立全局错误画面兜底。首屏主题由 `public/theme-init.js` 在渲染前应用，避免闪烁。
+`index.html` 提供默认标题与描述；五个查询参数工作区和管理 Dialog 共用它，登录页与 404 页通过 React 19 `<title>`/`<meta>` 覆盖。未知路由使用自定义 404 页面；路由错误边界（`src/error-boundary.tsx`）提供重试和首页入口并在导航后复位，Router 或 Providers 失败时由不依赖 Providers 的独立全局错误画面兜底。首屏主题由 `public/theme-init.js` 在渲染前应用，避免闪烁。
 
-四个工作区复用应用框架（桌面导航轨、手机底栏）与两栏阅读工作区（列表栏 + 宽屏阅读台，窄屏改为侧滑详情面板）。设置中心与管理面板复用全屏 Base UI Dialog 外壳；文献追踪和通知分类共享未保存草稿，关闭或离开该分类组前需要确认。字体、配色、尺寸、动效和焦点管理统一见[设计系统](../../../docs/reference/design-system.md)，本页不重复维护视觉参数。
+五个工作区复用应用框架（桌面导航轨、手机底栏）与两栏阅读工作区（列表栏 + 宽屏阅读台，窄屏改为侧滑详情面板）。设置中心与管理面板复用全屏 Base UI Dialog 外壳；文献追踪和通知分类共享未保存草稿，关闭或离开该分类组前需要确认。字体、配色、尺寸、动效和焦点管理统一见[设计系统](../../../docs/reference/design-system.md)，本页不重复维护视觉参数。
 
 征稿工作区只读取后端认证 API，原文、状态和分页由服务端提供。采集和刷新不在浏览器中执行，见[征稿追踪架构](../../../docs/architecture/cfp-tracking.md)。
 
@@ -118,12 +92,14 @@ apps/client/frontend/
 │   ├── route-error.tsx    常规路由错误画面与重试入口
 │   ├── global-error.tsx   Router 或 Providers 失败时的独立错误画面
 │   └── providers.tsx      Theme、Motion、React Query 与认证上下文
-├── assets/                 本地字体 CSS 与 Unicode-range WOFF2 分片
+├── assets/                本地字体 CSS 与 Unicode-range WOFF2 分片
 ├── components/
 │   ├── admin/             全局管理面板 Dialog 与管理功能卡片
+│   ├── animate-ui/        Animate UI 动画图标
 │   ├── cfp/               征稿工作区、期刊分组与原文展示
 │   ├── favorites/         收藏页视图与 view model
 │   ├── feature/           阅读工作区、检索与筛选胶囊、文章详情和全局用户菜单
+│   ├── relations/         关系图工作区、画布与收藏控件
 │   ├── shell/             应用框架：导航轨、手机底栏与账号头像
 │   ├── settings/          聚合设置中心、分类内容与设置组件
 │   ├── tracking/          追踪设置内容与共享 view model
@@ -146,10 +122,13 @@ apps/client/frontend/
 └── tests/
     ├── *.test.tsx         Vitest/jsdom 与显式 MSW 场景
     ├── browser-components/ 选择性的 Vitest Chromium 原生语义与动效生命周期
+    ├── fixtures/          共享测试数据
     ├── mocks/             按领域组织的 typed scenario handlers
+    ├── native-smoke/      Windows/Android 原生客户端冒烟驱动（见 apps/client/README.md）
     └── e2e/
         ├── local-fixtures.spec.tsx  使用显式 API 场景的 UI 冒烟测试
-        └── full-stack/              真实 Go/SQLite 关键旅程
+        ├── full-stack/              真实 Go/SQLite 关键旅程
+        └── support/                 full-stack 测试服务启动脚本
 ```
 
 新增业务逻辑时优先放入对应 feature 目录；可复用的视觉原语放入 `components/ui/`。新应用 TypeScript 源文件默认使用 `.tsx`，即使不含 JSX；既有扩展名、声明文件和工具要求的配置文件按仓库约定保留。
@@ -228,7 +207,7 @@ pnpm test:e2e:full-stack
 pnpm build
 ```
 
-`pnpm check`（`vp check`）依次运行 Oxfmt 格式检查、Oxlint 检查和 TypeScript 7 类型检查；lint、格式和测试配置都在 `vite.config.ts` 的 `lint`、`fmt`、`test` 块中。Oxlint 经 `jsPlugins` 加载 `@stylexjs/eslint-plugin` 与 `oxlint-anti-slop`，生成文件（`lib/generated/`、Wails 绑定、路由树）不参与 lint。`pnpm knip` 检查未使用的文件、依赖与导出（生成的 `lib/generated/api-schema.tsx` 除外），CI 要求结果为空。Oxlint 开启 anti-slop 的 `no-unnecessary-type-widening` 与 `no-typeof-outside-guards`：外部数据用 `lib/type-guards.tsx` 的类型守卫或 Zod 校验，查表用 `Map`。lint 警告与错误都必须为零。
+`pnpm check`（`vp check`）依次运行 Oxfmt 格式检查、Oxlint 检查和 TypeScript 7 类型检查；lint、格式和测试配置都在 `vite.config.ts` 的 `lint`、`fmt`、`test` 块中。Oxlint 经 `jsPlugins` 加载 `@stylexjs/eslint-plugin` 与 `oxlint-anti-slop`，生成文件（`lib/generated/`）不参与 lint。`pnpm knip` 检查未使用的文件、依赖与导出（生成的 `lib/generated/api-schema.tsx` 除外），CI 要求结果为空。Oxlint 开启 anti-slop 的 `no-unnecessary-type-widening` 与 `no-typeof-outside-guards`：外部数据用 `lib/type-guards.tsx` 的类型守卫或 Zod 校验，查表用 `Map`。lint 警告与错误都必须为零。
 
 测试边界：
 
