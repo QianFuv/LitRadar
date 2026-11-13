@@ -4,11 +4,11 @@
 
 ## 输出边界
 
-LitRadar 只有一个进程级 Go slog 日志处理器：
+服务端进程只有一个进程级 Go slog 日志处理器：
 
 - 服务端事件写入 `stderr`，默认每行一个 JSON 对象；CLI 的业务结果继续独占 `stdout`。
 - Wails web 和原生客户端的宿主启动失败通过标准 `slog` 默认处理器写入 `stderr`，事件名为 `client.failed`，随后以退出码 1 终止；该客户端文本输出不使用服务端的 JSON/compact 处理器。
-- 未知 CLI 子命令和无效或缺失的 `--retries` 值会在 `process.failed` 事件中附带固定的 `diagnostic` 提示，保留 `error_kind=command_failed`；不记录原始参数值或底层错误文本。JSON 和 compact 格式均包含该提示。
+- 未知 CLI 子命令、无效或缺失的 `--retries` 值，以及公开维护失败（例如 `admin index optimize-storage` 返回的维护错误）会在 `process.failed` 事件中附带 `diagnostic`，子命令内的失败还会在 `cli.command.failed` 中附带同一值；两者都保留 `error_kind=command_failed`。前两类是固定提示，维护失败使用与 stdout `error` 相同的公开错误消息；不记录原始参数值或底层错误文本。JSON 和 compact 格式均包含该字段。
 - Docker 不在应用文件系统中写日志。Compose 收集容器 `stderr`，应用根文件系统仍为只读。
 - 调度启动的 `litradar` 子进程继承父进程 `stderr`，因此事件实时进入同一容器日志。
 - 浏览器只把经过白名单裁剪的错误对象写入当前浏览器开发者控制台，不上传到服务端，也不写入 Web Storage。
@@ -27,10 +27,10 @@ litradar openapi > openapi.json 2> litradar.log
 
 | 字段          | 含义                                                                  |
 | ------------- | --------------------------------------------------------------------- |
-| `time`   | UTC RFC 3339 时间                                                     |
-| `msg` | slog 记录消息，通常与 `event` 相同 |
+| `time`        | UTC RFC 3339 时间                                                     |
+| `msg`         | slog 记录消息，通常与 `event` 相同                                    |
 | `level`       | `TRACE`、`DEBUG`、`INFO`、`WARN` 或 `ERROR`                           |
-| `target`      | 产生事件的兼容 target                                                |
+| `target`      | 产生事件的兼容 target                                                 |
 | `event`       | 稳定的点分事件名，例如 `http.request.completed`                       |
 | `component`   | 稳定组件名，例如 `runtime`、`http`、`index`、`scheduler`、`storage`   |
 | `outcome`     | 适用时的有限结果枚举，例如 `success`、`failure`、`client_error`       |
@@ -91,9 +91,9 @@ litradar openapi > openapi.json 2> litradar.log
 - `security.auth.*`、`security.admin.*`：认证结果、限流和状态变更审计
 - `logging.events_dropped`：非阻塞日志队列在过载时丢失的行数
 
-标准 handler 通过 `ReplaceAttr` 把时间统一为 UTC、最低日志级别显示为 `TRACE`，并移除内部 `log_target` 属性。JSON 时间使用标准精度，文本时间由 `TextHandler` 格式化；不再输出自定义六位小数时间或 span 前缀。`WithGroup` 按标准规则输出嵌套 JSON / 点分文本键，重复属性也遵循标准 handler 的行为。`error` 属性按标准 slog 语义输出其错误文本；不能序列化的其他属性由 handler 写为 `!ERROR:...` 字符串。调用点仍负责只提交经过裁剪的安全字段。4096 条有界队列、丢弃计数、span 关联和关闭时的一秒排空预算保持不变。
+标准 handler 通过 `ReplaceAttr` 把时间统一为 UTC、最低日志级别显示为 `TRACE`，并移除内部 `log_target` 属性。JSON 时间使用标准精度，文本时间由 `TextHandler` 格式化。`WithGroup` 按标准规则输出嵌套 JSON / 点分文本键，重复属性也遵循标准 handler 的行为。`error` 属性按标准 slog 语义输出其错误文本；不能序列化的其他属性由 handler 写为 `!ERROR:...` 字符串。调用点负责只提交经过裁剪的安全字段。队列和丢失语义见[队列与丢失语义](#队列与丢失语义)。
 
-字段模式改用 Go `regexp.Compile` / `MatchString`：默认在任意子串上匹配，需要匹配末尾时显式加 `$`。`\d` 只匹配 ASCII 数字；Unicode 字符请使用支持的 Unicode 类。Rust 专用的 `x` / `R` / `u` flag、Unicode 转义和字符集运算不再具有原先语义，保存前应重新检查。外层指令仍以逗号、花括号等分隔字段，不能直接嵌入含这些分隔符的正则。旧配置中不能编译的模式会在保存或启动时明确失败，应先改成 Go 语法再重启。
+`log_filter` 的字段模式使用 Go `regexp.Compile` / `MatchString`：默认在任意子串上匹配，需要匹配末尾时显式加 `$`。`\d` 只匹配 ASCII 数字；Unicode 字符请使用 Go 支持的 Unicode 类。外层指令以逗号、花括号等分隔字段，不能直接嵌入含这些分隔符的正则。不能编译的模式会在保存或启动时明确失败。
 
 ## 级别规则
 
@@ -109,11 +109,11 @@ litradar openapi > openapi.json 2> litradar.log
 
 ## 配置
 
-日志配置是 `data/auth.sqlite.runtime_settings` 中的两个非秘密管理员设置：
+日志配置是 `data/auth.sqlite` 的 `runtime_settings` 表中的两个非秘密管理员设置：
 
-| 字段         | 默认值 | 前端控件 | 生效方式 | 允许值/语义                                  |
-| ------------ | ------ | -------- | -------- | -------------------------------------------- |
-| `log_format` | `json` | 单选     | 重启进程 | `json` 或 `compact`                          |
+| 字段         | 默认值 | 前端控件 | 生效方式 | 允许值/语义                                                           |
+| ------------ | ------ | -------- | -------- | --------------------------------------------------------------------- |
+| `log_format` | `json` | 单选     | 重启进程 | `json` 或 `compact`                                                   |
 | `log_filter` | 见下文 | 文本     | 重启进程 | 目标、span 和字段过滤指令；字段模式使用 Go regexp；`off` 完全关闭事件 |
 
 默认 filter 为：
@@ -270,32 +270,7 @@ docker compose logs --no-log-prefix server |
 
 ## 性能画像
 
-先构建当前镜像，并对隔离数据副本运行三轮 off/on 对照：
-
-```powershell
-docker compose build
-pwsh ./apps/server/tests/profiling/profile_logging.ps1 `
-  -DataPath ./output/logging-fixture `
-  -Rounds 3 `
-  -RequestCount 300 `
-  -Concurrency 4
-```
-
-脚本先用正常容器启动完成迁移，通过可配置的 `sqlite3` CLI 快照 `log_format`/`log_filter`，再事务性切换 off/default 两种模式并在结束时恢复原始行。它交错运行两种模式，对 `/api/logging-profile-missing` 发起固定 404 请求，验证每个默认模式应用行都是 JSON 且含必填字段，并检查请求事件数与丢失数。报告写入已忽略的 `output/logging/`。
-
-脚本还会为两种 warm-idle 模式调用 `profile_docker_memory.ps1`。默认报告内存用量，不设置预算，也不假定容器已有内存上限。
-
-门禁：
-
-- 预期负载 `dropped_count=0`
-- logging-on p95 延迟增量不超过 `max(2 ms, logging-off p95 × 15%)`
-- 两次内存画像都必须通过，包括 OOM 与功能检查。
-- 启用 `-EnforceMemoryBudgets` 时，两种模式都检查 warm-idle 的 20/24 MiB 预算、零 swap/max/PSI 压力，以及 logging-on p95 内存增量不超过 8 MiB。
-- 显式提供的 `-P95LimitMiB`、`-PeakLimitMiB` 和 `-ExpectedMemoryLimitMiB` 分别转发；省略的值保持未设置，不隐含 160 MiB 上限。`-ExpectedMemoryLimitMiB 0` 表示核对容器未设上限。
-
-报告列出实际生效的策略，禁用的阈值为 `null`。即使不启用内存预算，日志正确性、丢失事件和延迟门禁仍必须通过。
-
-只使用隔离 fixture。脚本会启动迁移并读写传入的数据目录；不要把正在运行或未备份的实际 `data/` 交给画像脚本。
+日志开销的 off/on 对照脚本、门禁和内存画像见[性能剖析](../guides/profiling.md#日志开销对照)。只使用隔离 fixture，不要把正在运行或未备份的实际 `data/` 交给画像脚本。
 
 ## 隐私规则
 

@@ -23,9 +23,7 @@
 
 `data/index-control` 是可重建的运行控制状态：项目级 `index-batches.sqlite`（batch schema v2，含 typed notify handoff）和每个 catalog 的 v5 anchor/run/lease 控制库即使位于项目根下，也都不会进入 backup manifest、备份树或恢复目标。Provider 切换不需要复制旧 checkpoint；清空控制状态后的首次索引会创建新 batch 并通过内容 identity alias/upsert 幂等收敛，但也会失去尚未完成的 notify handoff/Unknown acknowledgement 证明。
 
-`data/index-work/scholarly/` 只保存 Crossref 的必要消费字段、创建日期分片、计数和排序进度；其 SQLite、归属 JSON 和事务文件都不是内容索引，不进入 manifest、备份树、内容发现或恢复目标。它与正式内容/控制 schema 的版本独立，删除正式数据库不是工作集恢复步骤。
-
-工作集丢失或可识别的自有缓存损坏时，当前版本保留 core checkpoint 的 `C/T`、update 条件和 candidate，重新收集并通过稳定 identity/upsert 重放；不会只续旧 cursor 而丢掉前半结果。路径或身份不匹配会停止，不自动删除未知文件。成功输出后缓存可能已经清理，即使后续控制提交失败，也按相同规则重建。普通 Crossref API 升级或缓存故障无须清空 `data/index-control`，与下面的离线内容快照恢复不同。
+`data/index-work/scholarly/` 是 Crossref 可丢弃工作集，不是内容索引，不进入 manifest、备份树、内容发现或恢复目标；丢失或损坏时当前版本会重新收集，无须清空 `data/index-control`。工作集规则见[数据库参考](../reference/database.md)。
 
 部署密钥不在选择范围内。Meta 或状态目录中出现 `.key` 或 `.pem` 文件时，创建会失败。
 
@@ -69,7 +67,7 @@ litradar admin backup create \
 - 每个文件的相对路径、类型、字节数和 SHA-256
 - SQLite `PRAGMA user_version`
 
-清单格式名固定为 `litradar-backup`。当前二进制创建 version 2，也接受规范的 version 1 清单。v1 没有 Meta 选择和 `meta/` 组件；恢复 v1 时目标 `data/meta` 完全保持原样。改名前的其他格式仍会被拒绝，不提供别名识别或自动转换。
+清单格式名固定为 `litradar-backup`。当前二进制创建 version 2，也接受规范的 version 1 清单。v1 没有 Meta 选择和 `meta/` 组件；恢复 v1 时目标 `data/meta` 完全保持原样。其他格式名一律拒绝。
 
 独立验证不需要部署密钥，也不修改数据：
 
@@ -93,7 +91,7 @@ litradar admin backup verify \
 
 ## 为离线索引优化准备回滚点
 
-`litradar admin index optimize-storage` 接受精确 v6/v7/v8/v9/v10 内容库，离线重建为 v10。优化前经验证的备份是降级到旧二进制时的回滚点，其内容版本必须受目标二进制支持。不要降低 v10 文件的 `user_version`，也不要手工补建 `article_search_content` 或历史索引。
+`litradar admin index optimize-storage` 接受精确 v6/v7/v8/v9/v10 内容库，离线重建为 v10。普通启动也会把 `article_search` 仍为 `unicode61` 或 `simple 0` 的内容库就地迁移到 v10（见[数据库参考](../reference/database.md#内容库破坏性切换)），因此升级前的备份同样是回滚点。优化前经验证的备份是降级到旧二进制时的回滚点，其内容版本必须受目标二进制支持。命令语义、输出字段和错误码见 [CLI 参考](../reference/cli.md)。不要降低 v10 文件的 `user_version`，也不要手工补建 `article_search_content` 或历史索引。
 
 完整顺序：
 
@@ -102,7 +100,7 @@ litradar admin backup verify \
 3. 创建包含索引的严格时间点备份；需要保留 changes/旧导入源时同时选择 `--include-push-state`。
 4. 独立运行 `backup verify`，并把成功备份保持只读、与活动 `data/` 分离。
 5. 统计 `data/index/*.sqlite` 的总字节数，确认同一文件系统至少有 `2 × source_bytes + 64 MiB` 可用空间。
-6. 运行带显式确认的优化命令，保存完整 stdout JSON 和日志；检查 `status=optimized`、`optimized_bytes`、`reclaimed_bytes`、每库 schema/影子表/freelist/FTS 分配和行计数。
+6. 运行带显式确认的优化命令，保存完整 stdout JSON 和日志；成功必须返回 `status=optimized`（空目录为 `noop`），并按 CLI 参考核对报告中的字节数、每库 schema、影子表、freelist、FTS 分配和行计数。
 7. 启动当前二进制，检查 `/`、`/health/live`、`/health/ready`、`/openapi.json` 和代表性检索、详情、分页。原文、身份和权威行数必须保持；检索结果按[当前分词契约](../reference/database.md#article_search)核对，不能要求旧 `unicode61` 或 `simple 0` 的全部匹配结果不变。继续保留优化前备份直到降级窗口结束。
 
 本机命令骨架：

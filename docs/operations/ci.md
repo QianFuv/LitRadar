@@ -1,160 +1,42 @@
-# CI execution and timing
+# CI 执行
 
-CI runs all quality gates on main pushes and pull requests. Version increases and
-explicit version retries additionally run packaging, platform smoke tests and
-publication. Scheduled coverage remains informational. No path filter or cached
-test result substitutes for a required gate.
+CI 在 `main` 推送和 pull request 上运行全部质量门禁。版本递增和显式的版本重试另外运行打包、平台冒烟测试和发布。定时覆盖率只作参考。不使用路径过滤，也不用缓存的测试结果替代任何必需门禁。版本规则、发布产物和重试步骤见[版本发布](releases.md)。
 
-## Shared workflow contract
+## 共享工作流约定
 
-All workflow YAML uses two-space structural indentation and the same stage vocabulary:
-`detect-changes` -> `quality` -> `build-acceptance` -> `publish`. Existing workflow
-names, job IDs and explicit or implicit job names are compatibility interfaces and
-remain unchanged. Stage labels and summaries make the flow consistent without
-renaming required checks. Detection classifies version changes across the entire
-push; it does not filter paths or skip required quality checks. Normal pushes run
-quality and its production frontend build; release packaging runs only for a version
-increase or explicit same-version retry.
+全部工作流 YAML 使用两空格结构缩进和同一套阶段词汇：`detect-changes` -> `quality` -> `build-acceptance` -> `publish`。工作流名称、job ID 以及显式或隐式的 job 名称是必需检查的身份，不要重命名；阶段标签和 summary 只用于统一展示流程。变更检测按整个推送判断版本变化，不过滤路径，也不跳过必需的质量检查。普通推送运行质量检查及其生产前端构建；发布打包只在版本递增或显式同版本重试时运行。
 
-Every transferred artifact has source SHA, target platform and file SHA-256 evidence.
-The common `ci-manifest.json` schema records `sourceSha`, `platforms`, `stage`,
-`status`, check outcomes/durations, missing paths and artifact-relative file hashes.
-Platform-independent exports say `independent`; combined publication evidence lists
-both targets. Large image tar files are hashed as streams. Manifests stay inside
-existing artifact roots and outside official release `assets/`, preserving download
-layouts and the versioned public server and client assets. Client evidence also binds its image tar and optional signed Android package.
+每个传输的产物都带源码 SHA、目标平台和文件 SHA-256 证据。通用 `ci-manifest.json` schema 记录 `sourceSha`、`platforms`、`stage`、`status`、检查结果/耗时、缺失路径和相对于产物的文件 hash。与平台无关的导出标为 `independent`；合并的发布证据列出两个目标平台。大型镜像 tar 以流方式计算 hash。清单保存在现有产物根目录内，位于正式 Release 的 `assets/` 之外，因此不改变下载布局和版本化的服务端/客户端公开资产。客户端证据还绑定其镜像 tar 和可选的已签名 Android 包。
 
-Successful build transfers require actual payloads before upload; a manifest alone
-cannot satisfy the contract. Diagnostic reports may record missing files after an
-earlier failure. Final summaries run after uploads and report the current job status,
-so a failed upload cannot be presented as success. The same heading, source/platform
-fields and check/status/duration table apply to all stages; existing frontend timing
-and flaky-test policy, and informational coverage policy, remain visible.
+成功的构建传输在上传前必须有实际负载，只有清单不能满足约定。诊断报告可以在更早的失败后记录缺失文件。最终 summary 在上传之后运行并报告当前 job 状态，因此上传失败不会显示为成功。所有阶段使用相同的标题、源码/平台字段和检查/状态/耗时表；前端的耗时与 flaky 测试策略以及覆盖率的参考性策略保持可见。
 
-Go caches explicitly name the root and go-sdk replacement module's `go.mod`/`go.sum`
-inputs. Backend compilation caches remain partitioned by lane and, for the race
-lane, compiler identity. pnpm names
-the root lockfile. BuildKit
-uses the `litradar-linux-amd64` cache scope and hashes Dockerfile, build contexts,
-arguments and pinned bases through its own cache graph. Cached bytes never replace
-tests, source-bound frontend verification or platform smoke acceptance.
+## 质量 job
 
-## Quality jobs
+- `Release rules` 先对推送分类，再启动后端、前端和客户端工作流。
+- 后端 job 在 Linux 和 Windows 上分别运行独立的 `regular` 与 `race` 通道。`regular` 通道负责格式、模块/依赖校验、显式 vet、完整根模块测试和替换模块的常规测试；`race` 通道运行完整的根模块与替换模块 race 测试。`regular` 通道以 `CGO_ENABLED=0` 构建，不需要 C 编译器；`race` 通道使用 `CGO_ENABLED=1`（Go race detector 需要 cgo）并记录编译器身份。两者都记录诊断。集成/SQLite/进程测试都在完整 Go 套件中，两个通道都不使用 `-short`。
+- `regular` 通道还使用根 `.golangci.yml`（决定启用的 linter）运行 `golangci-lint run . ./apps/server/...`，用 `go run ./apps/server/cmd/sqlc-schema -check -output apps/server/internal/storage/sqlc/schema` 检查由迁移派生的 sqlc schema 快照，并运行 `sqlc diff -f apps/server/sqlc.yaml`。每项都在 `test-results/go/` 下写日志。`race` 通道不安装这些工具。
+- 客户端 job 安装同一固定版本的 golangci-lint，并在前端 dist 构建后执行 lint。Web 使用 `server,production` 构建标签；Windows 同时检查 `production` 和 `production,smoke`；Android 使用 `android,production`、构建所用 NDK 编译器、arm64 目标和 cgo。报告随客户端证据上传。有意省略的 Android 发布包同时省略其目标 lint，与包的构建门禁一致。
+- 两个 `Backend / Go checks (<os>)` 名称是聚合门禁，各自要求整个四 job 矩阵成功；失败、取消或跳过都不能成为通过的发布前置条件。
+- 前端契约生成检查、`pnpm check`（Vite+ `vp check`：Oxfmt 格式、Oxlint 和 TypeScript 7 类型检查）、Knip、jsdom、浏览器组件、fixture 流程和生产全栈流程都是必需的。
+- 客户端工作流（`Client`）运行 Web linux/amd64、Windows x64 和 Android arm64 质量通道，并独占 Web host 检查；`frontend.yaml` 负责 Vite 契约、静态检查和浏览器流程。打包工具版本、Android SDK/NDK 和签名要求见[版本发布](releases.md#客户端打包)。
+- 只有普通质量运行共享 PR/ref 并发组。带发布的运行使用包含 run ID 的独立组，因此之后的普通推送不能取消某个版本的前置检查。发布保留版本/`latest` 的串行化，不存在外层的分支级发布取消。
 
-- Release rules classify the push before the backend/frontend workflows start.
-- Backend jobs run independent `regular` and `race` lanes on Linux and Windows.
-  The regular lane owns formatting, module/dependency verification, explicit vet,
-  full root tests and replacement-module regular tests. The race lane runs the
-  full root and replacement-module race suites. The regular lane builds with
-  `CGO_ENABLED=0` and needs no C compiler; the race lane uses `CGO_ENABLED=1`,
-  because Go's race detector requires cgo, and records compiler identity. Both
-  record diagnostics. Integration/SQLite/process tests remain in the full Go suites;
-  neither lane uses `-short`.
-- The regular lane also runs `golangci-lint run . ./apps/server/...` with the root
-  `.golangci.yml` (which owns the enabled linters), checks the migration-derived
-  sqlc schema snapshot with `go run ./apps/server/cmd/sqlc-schema -check`, and runs
-  `sqlc diff -f apps/server/sqlc.yaml`. Each writes a log under `test-results/go/`.
-  The race lane does not install these tools.
-- Client jobs install the same pinned golangci-lint version and lint after their
-  frontend dist has been built. Web checks use `server,production`; Windows checks
-  use both `production` and `production,smoke`; Android checks use
-  `android,production` with the build's NDK compiler, arm64 target and cgo.
-  Reports are uploaded with client evidence. An intentionally omitted Android
-  release package also omits its target lint, matching the package's build gate.
-- The two existing `Backend / Go checks (<os>)` names remain aggregate gates. Each
-  requires the entire four-job matrix to succeed; failure, cancellation or skip
-  cannot become a passing release prerequisite.
-- Frontend contract generation, `pnpm check` (Vite+ `vp check`: Oxfmt formatting,
-  Oxlint and TypeScript 7 type checking), Knip, jsdom, browser components,
-  fixture flows and production full-stack flows all remain required. Their serial
-  job is much shorter than the measured backend critical path.
-- Only ordinary quality runs share a PR/ref concurrency group. Release-bearing
-  runs use a separate group containing the run ID, so a later ordinary push cannot
-  cancel a version's prerequisites. Publication keeps its existing version/latest
-  serialization. There is no outer branch-wide cancellation of the release.
+`node apps/server/scripts/check-go.mjs` 在本地运行全部 Go 检查；传入 `regular` 或 `race` 可复现单个 CI 通道。不要在同一工作目录中并发运行两个通道，它们共享诊断路径；托管矩阵 job 使用各自的 checkout。
 
-`node apps/server/scripts/check-go.mjs` still runs all checks locally. Pass `regular` or `race`
-to reproduce one CI lane. Do not run both lanes concurrently in the same working
-directory: they share diagnostic paths. Hosted matrix
-jobs have separate checkouts.
+## 缓存与产物归属
 
-## Cache and artifact ownership
+- Go 模块缓存显式包含根模块和 go-sdk 本地替换模块的 `go.mod`/`go.sum`。
+- 编译缓存按 OS、架构、精确 Go 工具链、通道以及 `race` 通道的编译器身份分区；最终 key 包含源码提交。兼容前缀恢复可以加速新提交，新提交随后保存自己的完整缓存，而不是在依赖 key 不变时冻结首次构建。Go 仍在内部校验源码输入。
+- `regular` 通道缓存 golangci-lint 和 sqlc 二进制，key 由 OS、架构、Go 工具链和两个固定工具版本（`backend.yaml` 中的 `GOLANGCI_LINT_VERSION` 和 `SQLC_VERSION`）组成。
+- pnpm 缓存以根 lockfile 为 key；Vite 和 pnpm 缓存与测试/构建产物分开。
+- BuildKit 使用 `litradar-linux-amd64` cache scope，并通过自身缓存图对 Dockerfile、构建上下文、参数和固定基础镜像做 hash。
 
-Backend module caches explicitly include the root and go-sdk local replacement
-module manifests. Compilation caches are separated by OS, architecture, exact
-Go toolchain, lane and race-lane compiler identity; the final key includes
-the source commit. Compatible prefix restores accelerate a new commit, which then
-saves its own completed cache instead of freezing the first build under an
-unchanged dependency key. Go still validates source inputs internally.
-The regular lane caches the golangci-lint and sqlc binaries under a key made of OS,
-architecture, Go toolchain and both pinned tool versions
-(`GOLANGCI_LINT_VERSION` and `SQLC_VERSION` in `backend.yaml`).
+测试保留 `-count=1`。只有根模块常规测试在相同配置的显式 `go vet` 成功后禁用隐式 vet；race 选中的文件和依赖模块图保留各自的 vet 行为。缓存字节永远不能替代测试、绑定源码的前端验证或平台冒烟验收。
 
-Tests retain `-count=1`. Only root regular tests disable implicit vet, after the
-same-config explicit `go vet` succeeds; race-selected files and dependency module
-graphs retain their own vet behavior.
+发布 job 传输经过冒烟测试的 Linux 镜像、服务端归档和客户端产物，校验源码与 SHA-256 清单后再加载客户端镜像，比对冒烟证据，并运行隔离的三服务网关冒烟测试；它从不在发布阶段重新构建这些字节。
 
-Vite and pnpm caches remain distinct from test/build artifacts. Publication
-continues transferring the exact smoke-tested Linux image and both platform
-archives to its publication job; it never rebuilds those bytes there.
+## 参考
 
-## Measured baseline (2026-10-23 analysis)
-
-Source: [run 39633240092](https://github.com/QianFuv/LitRadar/actions/runs/39633240092),
-commit `d4a0478660a843e6f3e6eddc6f97f9490829c58a`, Go 1.27.3. Values come from
-GitHub's job/step timestamps and each backend artifact's `results.json`.
-
-| Successful job              | Job time | Dominant step                                       |
-| --------------------------- | -------: | --------------------------------------------------- |
-| Windows backend (attempt 2) |  34m 31s | Combined checks: 33m 28s                            |
-| Linux backend               |   9m 55s | Combined checks: 9m 35s                             |
-| Frontend                    |   5m 43s | Fixture flows: 1m 43s; static checks: 1m 13s        |
-| Linux release               |   5m 39s | Docker build: 4m 11s                                |
-| Windows release             |   3m 13s | Package/smoke: 1m 29s; web build: 12s               |
-| Publication                 |   1m 26s | Download Linux bytes: 17s; release preparation: 15s |
-
-The run was created at 16:16:11 UTC, the retry started at 16:55:06, and completion
-was 17:38:07. Its 81m 56s elapsed time includes a failed Windows attempt and the
-retry gap, not 81 minutes of successful job work. The prior successful release
-[run 39111097654](https://github.com/QianFuv/LitRadar/actions/runs/39111097654)
-also had a 35m 10s Windows backend job (33m 26s checks), confirming the bottleneck.
-
-Within the latest successful Windows artifact, root regular tests took 589.28s,
-root race 658.36s, explicit vet 55.27s, and the eight replacement-module commands
-687.81s combined. The module-own and application-root dependency graphs differ;
-these tests are retained, not discarded as duplicates.
-
-## Expected versus measured savings
-
-Adding the recorded command durations into the new lanes gives approximately
-15m 28s regular and 17m 46s race on Windows, versus 33m 28s for the old combined
-step. With identical command costs and simultaneous runner availability, that
-models about 15m 42s less critical-path time before setup/cache/queue differences.
-It is a scheduling estimate, not a hosted measurement. Extra workers can increase
-runner minutes, and cold caches or queue delays can reduce the benefit.
-
-Cache refresh and avoiding repeated regular-root vet may save compilation work,
-but their separate impact has not been measured. Local contract tests measure
-correctness, not hosted performance. The initial optimization was validated locally;
-record actual post-change job/step data from an authorized hosted run before claiming
-a speedup. Version releases and deployments require their own authorization.
-
-## Client quality and releases
-
-`Client` adds Web linux/amd64, Windows x64 and Android arm64 quality lanes. Task is pinned to v3.54.0; Wails CLI follows the version in the shared root Go module. The client workflow owns the Web host check; frontend.yaml owns Vite contracts, static checks and browser flows.
-
-Server release builds never download frontend exports. Web release builds embed the same single Vite frontend and smoke `/` and `/login`; Windows invokes `task package:windows`; Android invokes `task package:android` with Java 21, SDK 35 and NDK r28c. Release APKs require all four signing secrets. Missing signing configuration yields explicit omission evidence and job-summary warnings while mandatory packages still publish. The Windows portable client is unsigned. See [release contracts](releases.md).
-
-Publication verifies source and SHA-256 inventories before loading client image bytes, checks the loaded image against smoke evidence, and runs the isolated three-service gateway smoke. Existing server archive/image evidence, exact-commit retries and serialized highest-version latest promotion remain required. Public assets include server archives, Web binary, Windows portable zip, optional signed Android APK and one SHA256SUMS. Both OCI images are linux/amd64. Hosted run timings must be measured before making performance claims.
-
-- [GitHub concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)
-  describes running cancellation and pending-run replacement. Distinct release
-  groups are needed; setting cancellation false in one shared branch group alone
-  would not protect releases from later ordinary runs.
-- [Pinned setup-go cache behavior](https://github.com/actions/setup-go/blob/b7ad1dad31e06c5925ef5d2fc7ad053ef454303e/src/cache-save.ts)
-  skips saving on an exact hit. Explicit source-aware build keys allow refreshed
-  compilation caches without mixing regular and race writers.
-- [Go test and caching](https://pkg.go.dev/cmd/go#hdr-Test_packages) documents
-  implicit vet; [Go build caching](https://pkg.go.dev/cmd/go#hdr-Build_and_test_caching)
-  explains cgo external-library invalidation limitations. Uncached test execution
-  remains necessary here.
+- [GitHub 并发控制](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)说明运行中的取消和待运行替换。发布需要独立的并发组；只在共享分支组中关闭取消，无法防止之后的普通运行影响发布。
+- [固定版本的 setup-go 缓存行为](https://github.com/actions/setup-go/blob/b7ad1dad31e06c5925ef5d2fc7ad053ef454303e/src/cache-save.ts)在精确命中时跳过保存。显式的、感知源码的构建 key 使编译缓存可以刷新，且不会混用 `regular` 和 `race` 的写入方。
+- [Go 测试与缓存](https://pkg.go.dev/cmd/go#hdr-Test_packages)说明隐式 vet；[Go 构建缓存](https://pkg.go.dev/cmd/go#hdr-Build_and_test_caching)说明 cgo 外部库失效的局限。因此这里仍需不使用缓存的测试执行。

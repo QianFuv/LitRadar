@@ -25,7 +25,7 @@ wc -c secrets/litradar.key
 - 与数据库备份分开存储
 - 同时提供给所有需要解密同一 `auth.sqlite` 的应用实例或按需子命令
 
-`litradar serve`、`litradar index`、`litradar notify`、`litradar push` 和 `litradar scheduler` 都要求 `--secret-key-file`。`litradar admin secrets` 使用相应 key 参数；`litradar admin bootstrap` 和 `litradar admin backup` 不需要密钥。
+哪些命令需要 `--secret-key-file` 见[运行配置](../reference/configuration.md#部署密钥文件)。
 
 ## OIDC 身份验证
 
@@ -43,21 +43,17 @@ Windows/Android 客户端通过系统浏览器访问 `GET /api/auth/oidc/native/
 
 待兑换码仅存于当前服务进程内存，进程重启后失效；多实例部署需将待兑换流程固定到同一实例，或在支持多实例兑换前改用共享原子存储。
 
+原生客户端只支持账号密码（`POST /api/auth/native/login`）和 OIDC 登录，两者都签发独立的 90 天 `device:` 个人令牌，不覆盖浏览器会话；设备撤销和退出行为见[客户端指南](../guides/clients.md)。
+
 ## 日志数据边界
 
-所有日志级别都禁止密码、部署密钥、Cookie、Bearer token、邀请码、访问令牌、第三方 API key、PushPlus token、认证头、用户名/邮箱、请求或响应 body、URL query、文章/公告/AI 内容、会话 JSON、密文、hash 和完整文件路径。`DEBUG` 或 `TRACE` 不放宽该边界。
-
-允许记录匹配路由、method/status、耗时、计数、工作流阶段、有限 outcome/error kind、provider 名、安全内部数值 ID、服务器 UUID 和调度 run ID。HTTP 请求 ID 由服务器覆盖生成；日志不信任客户端提供的 ID。浏览器记录器只把 allowlist 对象写入本地控制台，不上传 message、stack、promise reason、query、body、token 或 Web Storage。
-
-新增事件或字段必须用唯一 sentinel 覆盖成功与失败路径，验证服务端 JSON、调度子进程 stderr 和浏览器对象都不含秘密或内容。若事故日志发现禁止字段，应立即停止扩大采集、限制证据访问、轮换受影响凭据并按[日志运维](logging.md)的流程处理；不能只依赖后续轮转删除泄漏。
+所有日志级别都禁止秘密与业务内容，`DEBUG` 或 `TRACE` 不放宽该边界；HTTP 请求 ID 由服务器覆盖生成，日志不信任客户端提供的 ID。禁止字段、允许字段和新增字段的 sentinel 验证要求见[日志运维](logging.md#隐私规则)。若事故日志发现禁止字段，应立即停止扩大采集、限制证据访问、轮换受影响凭据并按[日志运维](logging.md#事故处理)的流程处理；不能只依赖后续轮转删除泄漏。
 
 ## 持久安全审计
 
-安全审计的权威记录是认证库 v9 引入的只追加表 `security_audit_events`，不是可能丢弃的普通 tracing 队列。认证成功/失败、限流样本、密码和令牌操作、管理员权限与用户操作、邀请码、调度任务、运行设置和公告变更均使用固定 action/outcome/reason 分类；记录内部 actor/target ID、服务器 request ID 和必要的限流元数据，不记录密码、用户名、token、邀请码、原始 IP、请求体或业务内容。
+安全审计的权威记录是认证库 v9 引入的只追加表 `security_audit_events`，不是可能丢弃的普通日志队列。认证成功/失败、限流样本、密码和令牌操作、管理员权限与用户操作、邀请码、调度任务、运行设置和公告变更均使用固定 action/outcome/reason 分类；不记录密码、用户名、token、邀请码、原始 IP、请求体或业务内容。
 
-业务安全变更与必需审计行在同一个 immediate transaction 中提交。审计插入失败时变更整体回滚，API 返回 `503`；通过公开认证限流器的认证拒绝会在返回前同步追加。被限流的请求全部写入安全 tracing，但持久审计按认证操作与限流桶分类，每 60 秒最多同步写入一个代表性样本；样本携带该进程内单调增长的 `rejected_count`，未命中采样窗口的请求不会占用 blocking executor 或写 SQLite。失败路径只向 `stderr` 输出固定 `audit.persistence_failed` 分类和进程内计数，不输出 SQLite 原始错误。普通日志过载不会影响已提交审计行。
-
-默认保留 180 天，可通过 `audit_retention_days` 设置 1–3650 天。启动后立即检查；有积压时每 60 秒继续一批，清空后才推进跨实例每日完成窗口并恢复每 24 小时检查。每个事务最多删除 10,000 行，失败回滚且不推进完成时间。系统不暴露远程审计 API，查询、导出和取证只能使用受控的只读数据库副本；具体 SQL 与告警规则见[日志运维](logging.md)。`auth.sqlite` 固定备份范围包含审计历史和 maintenance 标记。
+业务安全变更与必需审计行在同一个 immediate transaction 中提交；审计插入失败时变更整体回滚，API 返回 `503`。被限流的请求全部写入结构化日志，但持久审计按认证操作与限流桶分类，每 60 秒最多同步写入一个代表性样本；样本携带该进程内单调增长的 `rejected_count`，未命中采样窗口的请求不会触发同步 SQLite 写入。字段、`audit.persistence_failed` 告警、保留策略和只读查询见[日志运维](logging.md#持久安全审计)；`auth.sqlite` 固定备份范围包含审计历史和 maintenance 标记。
 
 ## 子进程树隔离
 
@@ -78,13 +74,14 @@ Unix 取消和超时先向整个 group 发送 SIGTERM，等待 250 ms grace peri
 - `runtime_settings.semantic_scholar_api_key_pool`
 - `runtime_settings.cnki_captcha_token`
 - `runtime_settings.provider_proxy_url`
+- `runtime_settings.oidc_client_secret`
 - `cnki_sessions.session_json`
 
 每次写入生成随机 24 字节 nonce，并把表、行/配置键和字段名作为关联数据。密文复制到其他用户或字段后无法通过认证。
 
 统一服务在绑定端口和启动调度前验证现有秘密值，按需子命令在业务工作前验证。密钥缺失、长度错误、密文损坏、密钥不匹配或残留明文都会使启动失败；错误消息不包含凭据。
 
-当前二进制只接受 `litradarenc:v1:` 信封。改名前的信封格式不会被读取或自动迁移；`litradar admin secrets migrate` 只把明文转换为当前格式。
+当前二进制只接受 `litradarenc:v1:` 信封；`litradar admin secrets migrate` 只把明文转换为该格式。
 
 Crossref 联系邮箱、CORS、MCP 和 Cookie 设置不是秘密字段，以普通运行配置保存。
 
@@ -149,9 +146,9 @@ unset ADMIN_PASSWORD
 
 - 公开注册始终需要处于 active 状态的邀请码，只创建普通用户；过期、撤销或达到使用上限均在注册事务内拒绝。
 - 普通用户邀请码默认有效 7 天、最多使用 1 次；同一用户最多一个未撤销发行，rotate 会在一个 immediate transaction 中撤销旧码并创建替代码。
-- 管理员可把有效期覆盖为当前时间后最多 365 天，把最大使用次数覆盖为 `1..=1000`；撤销只写 `revoked_at`，不物理删除兑换历史。
+- 管理员可把有效期覆盖为当前时间后最多 365 天，把最大使用次数覆盖为 1–1000；撤销只写 `revoked_at`，不物理删除兑换历史。
 - 注册在同一 immediate transaction 中创建用户、递增 `use_count`、追加 `invite_code_uses` 和安全审计；并发争用最后一个名额时只有一个事务能提交。
-- 用户名长度 `3..32`，只允许字母、数字和下划线。
+- 用户名长度 3–32，只允许字母、数字和下划线。
 - bootstrap、注册、改密和管理员重置的新密码至少 12 个 Unicode 字符。
 - 既有短密码哈希仍可登录，直到下次改密。
 - 新密码使用 PHC 格式 Argon2id（`m=19456 KiB,t=2,p=1`）；API 的密码 KDF 使用独立并发 2 gate，限制密码验证的并行内存消耗。
@@ -184,7 +181,7 @@ unset ADMIN_PASSWORD
 
 用户名会 trim、截断为注册策略允许的最多 32 个 code point，再转为 ASCII 小写。IP/用户名 map 使用真正的最近使用顺序淘汰，旋转输入不能使 key 数无限增长。成功登录或注册只清除该操作对应的用户名桶，不清除 IP 或全局额度。
 
-`trusted_proxy_cidrs` 默认空。任意 `Forwarded`/`X-Forwarded-For` 都不能改变不可信直连 peer 的分桶；只有直连地址命中明确 CIDR 时才按右到左可信链取客户端地址。标准 `Forwarded` 优先，链必须全部是数值 IP/可选端口；无效链回退到直连代理地址的共享桶。不要把任意公网范围加入可信列表，可信代理也必须覆盖而不是盲目追加来自客户端的转发头。
+`trusted_proxy_cidrs` 默认空，任意 `Forwarded`/`X-Forwarded-For` 都不能改变不可信直连 peer 的分桶；客户端地址解析规则见[运行配置参考](../reference/configuration.md#origin-语法)。不要把任意公网范围加入可信列表，可信代理也必须覆盖而不是盲目追加来自客户端的转发头。
 
 超过限制返回统一 `429`、数值 `Retry-After` 和相同 detail，不泄露用户名是否存在。每个请求的结构化事件包含固定 `reason`、`bucket`、`source_class`、递增 `rejected_count` 和服务器生成的 `request_id`，不记录原始 IP、用户名或转发头；持久安全审计按操作与桶每 60 秒最多保存一个代表性事件，避免攻击流量转化为无上界的同步 SQLite 写入。策略可由严格的 `auth_rate_limit_policy` JSON 调整，但 parser 要求全局桶容量/补充速率始终高于前置桶。
 
@@ -194,23 +191,11 @@ unset ADMIN_PASSWORD
 
 默认 `secure_cookies=false`，适合 loopback HTTP。通过 HTTPS 对外访问前应把数据库设置改为 `true`。直接运行二进制时可用 `litradar serve --require-secure-cookies` 作为启动门；不满足时应用在绑定端口前失败。默认 Compose 不添加该参数，因此开放入口前要核对数据库设置。
 
-部署的浏览器通过 Caddy 同源访问 Wails Web host 与 Go 服务端；开发由 Vite 8000 代理到 Go 8001。浏览器跨源直连时：
+部署的浏览器通过 Caddy 同源访问 Wails Web host 与 Go 服务端；开发由 Vite 8000 代理到 Go 8001。浏览器跨源直连时在 `cors_allowed_origins` 列出准确 Origin；credentialed CORS 拒绝 `*` wildcard 和 opaque `null`，避免把任意网站或不同不透明上下文纳入携带 Cookie 的信任边界。
 
-- 在 `cors_allowed_origins` 列出准确 Origin
-- credentialed CORS 拒绝 `*` wildcard，避免把任意网站纳入携带 Cookie 的信任边界
-- CORS 也拒绝 opaque `null`，避免把不同不透明上下文视为同一个受信 Origin
-- 浏览器请求携带 Cookie credentials
+MCP 的 `Host` 防护与浏览器 CORS 分开：`mcp_allowed_hosts` 默认 `localhost,127.0.0.1,::1`，公网域名、局域网 IP 或反向代理 Host 必须显式加入；`mcp_allowed_origins` 只用于浏览器跨源直连 MCP，并为现有 opaque Origin 客户端保留精确字面量 `null`。
 
-MCP 的 `Host` 防护与浏览器 CORS 分开：
-
-- `mcp_allowed_hosts` 默认 `localhost,127.0.0.1,::1`
-- 公网域名、局域网 IP 或反向代理 Host 必须显式加入
-- `mcp_allowed_origins` 只用于浏览器跨源直连 MCP
-- MCP Origin 通常遵循同一准确 HTTP(S) tuple 语法，但为现有 opaque Origin 客户端保留精确字面量 `null`
-
-管理员提交无效 CORS/MCP Origin 时，API 返回 `400` 且整份更新不落库；有效修改在下次 `litradar serve` 启动时生效。旧版本或库外修改留下的无效行会在监听端口绑定前使启动明确失败，不会静默忽略或自动修复，从而避免意外放宽网络策略。
-
-全局配置详见[运行配置参考](../reference/configuration.md)。
+管理员提交无效 CORS/MCP Origin 时，API 返回 `400` 且整份更新不落库；有效修改在下次 `litradar serve` 启动时生效。旧版本或库外修改留下的无效行会在监听端口绑定前使启动明确失败，不会静默忽略或自动修复，从而避免意外放宽网络策略。Origin 语法和全局配置详见[运行配置参考](../reference/configuration.md)。
 
 ### 响应安全策略
 
@@ -218,9 +203,7 @@ Go 服务端只提供 API、MCP、OpenAPI 文档和健康检查，页面返回 4
 
 服务端使用 `--require-secure-cookies` 时要求 `secure_cookies=true`，并发送一年 HSTS。Web host 通过 `LITRADAR_CLIENT_HSTS_MAX_AGE` 单独启用 HSTS；只在外部入口始终为 HTTPS 后配置。认证响应始终 `Cache-Control: no-store`、`Pragma: no-cache`。客户端哈希资源可长期 immutable 缓存，SPA HTML 重新验证；UI 不包含数据或部署密钥。
 
-根 `Caddyfile` 拒绝 `/wails` 和 `/wails/*`：Wails v3 Server Build 的 runtime 端点未经认证，Web host 不注册服务，不能把 runtime 调用暴露给匿名网络请求。网关保留 Authorization、Cookie、Origin 和 Host，覆盖 `X-Forwarded-For` 为直连地址并移除 `Forwarded`，避免客户端伪造限流来源；MCP 关闭代理缓冲。准确设置 `trusted_proxy_cidrs` 为 backend 网络，`mcp_allowed_hosts` 为公开域名。Caddy 前若再加代理，必须明确设计可信链；默认配置只信任直连客户端。
-
-原生客户端只支持账号密码和 OIDC 登录：`/api/auth/native/login` 与[原生客户端 OIDC](#原生客户端-oidc) 都签发独立 `device:` 个人令牌，有效期 90 天，不覆盖浏览器会话；令牌列表可撤销设备，原生退出撤销当前令牌。见[客户端指南](../guides/clients.md)。
+根 `Caddyfile` 拒绝 `/wails` 和 `/wails/*`，因为 Wails v3 Server Build 的 runtime 端点未经认证；网关覆盖 `X-Forwarded-For` 为直连地址并移除 `Forwarded`，避免客户端伪造限流来源。路由和请求头细节见 [Docker 部署](docker.md#服务拓扑)。准确设置 `trusted_proxy_cidrs` 为 backend 网络，`mcp_allowed_hosts` 为公开域名。Caddy 前若再加代理，必须明确设计可信链；默认配置只信任直连客户端。
 
 ## 服务器出站请求
 
@@ -241,30 +224,17 @@ AI 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retry-After` 
 
 ## 构建与发布验证
 
-发布前运行 Linux 与 Windows 后端检查和前端检查；`Release` 工作流对 Linux amd64 镜像、Linux 归档和 Windows x64 归档分别执行冒烟测试，全部通过后发布服务端归档/镜像，以及独立客户端产物；Android 发布必须具备签名密钥。仓库不再提供漏洞、密钥或 CodeQL 扫描工作流和本地扫描入口。GitHub 仓库级保护设置独立于这些文件管理。
+发布前必须通过后端（Linux/Windows）、前端和客户端质量检查；`Release` 工作流对 Linux amd64 镜像、Linux 归档、Windows x64 归档和客户端产物分别执行冒烟测试，全部通过后才发布。Android APK 只在四个签名 secret 齐全时发布，不发布调试签名包；流程见[版本发布](releases.md)。仓库不包含漏洞、密钥或 CodeQL 扫描工作流；GitHub 仓库级保护设置独立于这些文件管理。
 
-构建继续使用固定依赖、基础镜像摘要和发行包校验和。Obscura 使用官方 v0.2.4 render + stealth 二进制；下载校验用于可复现构建，功能、渲染和容器隔离仍由冒烟测试验证。Dependabot 继续提出常规依赖更新。
+构建使用固定依赖、基础镜像摘要和发行包校验和。Obscura 使用官方 v0.2.4 render + stealth 二进制；下载校验用于可复现构建，功能、渲染和容器隔离由冒烟测试验证。Dependabot 每周提出 GitHub Actions 和 Go 模块等常规依赖更新。
 
 ## 网络暴露
 
-根 Compose 仅发布：
-
-- `127.0.0.1:8000:8000`
-
-该 Caddy 入口统一代理 UI、REST、OpenAPI 文档和 MCP。容器内监听 `0.0.0.0` 只用于 Compose 网络通信。远程访问应经 TLS 反向代理，并同时配置 Secure Cookie、准确 CORS/MCP 白名单和共享限流。不要直接把宿主机端口改为所有网卡。
+根 Compose 只发布网关端口，默认绑定 `127.0.0.1:8000`（`LITRADAR_BIND_ADDRESS`/`LITRADAR_PORT` 可改，见 [Docker 部署](docker.md#2-配置-https-访问)）。该 Caddy 入口统一代理 UI、REST、OpenAPI 文档和 MCP；容器内监听 `0.0.0.0` 只用于 Compose 网络通信。远程访问应经 TLS 反向代理，并同时配置 Secure Cookie、准确 CORS/MCP 白名单和共享限流。不要把绑定地址直接改为所有网卡。
 
 ## 容器边界
 
-`server` 使用原服务端镜像，`client-web` 和 `gateway` 独立运行：
-
-- 使用 UID/GID `10001:10001`；应用入口为 `/usr/local/bin/litradar`，并打包 Obscura 和 `pdftotext`；检索分词在 Go 中完成，没有 Node.js 运行时
-- 根文件系统只读
-- `/tmp` 使用 `noexec,nosuid,nodev` tmpfs
-- 只允许 `/app/data` 持久写入；客户端不挂载业务数据或部署密钥
-- 丢弃全部 Linux capabilities
-- 启用 `no-new-privileges:true`
-- 镜像定义 `/health/ready` Docker health check；发布 smoke 另行探测根路径 404、文档、OpenAPI 和 auth cache/Header 边界
-- Compose 只向宿主机 loopback 发布端口；通过 HTTPS 对外访问前应把数据库 `secure_cookies` 设为 `true`
+只有 `server` 访问业务数据和部署密钥：它以 UID/GID `10001:10001` 运行，入口为 `/usr/local/bin/litradar`，打包 Obscura 和 `pdftotext`，只允许 `/app/data` 持久写入。三个服务都使用只读根文件系统和 `no-new-privileges:true`；`client-web` 以 distroless `nonroot` 运行，不挂载业务数据或密钥；`gateway` 只保留 `NET_BIND_SERVICE`。逐服务的账号、capabilities、tmpfs 和健康检查见 [Docker 部署](docker.md#容器限制)。通过 HTTPS 对外访问前应把数据库 `secure_cookies` 设为 `true`。
 
 不要通过 root 容器、开放整个宿主机目录或挂载 Docker socket 解决权限问题。
 
@@ -324,5 +294,3 @@ litradar admin secrets verify \
 路由层的管理员检查和“不能撤销/删除自己”只提供提前反馈。所有管理员写操作都把 actor ID 传入 storage，并在各自的 `BEGIN IMMEDIATE` 获得写锁后重新确认 actor 仍存在且仍为管理员；只有随后同一事务中的目标写入、凭据/令牌撤销和必需审计能够提交。输入校验和密码 KDF 可以在事务外完成，但撤权若先提交，已经通过入口检查的在途密码重置、邀请码、计划任务、运行设置或公告写入仍固定返回 `403`，不能使用旧授权快照提交。
 
 管理员授权或删除用户还会在同一事务中读取 target 和当前管理员计数。撤权或删除的提交结果必须至少保留一个管理员；并发交叉撤权/删除中只有一个事务可以成功。target 不存在映射为 `404`，最后管理员不变量冲突映射为 `409`，三者不会降级为通用 `500`。
-
-网关保留 `NET_BIND_SERVICE` capability，因为官方 Caddy 二进制带该文件 capability；移除其 bounding-set 权限会在执行时返回 EPERM，即使监听 8000。其他 capabilities 仍全部丢弃。根文件系统只读，自动 HTTPS 与配置持久化在 loopback 示例中关闭。

@@ -2,7 +2,7 @@
 
 本文档是服务端 `apps/server/Dockerfile` 与 `docker-compose.yml` 的部署操作手册。命令参数见 [CLI 参考](../reference/cli.md)，安全边界见[安全说明](security.md)。
 
-首次部署按下文的初始化步骤执行；已有数据先阅读备份与恢复要求。除明确标为 PowerShell 的画像命令外，示例在仓库根目录的 Bash 中执行，所需工具包括 Docker Compose、OpenSSL 和 curl；日志筛选另需 jq。
+首次部署按下文的初始化步骤执行；已有数据先阅读备份与恢复要求。示例在仓库根目录的 Bash 中执行，所需工具包括 Docker Compose、OpenSSL 和 curl。
 
 ## 服务拓扑
 
@@ -13,33 +13,31 @@ browser/API/MCP -> 127.0.0.1:8000 -> gateway (Caddy)
 server -> ./data:/app/data + litradar_key Compose secret
 ```
 
-Compose 项目名为 `litradar`，服务为 `server`、`client-web`、`gateway`。只有网关发布宿主端口；客户端仅连接内部 frontend 网络，没有数据卷或密钥。server 连接 backend 网络并保留访问上游所需的出站连接。
+Compose 项目名为 `litradar`，服务为 `server`、`client-web`、`gateway`。只有网关发布宿主端口；客户端仅连接内部 frontend 网络，没有数据卷或密钥。server 连接 backend 网络并保留访问上游所需的出站连接。各服务的运行账号和文件系统限制见[容器限制](#容器限制)。
 
-| 服务 | 构建 | 镜像 | 持久化 |
-| --- | --- | --- | --- |
-| server | `apps/server/Dockerfile` | `ghcr.io/qianfuv/litradar-server:latest` | `/app/data`，只读部署密钥 |
-| client-web | `apps/client/build/docker/Dockerfile.server`，上下文为仓库根目录（专用 Dockerfile ignore） | `ghcr.io/qianfuv/litradar-client-web:latest` | 无 |
-| gateway | digest 固定的 Caddy 2.11.2 Alpine | 见 Compose | 只读 `Caddyfile` |
+| 服务       | 构建                                                                                       | 镜像                                         | 持久化                    |
+| ---------- | ------------------------------------------------------------------------------------------ | -------------------------------------------- | ------------------------- |
+| server     | `apps/server/Dockerfile`                                                                   | `ghcr.io/qianfuv/litradar-server:latest`     | `/app/data`，只读部署密钥 |
+| client-web | `apps/client/build/docker/Dockerfile.server`，上下文为仓库根目录（专用 Dockerfile ignore） | `ghcr.io/qianfuv/litradar-client-web:latest` | 无                        |
+| gateway    | digest 固定的 Caddy 2.11.2 Alpine                                                          | 见 Compose                                   | 只读 `Caddyfile`          |
 
-server 镜像在 0.5.0 之后由 `ghcr.io/qianfuv/litradar` 更名为 `ghcr.io/qianfuv/litradar-server`，旧名称停留在 0.5.0，不再发布新版本。已有部署更新时，把自己 Compose 文件中 server 的 `image` 改为新名称（或改用仓库中的 `docker-compose.yml`），再执行 `docker compose pull` 和 `docker compose up -d`。
+server 镜像在 0.5.0 之后由 `ghcr.io/qianfuv/litradar` 更名为 `ghcr.io/qianfuv/litradar-server`，旧名称不再发布新版本。从旧名称升级时，把自己 Compose 文件中 server 的 `image` 改为新名称（或改用仓库中的 `docker-compose.yml`），再执行 `docker compose pull` 和 `docker compose up -d`。
 
 根 `Caddyfile` 路由：
 
-| 路径 | 目标 |
-| --- | --- |
-| `/api`、`/api/*`、`/mcp`、`/mcp/*`、`/docs`、`/docs/*`、`/openapi.json`、`/openapi.yaml`、`/health/*` | server |
-| `/wails`、`/wails/*` | 网关直接返回 404 |
-| 其他，包括 `/`、`/login` | client-web 的 SPA |
+| 路径                                                                                                  | 目标              |
+| ----------------------------------------------------------------------------------------------------- | ----------------- |
+| `/api`、`/api/*`、`/mcp`、`/mcp/*`、`/docs`、`/docs/*`、`/openapi.json`、`/openapi.yaml`、`/health/*` | server            |
+| `/wails`、`/wails/*`                                                                                  | 网关直接返回 404  |
+| 其他，包括 `/`、`/login`                                                                              | client-web 的 SPA |
 
-Wails Server Build 的 runtime 端点未经认证；Web host 不注册任何服务，因此网关禁止整个 runtime 命名空间。网关保留 Authorization、Cookie、Origin、Host，覆盖 X-Forwarded-For 为直连地址并移除 Forwarded；MCP 使用 `flush_interval -1`，保留流式响应。[Caddy 官方说明](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)介绍转发头和缓冲行为。
-
-默认入口是 loopback HTTP，自动 HTTPS 和配置持久化关闭。网关只保留官方 Caddy 文件 capability 所需的 NET_BIND_SERVICE；server/client-web 丢弃全部 capabilities，所有服务使用只读根文件系统与 no-new-privileges。server 以 UID/GID 10001:10001 运行，`/tmp` 为 noexec/nosuid/nodev tmpfs，Docker healthcheck 只请求 `/health/ready`。
+Wails Server Build 的 runtime 端点未经认证；Web host 不注册任何服务，因此网关禁止整个 runtime 命名空间。网关保留 Authorization、Cookie、Origin、Host，覆盖 X-Forwarded-For 为直连地址并移除 Forwarded；MCP 使用 `flush_interval -1`，保留流式响应。[Caddy 官方说明](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)介绍转发头和缓冲行为。默认入口是 loopback HTTP，自动 HTTPS 和配置持久化关闭。
 
 ## 镜像内容与源码构建
 
 服务端 Dockerfile 使用固定 Ubuntu digest、Go 归档校验和与 CA 包版本，不安装 Node.js，也不构建 UI。`apps/server` 以 `CGO_ENABLED=0` 编译为纯 Go 二进制，构建阶段不安装 C 编译器或交叉编译工具链。服务端镜像包含 Obscura v0.2.4、Poppler、不可变 Meta bundle、许可证和 Go 构建清单。服务端 `/` 与 UI 路径返回 404，`/docs`、`/openapi.json`、API、MCP、健康检查可用。
 
-客户端先在根目录构建 Vite，再由独立 Dockerfile 将 `frontend/dist` 嵌入 linux/amd64 Wails Web host，并放入 distroless 镜像。两个应用运行镜像均不需要 Node.js。
+客户端先在根目录构建 Vite，再由独立 Dockerfile 将 `apps/client/frontend/dist` 嵌入 linux/amd64 Wails Web host，并放入 distroless 镜像。两个应用运行镜像均不需要 Node.js。
 
 ```bash
 pnpm install --frozen-lockfile
@@ -48,7 +46,7 @@ docker compose build
 docker compose up -d
 ```
 
-`server` 仍在同一进程中监管 HTTP 与持久化调度，按需使用同一可执行文件启动任务子进程；SIGINT/SIGTERM 协调关闭并等待子进程。Web 客户端不运行索引或调度。
+`server` 在同一进程中监管 HTTP 与持久化调度，按需使用同一可执行文件启动任务子进程；SIGINT/SIGTERM 协调关闭并等待子进程。Web 客户端不运行索引或调度。
 
 ## 首次部署
 
@@ -78,7 +76,7 @@ docker compose run --rm --no-deps --entrypoint sh server \
 
 命令应退出 0；它只检查权限，不生成密钥或业务数据。
 
-已有明文集成凭据的 `data/auth.sqlite` 必须在停机和备份后先执行显式密文迁移，见[安全说明](security.md)。
+已有明文集成凭据的 `data/auth.sqlite` 必须在停机和备份后先执行显式密文迁移，见[安全说明](security.md#旧明文迁移)。
 
 ### 2. 拉取和启动
 
@@ -88,7 +86,7 @@ docker compose up -d --remove-orphans
 docker compose ps
 ```
 
-镜像更新后，再运行 `docker compose pull` 和 `docker compose up -d --remove-orphans`。
+镜像更新后，先按[备份与恢复](backup.md)创建并验证备份，再运行 `docker compose pull` 和 `docker compose up -d --remove-orphans`。新镜像启动时可能把旧格式内容库就地迁移到 v10（见[旧分词器索引与中文检索](#旧分词器索引与中文检索)），不支持当前 v10 的旧镜像随后无法直接打开这些文件。
 
 需要验证当前源码时改为本地构建：
 
@@ -113,7 +111,7 @@ printf '%s\n' "$ADMIN_PASSWORD" |
 unset ADMIN_PASSWORD
 ```
 
-容器入口已经是 `litradar`，因此 `admin` 是首个参数。用户表非空时 bootstrap 会拒绝。
+容器入口已经是 `litradar`，因此 `admin` 是首个参数。bootstrap 的约束见[安全说明](security.md#首个管理员)。
 
 ### 4. 运行配置
 
@@ -141,27 +139,17 @@ docker compose run --rm server index \
 
 配置上述 Scholarly 凭据后可把文件替换为 `english_journals.csv` 或 `ccf_computer_journals.csv`。已有索引库也可直接放入宿主机 `data/index/`。
 
-### 6. 中断恢复和更新
+## 索引中断恢复
 
-每条实时索引或更新命令先在 `data/index-control/index-batches.sqlite` 的 batch ledger schema v2 中取得固定单行项目租约 `index_batch_lease`，因此同一项目跨全部目录只允许一个 active invocation。进入某个目录后，命令还会在该目录的 catalog 控制库 v5 中取得 `(catalog_name, provider_name)` 的 `provider_leases` 次级租约；它保护 Provider traversal 和内容提交，但不替代项目级串行化。父进程每 30 秒把两级租约续到未来 300 秒。普通上游、worker 或清单错误保留 active batch、catalog phase 和待发布事件并释放当前所有权；容器或 Docker daemon 被强制终止时，后续命令只能在确认旧进程消失且租约过期后接管兼容 batch。
+每条实时索引或更新命令先取得项目级租约 `index_batch_lease`（`data/index-control/index-batches.sqlite`），再为当前目录取得 catalog 控制库中的 `provider_leases` 次级租约；父进程定期续期，硬终止后租约最长 300 秒过期。普通上游、worker 或清单错误会保留 active batch 和待发布事件并释放所有权。租约、batch 兼容条件和增量边界见 [CLI 参考](../reference/cli.md)与[数据库参考](../reference/database.md)。
 
 恢复时按以下顺序操作：
 
-1. 确认旧容器、计划任务子进程和 `litradar-memory-*` 画像容器已经停止；不要通过删除 `index_batch_lease` 或 catalog `provider_leases` 绕过所有权检查。
+1. 确认旧容器、计划任务子进程和画像容器已经停止；不要通过删除 `index_batch_lease` 或 catalog `provider_leases` 绕过所有权检查。
 2. 停止常驻服务并完成离线、已验证的当前数据备份。部署密钥必须继续留在 Compose secret 中，不得复制到备份或日志。
 3. 普通失败可立即重跑同一命令；硬终止必须等到旧租约过期。未过期时的明确所有者错误表示旧运行仍受保护，不是可忽略的重试提示。
-4. 需要恢复 changes JSON 时必须用兼容的目录选择、sync mode、ledger 中保存的遗留 issue-batch 恢复值和 notify flags 重跑 `--update`，让默认 resume 继续同一 active batch。issue-batch 只用于匹配旧 active batch；若非默认值要求显式传入，CLI 会发出兼容性警告。存在已发布或可能已发布 manifest 时不要用 `--no-resume` 丢弃 handoff。
+4. 需要恢复 changes JSON 时，用与原 batch 兼容的目录选择、模式和 notify 选项重跑 `--update`，让默认 `--resume` 继续同一 active batch。存在已发布或可能已发布 manifest 时不要用 `--no-resume` 丢弃 handoff。
 5. 成功后确认命令退出 0、changes JSON 可解析、batch 历史进入 `completed`、`index_batch_lease` 与 catalog `provider_leases` 都没有活动所有者，再启动服务并检查 `/health/live`、`/health/ready` 和 `/`。
-
-Zeabur 更新应保留现有服务和 PVC 身份。停服后只运行单个一次性维护进程，不向同一卷启动第二个应用服务。为独立的 Provider 设置迁移保留旧镜像 digest，以及分别验证的认证库和控制库备份。完成受支持的设置迁移后再启动，检查 readiness 和代表性查询，并保留全部备份直到发布回滚窗口结束。
-
-Scholarly 增量使用成功期次 anchor 年份的 1 月 1 日作为日期下界，并完整补查 candidate 到 base 的边界期次；不是从完成时间回看 30 天。Crossref 保留 `from-update-date`，冻结 UTC 秒上界 `T`，按完整 created 历史分片；小片以最多 225 条单响应校验，单秒仍过大才使用无排序 cursor，完整计数通过后在本地归并期次。OpenAlex 保留原有 `from_created_date` 和有序分页。缺少可用 anchor 或无法证明边界时进行同源无界重放，已有内容不因空结果被删除。规则和非快照限制见 [Scholarly](../reference/sources/scholarly.md)。
-
-同次 Crossref resume 不再使用 240 秒游标过期或 HTTP 500 强制重扫；下一次 update 仍须新查询并保留整期补查。升级后的 English 恢复使用原正确性选项和默认 `--resume`，只选 `english_journals.csv`，本次不发送通知；完整示例见 [CLI 恢复步骤](../reference/cli.md#crossref-2026-08-游标升级后的-english-恢复)。这次 API 兼容升级不要求删除内容库、控制库或重建约 10 GB 的 English 数据；新 traversal v2 不能由旧二进制直接恢复。
-
-CNKI 的 2xx 正文解码失败会在现有三次上限内记录并重试；持续失败仍应作为上游/工作流失败处理，不能因为当时内存较低就算作验收通过。
-
-备份与恢复验证不依赖任何 SQLite 分词扩展。恢复的快照若仍声明 `unicode61` 或 `simple 0`，启动预检会在一个事务内把它迁移到 v10、从规范表重建检索投影，再执行完整性、外键、schema 和投影计数检查。不要向运行镜像复制历史 DLL/SO。
 
 ## 数据和秘密
 
@@ -171,9 +159,9 @@ CNKI 的 2xx 正文解码失败会在现有三次上限内记录并重试；持�
 | `./secrets/litradar.key` | `/run/secrets/litradar_key` | Compose secret，只读          |
 | 镜像官方 Meta bundle     | `/usr/share/litradar/meta`  | 不可变源；不在 `/app/data` 内 |
 
-Crossref 的可丢弃工作集固定在 `/app/data/index-work/scholarly/`，随现有 data 挂载持久化，不增加挂载或公开配置，也不进入备份。它不使用 `/tmp` 大排序文件，现有 64 MiB tmpfs 保持不变。每个工作集的 SQLite page cache 为 4 MiB、mmap 关闭、主文件上限 4 GiB；事务日志需要额外可用空间，4 MiB 不是进程 RSS 上限，HTTP JSON 仍受 16 MiB 限制。
+`LITRADAR_DATA_DIR` 和 `LITRADAR_SECRET_KEY_FILE` 可把上表宿主机路径改为专用数据目录和密钥文件。
 
-容量不足会明确失败并保留正式内容和旧 anchor，不能通过截断工作集宣告完成。未完成的自有缓存通常供 resume 复用；缺失或可识别损坏时，当前版本从同一冻结范围重新收集。路径、归属或 symlink/reparse point 校验失败则拒绝访问。不要在运行中手工清空工作目录，也不要用删除控制状态代替容量诊断。
+Crossref 可丢弃工作集固定在 `/app/data/index-work/scholarly/`，随现有 data 挂载持久化，不需要额外挂载或 `/tmp` 空间，也不进入备份；容量和缓存规则见[数据库参考](../reference/database.md)。容量不足会明确失败并保留正式内容。不要在运行中手工清空工作目录，也不要用删除控制状态代替容量诊断。
 
 ### Meta bundle 与持久卷
 
@@ -223,186 +211,37 @@ docker compose ps
 
 ## 容器限制
 
-唯一服务启用：
+三个服务都使用 `read_only: true`、`restart: unless-stopped` 和 `no-new-privileges:true`，其余限制按服务区分：
 
-- `read_only: true`
-- `restart: unless-stopped`
-- `cap_drop: [ALL]`
-- `no-new-privileges:true`
-- 带 `noexec,nosuid,nodev` 的 `/tmp` tmpfs
-- 唯一持久可写的数据挂载、只读密钥挂载和镜像内 readiness 健康检查
+| 服务       | 运行账号               | capabilities                        | 可写位置                                                      | 其他                                    |
+| ---------- | ---------------------- | ----------------------------------- | ------------------------------------------------------------- | --------------------------------------- |
+| server     | UID/GID `10001:10001`  | 全部丢弃                            | `/app/data`；`/tmp` 为 `noexec,nosuid,nodev`、64 MiB 的 tmpfs | 只读密钥挂载；镜像内 readiness 健康检查 |
+| client-web | distroless `nonroot`   | 全部丢弃                            | 无                                                            | 不挂载业务数据或部署密钥                |
+| gateway    | Caddy 官方镜像默认账号 | 全部丢弃，仅保留 `NET_BIND_SERVICE` | 无                                                            | 只读 `Caddyfile`                        |
 
-除 `/app/data` 外没有持久写路径。页面由独立 client-web 提供，server 不读 UI 资源。不要通过 root 容器、开放整个宿主机目录或挂载 Docker socket 解决权限问题。
+网关保留 `NET_BIND_SERVICE`，因为官方 Caddy 二进制带该文件 capability；从 bounding set 移除后，即使监听 8000 也会在执行时返回 EPERM。除 `/app/data` 外没有持久写路径。页面由独立 client-web 提供，server 不读 UI 资源。不要通过 root 容器、开放整个宿主机目录或挂载 Docker socket 解决权限问题。
 
-Compose 默认不设置 cgroup 内存上限。需要限定部署预算时，可在 Compose 覆盖文件中设置 `mem_limit`，或向 `docker run` 传入 `--memory`。服务与调度子进程共享容器 cgroup；画像默认只报告用量，只有显式启用的预算才参与门禁。
+Compose 默认不设置 cgroup 内存上限。需要限定部署预算时，可在 Compose 覆盖文件中设置 `mem_limit`，或向 `docker run` 传入 `--memory`。服务与调度子进程共享容器 cgroup；内存测量见[性能剖析](../guides/profiling.md)。
 
 上游响应在透明解压后仍受各自限制：CNKI/ZJLib 为 2 MiB，JFBYM 为 256 KiB，Scholarly 为 16 MiB，PDF 为 32 MiB。`Content-Length` 只用于提前检查，解压后的流仍按 `limit + 1` 读取。这些响应上限、有界队列和持久页确认机制不依赖容器是否设置内存上限。
 
 ## 日志收集与轮转
 
-应用默认把 JSON Lines 写入 `stderr`，不在 `/app` 创建日志文件。Compose 使用 Docker `local` 驱动并设置 `max-size=10m`、`max-file=5`、`compress=true`；每个容器在压缩影响之前最多约 50 MiB 驱动日志，同时保持 `read_only: true` 和唯一数据写卷不变。
-
-```bash
-docker compose logs --since 30m --timestamps server
-docker compose logs --no-log-prefix server | jq -c 'select(.level == "ERROR")'
-```
-
-删除容器会连同其驱动日志一起删除；需要跨轮转或跨容器保留的事故证据必须在窗口内导出。不要直接读取 Docker 内部 driver 文件。事件 schema、request/run ID 关联、丢失语义、浏览器本地范围和事故流程见[日志运维](logging.md)。
-
-## Go 容器画像
-
-先用 `docker buildx build -f apps/server/Dockerfile --platform linux/amd64 --load --provenance=false -t litradar:go-test-amd64 .` 构建镜像，再运行 `node apps/server/tests/profiling/go-image.mjs`。它在原生 amd64 主机上执行三轮隔离工作负载，使用 160 MiB 容器上限和 64 MiB tmpfs，验证合成文章的认证检索、真实 helper 与退出清理，分别报告应用 RSS 和整个 cgroup 的当前/峰值用量；不把两者相加，也不声称单独测得 helper RSS。结果保存在 `output/profiling/`。
-
-## 内存画像与门禁
-
-仓库提供 PowerShell 7 脚本 `apps/server/tests/profiling/profile_docker_memory.ps1`。脚本为每次运行生成唯一的 Compose 项目、容器和网络，只删除这些具名测试资源，并把不含命令参数和密钥值的 JSON 写入已忽略的 `output/memory/`。Docker 必须使用 cgroup v2，目标镜像必须先构建：
-
-```powershell
-docker buildx build -f apps/server/Dockerfile --platform linux/amd64 --load -t ghcr.io/qianfuv/litradar-server:latest .
-docker compose config --quiet
-```
-
-`-DataPath` 是强制参数。脚本会把该目录以读写方式挂载到 `/app/data`，服务启动会迁移其中的数据库，索引/更新会写入其中的数据。确定性测试应传隔离副本；只有完成停机和已验证备份后，才可把真实 `./data` 传给更新场景。部署密钥仍由 Compose secret 挂载，命令只传容器内密钥路径。
-
-### 指标口径
-
-| JSON 字段/来源                   | 含义                                                                         | 用途                               |
-| -------------------------------- | ---------------------------------------------------------------------------- | ---------------------------------- |
-| `Memory.WorkingSet*`             | `memory.current - memory.stat.inactive_file`，与 Docker working-set 口径一致 | 报告用量；仅执行显式启用的预算     |
-| `Memory.CgroupCurrent*`          | 原始 cgroup 当前用量，包含可回收文件页缓存                                   | 分析页缓存和 cgroup 总占用         |
-| `Memory.CgroupLifetimePeakBytes` | 容器创建以来的原始 `memory.peak`                                             | 诊断启动或作业瞬时峰值             |
-| `PeakProcesses`                  | `docker top` 的进程 RSS、线程数和命令名峰值拆分                              | 区分 `serve`、作业子进程和辅助进程 |
-| `Memory.SwapPeakBytes`           | `memory.swap.current` 的采样峰值                                             | 仅启用旧预算时要求为零             |
-| `EventDelta`                     | 新建 cgroup 生命周期内的 `memory.events` 计数                                | OOM 始终失败；旧预算另检查 max     |
-| `FullPressureAvg10Max`           | `memory.pressure` 的 full `avg10` 采样最大值                                 | 仅启用旧预算时要求为零             |
-
-每个样本还保存选定的 `memory.stat`、PSI、进程 RSS 总和、进程数和线程数。摘要报告 working-set 的 p50、p95、采样峰值、持续时间、场景退出码、OOM 状态和门禁失败原因。采样需要短生命周期的 `docker exec`，因此 cgroup 数值是略偏保守的；进程 RSS 与 cgroup working set 的记账方式不同，不能相加。
-
-显式传入 `-EnforceMemoryBudgets` 时启用以下旧预算：
-
-| 场景                                 | p95     | 采样峰值 |
-| ------------------------------------ | ------- | -------- |
-| `warm-idle`                          | 20 MiB  | 24 MiB   |
-| `index`、`update`、`scheduled-child` | 100 MiB | 120 MiB  |
-
-默认情况下，实际 OOM、命令非零退出或测试流量失败会使画像失败。`-EnforceMemoryBudgets` 启用表中的 p95 与峰值预算，并要求 swap、`memory.events.max` 和 full PSI `avg10` 均为零。单独传入 `-P95LimitMiB` 或 `-PeakLimitMiB` 只启用对应阈值；与旧预算同时使用时，显式值覆盖旧值。
-
-`-ExpectedMemoryLimitMiB` 只核对已有容器上限，不创建上限；`0` 表示期望容器没有上限，其他值对应运维配置的预算。未启用的阈值在报告中为 `null`。调整并发时应比较相同数据下的测量结果；遗留 `--issue-batch` 不控制当前内存或并发。
-
-### 场景命令
-
-真实数据只在停机备份验证完成后画像。最终验收顺序为默认恢复索引、CCF 更新、中国期刊更新、英文学术更新、同 cgroup 计划任务子进程，最后是预热后的日常服务。`DurationSeconds` 是保护性超时；作业提前完成时立即结束，超时则以退出码 124 失败。
-
-默认恢复索引不带 `--update`，用于证明已完成期刊可跳过且旧待发布事件不会被非更新运行接管：
-
-```powershell
-pwsh ./apps/server/tests/profiling/profile_docker_memory.ps1 `
-  -Scenario index `
-  -DataPath ./data `
-  -DurationSeconds 14400 `
-  -Command @(
-    'index',
-    '--secret-key-file', '/run/secrets/litradar_key'
-  ) `
-  -OutputPath ./output/memory/final-resume-index.json
-```
-
-先运行需要恢复待发布事件的 CCF 更新，再分别运行中国期刊和英文学术更新：
-
-```powershell
-pwsh ./apps/server/tests/profiling/profile_docker_memory.ps1 `
-  -Scenario update `
-  -DataPath ./data `
-  -DurationSeconds 14400 `
-  -Command @(
-    'index',
-    '--secret-key-file', '/run/secrets/litradar_key',
-    '--file', 'ccf_computer_journals.csv',
-    '--update'
-  ) `
-  -OutputPath ./output/memory/final-update-ccf.json
-
-pwsh ./apps/server/tests/profiling/profile_docker_memory.ps1 `
-  -Scenario update `
-  -DataPath ./data `
-  -DurationSeconds 14400 `
-  -Command @(
-    'index',
-    '--secret-key-file', '/run/secrets/litradar_key',
-    '--file', 'chinese_journals.csv',
-    '--update'
-  ) `
-  -OutputPath ./output/memory/final-update-chinese.json
-
-pwsh ./apps/server/tests/profiling/profile_docker_memory.ps1 `
-  -Scenario update `
-  -DataPath ./data `
-  -DurationSeconds 14400 `
-  -Command @(
-    'index',
-    '--secret-key-file', '/run/secrets/litradar_key',
-    '--file', 'english_journals.csv',
-    '--update'
-  ) `
-  -OutputPath ./output/memory/final-update-english.json
-```
-
-常驻服务和同 cgroup 子任务的合并画像：
-
-```powershell
-pwsh ./apps/server/tests/profiling/profile_docker_memory.ps1 `
-  -Scenario scheduled-child `
-  -DataPath ./data `
-  -DurationSeconds 14400 `
-  -Command @(
-    'index',
-    '--secret-key-file', '/run/secrets/litradar_key',
-    '--file', 'ccf_computer_journals.csv',
-    '--update'
-  ) `
-  -OutputPath ./output/memory/final-scheduled-child.json
-```
-
-五分钟预热后采集十分钟日常服务和轻流量；直接画像服务端时路径包含 `/health/live`、`/health/ready` 和 `/docs`：
-
-```powershell
-pwsh ./apps/server/tests/profiling/profile_docker_memory.ps1 `
-  -Scenario warm-idle `
-  -DataPath ./data `
-  -WarmupSeconds 300 `
-  -DurationSeconds 600 `
-  -TrafficPath /health/live,/health/ready,/docs `
-  -OutputPath ./output/memory/final-warm-idle.json
-```
-
-每份 JSON 只记录 `CommandProvided`，不记录命令参数或秘密。通过条件为 `Gate.Passed=true`：命令退出 0、没有 OOM、测试流量成功，并通过显式启用的内存或压力检查。默认观察不执行旧的 20/24 MiB 或 100/120 MiB 预算。
-
-无论内存选项如何，非零退出（含超时 124）、上游错误、OOM 或流量失败都属于失败运行。显式阈值或旧压力检查超限也返回 1，未设置的预算不参与判断。以下极小阈值用于验证单项内存检查确实能报错：
-
-```powershell
-pwsh ./apps/server/tests/profiling/profile_docker_memory.ps1 `
-  -Scenario warm-idle `
-  -DataPath ./isolated-profile-data `
-  -DurationSeconds 10 `
-  -P95LimitMiB 0.001 `
-  -PeakLimitMiB 0.001
-```
-
-该命令预期返回 1，并在 JSON 的 `Gate.Failures` 中同时列出 p95 和峰值超限。中断或失败时 `finally` 仍只按本次唯一名称删除容器和网络；若宿主机或 Docker daemon 被强制终止，可用 `docker ps -a --filter name=litradar-memory-` 检查后按完整名称清理。
+应用把 JSON Lines 写入 `stderr`，不在 `/app` 创建日志文件；Compose 使用 Docker `local` 驱动，每个容器在压缩前最多约 50 MiB。查询命令、保留边界和事故流程见[日志运维](logging.md#docker-保留策略)。
 
 ## 通过 HTTPS 提供访问
 
 ### 1. 确认镜像发布
 
-`VERSION` 递增且 backend、frontend 检查通过后，`CI` 调用 `Release` 工作流：只构建 `linux/amd64` 镜像，容器冒烟通过后推送 `ghcr.io/qianfuv/litradar-server:v<version>`，再由串行的 latest 更新步骤把 `ghcr.io/qianfuv/litradar-server:latest` 指向已发布的最高稳定版本。不提供 arm64 镜像或 `sha-*` tag。部署前确认对应 GitHub Release 已发布；可复现部署优先使用 `v<version>`，`latest` 是可变 tag。流程见[版本发布](releases.md)。
+CI 在 `VERSION` 递增且后端、前端和客户端质量检查全部通过后，发布 `ghcr.io/qianfuv/litradar-server` 与 `ghcr.io/qianfuv/litradar-client-web` 的 `v<version>` 和 `latest`（仅 linux/amd64）。部署前确认对应 GitHub Release 已发布；可复现部署优先使用 `v<version>`，`latest` 是可变 tag。流程见[版本发布](releases.md)。
 
 ### 2. 配置 HTTPS 访问
 
-先通过 loopback 完成管理员 bootstrap。在管理员运行配置设置 `public_base_url=https://papers.example.org`、`secure_cookies=true`、`trusted_proxy_cidrs=172.30.42.0/24`（默认 backend 网段）和 `mcp_allowed_hosts`（包含 `papers.example.org`）。网络、Cookie 与 MCP 设置保存后重启 server；公网前检查 `--require-secure-cookies` 启动门。不要用 `0.0.0.0/0` 代替准确可信网络。
+先通过 loopback 完成管理员 bootstrap。在管理员运行配置设置 `public_base_url=https://papers.example.org`、`secure_cookies=true`、`trusted_proxy_cidrs=172.30.42.0/24`（默认 backend 网段）和 `mcp_allowed_hosts`（包含 `papers.example.org`）。网络、Cookie 与 MCP 设置保存后重启 server；字段语义见[运行配置参考](../reference/configuration.md)。不要用 `0.0.0.0/0` 代替准确可信网络。
 
-默认 backend 子网可用 `LITRADAR_BACKEND_SUBNET` 改为不冲突的私网 CIDR，同时更新服务端 trusted_proxy_cidrs。`LITRADAR_DATA_DIR`、`LITRADAR_SECRET_KEY_FILE` 可选择专用数据/密钥路径；`LITRADAR_BIND_ADDRESS` 和 `LITRADAR_PORT` 控制网关发布地址。client-web 使用 WAILS_SERVER_HOST/PORT；客户端 HSTS 使用 LITRADAR_CLIENT_HSTS_MAX_AGE。
+默认 backend 子网可用 `LITRADAR_BACKEND_SUBNET` 改为不冲突的私网 CIDR，同时更新 `trusted_proxy_cidrs`。`LITRADAR_BIND_ADDRESS` 和 `LITRADAR_PORT` 控制网关发布地址（默认 `127.0.0.1:8000`）。client-web 使用 `WAILS_SERVER_HOST`/`WAILS_SERVER_PORT`；客户端 HSTS 使用 `LITRADAR_CLIENT_HSTS_MAX_AGE`。
 
-生产 TLS 建议直接在同一 Caddy 中使用域名站点，移除 `auto_https off`，发布 80/443，并为 Caddy 的证书状态配置独立持久存储；业务数据和部署密钥仍仅授予 server。保留原有 handle 路由、MCP flush_interval 和请求头边界。启用 HTTPS 后将 client-web 的 `LITRADAR_CLIENT_HSTS_MAX_AGE=31536000`，server 命令增加 `--require-secure-cookies`。
+生产 TLS 建议直接在同一 Caddy 中使用域名站点，移除 `auto_https off`，发布 80/443，并为 Caddy 的证书状态配置独立持久存储；业务数据和部署密钥仍仅授予 server。保留原有 handle 路由、MCP `flush_interval` 和请求头边界。启用 HTTPS 后将 client-web 的 `LITRADAR_CLIENT_HSTS_MAX_AGE` 设为 `31536000`，server 命令增加 `--require-secure-cookies`。
 
 默认 Caddy 将 X-Forwarded-For 设为直连地址。如果额外接入外层 TLS/CDN 代理，必须显式配置准确可信代理链和客户端地址解析，再将经过验证的客户端地址传给 server；不能盲目信任外来 Forwarded/X-Forwarded-For。默认 loopback 示例不会自动信任外层代理。
 
@@ -417,6 +256,7 @@ curl -o /dev/null -w '%{http_code}\n' http://localhost:8000/wails/runtime
 ```
 
 可用 `node tests/compose-smoke.mjs <server-image> <client-image>` 对临时项目执行真实三服务、Cookie/Bearer 登录与路由验证；脚本只创建合成密钥与专用卷，并在结束时清理。
+
 应用 URL 校验不能替代网络策略。容器或主机 egress ACL 只应允许管理员批准的 AI/PushPlus 目标、DNS 和 TLS 基础设施，并显式阻断 loopback、RFC1918、link-local、元数据地址与内部服务网段。多实例部署还必须在反向代理/网关使用共享认证限流；应用内单实例 bucket 不是跨实例协调器。
 
 ## 按需命令
@@ -441,13 +281,13 @@ MCP 端点内置于统一应用的 `/mcp`，不需要单独服务：
 
 ## 备份和恢复
 
-通过独立 `/backups` bind mount 运行 `litradar admin backup`，不要把备份输出写入 `/app/data`。恢复前必须停止`server` 服务并等待活动心跳过期。完整流程见[备份与恢复](backup.md)。
+通过独立 `/backups` bind mount 运行 `litradar admin backup`，不要把备份输出写入 `/app/data`。恢复前必须停止 `server` 服务并等待活动心跳过期。完整流程和 Docker 命令见[备份与恢复](backup.md)。
 
 ## 离线索引存储优化
 
-`admin index optimize-storage` 会整目录重建 `data/index`，必须在停机窗口运行。普通容器启动只 preflight 精确 v6/v7/v8/v9/v10，不会自动改写现有 v6/v7/v8/v9 文件。不支持 v10 的旧镜像不能打开优化后的文件；降级前必须先恢复优化前已验证、包含索引且受目标镜像支持的旧版备份。
+`admin index optimize-storage` 离线整目录重建 `data/index` 为 v10 并压缩，必须在停机窗口运行。前置条件、空间要求、输出核对和回滚点见[备份与恢复](backup.md#为离线索引优化准备回滚点)，命令语义、输出字段和错误码见 [CLI 参考](../reference/cli.md)。不支持 v10 的旧镜像不能打开优化后的文件。
 
-先停止服务和所有一次性 `index`/投递容器，等待 API/worker/调度心跳超过 90 秒；若任务被强制终止，还要等待最长 300 秒的 batch/catalog lease 过期。创建和验证的备份必须通过独立 `/backups` bind mount 保存：
+先停止服务和所有一次性 `index`/投递容器，等待心跳和租约过期，再通过独立 `/backups` bind mount 创建并验证备份：
 
 ```bash
 mkdir -p backups
@@ -469,7 +309,7 @@ docker compose run --rm --no-deps \
     --backup /backups/litradar-before-index-v10
 ```
 
-在宿主机统计 `data/index/*.sqlite` 总字节数，并用 `df -B1 data` 确认可用空间至少为 `2 × source_bytes + 64 MiB`。保留备份目录为只读，然后运行当前镜像中的维护命令：
+确认空间后运行当前镜像中的维护命令，并保存完整 stdout JSON 和容器日志：
 
 ```bash
 docker compose run --rm --no-deps \
@@ -479,9 +319,7 @@ docker compose run --rm --no-deps \
     --confirm-index-maintenance
 ```
 
-保存完整 stdout JSON 和容器日志。成功必须返回 `status=optimized`（空目录为 `noop`），并核对 `source_bytes`、`temporary_bytes_required`、`optimized_bytes`、`reclaimed_bytes`，以及每库 v10、`has_content_shadow=false`、freelist 不超过 1%、FTS 分配和权威行计数。失败若返回 `error.recovery_paths`，不要删除 marker、staging 或 rollback，也不要启动服务；保留这些精确路径、日志和已验证备份处理恢复。
-
-成功退出后启动同一镜像并做 smoke：
+失败若返回非空 `error.recovery_paths`，不要删除 marker、staging 或 rollback，也不要启动服务。成功退出后启动同一镜像并做 smoke：
 
 ```bash
 docker compose up -d --remove-orphans
@@ -491,7 +329,7 @@ curl --fail http://localhost:8000/health/ready
 curl --fail http://localhost:8000/openapi.json
 ```
 
-还要用固定查询核对检索、过滤、游标分页和文章详情。保留优化前备份直到镜像降级窗口结束；如需降级，先停止当前服务，再次验证备份受目标镜像支持，并按[离线恢复](backup.md#离线恢复)恢复索引，不能把 v10 文件直接交给不支持该版本的旧镜像。
+还要用固定查询核对检索、过滤、游标分页和文章详情。需要降级时，先停止当前服务，再按[离线恢复](backup.md#离线恢复)恢复受目标镜像支持的优化前备份。
 
 ## 排障
 
@@ -509,16 +347,10 @@ curl --fail http://localhost:8000/openapi.json
 3. 确认没有长时间阻塞的任务；调度心跳健康窗口为 90 秒。
 4. 用 `docker compose run --rm server scheduler validate --secret-key-file /run/secrets/litradar_key` 验证已保存任务。
 
-### 旧分词器索引
+### 旧分词器索引与中文检索
 
-先区分数据库版本与 FTS 定义：受支持的精确 v6/v7/v8 使用内建 `unicode61`，旧 v9/v10 使用已移除的 Simple `simple 0`；当前 v10 使用 FTS5 内建的 `ascii` 分词器，由 Go 切词。启动预检按 `article_search` 声明判断，声明不是当前形式的内容库会在一个事务内迁移到 v10 并重建检索投影；失败时回滚，原声明保持不变。迁移路径见[数据库参考](../reference/database.md#内容库破坏性切换)，完成后复核版本、FTS 定义和代表性查询。不得降低版本号或复制历史 DLL/SO。
+检索分词在 Go 中完成，镜像不包含 Simple、`libsimple.so` 或任何 SQLite 分词扩展；Obscura 与 Poppler 是独立辅助程序。普通启动的预检按 `article_search` 声明判断：仍为 `unicode61`（v6/v7/v8）或 `simple 0`（旧 v9/v10）的内容库会在一个事务内就地迁移到 v10 并重建检索投影，失败时回滚，原声明保持不变。备份恢复出的旧快照也按此迁移。完成后复核版本、FTS 定义和代表性查询；不得降低版本号，也不要向运行镜像复制历史 DLL/SO。分词规则和迁移路径见[数据库参考](../reference/database.md#article_search)。
 
 ### 通知没有结果
 
 检查 `.changes.json`、用户偏好、AI/PushPlus 凭据，以及认证库中的 `delivery_runs`、`delivery_run_items`、`delivery_dedupe` 和 `delivery_leases`。不要通过修改旧状态 JSON 来清除 busy/unknown；详见[通知与追踪](../guides/notifications.md)。
-
-<a id="native-chinese-search-runtime"></a>
-
-### 中文检索分词
-
-检索分词在 Go 中完成，镜像不包含 Simple、`libsimple.so` 或任何 SQLite 分词扩展；Obscura 与 Poppler 是独立辅助程序。中文逐字成词，短语匹配连续文字；拉丁文不区分重音和大小写；不提供 Jieba 分词或拼音别名。旧 `unicode61` 或 `simple 0` 索引在启动时自动迁移并重建。容器冒烟测试覆盖打包迁移，以及认证后的中文、拉丁文、DOI 和无拼音查询。规则见[数据库参考](../reference/database.md#article_search)。

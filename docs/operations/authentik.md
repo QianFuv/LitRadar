@@ -3,6 +3,7 @@
 LitRadar 支持用户名或邮箱加密码登录，也支持 authentik OpenID Connect 登录。
 首次部署仍先通过 `litradar admin bootstrap` 创建本地管理员，再启用单点登录。
 authentik 不授予 LitRadar 管理员权限；管理员身份始终在 LitRadar 本地管理。
+以下示例假定公开地址为 `https://papers.example.org`。
 
 ## authentik 提供程序
 
@@ -10,11 +11,11 @@ authentik 不授予 LitRadar 管理员权限；管理员身份始终在 LitRadar
 
 - Client type：**Confidential**，保存 Client ID 和 Client Secret。
 - 授权流程：authorization code；LitRadar 使用 PKCE S256 和 `client_secret_basic`。
-- Redirect URI：使用严格匹配，填写 `https://paper.qianfuv.fun/api/auth/oidc/callback`。
+- Redirect URI：使用严格匹配，填写 `https://papers.example.org/api/auth/oidc/callback`。原生客户端也由服务端回调，无需额外 redirect URI。
 - Scope mappings：`openid profile email`，userinfo 必须返回 `sub`、`email` 和布尔值 `email_verified`。
 - Subject mode：`sub_mode=user_uuid`，以稳定 UUID 标识用户；不要使用可更改的用户名或邮箱作为 subject。
-- 保留现有注册入口的邀请、`mails.neu.edu.cn` 邮箱和邮箱 OTP 规则；只有当前已验证地址才能声明 `email_verified=true`。
-- 不允许用户自行更改用户名和邮箱，维持既定的身份管理策略。
+- 只有经 authentik 验证（例如邮箱 OTP）的当前地址才能声明 `email_verified=true`；注册限制（邀请、邮箱域名等）由 authentik 的注册流程负责。
+- 建议禁止用户在 authentik 中自行更改用户名和邮箱，避免身份漂移。
 
 将提供程序的 **OpenID Configuration Issuer** 原样填入 LitRadar 的 issuer 设置，
 包括其路径和末尾斜杠。服务从该 issuer 的
@@ -25,13 +26,13 @@ authentik 不授予 LitRadar 管理员权限；管理员身份始终在 LitRadar
 
 在管理员运行设置的 `single_sign_on` 分组配置：
 
-| 设置 | 值 |
-|---|---|
-| `oidc_issuer_url` | authentik 提供程序的 issuer URL |
-| `oidc_client_id` | confidential client 的 Client ID |
+| 设置                 | 值                                                  |
+| -------------------- | --------------------------------------------------- |
+| `oidc_issuer_url`    | authentik 提供程序的 issuer URL                     |
+| `oidc_client_id`     | confidential client 的 Client ID                    |
 | `oidc_client_secret` | Client Secret；使用部署密钥加密保存，界面仅显示掩码 |
-| `oidc_display_name` | `authentik`，可更改登录按钮名称 |
-| `public_base_url` | `https://paper.qianfuv.fun` |
+| `oidc_display_name`  | 默认 `authentik`，可更改登录按钮名称                |
+| `public_base_url`    | `https://papers.example.org`                        |
 
 issuer、client id、client secret 和 public base URL 全部非空才启用 OIDC。
 设置在下一次请求生效；更改流程相关设置后，应重新发起登录。
@@ -42,6 +43,7 @@ issuer、client id、client secret 和 public base URL 全部非空才启用 OID
 浏览器流程使用十分钟的 HMAC 签名 `litradar_oidc` Cookie，签名密钥来自已有部署密钥。
 Cookie 为 HttpOnly、SameSite=Lax，路径限于 `/api/auth/oidc`，回调时清除。
 回调复用普通 LitRadar 会话签发逻辑；个人访问令牌和 MCP Bearer 认证保持原有规则。
+原生客户端流程见[原生客户端 OIDC](security.md#原生客户端-oidc)。
 
 ## 账号建立、绑定和恢复
 
@@ -56,31 +58,30 @@ OIDC 创建的账号仅通过 authentik 登录，不能修改本地邮箱、修�
 每次登录使用已验证的 userinfo 邮箱同步 OIDC 账号地址；新地址已被占用时保留原地址。
 本地账号邮箱不会随绑定提供程序的邮箱变化而更新。
 
-ID token 仅来自服务端通过验证 TLS 的 token endpoint；验证 `iss`、`aud`、`azp`、
-`exp`、`iat` 和 `nonce`，并要求 userinfo `sub` 一致。当前按已批准的安全边界省略
-ID token 签名验证；若以后接受浏览器传来的 token，必须先加入 JWKS 签名验证。
+ID token 由服务端从 token endpoint 取得，并由 go-oidc 按发现文档的 `jwks_uri` 验证签名；
+同时检查 `iss`、`aud`、`azp`、`exp`、`iat` 和 `nonce`，并要求 userinfo `sub` 一致。
+完整验证规则见[安全说明](security.md#oidc-身份验证)。
 
 回调只暴露有界错误码：`unavailable`、`state`、`denied`、`provider`、
 `email_unverified`、`email_conflict`、`account_conflict`、`expired_session`。
 登录失败返回 `/login?oidc_error=<code>`，绑定失败返回 `/?oidc_link=<code>`。
-安全审计记录 `oidc_login`、`oidc_provision`、`oidc_link`、`oidc_unlink`、`email_change`，
+安全审计记录 `oidc_login`、`oidc_provision`、`oidc_link`、`oidc_unlink`、`oidc_native_exchange`、`email_change`，
 不保存授权码、token、nonce、state、邮箱或 client secret。
 
-## Nginx Proxy Manager 回调日志
+## 回调访问日志
 
-OIDC 回调 query 含一次性授权码和 state。发布前，在 Nginx Proxy Manager 的
-`paper.qianfuv.fun` Proxy Host 中为 `/api/auth/oidc/callback` 配置单独的精确路径 location，
-复用现有 `litradar:8000` 转发和请求头配置，并在这个 location 内设置：
+OIDC 回调 query 含一次性授权码和 state。LitRadar 自身 HTTP 日志只记录匹配路由，不记录 URL query；
+仓库自带的 Caddy `gateway` 未启用访问日志。若在 LitRadar 前另有记录访问日志的反向代理、CDN 或 WAF，
+发布前应对 `/api/auth/oidc/callback` 禁止记录完整 query，同时保持原有转发和请求头配置。
+
+以 Nginx（包括 Nginx Proxy Manager 的 Advanced 配置）为例，复制当前生效的代理 location，
+改为精确路径并加入：
 
 ```nginx
-access_log off;
+location = /api/auth/oidc/callback {
+    # Keep the same proxy_pass and proxy_set_header directives as the main location.
+    access_log off;
+}
 ```
 
-可在 Proxy Host 的 Advanced 配置中复制当前生效的代理 location，改为
-`location = /api/auth/oidc/callback` 并加入上述指令；保持原有转发头和代理行为。
-使用该 NPM 版本生成的配置作为模板，避免另建 location 时丢失代理设置。
-保存前校验 Nginx 配置，保存后通过一次实际登录确认回调仍能转发且 access log 不再记录它。
-若有上游 CDN、WAF 或其他代理，也应对该路径禁记完整 query。
-LitRadar 自身 HTTP 日志只记录匹配路由，不记录 URL query。
-
-本文描述操作要求；不创建 authentik 资源、不写生产运行设置、不修改 NPM 配置，也不部署服务。
+保存前校验代理配置，保存后通过一次实际登录确认回调仍能转发且访问日志不再记录它。
