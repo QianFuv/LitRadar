@@ -63,10 +63,10 @@ litradar serve --secret-key-file PATH
 | `--secret-key-file PATH`         | 必填         | 32 字节部署密钥                                      |
 | `--host HOST`                    | `127.0.0.1`  | HTTP 监听地址                                        |
 | `--port PORT`                    | `8000`       | HTTP TCP 端口                                        |
-| `--project-root PATH`            | 当前工作目录 | 服务端数据根目录                       |
+| `--project-root PATH`            | 当前工作目录 | 服务端数据根目录                                     |
 | `--scheduler-interval-seconds N` | `30`         | 立即执行首个 tick 后的调度间隔；必须大于 0           |
 | `--require-secure-cookies`       | 关闭         | 要求数据库 `secure_cookies=true`，否则绑定端口前失败 |
-| `--development`                  | 关闭         | 限制为 loopback 开发模式     |
+| `--development`                  | 关闭         | 限制为 loopback 开发模式                             |
 
 `serve` 是唯一常驻入口。它先准备和迁移存储，再在一个进程中并发运行 HTTP 与内嵌调度。计划任务使用当前 `litradar` 可执行文件启动类型化子命令进程，并把每次运行隔离到 Unix process group 或 Windows Job Object。SIGINT/SIGTERM 会先终止完整进程树、等待直接子进程，再保存 `cancelled`；任一运行组件意外失败会关闭另一组件并使进程非零退出。
 
@@ -139,9 +139,7 @@ litradar admin backup restore
     [--auth-db PATH]
 ```
 
-备份命令不接收部署密钥。清单格式名固定为 `litradar-backup`；新备份使用 version 2，并始终包含认证库和完整 `data/meta` 普通文件树。`--include-indexes` 选择创建时发现的全部 `data/index/*.sqlite`，不按内容 schema 筛选，明确排除可重建的 `data/index-control`（项目 `index-batches.sqlite` 和每个 catalog control）以及 `data/index-work`（Crossref 工作集）；`--include-push-state` 同时选择 `data/push_state` 和 `data/folder_push_state`。验证和恢复仍接受 version 1；v1 恢复不会修改目标 Meta 目录。精确替换和离线门禁见[备份与恢复](../operations/backup.md)。
-
-备份验证检查文件清单、大小、SHA-256、SQLite `quick_check`，以及 `user_version` 与清单的一致性和版本上限。通过这些检查的历史数据库可以保留在备份中；恢复后的内容库仍须满足运行时精确 v6/v7/v8/v9/v10 结构或受支持的迁移、重建要求。
+备份命令不接收部署密钥。`--include-indexes` 加入 `data/index/*.sqlite`，`--include-push-state` 加入 `data/push_state` 和 `data/folder_push_state`；`--output` 和 `--backup` 的相对路径按 `--project-root` 解析。备份范围、清单格式、验证检查、精确替换和离线门禁见[备份与恢复](../operations/backup.md)。
 
 ### 索引存储优化
 
@@ -151,11 +149,9 @@ litradar admin index optimize-storage
     [--project-root PATH]
 ```
 
-这是显式、离线、整目录替换操作，不接受 `--auth-db` 或部署密钥。它把受支持的精确 v6/v7/v8/v9/v10 内容库从规范关系表重建为当前 v10，用 Go 切词和 FTS5 `ascii` 声明生成搜索投影、移除重复 FTS 内容并压缩空闲页。普通服务或索引启动也会把 FTS 声明不是当前 `ascii` 声明的 v6/v7/v8/v9/v10 内容库在一个事务内迁移到 v10 并重建检索投影；本命令另外完成整目录替换和压缩。
+这是显式、离线、整目录替换操作，不接受 `--auth-db` 或部署密钥。它把受支持的内容库从规范关系表重建为当前 v10，生成检索投影、移除重复 FTS 内容并压缩空闲页；普通启动的检索声明迁移见[数据库版本](database.md#连接和版本)。停机、备份、空间预留（`2 × source_bytes + 64 MiB`）和执行顺序见[为离线索引优化准备回滚点](../operations/backup.md#为离线索引优化准备回滚点)。
 
-运行前必须停止 `serve`、独立 `index`/投递命令和计划任务子进程，等待 API/worker/调度心跳超过 90 秒，并等待所有 batch/catalog lease 到期或由正常退出释放。先创建并独立验证带 `--include-indexes` 的备份；需要旧二进制降级时，必须保留受目标旧二进制支持的优化前索引备份。可用空间至少按 `2 × source_bytes + 64 MiB` 预留；命令也会在复制前记录 `temporary_bytes_required` 估计。
-
-暂存和 rollback 目录位于项目的 `data/` 内，与 `index/` 同盘；上述数值是容量预留估计，不会在 `/tmp` 预分配对应大小。兼容性 preflight 若迁移了源库，后续文件变更检测和 `source_bytes` 以迁移后的文件为准，`source_schema_version` 仍报告迁移前版本。
+暂存和 rollback 目录位于项目的 `data/` 内，与 `index/` 同盘，不使用 `/tmp`。兼容性 preflight 若迁移了源库，后续文件变更检测和 `source_bytes` 以迁移后的文件为准，`source_schema_version` 报告迁移前版本。
 
 成功 stdout 为一行 JSON：
 
@@ -212,7 +208,7 @@ litradar index --secret-key-file PATH
 
 约束：
 
-- 显式 `workers/processes` 各接受 `1..=32`。冻结全部选中目录后、接纳批次或创建内容库前，系统检查 Provider 容量。缺省值分别解析；非法组合直接失败，不截断到上限。遗留 `issue-batch` 至少为 1，仅用于恢复兼容。
+- 显式 `workers/processes` 各接受 `1–32`。冻结全部选中目录后、接纳批次或创建内容库前，系统检查 Provider 容量。缺省值分别解析；非法组合直接失败，不截断到上限。遗留 `issue-batch` 至少为 1，仅用于恢复兼容。
 - Scholarly 默认 6 个工作线程和 3 个进程，上限分别为 32、3，聚合容量最多 96；国内 CNKI 默认 6 个工作线程和 1 个进程，聚合容量最多 32。其他 Provider 默认 `6 × 1`，聚合上限 32。未选中的配置路由不限制本次目录。
 
 并发只控制任务容量，不提高上游 API 配额。OpenAlex、Crossref 和 Semantic Scholar 的请求节奏、密钥隔离与额度计算统一见[请求预算](configuration.md#scholarly-请求预算)。`--issue-batch` 不控制并发或内存；没有默认 100 MiB 内存门禁，性能分析阈值由运维人员显式选择。
@@ -225,7 +221,7 @@ litradar index --secret-key-file PATH
 
 命令结果保留 `status`、`message`、`csvs` 和对象 `effective_concurrency`。每个 CSV 的 `concurrency` 包含解析后的 `configured_workers/processes/capacity`、`aggregate_limit`、`effective_workers`、`executor_count`、`child_process_count`、`inline_executor_count` 和 `effective_aggregate_capacity`。单个内联执行器计为 1 个执行器、0 个子进程；只有非空待处理分区计入工作组，已完成、跳过或仅恢复清单的目录活动容量为 0。顶层配置与实际摘要分别选择容量最大的目录元组，不会把不同目录的最大值相乘。空选择容量为 0，未指定的 `requested_workers/processes` 保留为 `null`。这些字段表示任务容量，不是实测 HTTP 重叠数。`source_attempt_count` 统计已提交的规范 Provider 页面，包括恢复时保存的计数，不是 HTTP 请求或重试次数；`written_article_count` 仍是固定大小计数。
 
-发布镜像把 bundle 固定放在 `/usr/share/litradar/meta`，二进制发行包放在可执行文件旁的 `assets/meta`。普通 `index` 依次查找这两处的 `bundle-manifest.json`，存在时于认证库迁移后、读取密钥和运行设置前准备持久的 `<project-root>/data/meta`，再进入下述规范目录校验；内部多进程 worker 请求不会重复准备。准备结果产生 `storage.managed_meta.prepared` 聚合事件，不改变上述 stdout JSON。这些路径不接受环境变量或 CLI 覆盖；本地构建通常发现不到 manifest，因此执行 no-op。运行目录缺失会明确失败，存在但没有选中 CSV 时返回 `skipped`。
+普通 `index` 在认证库迁移后、读取密钥和运行设置前准备受管 Meta 目录，内部多进程 worker 请求不重复准备；bundle 位置和准备规则见[官方 Meta 打包路径](configuration.md#官方-meta-打包路径)。`data/meta` 缺失时命令明确失败，存在但没有选中的 CSV 时返回 `skipped`。
 
 ### 规范目录和 Provider 路由
 
@@ -241,7 +237,7 @@ CSV 使用 LitRadar 维护的 `catalog_id,catalog_aliases,title,issn,eissn,all_i
 
 `index_provider_routes` 从 `auth.sqlite.runtime_settings` 把 stem 映射到一个已注册的 `provider.IndexContent`。缺少 route、Provider 未注册或没有索引 capability 都会在启动 worker 前失败。改变 route 不改目录或内容库身份；在线摘要页和全文使用各自的 default + per-catalog 顺序，和索引 Provider 单选相互独立。
 
-内容库的新建、预检和迁移要求统一见[数据库版本](database.md#连接和版本)。新建库使用 v10；精确 v6/v7/v8/v9/v10 在普通启动时保留原结构，精确 v4/v5 可事务迁移到 v10。非空 v0 及 v1 至 v3 返回包含确切路径的重建错误，命令不会自动删除、改名或降低 `user_version`。
+内容库的新建、预检和迁移要求统一见[数据库版本](database.md#连接和版本)：新建库使用 v10，精确 v4–v9 以及检索声明不是当前形式的 v10 在启动时事务迁移到 v10；非空 v0 及 v1 至 v3 返回包含确切路径的重建错误，命令不会自动删除、改名或降低 `user_version`。
 
 ### 实时恢复与增量同步
 
@@ -273,45 +269,19 @@ CSV 使用 LitRadar 维护的 `catalog_id,catalog_aliases,title,issn,eissn,all_i
 
 `--update` 从内容库的事务性 `article_change_events` 生成 Provider-neutral changes JSON。核心先把精确 payload、目标相对路径和 through-event cursor 持久化为 batch manifest intent，再原子发布相同字节、幂等清理该 cursor，最后进入可选 notify phase。重启可只补 manifest 或 notify，不重复已完成 Provider 工作。若 outbox 已空但已有一个有界且可解析、属于同内容库的 manifest，空 update 会保留该文件且不再次 notify。batch ledger 丢失时文件/SQLite 边界仍按至少一次处理，消费者必须按规范文章身份去重。Provider 请求统计只在终态结构化日志中聚合，不写入内容库。
 
-notify phase 使用 disposable batch schema v2 的独立 typed handoff state，不再把 exit code 混入不可变 catalog outcome。父进程在启动 child 前持久化 32 位十六进制 attempt ID；child 只向父进程输出一行 compact JSON（protocol、attempt、workflow、mode、status、db），父进程最多保留 64 KiB stdout、继续排空管道，并严格核对上下文和退出类别。catalog 只有在 `idle`、`completed` 或 `skipped` 且退出 0 时才能完成。
+notify phase 使用 batch ledger v2 中独立的 typed handoff state，exit code 不写入 catalog outcome。父进程在启动 child 前持久化 32 位十六进制 attempt ID；child 只向父进程输出一行 compact JSON（protocol、attempt、workflow、mode、status、db），父进程最多保留 64 KiB stdout、继续排空管道，并严格核对上下文和退出类别。catalog 只有在 `idle`、`completed` 或 `skipped` 且退出 0 时才能完成。
 
 恢复规则按状态固定：结果尚未落盘或 child 返回 `running` 时复用同一 attempt ID，以便投递层返回已有 durable run；`failed`、`cancelled` 或 `timed_out` 在下一次 operator invocation 使用新 attempt；`unknown`、缺失/畸形/超大输出、上下文不匹配或 status/exit 不一致都不会自动启动 child。审核 delivery run/item/dedupe 后，可用原命令加 `--acknowledge-unknown-notify`；确认 ID 与时间会和新 attempt 在一个 transaction 中写入。attempt 只改变外层 scheduled run 身份，文章级 Confirmed/Unknown dedupe 跨 attempt 保留，所以已确认或不确定的文章不重发，新文章仍可投递。每次父进程调用对每个 catalog 最多启动一个 notify child。
 
-### Crossref 2026-08 游标升级后的 English 恢复
+### 无效的 traversal checkpoint
 
-新版按 [Crossref 官方建议](sources/scholarly.md#crossref-分页)使用完整 created 历史分片、固定 update 条件和计数校验；无序结果验证后才本地排序并输出。没有新增公共 CLI 参数。临时工作集固定在 `data/index-work/scholarly/`，不参与备份，不放在 `/tmp`；响应上限仍是 16 MiB，单工作集主文件最多 4 GiB，事务日志另占磁盘。
+Scholarly traversal checkpoint 只接受当前 v2 格式；旧版本、无版本或损坏的 checkpoint 在恢复时直接失败，错误为 `scholarly checkpoint is invalid or obsolete; restart the indexing run`。属于当前 active batch 的 checkpoint 可用 `--no-resume` 放弃：命令删除该 batch 自有的 run checkpoint，保留 committed anchor、内容库和已发布清单，新 traversal 从现有 anchor 开始；若 ledger 记录了待完成的已发布 notify manifest，需先按上文恢复 handoff。不要删除内容库来处理此错误。Crossref 查询与工作集规则见 [Scholarly](sources/scholarly.md#crossref-分页) 和[数据库参考](database.md#crossref-可丢弃工作集)。
 
-确认旧索引进程已停止、没有未过期的竞争 lease 后，在项目根目录使用新二进制恢复原来关闭通知的 English 增量批次：
+从 control v3 升级留下的无 batch traversal 只能由显式 `--file` 单 CSV、默认 `--resume` 接管；隐式全部 CSV 会拒绝，以免把不同旧 epoch 混入一个 batch。
 
-```bash
-litradar index \
-  --secret-key-file secrets/litradar.key \
-  --project-root . \
-  --file english_journals.csv \
-  --update \
-  --resume \
-  --no-notify
-```
+只有命令成功结束、同 batch 的全部选中 catalog 完成、变更清单可解析且没有残留 traversal 或活动 lease，才算本次更新完成。失败时保留日志、正式内容和恢复状态；不要用删除数据库来处理计数或容量错误。
 
-保留原 CSV、模式和 batch 正确性选项，不删除内容库、控制库或 batch ledger，也不加 `--no-resume`。旧 Scholarly v1 Crossref traversal 会保留 base/candidate 并从新查询头安全重放；v1 OpenAlex traversal 保留原 cursor 语义；NULL traversal 正常开始。新 traversal 为 v2，成功 anchor 仍为 v1，正式 schema 不变。v2 写入后不能盲目用旧二进制接管。
-
-同一次 resume 可以继续已验证片和有效 cursor，不再按 240 秒或 HTTP 500 重扫。下一次独立 update 仍会重新查询并补查整个成功边界期次，日期下界为 anchor 年份的 1 月 1 日；没有固定回看 7/30 天的逻辑，终点 cursor 也不是永久水位。缺失工作集时按原 `C/T`、update 条件和 candidate 重建，不能在丢失前半结果时继续旧 cursor。
-
-只有命令成功结束、同 batch 的全部选中 journal/catalog 完成、变更清单可解析且没有残留 traversal 或活动 lease，才确认本次更新完成。失败时保留日志、正式内容和恢复状态；不要用删除数据库来处理计数或容量错误。交互观察应预先限定，例如最多 3 分钟、3 次状态检查；到达界限只报告实际进度并停止观察，不把启动或部分处理算作完成，也不因此终止健康的索引进程。固定 cursor、时间上界和计数相等不提供远端快照保证。
-
-### 从 control v3 恢复旧 English traversal
-
-从 control v3 升级留下的 batchless traversal 只允许由显式单 CSV、默认 `--resume` 接管；隐式全部 CSV 会拒绝，以免把不同旧 epoch 混入一个 batch。对已有 English 失败状态，先确认没有旧索引进程，再沿用原命令的 mode、ledger 中保存的遗留 issue-batch 恢复值和 notify 选项，并增加下列参数。只有原值不是默认 `8` 时才需要显式传入 `--issue-batch`；此时预期会看到兼容性警告：
-
-```bash
-litradar index \
-  --secret-key-file /run/secrets/litradar_key \
-  --project-root /app \
-  --file english_journals.csv \
-  --update
-```
-
-不要为这次 legacy 接管添加 `--no-resume`。核心要求旧 batchless checkpoints 共享一个 mode 和 start epoch，把同 epoch 已完成 anchor 绑定到新 batch，然后跳过较早 journal 并从保留的 English checkpoint（例如 Public Choice）继续。若此前已经用新版本启动过不带 `--file` 的失败尝试，active all-CSV batch 会产生 `catalog_selection` mismatch；确认进程已停止后，先移动或删除仅项目级的 `data/index-control/index-batches.sqlite`，保留 `english_journals.sqlite`，再执行上述显式恢复命令。
+### 常用示例
 
 日常增量及可选通知：
 
@@ -397,24 +367,24 @@ litradar push --secret-key-file PATH
 
 parser 还接受 `--index-db PATH` 直接指定索引文件；普通使用优先选择 `--db`。
 
-| 参数                         | 默认值                 | 含义                              |
-| ---------------------------- | ---------------------- | --------------------------------- |
-| `--secret-key-file PATH`     | 必填                   | 解密用户投递凭据                  |
-| `--index-db PATH`            | 空                     | 直接指定一个索引 SQLite           |
-| `--db NAME`                  | 全部索引库             | 数据库文件名或 stem               |
-| `--changes-file PATH`        | SQLite checkpoint 差异 | 指定 Provider-neutral 变更清单    |
-| `--ai-model MODEL`           | 用户设置或代码默认     | 覆盖模型名，不提供 API key        |
-| `--max-candidates N`         | `120`                  | 进入模型前的候选上限              |
-| `--timeout N`                | `60`                   | AI/PushPlus HTTP 超时秒数         |
-| `--retries N`                | `3`                    | 适用请求的重试次数，范围 `1..=10` |
-| `--dedupe-retention-days N`  | `60`                   | 已确认去重记录保留天数            |
-| `--dry-run` / `--no-dry-run` | 执行模式               | 是否禁止外部发送和收藏/去重写入   |
+| 参数                         | 默认值                 | 含义                            |
+| ---------------------------- | ---------------------- | ------------------------------- |
+| `--secret-key-file PATH`     | 必填                   | 解密用户投递凭据                |
+| `--index-db PATH`            | 空                     | 直接指定一个索引 SQLite         |
+| `--db NAME`                  | 全部索引库             | 数据库文件名或 stem             |
+| `--changes-file PATH`        | SQLite checkpoint 差异 | 指定 Provider-neutral 变更清单  |
+| `--ai-model MODEL`           | 用户设置或代码默认     | 覆盖模型名，不提供 API key      |
+| `--max-candidates N`         | `120`                  | 进入模型前的候选上限            |
+| `--timeout N`                | `60`                   | AI/PushPlus HTTP 超时秒数       |
+| `--retries N`                | `3`                    | 适用请求的重试次数，范围 `1–10` |
+| `--dedupe-retention-days N`  | `60`                   | 已确认去重记录保留天数          |
+| `--dry-run` / `--no-dry-run` | 执行模式               | 是否禁止外部发送和收藏/去重写入 |
 
-checkpoint、run、item、dedupe 和 workflow lease 统一写入 `--auth-db` 指向的认证 SQLite，不再接受状态目录覆盖。启动时会安全导入项目根下保留的旧 `<db>.json`，但运行过程中只读取 `.changes.json`，不会创建或更新投递状态 JSON。
+checkpoint、run、item、dedupe 和 workflow lease 统一写入 `--auth-db` 指向的认证 SQLite，没有状态目录参数。运行时只读取 `.changes.json`，不创建或更新投递状态 JSON；旧 `<db>.json` 导入规则见[数据库参考](database.md#持久投递状态)。
 
 `--db` 省略时按名称排序处理全部 `data/index/*.sqlite`。`utd24` 和 `utd24.sqlite` 等价；路径部分会被去掉。
 
-`--retries N` 表示首次请求后最多再重试 N 次，默认值为 3。0 或大于 10 的值会在密钥、数据库、目标和传输初始化前被拒绝。该参数是每个适用请求或 AI 响应格式的重试次数，不是作业总时限或全局请求总数。AI 可对连接失败、timeout 和受限瞬态状态重试；PushPlus 仅在连接建立明确失败、请求尚未发送时重试。一旦 PushPlus 请求可能到达上游，timeout、HTTP 响应或连接后错误会直接产生 `unknown`，不会自动重放。`--dedupe-retention-days <= 0` 禁用确认记录清理，而不是立即删除全部记录。
+`--retries N` 表示首次请求后最多再重试 N 次，默认值为 3。0 或大于 10 的值会在密钥、数据库、目标和传输初始化前被拒绝。该参数是每个适用请求或 AI 响应格式的重试次数，不是作业总时限或全局请求总数。哪些失败会重试、PushPlus 何时不再重放，见[通知与追踪](../guides/notifications.md#副作用顺序)。`--dedupe-retention-days <= 0` 禁用确认记录清理，而不是立即删除全部记录。
 
 `notify`/`push` 在投递运行已形成聚合结果时总会先向 stdout 输出一行完整 JSON。聚合状态为 `completed`、`skipped` 或 `idle` 时退出 0；`running`、`cancelled`、`timed_out`、`failed` 或 `unknown` 时退出非零。这样普通调用方仍能解析每个数据库和订阅者的精确结果，scheduler 不会把业务失败误记为成功。`index --notify` 使用上述私有 compact handoff 契约并同时核对 typed status 与退出类别；隐藏参数不属于公开 CLI，也不会出现在 help 中。
 
@@ -455,7 +425,7 @@ litradar scheduler dry-run-once TASK_ID
 litradar openapi [--output PATH]
 ```
 
-不传 `--output` 时把格式化 JSON 写到 stdout；传入路径时写入该文件。该子命令不需要数据库或部署密钥，也不启动 HTTP/调度运行时。
+不传 `--output` 时把紧凑（单行）JSON 写到 stdout；传入路径时写入该文件。该子命令不需要数据库或部署密钥，也不启动 HTTP/调度运行时。
 
 ## 输出和失败
 
@@ -465,7 +435,3 @@ litradar openapi [--output PATH]
 - 错误写入 stderr，并以非零状态退出。
 - 不支持的位置参数或未知选项会明确报错，不会静默忽略。
 - 密文和密码不会出现在结构化输出。
-
-<a id="search-tokenizer-upgrade"></a>
-
-分词升级统一见[索引存储优化](#索引存储优化)，分词规则见[数据库参考](database.md#article_search)。

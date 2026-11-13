@@ -17,7 +17,7 @@ OpenAPI 由 Go 类型生成：`apps/server/internal/api/` 用 huma 注册各操�
 | 同源 Web 前端                 | 登录后由后端设置的 `litradar_session` HttpOnly Cookie |
 | 脚本、API 客户端与 MCP 客户端 | `Authorization: Bearer <access_token>`                |
 
-访问令牌由 `POST /api/auth/tokens` 创建。不得把会话或访问令牌放入 URL 查询参数。
+访问令牌由 `POST /api/auth/tokens` 创建；原生客户端的设备令牌见[原生客户端登录](#原生客户端登录)。不得把会话或访问令牌放入 URL 查询参数。
 
 以下健康接口位于 REST `/api` 前缀之外且无需认证：
 
@@ -30,20 +30,14 @@ OpenAPI 由 Go 类型生成：`apps/server/internal/api/` 用 huma 注册各操�
 - `POST /api/auth/register`
 - `POST /api/auth/login`
 - `GET /api/auth/invite-required`
+- `GET /api/auth/providers`
+- `GET /api/auth/oidc/login`
+- `GET /api/auth/oidc/callback`
+- `POST /api/auth/native/login`
+- `GET /api/auth/oidc/native/login`
+- `POST /api/auth/oidc/native/exchange`
 
 `/api/admin/*` 需要管理员身份，其余接口需要普通用户或管理员身份。
-
-<a id="cfp-tracking"></a>
-
-## 征稿追踪
-
-`GET /api/cfp/journals?db=NAME&q=TEXT` 返回完整维护期刊目录，包括尚无文章的期刊，以及后端计算的来源覆盖、数量和新鲜度，不含征稿正文。
-
-`GET /api/cfp/journals/{catalog_id}/notices?db=NAME&include_closed=false&limit=50` 返回征稿原文、服务端计算的状态和首次投稿截止日期。`limit` 最大为 200；`catalog_id` 是不透明的维护目录身份或显式历史别名，`db` 是必填的元数据目录数据库文件名。有效但尚未适配的成员返回空的 `200` 响应，不存在的目录或成员返回 `404`。
-
-下一页的 `cursor` 令牌通过认证加密绑定数据库、规范期刊、是否包含已关闭征稿、排序、元数据及来源版本和状态计算时刻，15 分钟后过期。篡改、跨查询、过期或数据版本已变化的令牌返回 `409`；客户端必须丢弃已累积的页面，不带游标重新开始。征稿字段使用 camelCase，既有 `page` 分页字段仍使用 snake_case。
-
-征稿 GET 请求只读持久数据；采集、原文解析、Obscura/PDF 辅助程序和 SQLite 发布都由后端负责。操作入口见[征稿 CLI](cli.md#cfp)，采集和可用性边界见[征稿追踪架构](../architecture/cfp-tracking.md)。
 
 ## 通用约定
 
@@ -57,7 +51,7 @@ OpenAPI 由 Go 类型生成：`apps/server/internal/api/` 用 huma 注册各操�
 
 ### ID 与分页
 
-文章、期刊、期次的 63 位哈希 ID 在 JSON 字段、路径参数和查询参数的 OpenAPI schema 中统一为十进制字符串，图谱收藏的 `root_article_id` 也使用字符串。合法格式为 `^[1-9][0-9]*$`，范围为 `1` 至 `9223372036854775807`；不允许符号、前导零、小数、指数或空白，格式错误和越界返回 `422`。`journal_id` 数组使用重复查询参数，每个元素均为字符串。客户端应直接传递字符串，禁止转换为 JavaScript `number`。服务端和 SQLite 内部继续使用精确的 `int64`，无需迁移已有索引或图谱记录。
+文章、期刊、期次的 63 位哈希 ID 在 JSON 字段、路径参数和查询参数的 OpenAPI schema 中统一为十进制字符串，图谱收藏的 `root_article_id` 也使用字符串。合法格式为 `^[1-9][0-9]*$`，范围为 `1` 至 `9223372036854775807`；不允许符号、前导零、小数、指数或空白，格式错误和越界返回 `422`。`journal_id` 数组使用重复查询参数，每个元素均为字符串。客户端应直接传递字符串，禁止转换为 JavaScript `number`。服务端和 SQLite 内部使用精确的 `int64`。
 
 自增的用户、文件夹、令牌、图谱、公告、任务和邀请码路径参数保持整数类型。MCP 的文章、期刊 ID 及 `search_articles.issue_id` 同样使用十进制字符串；MCP 没有图谱收藏工具。
 
@@ -70,8 +64,6 @@ OpenAPI 由 Go 类型生成：`apps/server/internal/api/` 用 huma 注册各操�
 - 精确的默认值、上限和过滤字段以 OpenAPI schema 为准。
 
 全文查询 `q` 默认使用 `search_mode=simple`，把完整输入转义为一个 FTS5 字面短语，引号和 `OR` 等符号不会被解释为运算符。输入先按[检索分词](database.md#article_search)折叠重音和大小写并切词，因此 `resume` 能命中 `Résumé`，中文按字组成短语。只有显式设置 `search_mode=advanced` 才启用 FTS5 查询语法，其中每个操作数同样在 Go 中切成短语，`AND`/`OR`/`NOT`、`NEAR`、列限定和前缀 `*` 保持 FTS5 语义；非法高级表达式返回 `400 Invalid search expression`。REST、MCP 与 storage 均限制搜索文本最多 2,048 个 Unicode 字符、重复 `journal_id`/`area` 与期刊评级过滤值合计最多 500 项。
-
-<a id="journal-rating-filters"></a>
 
 ### 期刊评级筛选
 
@@ -96,17 +88,17 @@ OpenAPI 由 Go 类型生成：`apps/server/internal/api/` 用 huma 注册各操�
 
 模型包含 `type`、`title`、`status`、`detail`、`instance` 和 `errors`，未设置的可选成员会省略。响应不含顶层 `code` 或 `retryable`。可重试的 `429` 和 `503` 响应带 `Retry-After`（非负秒数），客户端据此决定是否重试。
 
-huma 在调用业务 handler 之前解码并按 OpenAPI schema 校验 typed path、query、header 和 JSON 对象请求体，因此 schema 校验失败返回 `422`，并先于认证检查；JSON 语法错误返回 `400`。`errors[].location` 指出失败位置，例如 `body.field`、`query.limit` 和 `path.article_id`。handler 内部的业务校验仍返回 `400`。业务错误和原始 HTTP 边界共用 huma 的错误模型；`errors[]` 保留 `code`、`phase`、`action`、`request_id` 等分类位置，`Retry-After` 头按原有策略返回。
+huma 在调用业务 handler 之前解码并按 OpenAPI schema 校验 typed path、query、header 和 JSON 对象请求体，因此 schema 校验失败返回 `422`，并先于认证检查；JSON 语法错误返回 `400`。`errors[].location` 指出失败位置，例如 `body.field`、`query.limit` 和 `path.article_id`。handler 内部的业务校验返回 `400`。业务错误和原始 HTTP 边界共用 huma 的错误模型；`errors[]` 承载 `code`、`phase`、`action`、`request_id` 等分类，`Retry-After` 按上文规则返回。
 
-浙江图书馆 QR 登录轮询的 `interval_seconds` 为 `0.1..=10`（默认 2），`timeout_seconds` 为 `1..=600`（默认 180）；越界值在认证前返回 `422`。
+浙江图书馆 QR 登录轮询的 `interval_seconds` 为 `0.1–10`（默认 2），`timeout_seconds` 为 `1–600`（默认 180）；越界值在认证前返回 `422`。
 
 分类的工作流错误把机器可读的值放进 `errors`：`location` 是分类名，`message` 是值；面向人的工作流消息放在 `detail`。
 
-| 工作流                     | `errors[].location`  |
-| -------------------------- | -------------------- |
-| CNKI 登录、轮询和预热      | `code`、`phase`      |
-| 文章 Provider 认证         | `code`、`action`     |
-| 会话撤销未确认             | `code`、`request_id` |
+| 工作流                | `errors[].location`  |
+| --------------------- | -------------------- |
+| CNKI 登录、轮询和预热 | `code`、`phase`      |
+| 文章 Provider 认证    | `code`、`action`     |
+| 会话撤销未确认        | `code`、`request_id` |
 
 例如 CNKI 登录超时包含 `{"location":"code","message":"cnki_login_timeout"}` 和 `{"location":"phase","message":"login"}`。
 
@@ -126,7 +118,7 @@ huma 在调用业务 handler 之前解码并按 OpenAPI schema 校验 typed path
 
 服务端不会在通用 `500` / `503` 响应中暴露内部错误细节。
 
-客户端取消请求时，服务端按客户端关闭记录 `499`，不计为 `500` 服务端失败；连接已经关闭时客户端不会收到该响应。执行器准入超时仍为带 `Retry-After` 的 `503`。
+客户端取消请求时，服务端按客户端关闭记录 `499`，不计为 `500` 服务端失败；连接已经关闭时客户端不会收到该响应。执行器准入超时返回带 `Retry-After` 的 `503`。
 
 ## REST 端点目录
 
@@ -150,7 +142,7 @@ huma 在调用业务 handler 之前解码并按 OpenAPI schema 校验 typed path
 | `GET` | `/api/issues/{issue_id}`              | 单个期次                         |
 | `GET` | `/api/articles`                       | 文章过滤、全文检索与分页         |
 | `GET` | `/api/articles/{article_id}`          | 单篇文章                         |
-| `GET` | `/api/articles/{article_id}/related`  | 按标题与摘要的 FTS5 bm25 相似度排序 |
+| `GET` | `/api/articles/{article_id}/related`  | 按 bm25 相似度排序的相关文章     |
 | `GET` | `/api/articles/{article_id}/access`   | 本地计算摘要页和全文能力         |
 | `GET` | `/api/articles/{article_id}/abstract` | 在线解析并 307 跳转到摘要页      |
 | `GET` | `/api/articles/{article_id}/fulltext` | 在线解析并返回 307 或有界 PDF    |
@@ -158,38 +150,61 @@ huma 在调用业务 handler 之前解码并按 OpenAPI schema 校验 typed path
 | `GET` | `/api/weekly-updates/summary`         | 不含文章正文的周更分组计数       |
 | `GET` | `/api/weekly-updates/articles`        | 固定周更窗口的文章游标页         |
 
-相关文章先去除标题中的 HTML/MathML 标签及属性，再从显示文本中取最多 16 个内容词，在标题和摘要中召回。不含汉字短语的标题使用加权召回预算为 3,000；含汉字短语的标题保留 30,000，避免过窄召回被偶然的跨词字对主导。汉字短语计数乘 4，稀有词优先用于召回，其他拉丁词仍参与 `bm25(article_search,0,10,1,0,0,1,0)` 排序，标题权重高于摘要。清理标记和缩小不含汉字短语时的预算会改变选词及结果。各词计数最多并发使用 4 个连接，单词标题省略不影响选词的计数；bm25 权重、三倍候选、排除源文章和按规范化标题去重保持不变。默认返回最多 10 篇，`limit` 上限 30。只有一个常见词时保留原有回退，因此预算不是候选数量或执行时间的硬上限。
-
-服务端按索引文件身份、大小和修改时间缓存有界的排序候选 ID，缓存键还包括源文章 ID、标题和候选上限。文件被替换或修改时失效；存在非空 WAL 或回滚日志时绕过并清除缓存。命中缓存仍读取文章详情并执行标题去重，不缓存完整文章响应。
+相关文章在标题和摘要中召回，按 `bm25(article_search,0,10,1,0,0,1,0)` 排序（标题权重高于摘要），排除源文章并按规范化标题去重；默认返回最多 10 篇，`limit` 上限 30。选词、召回预算和候选缓存见[相关文章召回](database.md#相关文章召回)。
 
 周更接口读取 `data/push_state/*.changes.json` 及受管 history 中七日窗口内的可通知文章，不会临时重新抓取数据。兼容接口 `/api/weekly-updates` 在窗口内每个数据库去重后的文章引用合计不超过 2,000 条时保持原响应结构；第 2,001 条会在加载完整文章元数据前使请求返回 `413`，调用方应迁移到下述有界接口。
 
-`/api/weekly-updates/summary` 只返回固定的 `window_start`、`window_end` 以及数据库/期刊标签和计数，不包含 article 数组或 abstract。`/api/weekly-updates/articles` 要求 `db`、正整数 `journal_id` 和摘要响应的 RFC3339 `window_end`，支持最长 2,048 字符的可选简单短语 `q`、`1..=200` 的 `limit`（默认 50）以及降序 `date|article_id` 游标。文章接口重新读取以该 `window_end` 截止的七日 manifest 成员，因此摘要之后生成的 manifest 不会混入后续页；成员 ID 仅写入当前 SQLite 连接的临时表，期刊、FTS、游标和 `limit + 1` 均在 SQL 内完成，不修改持久 schema 或索引内容。
+`/api/weekly-updates/summary` 只返回固定的 `window_start`、`window_end` 以及数据库/期刊标签和计数，不包含 article 数组或 abstract。`/api/weekly-updates/articles` 要求 `db`、正整数 `journal_id` 和摘要响应的 RFC3339 `window_end`，支持最长 2,048 字符的可选简单短语 `q`、`1–200` 的 `limit`（默认 50）以及降序 `date|article_id` 游标。文章接口重新读取以该 `window_end` 截止的七日 manifest 成员，因此摘要之后生成的 manifest 不会混入后续页；成员 ID 仅写入当前 SQLite 连接的临时表，期刊、FTS、游标和 `limit + 1` 均在 SQL 内完成，不修改持久 schema 或索引内容。
+
+周更汇总与文章分页请求共享解析后的变更清单缓存：最多保存 64 份清单和 1,000,000 个文章 ID，条目 60 秒后过期，复用前核对规范路径、文件长度和修改时间。文件变化或损坏时不返回旧缓存；超大清单仍可读取，但不驻留缓存。缓存只含来源元数据，不含账号凭据。
 
 期次、文章和 weekly article 的 `date` 只使用经真实日历校验的 `YYYY`、`YYYY-MM` 或 `YYYY-MM-DD`；配套 `date_precision` 为 `year`、`month`、`day` 或 `null`。只有年份的上游元数据保持如 `2026`，不会补成 `2026-01-01`。历史库中无法通过日历校验的旧日期仍原样可读，但其 precision 为 `null`。
 
 健康响应的 `status` 只可能是 `ok` 或 `unhealthy`。应用自有 manual、scheduler 和 push-stat 状态同样由 OpenAPI enum 约束；服务不会返回任意拼写。CNKI 上游状态不属于该封闭集合，未知字符串会原样返回，客户端必须保留兼容分支。
 
+### 征稿追踪
+
+| 方法  | 路径                                     | 作用                           |
+| ----- | ---------------------------------------- | ------------------------------ |
+| `GET` | `/api/cfp/journals`                      | 维护期刊目录、来源覆盖与新鲜度 |
+| `GET` | `/api/cfp/journals/{catalog_id}/notices` | 单个期刊的征稿原文游标页       |
+
+`GET /api/cfp/journals?db=NAME&q=TEXT` 返回完整维护期刊目录，包括尚无文章的期刊，以及后端计算的来源覆盖、数量和新鲜度，不含征稿正文。
+
+`GET /api/cfp/journals/{catalog_id}/notices?db=NAME&include_closed=false&limit=50` 返回征稿原文、服务端计算的状态和首次投稿截止日期。`limit` 最大为 200；`catalog_id` 是不透明的维护目录身份或显式历史别名，`db` 是必填的元数据目录数据库文件名。有效但尚未适配的成员返回空的 `200` 响应，不存在的目录或成员返回 `404`。
+
+下一页的 `cursor` 令牌通过认证加密绑定数据库、规范期刊、是否包含已关闭征稿、排序、元数据及来源版本和状态计算时刻，15 分钟后过期。篡改、跨查询、过期、格式无法解析或数据版本已变化的令牌返回 `409`；客户端必须丢弃已累积的页面，不带游标重新开始。征稿字段使用 camelCase，`page` 分页字段使用 snake_case。
+
+征稿 GET 请求只读持久数据；采集、原文解析、Obscura/PDF 辅助程序和 SQLite 发布都由后端负责。操作入口见[征稿 CLI](cli.md#cfp)，采集和可用性边界见[征稿追踪架构](../architecture/cfp-tracking.md)。
+
 ### 认证与 CNKI 会话
 
-| 方法                      | 路径                           | 作用                                 |
-| ------------------------- | ------------------------------ | ------------------------------------ |
-| `POST`                    | `/api/auth/register`           | 使用邀请码注册普通用户               |
-| `POST`                    | `/api/auth/login`              | 登录并设置会话 Cookie                |
-| `GET`                     | `/api/auth/invite-required`    | 注册与首管理员初始化状态             |
-| `GET`                     | `/api/auth/me`                 | 当前用户                             |
-| `POST`                    | `/api/auth/change-password`    | 修改当前用户密码                     |
-| `POST`                    | `/api/auth/logout`             | 注销当前会话                         |
-| `POST`                    | `/api/auth/logout-all`         | 撤销当前用户的全部会话与访问令牌     |
-| `GET` / `POST`            | `/api/auth/tokens`             | 列出或创建访问令牌                   |
-| `DELETE`                  | `/api/auth/tokens/{token_id}`  | 吊销访问令牌                         |
-| `GET` / `POST` / `DELETE` | `/api/auth/invite-code`        | 查看、生成或永久撤销当前用户的邀请码 |
-| `POST`                    | `/api/auth/invite-code/rotate` | 撤销旧邀请码并原子签发替代码         |
-| `GET` / `DELETE`          | `/api/cnki/session`            | 查看或清除当前用户的 CNKI 会话       |
-| `POST`                    | `/api/cnki/login/start`        | 启动浙江图书馆扫码登录               |
-| `POST`                    | `/api/cnki/login/poll`         | 轮询扫码登录状态                     |
+| 方法                      | 路径                             | 作用                                 |
+| ------------------------- | -------------------------------- | ------------------------------------ |
+| `POST`                    | `/api/auth/register`             | 使用邀请码注册普通用户               |
+| `POST`                    | `/api/auth/login`                | 用用户名或邮箱登录并设置会话 Cookie  |
+| `GET`                     | `/api/auth/invite-required`      | 注册与首管理员初始化状态             |
+| `GET`                     | `/api/auth/providers`            | 已启用的登录方式                     |
+| `GET`                     | `/api/auth/oidc/login`           | 开始 Web OIDC 登录并跳转到 IdP       |
+| `GET`                     | `/api/auth/oidc/callback`        | 完成 OIDC 登录或绑定                 |
+| `POST` / `DELETE`         | `/api/auth/oidc/link`            | 为当前本地账号绑定或解绑 OIDC 身份   |
+| `POST`                    | `/api/auth/native/login`         | 原生客户端密码登录并签发设备令牌     |
+| `GET`                     | `/api/auth/oidc/native/login`    | 开始原生客户端 OIDC 登录             |
+| `POST`                    | `/api/auth/oidc/native/exchange` | 用一次性授权码兑换设备令牌           |
+| `GET`                     | `/api/auth/me`                   | 当前用户                             |
+| `PUT`                     | `/api/auth/email`                | 设置或清除当前账号的本地邮箱         |
+| `POST`                    | `/api/auth/change-password`      | 修改当前用户密码                     |
+| `POST`                    | `/api/auth/logout`               | 注销当前会话                         |
+| `POST`                    | `/api/auth/logout-all`           | 撤销当前用户的全部会话与访问令牌     |
+| `GET` / `POST`            | `/api/auth/tokens`               | 列出或创建访问令牌                   |
+| `DELETE`                  | `/api/auth/tokens/{token_id}`    | 吊销访问令牌                         |
+| `GET` / `POST` / `DELETE` | `/api/auth/invite-code`          | 查看、生成或永久撤销当前用户的邀请码 |
+| `POST`                    | `/api/auth/invite-code/rotate`   | 撤销旧邀请码并原子签发替代码         |
+| `GET` / `DELETE`          | `/api/cnki/session`              | 查看或清除当前用户的 CNKI 会话       |
+| `POST`                    | `/api/cnki/login/start`          | 启动浙江图书馆扫码登录               |
+| `POST`                    | `/api/cnki/login/poll`           | 轮询扫码登录状态                     |
 
-公开注册始终要求有效邀请码，且只能创建非管理员。首个管理员必须在本机通过 `litradar admin bootstrap` 创建，API 不提供远程引导端点。新密码至少为 12 个 Unicode 字符。
+`POST /api/auth/register` 密码注册始终要求有效邀请码，且只能创建非管理员。OIDC 首次登录的建号、绑定和邮箱规则见 [authentik 单点登录](../operations/authentik.md#账号建立绑定和恢复)。首个管理员必须在本机通过 `litradar admin bootstrap` 创建，API 不提供远程引导端点。新密码至少为 12 个 Unicode 字符。
 
 普通用户邀请码默认有效 7 天、最多注册 1 次。`GET` 返回 `status=active|expired|revoked|exhausted`、`expires_at`、`revoked_at`、`max_uses` 与 `use_count`；`rotate` 在一个事务中永久撤销当前未撤销码并创建替代码。过期、撤销或用尽的邀请码均不能注册，重复撤销返回 `404`。
 
@@ -213,13 +228,13 @@ huma 在调用业务 handler 之前解码并按 OpenAPI schema 校验 typed path
 
 CNKI 会话按 LitRadar 用户隔离；状态接口只返回安全元数据，不返回 token 或 Cookie 值。
 
-浏览器会话 Cookie 由 `net/http` 解析和序列化，继续使用首个 Cookie header 中的首个同名项。带引号的值和名称后的空白按 Go Cookie 规则处理；不会对 Cookie 值做 URL 解码。`Set-Cookie` 使用标准属性顺序与 `SameSite=Lax` 拼写，Max-Age 仍向下取整，清除时仍为 `Max-Age=0`。
+浏览器会话 Cookie 由 `net/http` 解析和序列化：读取首个 Cookie header 中的首个同名项，带引号的值和名称后的空白按 Go Cookie 规则处理，不对 Cookie 值做 URL 解码。`Set-Cookie` 使用 `SameSite=Lax`，Max-Age 向下取整，清除时为 `Max-Age=0`。
 
 ### 访问令牌创建规则
 
 `POST /api/auth/tokens` 按以下固定顺序处理新令牌请求：
 
-1. 按 OpenAPI schema 校验请求体：未裁剪 JSON `name` 最多 100 个 Unicode code points（`maxLength = 100`），`ttl` 必须处于 `3600..=31536000` 秒（省略时为 `604800`）；越界值直接拒绝。这一步先于认证。
+1. 按 OpenAPI schema 校验请求体：未裁剪 JSON `name` 最多 100 个 Unicode code points（`maxLength = 100`），`ttl` 必须处于 `3600–31536000` 秒（省略时为 `604800`）；越界值直接拒绝。这一步先于认证。
 2. 认证当前用户。
 3. 裁剪首尾空白；空名称仍可创建未命名令牌，裁剪后精确等于 `login` 的名称保留给浏览器会话。
 4. 在事务内检查当前用户的 active personal tokens；达到 50 个时拒绝新建。
@@ -237,51 +252,55 @@ CNKI 会话按 LitRadar 用户隔离；状态接口只返回安全元数据，�
 
 ### 收藏与追踪
 
-| 方法             | 路径                                                       | 作用                          |
-| ---------------- | ---------------------------------------------------------- | ----------------------------- |
-| `GET` / `POST`   | `/api/favorites/folders`                                   | 列出或创建文件夹              |
-| `PUT` / `DELETE` | `/api/favorites/folders/{folder_id}`                       | 重命名或删除文件夹            |
-| `GET` / `PUT`    | `/api/favorites/tracking`                                  | 查看或设置追踪文件夹          |
-| `GET`            | `/api/favorites/folders/{folder_id}/articles/page`         | 收藏文章游标页                |
-| `GET` / `POST`   | `/api/favorites/folders/{folder_id}/articles`              | 列出或添加收藏                |
-| `DELETE`         | `/api/favorites/folders/{folder_id}/articles/{article_id}` | 删除单条收藏                  |
-| `POST`           | `/api/favorites/folders/{folder_id}/articles/bulk`         | 批量添加收藏                  |
-| `POST`           | `/api/favorites/folders/{folder_id}/articles/bulk-remove`  | 批量删除收藏                  |
-| `POST`           | `/api/favorites/folders/{folder_id}/articles/bulk-move`    | 批量移动收藏                  |
-| `GET`            | `/api/favorites/folders/{folder_id}/count`                 | 文件夹文章数                  |
-| `GET`            | `/api/favorites/folders/{folder_id}/export`                | 导出引文数据                  |
-| `GET`            | `/api/favorites/check`                                     | 查询一篇文章所在文件夹        |
-| `POST`           | `/api/favorites/check/batch`                               | 批量查询收藏状态              |
-| `GET`            | `/api/tracking/status`                                     | 当前追踪状态                  |
-| `GET` / `PUT`    | `/api/tracking/notification-settings`                      | 当前用户通知设置              |
-| `GET`            | `/api/tracking/ai-endpoints`                               | 管理员批准的 AI Endpoint      |
-| `POST`           | `/api/tracking/push-weekly`                                | 启动当前用户的手动周报任务    |
-| `GET`            | `/api/tracking/push-weekly/status`                         | 查询手动周报任务状态          |
-| `GET`            | `/api/tracking/push-weekly/runs/{run_id}`                  | 按 ID 查询 owner/admin 任务   |
-| `POST`           | `/api/tracking/push-weekly/runs/{run_id}/cancel`           | 请求取消 owner/admin 任务     |
-| `POST`           | `/api/tracking/push-weekly/runs/{run_id}/acknowledge`      | owner 确认 Unknown 并新建任务 |
+| 方法                     | 路径                                                       | 作用                          |
+| ------------------------ | ---------------------------------------------------------- | ----------------------------- |
+| `GET` / `POST`           | `/api/favorites/folders`                                   | 列出或创建文件夹              |
+| `PUT` / `DELETE`         | `/api/favorites/folders/{folder_id}`                       | 重命名或删除文件夹            |
+| `GET` / `PUT`            | `/api/favorites/tracking`                                  | 查看或设置追踪文件夹          |
+| `GET`                    | `/api/favorites/folders/{folder_id}/articles/page`         | 收藏文章游标页                |
+| `GET` / `POST`           | `/api/favorites/folders/{folder_id}/articles`              | 列出或添加收藏                |
+| `DELETE`                 | `/api/favorites/folders/{folder_id}/articles/{article_id}` | 删除单条收藏                  |
+| `POST`                   | `/api/favorites/folders/{folder_id}/articles/bulk`         | 批量添加收藏                  |
+| `POST`                   | `/api/favorites/folders/{folder_id}/articles/bulk-remove`  | 批量删除收藏                  |
+| `POST`                   | `/api/favorites/folders/{folder_id}/articles/bulk-move`    | 批量移动收藏                  |
+| `GET`                    | `/api/favorites/folders/{folder_id}/count`                 | 文件夹文章数                  |
+| `GET`                    | `/api/favorites/folders/{folder_id}/export`                | 导出引文数据                  |
+| `GET`                    | `/api/favorites/check`                                     | 查询一篇文章所在文件夹        |
+| `POST`                   | `/api/favorites/check/batch`                               | 批量查询收藏状态              |
+| `GET` / `POST`           | `/api/favorites/graphs`                                    | 列出或保存图谱收藏快照        |
+| `GET` / `PUT` / `DELETE` | `/api/favorites/graphs/{graph_id}`                         | 读取、更新或删除图谱收藏      |
+| `GET`                    | `/api/tracking/status`                                     | 当前追踪状态                  |
+| `GET` / `PUT`            | `/api/tracking/notification-settings`                      | 当前用户通知设置              |
+| `GET`                    | `/api/tracking/ai-endpoints`                               | 管理员批准的 AI Endpoint      |
+| `POST`                   | `/api/tracking/push-weekly`                                | 启动当前用户的手动周报任务    |
+| `GET`                    | `/api/tracking/push-weekly/status`                         | 查询手动周报任务状态          |
+| `GET`                    | `/api/tracking/push-weekly/runs/{run_id}`                  | 按 ID 查询 owner/admin 任务   |
+| `POST`                   | `/api/tracking/push-weekly/runs/{run_id}/cancel`           | 请求取消 owner/admin 任务     |
+| `POST`                   | `/api/tracking/push-weekly/runs/{run_id}/acknowledge`      | owner 确认 Unknown 并新建任务 |
 
-收藏 folder ID、单条删除路径的 article ID 和 tracking 的 folder ID 必须为正整数。添加及批量 item 的字符串 `article_id` 必须使用无符号、无前导零的正十进制形式。列表 `limit` 为 `1..=500`，普通列表默认 100、游标页默认 50；普通列表 `offset` 默认 0 且不得为负。导出 `format` 只接受 `bibtex`、`ris`、`endnote`，默认 `bibtex`。这些范围、格式和字符长度约束由 schema 校验，非法输入在认证和任务接纳之前返回 `422`；仅包含空白的文件夹名仍在认证后返回业务错误 `400`。
+收藏 folder ID、单条删除路径的 article ID 和 tracking 的 folder ID 必须为正整数。添加及批量 item 的字符串 `article_id` 必须使用无符号、无前导零的正十进制形式。列表 `limit` 为 `1–500`，普通列表默认 100、游标页默认 50；普通列表 `offset` 默认 0 且不得为负。导出 `format` 只接受 `bibtex`、`ris`、`endnote`，默认 `bibtex`。这些范围、格式和字符长度约束由 schema 校验，非法输入在认证和任务接纳之前返回 `422`；仅包含空白的文件夹名在认证后返回业务错误 `400`。
 
-收藏文件夹名称按 Unicode scalar value 计数，最多 100 个字符；note 最多 2,000 个字符，`db_name` 最多 255 个字符。批量添加、删除、移动和检查每次最多提交 500 个 article item/ID；501 个及以上在 schema 校验阶段返回 `422`，不会构造 SQL。动态 `IN` 查询固定按 500 个 ID 分块，HTTP JSON body 超过框架的 2 MiB 上限仍返回 `413`。
+收藏文件夹名称按 Unicode scalar value 计数，最多 100 个字符；note 最多 2,000 个字符，`db_name` 最多 255 个字符。批量添加、删除、移动和检查每次最多提交 500 个 article item/ID；501 个及以上在 schema 校验阶段返回 `422`，不会构造 SQL。动态 `IN` 查询固定按 500 个 ID 分块，HTTP JSON body 超过框架的 2 MiB 上限返回 `413`。
 
 收藏文章列表的每一行都包含必填的 `metadata_status`：`available` 表示索引元数据已读取，`missing` 表示来源数据库或文章已不存在，`unavailable` 表示文件系统、SQLite 或作者 JSON 等操作性读取失败。后两种状态都保留收藏行及其移动、删除能力；`missing` 条目导出为空元数据引文，`unavailable` 条目按下述原子导出规则返回明确失败。服务端只以安全数据库标识和错误类别记录 unavailable 事件，不记录 note、abstract、绝对路径或原始数据库错误。
+
+图谱收藏是按用户保存的独立关系图快照，不属于收藏文件夹；字段以 OpenAPI 为准，存储见[图谱收藏](database.md#图谱收藏)。
 
 引文导出通过 `format=bibtex|ris|endnote` 选择格式，文件扩展名和响应 Content-Type 保持为 `.bib`/`application/x-bibtex`、`.ris`/`application/x-research-info-systems` 和 `.xml`/`application/xml`。服务端使用格式专用 serializer：BibTeX 保留字符和结构性换行被编码为字段值，RIS 值被规范为单行，EndNote 只写入合法且已转义的 XML 1.0 文本；文章元数据不能注入额外字段或记录。
 
 服务端在认证后先校验格式，再以固定的 `created_at DESC, id DESC` 顺序读取最多 10,000 条收藏，并按每批 250 条只加载标题、作者、期刊、日期和 DOI。最终 UTF-8 内容最多 8 MiB；第 10,001 条收藏或下一个会超过限制的字节都会使整个请求返回 `413`，且不会返回 attachment header 或部分文件。缺失的数据库或文章保留一条空元数据引文；文件系统、SQLite 或作者 JSON 等操作错误返回完整失败，不会伪装成成功导出。
 
-手动周报是 SQLite 持久化异步任务。启动接口返回 `202`；没有任务时状态为 `idle`，`pending/running` 状态应继续轮询，服务重启后仍可通过 latest 或 run-id 接口恢复。公开终态为 `completed`、`failed`、`cancelled`、`timed_out` 或 `unknown`，并返回 `deadline_at`、`cancellation_requested`、`can_cancel` 和 `can_retry`。完整通知链路见[通知指南](../guides/notifications.md)。
+手动周报是 SQLite 持久化异步任务。启动接口返回 `202`；没有任务时状态为 `idle`，`pending/running` 状态应继续轮询，服务重启后仍可通过 latest 或 run-id 接口恢复。公开终态为 `completed`、`failed`、`cancelled`、`timed_out` 或 `unknown`，并返回 `deadline_at`、`cancellation_requested`、`can_cancel` 和 `can_retry`。无法按当前结构解析的已存投递结果保留原任务状态，`summary` 为 `Stored manual delivery result is invalid or obsolete`；解析失败不会重试投递或清除去重。完整通知链路见[通知指南](../guides/notifications.md)。
 
 SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户重复启动返回现有 job，不同用户可以同时排队或在实例有界池中并行。普通用户只能查询和取消自己的 run；管理员可按不可猜测的 job id 管理任意用户 run。`unknown` 表示外部结果可能已发生，`can_retry=false`，客户端不得把它当普通失败自动重放。普通启动在最新任务为 Unknown 时固定返回 `409`，不创建新行。owner 检查外部投递记录后，可对该最新任务调用 `POST /api/tracking/push-weekly/runs/{run_id}/acknowledge`；服务在一个 immediate transaction 中复核 ownership/latest/Unknown，写入 `manual_push_unknown_acknowledge` 安全审计并返回一个新 queued job。畸形 `run_id`（非 32 位十六进制字符串）在认证前返回 `422`；格式正确但不存在、或不属于请求 owner 的 ID 返回 `404`。过期、重复或非 Unknown 确认返回 `409`。管理员不能代替 owner 确认。旧 run、item 和 Unknown/confirmed dedupe 保持不变，所以旧的不确定文章不会重发，后续 manifest 的新文章仍可处理。
 
-`PUT /api/tracking/notification-settings` 的 `ai_retry_attempts` 只接受 `1..=10`。超出范围时返回 `422`，且不会替换已有设置。历史或被手工修改的数据库值在读取时会归一到该范围，但服务不会因此自动改写数据库。
+`PUT /api/tracking/notification-settings` 的 `ai_retry_attempts` 只接受 `1–10`。超出范围时返回 `422`，且不会替换已有设置。历史或被手工修改的数据库值在读取时会归一到该范围，但服务不会因此自动改写数据库。
 
 `delivery_method=pushplus` 要求事务内解析出的最终 `pushplus_token` 非空；同时启用 `sync_to_tracking_folder` 还要求该用户在同一事务快照中存在追踪文件夹。保存设置与 `DELETE /api/favorites/folders/{folder_id}` 都获取认证库的 immediate 写锁：若设置先提交，删除所依赖追踪文件夹返回 `400 A tracking folder is required before enabling PushPlus sync to tracking`；若删除或 token 清除先提交，后续设置保存返回相同的依赖错误或 `400 pushplus_token is required when delivery_method is 'pushplus'`，且不会部分覆盖其他字段。
 
 `GET /api/tracking/ai-endpoints` 需要登录，返回管理员当前批准的规范 HTTPS base URL 数组。通知设置中的非空主备 base URL 必须准确匹配该数组；不合法、未批准或已撤销的值返回固定 `400`，不会回显所提交 URL，也不会写入其他字段。
 
-通知设置最多包含 100 个关键词、100 个研究方向和 500 个数据库；单个偏好最多 500 个字符，URL 最多 2,048，model 最多 200，system prompt 最多 10,000，PushPlus template/topic/channel 分别最多 64/200/64 个字符。公告 title/message 分别最多 200/10,000 个字符。REST 与 storage 使用同一组 Unicode 字符和 item-count 校验。
+通知设置最多包含 100 个关键词、100 个研究方向和 500 个数据库；单个关键词或方向最多 500 个字符、单个数据库名最多 255 个字符，URL 最多 2,048，model 最多 200，system prompt 最多 10,000，PushPlus template/topic/channel 分别最多 64/200/64 个字符。数组项数和字段长度由 OpenAPI schema 校验，越界在认证前返回 `422`；单个数组元素的长度由业务校验返回 `400`。storage 对所有写入复用同一组 Unicode 字符和 item-count 限制，越界更新不会部分覆盖旧设置。公告 title/message 分别最多 200/10,000 个字符。
 
 ### 管理接口
 
@@ -305,17 +324,17 @@ SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户�
 
 所有管理写请求都会在目标 storage 事务取得 `BEGIN IMMEDIATE` 写锁后重新读取 actor 的当前管理员状态。若撤权先提交，即使请求已通过路由入口检查或已经完成密码 KDF/输入校验，该写入也返回固定 `403` 且不改变目标、令牌或完成审计；若写事务先提交，则撤权在其后线性化。读请求仍使用入口身份快照，不产生持久副作用。
 
-管理员创建邀请码的 JSON body 可省略；可选字段为绝对 Unix 秒 `expires_at`（必须晚于当前时间且最多 365 天）和 `max_uses`（`1..=1000`）。省略时仍使用 7 天、1 次。删除路由保留 HTTP `DELETE` 兼容性，但只写入 `revoked_at`，不会物理删除兑换历史。
+管理员创建邀请码的 JSON body 可省略；可选字段为绝对 Unix 秒 `expires_at`（必须晚于当前时间且最多 365 天）和 `max_uses`（`1–1000`）。省略时使用 7 天、1 次。`DELETE` 只写入 `revoked_at`，不物理删除兑换历史。
 
-公告 `priority` 只接受精确的小写枚举 `high`、`normal`、`low`，创建时默认 `normal`；不再对优先级修剪空白或转换大小写。非法值在认证前返回 `422`。
+公告 `priority` 只接受精确的小写枚举 `high`、`normal`、`low`，创建时默认 `normal`；非法值在认证前返回 `422`。
 
-计划任务的 `name`、`cron`、`timezone` 不接受空字符串（`422`）；仅含空白、非法 cron 语法或无效时区仍在认证后返回 `400`。创建默认 UTC、3,600 秒超时、启用和 coalesce；显式 `false` 及更新时的字段省略语义保持不变。
+计划任务的 `name`、`cron`、`timezone` 不接受空字符串（`422`）；仅含空白、非法 cron 语法或无效时区在认证后返回 `400`。创建时默认 UTC、3,600 秒超时、启用和 coalesce。
 
-计划任务使用 robfig/cron 的五字段语法，不接受 seconds 字段、`@daily` 等 descriptor 或内联 `CRON_TZ`；时区仍由 `timezone` 字段指定。星期日使用 `0` 或 `SUN`，`7` 不再有效。单值步进会扩展到字段上界，例如分钟 `5/2` 匹配 5、7、9 等；day-of-month 与 day-of-week 按库规则组合，`*/2` 不再等同于无约束通配。重复逗号按库规则忽略空项。UTC slot、DST 重复时刻、coalesce 和租约身份保持不变。已保存但不再有效的 cron 会显示在 scheduler 的 `skipped` 中并附原因，不会执行或自动改写；管理员需更新表达式。
+计划任务使用 robfig/cron 的五字段语法，不接受 seconds 字段、`@daily` 等 descriptor 或内联 `CRON_TZ`；时区由 `timezone` 字段指定。星期日使用 `0` 或 `SUN`，`7` 无效。单值步进扩展到字段上界，例如分钟 `5/2` 匹配 5、7、9 等；day-of-month 与 day-of-week 按库规则组合，`*/2` 不视为无约束通配。重复逗号产生的空项被忽略。已保存但无效的 cron 显示在 scheduler 的 `skipped` 中并附原因，不会执行或自动改写；管理员需更新表达式。
 
-计划任务只接受固定的类型化 job。内嵌调度器将已验证字段转换为当前可执行文件加 `index`、`notify` 或 `push` 子命令的完整 argv，不会执行 shell 命令。应用终止时，活动子进程会被结束并等待，运行状态保存为 `cancelled`。旧 `legacy_command` 只供审阅，不能启用或执行。
+计划任务只接受固定的类型化 job。内嵌调度器将已验证字段转换为当前可执行文件加 `index`、`notify` 或 `push` 子命令的完整 argv，不会执行 shell 命令。应用终止时，活动子进程会被结束并等待，运行状态保存为 `cancelled`。`legacy_command` 只供审阅，不能启用或执行。
 
-`last_status` 和近期 run 的状态使用同一封闭枚举：`idle`、`pending`、`claimed`、`running`、`success`、`failed`、`timed_out`、`error`、`unknown`、`cancelled`。旧数据库中的空值映射为 `idle`，未识别旧值显式映射为 `unknown`；新的写入只能使用声明值，终结接口还会拒绝非终态。
+`last_status` 和近期 run 的状态使用同一封闭枚举：`idle`、`pending`、`claimed`、`running`、`success`、`failed`、`timed_out`、`error`、`unknown`、`cancelled`。数据库中的空值读取为 `idle`，未识别值读取为 `unknown`；写入只能使用声明值，终结接口还会拒绝非终态。
 
 `GET /api/admin/runtime-settings` 为每个字段返回 group、control、apply mode、allowed values、秘密状态和值来源；前端据此覆盖全部后端设置，而不是维护第二份字段清单。`GET /api/admin/provider-catalog` 按逻辑 Provider 名称聚合索引、摘要页和全文 capability，并列出从 `data/meta/*.csv` 与 `data/index/*.sqlite` 发现的安全 catalog stem/文件名。它不返回上游 URL、凭据或文件路径。
 
@@ -342,9 +361,7 @@ Provider 设置的内部 JSON 结构同时发布为 OpenAPI 命名 schema：`Pro
 - `hourly`：稀疏的「小时 + 类型」行，按小时、再按类型升序，只包含有观测的小时；客户端应根据 `from`/`to` 补零。
 - `search_shapes`：各检索特征的边际分布（不是交叉组合），每项为 `feature`、`value` 和按调用加权的 `calls`。特征为 `endpoint`、`mode`、`database`、`term_count`、`uses_prefix`、`uses_boolean`、`hits` 和 `hit_count_basis`；只请求 `http` 或 `mcp` 时为空数组。`hits` 桶的计数口径由 `hit_count_basis` 区分：`total` 为总命中数，`returned` 为无总数时的返回条数，`candidates` 为相关推荐去重前的候选数。不同口径代表不同总体，不能合并解读；需要按口径拆分时使用 `series` 中的 `hits` 与 `hit_count_basis` 组合。
 
-所有数组在为空时都以 `[]` 出现。读取遥测存储失败时返回 `503`，body 为 `{"title":"Service Unavailable","status":503,"detail":"Load telemetry temporarily unavailable"}`（`application/problem+json`），并带 `Retry-After: 5`。当前这次 `/api/admin/telemetry` 请求在自身响应快照之后才被记录，因此出现在下一次读取中；成功的健康检查同样会被计量，尽管请求日志不记录它们。数值为尽力而为的估计：锁竞争、序列上限或存储失败都可能导致少计，写入与保留语义见[数据库参考](database.md#负载遥测库)。
-
-隐私边界：采集器不接收、也不存储用户 ID、用户名、IP、授权令牌、request ID、原始路径、原始查询字符串或检索/标题文本；不提供按用户聚合或原始检索记录。项目也不提供 Prometheus `/metrics` 端点或 CPU profile 采集端点。开关和保留期见[配置参考](configuration.md#负载遥测设置)。
+所有数组在为空时都以 `[]` 出现。读取遥测存储失败时返回 `503`，body 为 `{"title":"Service Unavailable","status":503,"detail":"Load telemetry temporarily unavailable"}`（`application/problem+json`），并带 `Retry-After: 5`。当前这次 `/api/admin/telemetry` 请求在自身响应快照之后才被记录，因此出现在下一次读取中；成功的健康检查同样会被计量，尽管请求日志不记录它们。数值为尽力而为的估计：锁竞争、序列上限或存储失败都可能导致少计，写入、保留和隐私边界见[数据库参考](database.md#负载遥测库)，开关和保留期见[配置参考](configuration.md#负载遥测设置)。项目不提供 Prometheus `/metrics` 端点或 CPU profile 采集端点。
 
 ## 文章访问边界
 
@@ -410,14 +427,10 @@ Web host 对 `/assets/*` 哈希资源使用长期 immutable 缓存，SPA HTML �
 
 工具结果的 text content 是 JSON 字符串。收藏工具始终使用当前认证用户 ID，不能访问其他用户的数据。所有 MCP 字符串参数最多 2,048 个 Unicode 字符，数组参数最多 500 项；超限作为 tool-level error 返回，不进入 SQLite 查询。
 
-MCP 的 Host／Origin 语法由 `net/url` 解析；Host 禁止 userinfo、非法 IPv6 和无效端口（包括带 `+` 的端口）。非标准 scheme 如 `1://` 不再有效。Origin 仍按 scheme、host 和端口匹配，path/query/fragment 不参与匹配，其语法采用 Go URL 规则。Host 白名单、Origin 白名单、端口限制和 DNS rebinding 防护保持启用。
+MCP 的 Host／Origin 语法由 `net/url` 解析；Host 禁止 userinfo、非法 IPv6 和无效端口（包括带 `+` 的端口）。Origin 按 scheme、host 和端口匹配，path/query/fragment 不参与匹配。Host 白名单、Origin 白名单、端口限制和 DNS rebinding 防护始终启用。
 
 `mcp_allowed_hosts` 默认只允许本机 host；经公网域名、局域网地址或反向代理访问时必须显式配置。浏览器跨源调用 MCP 时再设置 `mcp_allowed_origins`。详见[配置参考](configuration.md)。
 
 ## 原生客户端登录
 
-`POST /api/auth/native/login` 接受 username、password、device_name，返回 token、expires_at 与 user，不写浏览器 Cookie。服务端签发名称以 `device:` 开头、90 天有效的独立个人令牌；使用 Authorization Bearer 认证。访问令牌列表可撤销，原生 logout 撤销当前令牌。原生客户端只支持账号密码和 OIDC 登录；原生 OIDC 使用 `/api/auth/oidc/native/login` 与 `/api/auth/oidc/native/exchange`，见[安全说明](../operations/security.md#原生客户端-oidc)。见[客户端指南](../guides/clients.md)。
-
-### Stored JSON format changes
-
-CFP continuation cursors contain a typed JSON object inside the existing encrypted envelope. Historical tuple plaintext is rejected with the existing cursor error; clients should reload the first page. Manual delivery results require the current object shape and string status enum. Invalid historical results retain their durable task status and show `Stored manual delivery result is invalid or obsolete` in `summary`; parsing never retries delivery effects or clears deduplication. Public JSON field names and OpenAPI schemas are unchanged by these storage format changes. The standard JSON encoder retains the existing `omitempty` rules for optional zero values.
+`POST /api/auth/native/login` 接受 `username`（用户名或不区分大小写的邮箱）、`password` 和 `device_name`，返回 token、expires_at 与 user，不写浏览器 Cookie。服务端签发名称为 `device:<device_name>`、固定 90 天有效的独立个人令牌，使用 Authorization Bearer 认证；访问令牌列表可撤销该令牌，`POST /api/auth/logout` 撤销当前令牌。原生客户端只支持账号密码和 OIDC 登录；原生 OIDC 使用 `/api/auth/oidc/native/login` 与 `/api/auth/oidc/native/exchange`，见[安全说明](../operations/security.md#原生客户端-oidc)和[客户端指南](../guides/clients.md)。

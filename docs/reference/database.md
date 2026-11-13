@@ -52,13 +52,13 @@ FTS、动态 SQL、临时成员表、schema 检查及迁移 SQL 继续手写。`
 
 ## 连接和版本
 
-| 数据库             | `PRAGMA user_version` | 升级策略                                                                |
-| ------------------ | --------------------: | ----------------------------------------------------------------------- |
-| 认证/业务库        |                    22 | 版本化 migration                                                        |
-| 内容索引库         |                    10 | 新建精确 v10；运行时读写精确 v6/v7/v8/v9/v10；精确 v4/v5 原子迁移到 v10 |
-| 项目 batch ledger  |                     2 | 新建/验证精确 v2；精确 v1 原位迁移到 v2；可删除后重建                   |
-| catalog 索引控制库 |                     5 | v0/v1/v2/v3/v4 安全事务迁移；可删除后按 v5 重建                         |
-| 负载遥测库         |                     1 | 新建精确 v1；更高版本在改动前拒绝并禁用遥测，不降级；可删除后重建       |
+| 数据库             | `PRAGMA user_version` | 升级策略                                                                         |
+| ------------------ | --------------------: | -------------------------------------------------------------------------------- |
+| 认证/业务库        |                    23 | 版本化 migration                                                                 |
+| 内容索引库         |                    10 | 新建精确 v10；精确 v4–v9 及检索声明不是当前形式的 v10 在启动预检时原子迁移到 v10 |
+| 项目 batch ledger  |                     2 | 新建/验证精确 v2；精确 v1 原位迁移到 v2；可删除后重建                            |
+| catalog 索引控制库 |                     5 | v0/v1/v2/v3/v4 安全事务迁移；可删除后按 v5 重建                                  |
+| 负载遥测库         |                     1 | 新建精确 v1；更高版本在改动前拒绝并禁用遥测，不降级；可删除后重建                |
 
 上述内容、业务和控制库的可写连接使用 `foreign_keys=ON`、WAL、`synchronous=NORMAL` 和 30 秒 busy timeout。Crossref 私有工作集使用下面单独说明的连接策略，不改变这些正式 schema 版本。
 
@@ -68,7 +68,7 @@ FTS、动态 SQL、临时成员表、schema 检查及迁移 SQL 继续手写。`
 
 工作集使用 `foreign_keys=ON`、DELETE journal、`synchronous=FULL`、5 秒 busy timeout、4 MiB page cache 和禁用 mmap；4 KiB 页及 `max_page_count` 把主文件限制为 4 GiB，事务日志需要额外空间。4 MiB 不是进程总内存上限。记录与当前分片进度在同一事务中保存，完整计数通过后通过索引按 keyset 读取，每页最多 225 条、16 MiB；不将全刊读入内存，也不使用 `/tmp` 大排序文件。
 
-成功 anchor v1、Scholarly traversal v2 和工作集格式 v1 是三个不同的版本。严格读取有效 traversal v1：旧 Crossref cursor 从新查询头重放，保留原 base/candidate；OpenAlex 保留旧 cursor 语义。NULL traversal 正常新建，不需要手工修复 SQLite；旧二进制不能直接恢复 v2。
+成功 anchor v1、Scholarly traversal v2 和工作集格式 v1 是三个不同的版本。traversal 只接受 v2，其他版本在恢复时报错，处理方式见[无效的 traversal checkpoint](cli.md#无效的-traversal-checkpoint)；NULL traversal 正常新建。旧二进制不能直接恢复 v2。
 
 core 仍以内容事务和控制事务确认进度。工作集超前一页时重放该步骤；缺失或可识别损坏时从相同 `C/T`、update 条件和 candidate 重新收集，不能续用缺少前半记录的旧 cursor。Provider 完成输出后可清理缓存，但后续控制提交失败仍需安全重建并幂等重放。磁盘满或容量超限保留正式内容与旧 anchor，不截断结果。正常失败保留未完成缓存；不会自动清理未知文件或其他期刊缓存。
 
@@ -87,16 +87,19 @@ core 仍以内容事务和控制事务确认进度。工作集超前一页时重
 
 普通服务启动和业务访问对精确 v6/v7/v8/v9/v10 先做只读 schema preflight。`article_search` 声明不是当前 v10 `ascii` 声明的文件（v6/v7/v8 的 `unicode61`、旧 v9/v10 的 `simple 0`）会在一个事务内迁移到 v10，并从规范表重建检索投影；失败时回滚，原声明保持不变。声明已是当前形式的 v10 不会被改写。新建内容库使用 v10；停机后显式运行 `litradar admin index optimize-storage --confirm-index-maintenance` 可整目录重建并压缩。该离线命令的门禁和恢复路径见 [CLI 参考](cli.md#索引存储优化)。
 
-处理步骤：
+遇到 `IndexRebuildRequired` 时按以下顺序处理：
 
-1. 停止服务和独立索引命令。
-2. 创建并验证备份。
-3. 按错误信息移动或删除那个确切的 `data/index/*.sqlite` 文件；系统不会代为删除。
-4. 用当前维护目录重新运行 `litradar index`。
+1. 停止 `litradar serve` 和所有独立索引写入进程。
+2. 创建并验证包含旧内容库的备份。
+3. 记录错误中给出的确切文件路径，以及重建后用于比较的期刊数和文章数。
+4. 优先把该确切文件移动到备份位置，确认不再需要回退时才删除；不要使用目录级通配删除，系统也不会代为删除。
+5. 用未改名的维护目录重新运行 `litradar index`。
+6. 验证 v10 schema、期刊数、文章数和抽样内容，再恢复服务。
+7. 明确决定保留、导出或清理无法解析的旧收藏和 tracking 引用。
 
-旧 v1–v3 文章 ID、收藏和 tracking 引用不会迁移或重映射；精确 v4/v5 到 v10 的迁移不重映射这些 ID。
+重建使用新的规范身份空间：旧 v1–v3 文章 ID、收藏和 tracking 引用不会迁移或重映射，可能成为陈旧引用；精确 v4/v5 到 v10 的迁移同样不重映射这些 ID。
 
-## v6/v7/v8/v9/v10 内容索引库
+## v10 内容索引库
 
 ### 关系
 
@@ -163,7 +166,7 @@ Provider 写入前使用真实 Gregorian 日历校验日期，年/月信息不�
 
 已通过身份别名匹配的文章，后续写入采用新观察中的出版日期、年份和期次信息；缺失字段保留已有值，但年份变化时不会沿用不一致的旧日期。在线首发转为正式文章后，较旧的在线首发观察不能覆盖正式出版信息。日期或期次更正保留文章 ID 和已有身份别名，并在同一事务内更新列表、搜索投影和变更事件；不执行数据库迁移或自动历史重扫。
 
-期次日期从当前归属文章的已知日期按精度优先、同精度取较早值汇总，不再永久保留已被文章更正淘汰的旧日期，也不取决于文章重放顺序。没有已知文章日期时保留期次自身的日期；文章迁出后，仅清理已经没有文章的旧期次。
+期次日期从当前归属文章的已知日期按精度优先、同精度取较早值汇总，不保留已被文章更正淘汰的旧日期，也不取决于文章重放顺序。没有已知文章日期时保留期次自身的日期；文章迁出后，仅清理已经没有文章的旧期次。
 
 ### `article_identity_keys`
 
@@ -185,37 +188,9 @@ Provider 写入前使用真实 Gregorian 日历校验日期，年/月信息不�
 
 物化高频筛选字段：文章、期刊、issue ID，出版年份/日期，OA/in-press，DOI、PMID 和领域。`/api/articles` 的过滤、计数和游标分页基于该表。
 
-Schema v10 adds nonunique covering indexes on `(doi, date, article_id)` and `(pmid, date, article_id)` for exact identifier filters and date pagination. Migration to v10 also replaces an obsolete `article_search` declaration and rebuilds the search projection from canonical rows; ordinary startup runs it automatically when the declaration is obsolete.
+`(doi, date, article_id)` 和 `(pmid, date, article_id)` 上的非唯一覆盖索引服务精确标识符过滤和日期分页。
 
 ### `article_search`
-
-Related-article title terms are extracted from displayed HTML/MathML text, excluding publisher tag names, attributes, and formula IDs. Titles without Han phrases use a 3,000 recall budget and stop counting at 3,001 documents. Titles containing Han phrases retain the 30,000 budget: Latin terms stop at 30,001 documents and Han phrases at 7,501, with Han costs weighted by four. Counts are keyed by both term and budget. This policy changes recall/ordering for non-Han and markup titles; a blanket 3,000 budget was rejected after pooled relevance evaluation showed worse Han quality. The bm25 weights, three-times candidate over-fetch, source exclusion, and normalized-title deduplication remain unchanged.
-
-Single-term titles skip counting because the count cannot change their expression. Up to four connections count independent terms concurrently. Databases no larger than SQLite's default 2 GiB mmap limit use connection-local mapped reads; larger files retain ordinary paging. Pools close at the end of each request.
-
-Each observed database generation retains at most 4,096 exact term costs and 256 ranked candidate-ID lists using standard-library bounded maps, with at most 16 database generations retained globally. Candidate keys include source article ID, original title, and candidate limit. Returned slices are cloned. File identity, size, or modification-time changes replace the generation; nonempty WAL or rollback-journal files bypass and invalidate both caches. Failed rankings are not cached. Cache hits still fetch canonical article fields and run title deduplication; no complete article-response cache or long-lived database handle is added.
-
-FTS scans and temporary bm25 sorting in `EXPLAIN QUERY PLAN` are expected; ordinary `sqlite_stat1` statistics cannot eliminate candidate scoring. Offline optimization remains subject to the existing shutdown, backup, and maintenance gates; related queries do not run `ANALYZE` or `optimize`.
-
-FTS5 的 v6、v7 和 v8 都使用内置 `unicode61 remove_diacritics 2`，字段为：
-
-- `article_id UNINDEXED`；
-- `title`；
-- `abstract_text`；
-- `doi`；
-- `pmid`；
-- `authors`；
-- `journal_title`。
-
-v6 是 stored-content FTS，因此包含重复保存全文列的 `article_search_content` 影子表。v7/v8 使用以下精确选项：
-
-```sql
-content = '',
-contentless_delete = 1,
-tokenize = 'unicode61 remove_diacritics 2'
-```
-
-v7/v8 不创建 `article_search_content`，详情和列表字段继续以 `articles`、`journals` 和 `article_listing` 为权威来源；全文查询只依赖 FTS `rowid`/`MATCH` 结果，因此短语、布尔、否定、前缀和列限定语义不变。旧 v9/v10 保留 contentless 布局，但使用已移除的 Simple 扩展 `tokenize = 'simple 0'`。
 
 当前 v10 使用 FTS5 内置的 `ascii` 分词器，并把全部 ASCII 标点设为词内字符，因此 FTS 只按空格拆分：
 
@@ -225,17 +200,27 @@ contentless_delete = 1,
 tokenize = "ascii tokenchars '!""#$%&()*+,-./:;<=>?@[\]^_`{|}~''' "
 ```
 
+字段为 `article_id UNINDEXED`、`title`、`abstract_text`、`doi`、`pmid`、`authors` 和 `journal_title`。FTS 为 contentless，不创建 `article_search_content` 影子表；详情和列表字段以 `articles`、`journals` 和 `article_listing` 为权威来源，全文查询只依赖 FTS `rowid`/`MATCH` 结果。
+
 切词在 Go 中完成（`apps/server/internal/storage/search`），写入投影和检索操作数经过同一流程：
 
 1. 折叠：NFD 分解并去掉组合附加符号，非 ASCII 字母按 Unicode 规则转小写；不是字母或数字的字符（包括 ASCII 标点）变成空格。只含 ASCII 字母、数字和空白的文本跳过这一步。
-2. 按 Simple `simple 0` 的字节规则切词：连续 ASCII 字母为一个词并转小写，连续 ASCII 数字为一个词，空白和控制字符丢弃，ASCII 标点各自成词，每个非 ASCII 字符按 UTF-8 首字节长度单独成词。
+2. 按字节规则切词：连续 ASCII 字母为一个词并转小写，连续 ASCII 数字为一个词，空白和控制字符丢弃，ASCII 标点各自成词，每个非 ASCII 字符按 UTF-8 首字节长度单独成词。
 3. 用空格连接后写入 FTS；检索时组成短语 `"t1 t2 …"`，其中的双引号写成 `""`。
 
-因此检索不区分重音和大小写（`resume` 命中 `Résumé`），中文逐字成词、短语匹配连续文字，DOI 等标识符按字母和数字片段组成短语（`10.1000/abc` 命中 `10.1000/ABC`）；不提供拼音别名。规范标题、摘要和身份不变。
+因此检索不区分重音和大小写（`resume` 命中 `Résumé`），中文逐字成词、短语匹配连续文字，DOI 等标识符按字母和数字片段组成短语（`10.1000/abc` 命中 `10.1000/ABC`）；不提供拼音别名。规范标题、摘要和身份不受切词影响。
 
-内容 v8 保留 v7 的表、数据和 FTS 选项，只删除与 `event_id INTEGER PRIMARY KEY` 重复的 `idx_article_change_events_order`。v6/v7/v8 的 `unicode61` 声明不是当前声明，启动预检会把它们迁移到 v10。当前 DDL、版本和公共结构验证统一由 `apps/server/internal/storage/indexschema` 提供。
+当前 DDL、版本和公共结构验证统一由 `apps/server/internal/storage/indexschema` 提供。旧二进制未必支持 v10；需要降级时，必须停机并恢复优化前已验证、且受目标二进制支持的旧索引备份。不得降低 `user_version`、直接把新版索引交给不支持它的旧二进制，或手工拼接影子表。
 
-当前二进制读写精确 v6/v7/v8/v9/v10。旧二进制未必支持 v10；需要降级时，必须停机并恢复优化前已验证、且受目标二进制支持的旧索引备份。不得降低 `user_version`、直接把新版索引交给不支持它的旧二进制，或手工拼接影子表。
+#### 相关文章召回
+
+相关文章从标题的显示文本取词：先去除 HTML/MathML 标签、属性和公式 ID，再取最多 16 个内容词，在标题和摘要中召回，稀有词优先。各词命中数决定召回预算：不含汉字短语的标题预算为 3,000，计数到 3,001 篇即停止；含汉字短语的标题预算为 30,000，拉丁词计数到 30,001 篇、汉字短语计数到 7,501 篇停止，汉字短语成本乘 4。只有一个常见词时保留回退查询，因此预算不是候选数量或执行时间的硬上限。单词标题跳过计数；其余各词最多用 4 个连接并发计数，计数按词和预算分别缓存。
+
+排序使用 `bm25(article_search,0,10,1,0,0,1,0)`，先取三倍候选，排除源文章并按规范化标题去重。不超过 SQLite 默认 2 GiB mmap 上限的数据库使用连接级 mmap 读取，更大的文件使用普通分页；连接池在每个请求结束时关闭。
+
+每个已观察到的数据库代际最多保留 4,096 个词成本和 256 个排序候选 ID 列表，全局最多保留 16 个代际。候选缓存键包括源文章 ID、原始标题和候选上限，返回的切片为副本。文件身份、大小或修改时间变化时替换该代际；存在非空 WAL 或回滚日志时绕过并清除两类缓存；失败的排序不缓存。命中缓存仍读取规范文章字段并执行标题去重，不缓存完整文章响应，也不保留长期数据库句柄。
+
+`EXPLAIN QUERY PLAN` 中出现 FTS 扫描和临时 bm25 排序属于预期，`sqlite_stat1` 统计无法消除候选打分。相关查询不执行 `ANALYZE` 或 `optimize`；离线优化仍受停机、备份和维护门禁约束。
 
 ### `article_change_events`
 
@@ -246,7 +231,7 @@ tokenize = "ascii tokenchars '!""#$%&()*+,-./:;<=>?@[\]^_`{|}~''' "
 - 记录 article/journal/issue 和 in-press membership；
 - revision 唯一索引让 Provider 重试和控制状态丢失重放幂等收敛。
 
-`--update` 把事件生成到 `data/push_state/<db>.changes.json`。项目 batch ledger 先持久化精确 JSON 字节和 inclusive through-event cursor，再原子替换文件、幂等删除 `event_id <= cursor` 的行并推进 catalog phase。只要 active batch ledger 保留，rename 或 acknowledgement 任一侧崩溃都会重放同一 payload；ledger 丢失后文件系统与 SQLite 仍是至少一次边界，消费者继续按身份去重。空 outbox 不会覆盖已有的有界、可解析且 `db_name` 匹配的 manifest；旧时间格式的当前 manifest 会以新格式重建。Bootstrap 和 `--full-rescan` 不发布清单，并在成功结束时丢弃本次无需投递的 outbox。
+`--update` 把事件生成到 `data/push_state/<db>.changes.json`。项目 batch ledger 先持久化精确 JSON 字节和 inclusive through-event cursor，再原子替换文件、幂等删除 `event_id <= cursor` 的行并推进 catalog phase。只要 active batch ledger 保留，rename 或 acknowledgement 任一侧崩溃都会重放同一 payload；ledger 丢失后文件系统与 SQLite 仍是至少一次边界，消费者继续按身份去重。空 outbox 不会覆盖已有的有界、可解析且 `db_name` 匹配的 manifest。Bootstrap 和 `--full-rescan` 不发布清单，并在成功结束时丢弃本次无需投递的 outbox。
 
 ## v2 项目 batch ledger
 
@@ -295,13 +280,11 @@ notify status 只允许 `running/idle/completed/skipped/failed/cancelled/timed_o
 
 `base_anchor` 在运行期间不变；`traversal_checkpoint` 是 Provider 私有的页码、cursor、期次位置或组合状态。resume 只接管 batch、mode 与 base 都匹配的行；foreign/legacy batch、模式不匹配或 base 漂移都会在 Provider 访问前拒绝。每个 Continue 在内容提交之后更新 traversal；Complete 在一个 immediate transaction 中删除匹配 batch 的 run 行，并 upsert anchor 与 `completed_batch_id`。
 
-### v0/v1/v2/v3 迁移、legacy bridge 与删除语义
+### 旧控制库与删除语义
 
-旧 `provider_checkpoints` 只有 journal scope 且 JSON 严格等于 complete marker 的行可以证明“曾完整成功”，因此迁移为 `provider_sync_anchors` 的 NULL anchor。旧分页 cursor、listing/year scope、损坏或未知状态无法证明冻结窗口，全部丢弃；迁移随后删除旧表。v0/v1 还在同一事务中执行一次退役 Provider 名称重写。
+低于 v5 的 catalog 控制库在打开时于一个事务内迁移到 v5：旧 `provider_checkpoints` 中只有 journal scope 且严格等于 complete marker 的行迁移为 `provider_sync_anchors` 的 NULL anchor，其余旧 cursor 和未知状态丢弃；退役的 `cnki_oversea` 租约、anchor 和 checkpoint 被删除，国内状态与历史批次身份保持原样。`batch_id` 为空的旧 run checkpoint 只能按 [CLI 规则](cli.md#无效的-traversal-checkpoint)由显式单 CSV 接入新 batch，Provider opaque 值不会被解析或复制到 batch ledger。
 
-v3 -> v4 在一个事务中新增 nullable `completed_batch_id` 和 `batch_id`，保留所有有效 anchor、run 和 lease。显式 `--file` 的默认 resume 可以把一个 mode 和 `started_at` 完全一致的 batchless checkpoint epoch 接入新 batch，并把同 epoch 的 completed anchors 一起标记；隐式全部 CSV 和混合 epoch 固定拒绝。这个 bridge 只为升级恢复，不把 Provider opaque 值解析或复制到 batch ledger。
-
-切换 Provider 会自然使用新的 anchor/run namespace，而不修改内容库。删除或丢失全部 `data/index-control` 后，下一次运行从头抓取并通过 `article_identity_keys` 和 upsert 规则收敛。只删除 batch ledger 会失去 catalog completion/manifest recovery authority；仍带旧 batch ID 的 run checkpoint 会 fail closed，需恢复原 ledger、显式 `--no-resume`，或在 legacy 场景按 CLI 文档保留 catalog control 后重建单文件 batch。两类控制库都不需要恢复或备份；删除 catalog control 不是只清 cursor，而是同时放弃所有成功边界。
+切换 Provider 会使用新的 anchor/run namespace，不修改内容库。删除或丢失全部 `data/index-control` 后，下一次运行从头抓取并通过 `article_identity_keys` 和 upsert 规则收敛。只删除 batch ledger 会失去 catalog completion/manifest recovery authority；仍带旧 batch ID 的 run checkpoint 会 fail closed，需恢复原 ledger 或显式 `--no-resume`。两类控制库都不需要恢复或备份；删除 catalog control 不是只清 cursor，而是同时放弃所有成功边界。
 
 ## 认证与业务数据库
 
@@ -309,9 +292,11 @@ v3 -> v4 在一个事务中新增 nullable `completed_batch_id` 和 `batch_id`�
 
 ```text
 users
+  +-- user_identities
   +-- access_tokens
   +-- cnki_sessions
   +-- folders -- favorites
+  +-- relation_graph_favorites
   +-- invite_codes -- invite_code_uses
   +-- notification_settings
 
@@ -324,6 +309,11 @@ managed_meta_catalogs
 announcements
 security_audit_events -- security_audit_maintenance
 
+cfp_journals -- cfp_journal_aliases
+cfp_sources -- cfp_source_journals
+cfp_notices
+cfp_seed_imports
+
 delivery_checkpoints
 delivery_runs -- delivery_run_items
       |
@@ -335,19 +325,17 @@ delivery_runs -- delivery_run_items
 
 ### 用户、令牌和邀请码
 
-`users` 保存大小写不敏感的唯一用户名、密码 hash/salt、管理员标记、时间和单调 `token_generation`。新密码的 `password_hash` 是包含算法、版本、成本、salt 和输出的 `$argon2id$` PHC 字符串，旧 `salt` 列为空；旧 PBKDF2 hex 行保留原 salt，并在正确登录后通过原 hash+salt 的 CAS 单次升级。首个管理员只能通过 `litradar admin bootstrap` 创建；公开注册需要邀请码。密码变更、管理员重置与 `logout-all` 会在删除该用户全部 `access_tokens` 的同一 immediate transaction 中递增 `token_generation`；登录和依赖现有 token 的新令牌写入以该值为 CAS fence，后者还复核确切授权 token hash。目标用户不存在时密码更新返回未更新，删除令牌失败时密码与代际写入回滚。管理员标记更新和用户删除也使用 actor-aware immediate transaction：事务内重新验证 actor、target 和管理员计数，任何成功提交都至少保留一个 `is_admin = 1` 行。
+`users` 保存大小写不敏感的唯一用户名、可空且唯一的规范化 `email`、`auth_kind`（`local` 或 `oidc`）、密码 hash/salt、管理员标记、时间和单调 `token_generation`。新密码的 `password_hash` 是包含算法、版本、成本、salt 和输出的 `$argon2id$` PHC 字符串，旧 `salt` 列为空；旧 PBKDF2 hex 行保留原 salt，并在正确登录后通过原 hash+salt 的 CAS 单次升级。首个管理员只能通过 `litradar admin bootstrap` 创建；密码注册需要邀请码。密码变更、管理员重置与 `logout-all` 会在删除该用户全部 `access_tokens` 的同一 immediate transaction 中递增 `token_generation`；登录和依赖现有 token 的新令牌写入以该值为 CAS fence，后者还复核确切授权 token hash。目标用户不存在时密码更新返回未更新，删除令牌失败时密码与代际写入回滚。管理员标记更新和用户删除也使用 actor-aware immediate transaction：事务内重新验证 actor、target 和管理员计数，任何成功提交都至少保留一个 `is_admin = 1` 行。
 
 `access_tokens` 保存唯一 token hash，不保存明文 token。`name='login'` 是浏览器 Cookie 会话的保留行；其他 active personal token 每用户最多 50 个。达到上限只阻止新建，不删除历史行。所有读取路径统一以 `expires_at <= now` 判定过期并清理；salt、原始 token 和邀请码由操作系统 CSPRNG 生成。
 
-Auth schema v21 adds `idx_access_tokens_expires` on `access_tokens(expires_at)` so expiry cleanup can search the expired range without scanning every active token. The upgrade preserves token rows and the existing cleanup transaction boundaries; backups accept the current auth schema and reject newer unsupported versions.
+`idx_access_tokens_expires` 索引 `access_tokens(expires_at)`，过期清理按范围查找而不扫描全部 active token。新令牌签发的代际比较、授权 token 复核、插入和必需审计在同一个 `BEGIN IMMEDIATE` 中完成；任一条件已过期时整个签发无副作用回滚。
 
-认证库 v15 为既有 `users` 行补入从 0 开始的 `token_generation`，不改写密码、用户 ID 或令牌。代际比较、授权 token 复核、新令牌插入和必需审计在同一个 `BEGIN IMMEDIATE` 中完成；任一条件已过期时整个签发无副作用回滚。
+`user_identities` 把外部 OIDC 身份 `(issuer, subject)` 绑定到一个用户，保存 `created_at` 和 `last_login_at`；`(issuer, subject)` 和 `(user_id, issuer)` 各自唯一，删除用户时级联删除。账号建立与绑定规则见 [authentik 单点登录](../operations/authentik.md#账号建立绑定和恢复)。
 
-认证库 v12 的 `invite_codes` 除兼容字段 `used_by`/`used_at` 外，还保存 `expires_at`、不可逆 `revoked_at`、`max_uses` 和 `use_count`。`invite_code_uses` 为每次已提交兑换保存邀请码、用户和时间；删除用户只把历史中的用户引用设为 `NULL`，不能删除邀请码历史。`used_by`/`used_at` 表示首位兑换者，仅为旧客户端兼容。
+`invite_codes` 除兼容字段 `used_by`/`used_at` 外，还保存 `expires_at`、不可逆 `revoked_at`、`max_uses` 和 `use_count`。`invite_code_uses` 为每次已提交兑换保存邀请码、用户和时间；删除用户只把历史中的用户引用设为 `NULL`，不能删除邀请码历史。`used_by`/`used_at` 表示首位兑换者，仅为旧客户端兼容。
 
 普通用户由部分唯一索引保证最多一个 `revoked_at IS NULL` 的发行记录；过期或用尽后可以通过 rotate 原子撤销旧记录并签发新码。注册在 `BEGIN IMMEDIATE` 事务中以 `revoked_at IS NULL AND expires_at > now AND use_count < max_uses` 条件递增计数，同时插入用户、兑换历史、默认文件夹和审计事件，因此并发争用最后一个名额时最多一个事务成功。管理员生成的 `created_by IS NULL` 邀请码不受单发行索引限制，但有效期最多 365 天且用量上限为 1000。
-
-v11 升级保留旧 ID、code、创建者、首位使用者和使用时间；已使用行补入一条 `invite_code_uses` 历史，同一普通创建者的旧重复行只保留最高 ID 为未撤销状态。迁移后的旧码至少获得迁移时起 7 天的兼容有效期。
 
 ### CNKI 会话
 
@@ -357,19 +345,31 @@ v11 升级保留旧 ID、code、创建者、首位使用者和使用时间；已
 
 ### 收藏
 
-`folders` 以用户和名称唯一；auth schema v11 还通过 `idx_folders_one_tracking_per_user` 部分唯一索引保证每个用户最多一个 `is_tracking = 1` 文件夹。v10 升级时若发现多个旧 tracking folder，会按最低 folder ID 保留一个并在同一迁移事务内清除其余标记。`favorites` 保存 `user_id`、`folder_id`、稳定 `article_id`、内容库 `db_name`、note 和时间。`db_name` 是内容库文件名，不是 Provider 或 SQLite 外键。
+`folders` 以用户和名称唯一；`idx_folders_one_tracking_per_user` 部分唯一索引保证每个用户最多一个 `is_tracking = 1` 文件夹。`favorites` 保存 `user_id`、`folder_id`、稳定 `article_id`、内容库 `db_name`、note 和时间。`db_name` 是内容库文件名，不是 Provider 或 SQLite 外键。
 
 创建 tracking folder、切换 tracking folder、单条幂等收藏以及批量添加/删除/移动都使用 `BEGIN IMMEDIATE`。重复收藏由 `ON CONFLICT DO NOTHING RETURNING id` 与精确既有行查询返回真实 ID；批量中途失败会整体回滚。动态 favorite `IN` 查询每块最多 500 个 ID。
 
-v1–v3 的破坏性重建不会重映射旧 favorite 的 article ID；精确 v4/v5 到 v10 的迁移保留 ID。无法解析的旧引用由运维人员或用户清理。
+#### 收藏游标
 
-<a id="favorite-cursor-pagination"></a>
+`idx_favorites_cursor` 的列为 `(user_id, folder_id, created_at DESC, id DESC)`。`GET /api/favorites/folders/{folder_id}/articles/page` 使用绑定用户和文件夹的版本化不透明游标，读取 `limit + 1` 行，不计算精确总数；游标时间戳保留原始浮点位。`/articles` 数组端点使用 `limit/offset`。
 
-#### 收藏游标与索引维护
+### 图谱收藏
 
-认证库 v16 新增 `idx_favorites_cursor`，列为 `(user_id, folder_id, created_at DESC, id DESC)`。`GET /api/favorites/folders/{folder_id}/articles/page` 使用绑定用户和文件夹的版本化不透明游标，读取 `limit + 1` 行，不计算精确总数；游标时间戳保留原始浮点位。旧 `/articles` 数组端点继续支持 `limit/offset`。
+`relation_graph_favorites` 按用户保存独立的关系图快照，不属于收藏文件夹：
 
-认证库 v17 删除重复的 `idx_invite_codes_code` 和 `idx_notification_settings_user` 索引，原有 `UNIQUE` 约束继续保证 `invite_codes.code` 和 `notification_settings.user_id` 唯一，不改变应用数据。
+| 列                | SQLite 类型           | 含义                                    |
+| ----------------- | --------------------- | --------------------------------------- |
+| `id`              | `INTEGER PRIMARY KEY` | 快照身份                                |
+| `user_id`         | `INTEGER NOT NULL`    | 所属 `users(id)`；删除用户时级联删除    |
+| `db_name`         | `TEXT NOT NULL`       | 根文章所在内容库文件名，最多 255 个字符 |
+| `root_article_id` | `INTEGER NOT NULL`    | 根文章 ID                               |
+| `title`           | `TEXT NOT NULL`       | 快照标题，裁剪后 1–200 个字符           |
+| `node_count`      | `INTEGER NOT NULL`    | 节点数，`1–500`                         |
+| `graph`           | `TEXT NOT NULL`       | 不透明的原始 JSON object，最多 2 MiB    |
+| `created_at`      | `REAL NOT NULL`       | Unix 秒（含小数）                       |
+| `updated_at`      | `REAL NOT NULL`       | Unix 秒（含小数）                       |
+
+`idx_relation_graph_favorites_user_updated` 索引 `(user_id, updated_at DESC, id DESC)`。
 
 ### 用户通知配置
 
@@ -377,7 +377,7 @@ v1–v3 的破坏性重建不会重映射旧 favorite 的 article ID；精确 v4
 
 ### 持久投递状态
 
-认证库 v10 新增五张投递表，所有应用自有状态都受 `CHECK` 约束并使用类型化枚举读取：
+五张投递表的应用自有状态都受 `CHECK` 约束并使用类型化枚举读取：
 
 - `delivery_checkpoints` 以 `(workflow, db_name)` 唯一，保存规范 snapshot、最后完成时间、旧状态导入 hash 和单调 `revision`；
 - `delivery_runs` 保存外部任务 ID、触发来源、模式、用户、deadline、取消位、owner lease、终态和 `revision`；同一 `(workflow, db_name)` 只能有一个 active run，同一用户只能有一个 queued/active manual run；
@@ -389,8 +389,6 @@ run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-
 
 启动迁移会先读取 `data/push_state/<db>.json` 和 `data/folder_push_state/<db>.json`，校验所有文件后再用一个 immediate transaction 导入。每个源文件的 SHA-256 保存在 checkpoint 中：相同 hash 重启时跳过，已导入文件内容变化则拒绝启动，损坏文件使整批零写入。源文件和 `.changes.json` 都不会被导入器删除；未知旧状态只映射为固定 `unknown`/`unrecognized` 分类，不把原始状态或错误内容写入数据库。
 
-<a id="weekly-query-and-manual-delivery-membership"></a>
-
 #### 周报与手动投递的候选范围
 
 周报查询、可追踪文章数量和手动周报共享以 UTC 计算的 7 日变更清单窗口。它们合并当前及受管历史清单，去除重复发布，只包含仍存在于可用内容库中的可通知文章；历史回填 ID 不计入数量或手动候选集。
@@ -399,21 +397,21 @@ run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-
 
 ### 调度和活动门禁
 
-- `scheduled_tasks` 保存类型化 `job_spec`；旧 `legacy_command` 只读且不能启用。
+- `scheduled_tasks` 保存类型化 `job_spec`；`legacy_command` 只读且不能启用。
 - `scheduled_task_runs` 保存认领、运行、取消、超时和终态。
 - `scheduler_state` 保存单调调度游标。
 - `scheduler_workers` 保存内嵌调度心跳。
 - `service_heartbeats` 保存统一进程 HTTP 组件的活动记录。
 
-认证库 v20 保留运行历史与 ID，并新增内部字段 `trigger_kind`（`scheduled` 或 `manual`）。只有调度运行占用唯一的 `(task_id, scheduled_for)` 时段；连续的手动请求可以共享时间戳，且不消耗 cron 时段。迁移保留自增高水位，包括已删除运行的 ID。
+`scheduled_task_runs.trigger_kind` 为 `scheduled` 或 `manual`。只有调度运行占用唯一的 `(task_id, scheduled_for)` 时段；连续的手动请求可以共享时间戳，且不消耗 cron 时段。
 
 `litradar admin backup restore` 在替换前后检查最近 90 秒的心跳，目标仍活动时拒绝恢复。
 
-调度 repository 的新写入口接收 `SchedulerRunState`，不能持久化自由字符串；完成路径只接受终态。历史 `last_status = ''` 在读取时变为 `idle`，其他未识别旧值变为 `unknown`。delivery run/item/checkpoint/dedupe 已分别使用类型化状态与数据库 CHECK；worker 结果 JSON 和公开 manual/push statistics 也只序列化声明枚举。CNKI 状态来自上游，采用可保留原始字符串的 unknown 分支而不是拒绝或静默改写。
+调度 repository 的写入口接收 `SchedulerRunState`，不能持久化自由字符串；完成路径只接受终态。`last_status = ''` 在读取时变为 `idle`，其他未识别值变为 `unknown`。delivery run/item/checkpoint/dedupe 分别使用类型化状态与数据库 CHECK；worker 结果 JSON 和公开 manual/push statistics 也只序列化声明枚举。CNKI 状态来自上游，采用可保留原始字符串的 unknown 分支而不是拒绝或静默改写。
 
 ### 持久安全审计
 
-认证库 v9 新增 `security_audit_events`。每行包含可空 `actor_id`/`target_id`、固定 `action`/`outcome`/`reason`、服务器 `request_id`、限流 `source_class`/`bucket`/计数以及 `occurred_at`。这些字段只保存分类和内部 ID，不保存用户名、密码、原始 token、邀请码、IP、Header 或请求内容。
+`security_audit_events` 每行包含可空 `actor_id`/`target_id`、固定 `action`/`outcome`/`reason`、服务器 `request_id`、限流 `source_class`/`bucket`/计数以及 `occurred_at`。这些字段只保存分类和内部 ID，不保存用户名、密码、原始 token、邀请码、IP、Header 或请求内容。
 
 索引覆盖 `(occurred_at, id)`、`(action, outcome, occurred_at)`、`(actor_id, occurred_at)` 和非空 `request_id`。触发器拒绝 `UPDATE`，从而保持追加语义；受控保留任务仍可 `DELETE`。安全变更 repository 在业务事务提交前插入必需审计行，插入失败会回滚业务变更。认证拒绝与限流通过独立 immediate transaction 同步追加。
 
@@ -421,19 +419,13 @@ run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-
 
 ### `runtime_settings`
 
-只接受[运行配置](configuration.md)列出的 20 个字段。四个字段的非空值以 `litradarenc:v1:` 密文保存：`openalex_api_key_pool`、`semantic_scholar_api_key_pool`、`cnki_captcha_token` 和 `provider_proxy_url`。它们都由同一秘密 registry 纳入迁移、验证和轮换；公开运行设置响应不会返回明文或持久密文。
+只接受[运行配置](configuration.md#全局运行设置)列出的 27 个字段。五个字段的非空值以 `litradarenc:v1:` 密文保存：`openalex_api_key_pool`、`semantic_scholar_api_key_pool`、`cnki_captcha_token`、`provider_proxy_url` 和 `oidc_client_secret`。它们都由同一秘密 registry 纳入迁移、验证和轮换；公开运行设置响应不会返回明文或持久密文。
 
 `provider_proxy_policy`、Provider 路由/顺序和审计保留天数是非秘密运行配置。代理策略只保存逻辑 Provider 的布尔选择，代理 URL 只存在于认证库密文和当前进程受限内存，不进入内容库、索引控制库、worker request JSON、日志或审计 payload。
 
-<a id="retired-cnki-provider-migration"></a>
-
-#### 退役 CNKI Provider 的迁移
-
-认证库 v19 把存储的海外路由和访问顺序迁移到国内 `cnki`，保留自定义 Provider、空覆盖与设置时间戳。显式国内代理设置优先于已移除的海外设置。控制库 v5 仅移除海外租约、成功边界和检查点，国内状态与历史批次身份保持不变。
-
 ### 征稿数据
 
-认证库 v18 新增 `cfp_journals`、`cfp_journal_aliases`、`cfp_sources`、`cfp_source_journals`、`cfp_notices` 和 `cfp_seed_imports`。征稿原文、来源和期刊身份属于业务库，随认证库一起备份，不依赖文章索引。导入摘要、刷新租约和原子发布规则见[征稿追踪架构](../architecture/cfp-tracking.md#数据归属)。
+征稿数据保存在 `cfp_journals`、`cfp_journal_aliases`、`cfp_sources`、`cfp_source_journals`、`cfp_notices` 和 `cfp_seed_imports`。征稿原文、来源和期刊身份属于业务库，随认证库一起备份，不依赖文章索引。导入摘要、刷新租约和原子发布规则见[征稿追踪架构](../architecture/cfp-tracking.md#数据归属)。
 
 ### `managed_meta_catalogs` 和 `announcements`
 
@@ -477,45 +469,22 @@ CREATE TABLE hourly_load (
 
 ## 数据库之外的状态
 
-<a id="变更与投递状态"></a>
-
 - `data/push_state/<db>.changes.json`：索引 update 的 Provider-neutral 变更清单；
 - `data/push_state/<db>.json`：旧 notify/手动 PushPlus 状态导入源；
 - `data/folder_push_state/<db>.json`：旧 push 状态导入源。
 
-可变 checkpoint、run、item、dedupe 和 lease 的唯一权威存储是 `auth.sqlite`。运行时不再创建 `<db>.json` 或固定 `.tmp`，也不接受状态目录参数。清单的 `db_name` 是目标内容库身份；读取方不使用历史文件系统路径或 Provider 名称回退。旧导入源会原样保留，不能在导入后手工修改；`.changes.json` 始终保持文件契约，不进入认证库。
+可变 checkpoint、run、item、dedupe 和 lease 的唯一权威存储是 `auth.sqlite`。运行时不创建 `<db>.json` 或固定 `.tmp`，也没有状态目录参数。清单的 `db_name` 是目标内容库身份；读取方不使用历史文件系统路径或 Provider 名称回退。旧导入源会原样保留，不能在导入后手工修改；`.changes.json` 始终保持文件契约，不进入认证库。
 
 ## 备份边界
 
-v2 备份固定包含 `auth.sqlite` 和完整 `data/meta`，因此持久投递状态总在认证库快照中。`--include-indexes` 包含创建时发现的全部 `data/index/*.sqlite` 文件，不按内容 schema 筛选；`data/index-control` 永远排除，包括 `index-batches.sqlite` 和全部 catalog v5 controls，`data/index-work` 的 Crossref 工作集也始终排除，可丢弃的 `data/telemetry.sqlite` 同样不进入备份。Provider-neutral `.changes.json` 和保留的旧导入源需要 `--include-push-state`。部署密钥始终单独保存。
-
-备份验证检查文件清单、大小、SHA-256、SQLite `quick_check`，以及 `user_version` 与清单的一致性和版本上限，因此也能保留通过这些检查的历史数据库。它不执行内容结构预检或迁移；恢复后能否服务仍取决于上文的精确内容 schema、迁移或重建要求。
-
-### Relation graph favorites (auth schema v22)
-
-`relation_graph_favorites` stores independent, per-user graph snapshots without folders.
-
-| Column | SQLite type | Meaning |
-| --- | --- | --- |
-| id | INTEGER PRIMARY KEY | Snapshot identity |
-| user_id | INTEGER NOT NULL | Owning users(id); deletion cascades |
-| db_name | TEXT NOT NULL | Root article database |
-| root_article_id | INTEGER NOT NULL | Root article identity |
-| title | TEXT NOT NULL | Snapshot title |
-| node_count | INTEGER NOT NULL | Snapshot node count |
-| graph | TEXT NOT NULL | Opaque raw JSON object |
-| created_at | REAL NOT NULL | Fractional Unix seconds |
-| updated_at | REAL NOT NULL | Fractional Unix seconds |
-
-`idx_relation_graph_favorites_user_updated` indexes `(user_id, updated_at DESC, id DESC)`.
-Fresh databases run the same versioned migrations through v22.
+备份固定包含 `auth.sqlite`（因此包含全部持久投递、征稿和设置状态）和完整 `data/meta`；`data/index-control`、`data/index-work` 和 `data/telemetry.sqlite` 始终排除。备份范围、可选项和验证检查见[备份与恢复](../operations/backup.md#备份范围)；验证不执行内容结构预检或迁移，恢复后的内容库仍须满足[连接和版本](#连接和版本)中的要求。
 
 ## JSON 和文件格式边界
 
-Source、worker、CFP、备份及投递结果使用 typed structs 和标准 `encoding/json`，共享字符串 codec 使用 Go 1.27 的 `encoding/json/v2`。重复字段、非法 UTF-8、孤立 surrogate 会被标准库拒绝；数字使用标准转换，不再复刻 serde 浮点舍入和输出格式；通用验证不再强制所有 JSON number 转为 float64，也不再使用手写的 128 层阈值。标量或集合元素中的 `null` 遵循标准库零值规则，必填对象字段和计数 map 的非空约束仍明确校验。`json.Number` 保留上游 token，int64/uint64 转换检查范围；不能编码的结果不会以部分 JSON 写入存储。必填字段和非可空字段仍在解码前校验，外部 JSON tag 与 SQL 列名不变。
+Source、worker、CFP、备份及投递结果使用 typed structs 和标准 `encoding/json`，共享字符串 codec 使用 `encoding/json/v2`。重复字段、非法 UTF-8 和孤立 surrogate 被拒绝；标量或集合元素中的 `null` 按标准库零值规则处理，必填字段和非可空字段在解码前校验，必填对象字段和计数 map 的非空约束单独校验。`json.Number` 保留上游 token，int64/uint64 转换检查范围；不能编码的结果不会以部分 JSON 写入存储。外部 JSON tag 与 SQL 列名一致。
 
-旧 positional tuple 和单键对象 enum 格式已移除，适用于 Source/CFP、worker、作者、备份/metadata manifest、投递状态及结果。旧 Crossref cursor checkpoint（版本 1）不再升级或重放；继续使用当前版本 2 的 workset 状态和 OpenAlex cursor。旧格式会报错，索引需要重新创建 traversal；内容库和 committed identity 不会被清空。JSON 字节表示变化也可能使旧 workset 的冻结上下文校验失败，应重跑该索引任务。
+这些 JSON 只接受当前对象格式，positional tuple 和单键对象 enum 等旧格式报错。Scholarly traversal checkpoint 只接受 v2，处理方式见[无效的 traversal checkpoint](cli.md#无效的-traversal-checkpoint)；内容库和 committed identity 不受影响。
 
-周报 `.changes.json` 的 `generated_at` 统一写为 UTC RFC3339Nano，保留纳秒；不再接受 Unix 秒字符串、以 `run_id` 充当时间、Chrono 闰秒、小写或空格分隔符。当前旧 manifest 可在下一次索引发布时重建；旧 prepared intent 明确要求重跑索引，保留 outbox。历史文件不自动改写或删除：不符合格式时周报明确失败，需先归档旧文件再重新生成清单。历史清理只对可解析 RFC3339Nano 时间和受管摘要文件名生效。
+周报 `.changes.json` 的 `generated_at` 写为 UTC RFC3339Nano。使用旧时间格式的当前 manifest 在下一次索引发布时重建；旧 prepared intent 要求重跑索引并保留 outbox。其他不符合格式的受管清单不会被自动改写或删除，周报会明确失败，需先归档该文件再重新生成清单。历史清理只作用于可解析 RFC3339Nano 时间和受管摘要文件名。
 
-托管文件的读写、枚举和发布使用 `os.Root` 限制目录穿越和指向目录外的链接；备份恢复及维护保留原有校验与失败补偿。SQLite 继续由现有 VFS 打开，保留 NOFOLLOW、硬链接和 Windows reparse-point 检查。metadata 的无覆盖发布使用 `Root.Link`，要求目标文件系统支持硬链接；不支持时明确失败并执行原有补偿。目标已存在时拒绝覆盖。外部指定的密钥和 CLI 输入文件仍按其显式路径读取。
+托管文件的读写、枚举和发布使用 `os.Root` 限制目录穿越和指向目录外的链接。SQLite 打开时执行 NOFOLLOW、硬链接和 Windows reparse-point 检查。metadata 的无覆盖发布使用 `Root.Link`，要求目标文件系统支持硬链接，不支持时明确失败并执行补偿；目标已存在时拒绝覆盖。外部指定的密钥和 CLI 输入文件按其显式路径读取。
