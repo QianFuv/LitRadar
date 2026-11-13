@@ -4,15 +4,15 @@
 
 ## 工具链
 
-CI 和容器使用以下主版本：
+CI 和容器使用以下固定版本：
 
-| 工具    | 版本/来源                                      |
-| ------- | ---------------------------------------------- |
-| Go      | 1.27.3，CGO_ENABLED=0，无需 C 编译器           |
-| Node.js | 26.11.1                                        |
-| pnpm    | 12.16.1                                        |
+| 工具    | 版本/来源                                                                            |
+| ------- | ------------------------------------------------------------------------------------ |
+| Go      | 1.27.3，CGO_ENABLED=0，无需 C 编译器                                                 |
+| Node.js | 26.11.1                                                                              |
+| pnpm    | 12.16.1                                                                              |
 | Vite+   | 1.5.1（`vp`），前端工具链见[前端包说明](../../apps/client/frontend/README.md#工具链) |
-| Docker  | 当前 Docker Engine / Docker Desktop 与 Compose |
+| Docker  | 当前 Docker Engine / Docker Desktop 与 Compose                                       |
 
 Go 依赖由 `go.mod` / `go.sum` 与 `third_party/` 的固定补丁锁定，前端依赖由根目录 `pnpm-lock.yaml` 锁定。不要在普通开发任务中绕过 lockfile。
 
@@ -22,7 +22,7 @@ pnpm 会转发已有的 `NODE_OPTIONS`，并为子进程关闭 Node.js 实验性
 
 ### 后端开发工具
 
-后端通用能力使用标准库或已有成熟依赖：OIDC 使用 go-oidc v3，五字段 cron 使用 robfig/cron v3，认证限流使用 x/time/rate，可取消的简单并发额度使用 x/sync/semaphore，CFP 并行任务使用 errgroup.SetLimit。周报缓存的 LRU 使用 container/list；测试中的纯时间和并发等待优先用 testing/synctest 与 t.Context。admission 的已接纳任务占位、Scholarly 调度及独立 transport 状态的 worker pool 仍保留各自业务语义。
+后端通用能力使用标准库或已有成熟依赖：OIDC 使用 go-oidc v3，五字段 cron 使用 robfig/cron v3，认证限流使用 x/time/rate，可取消的简单并发额度使用 x/sync/semaphore，CFP 并行任务使用 errgroup.SetLimit。周报缓存的 LRU 使用 container/list；测试中的纯时间和并发等待优先用 testing/synctest 与 t.Context。admission 的已接纳任务占位、Scholarly 调度及独立 transport 状态的 worker pool 带有各自的业务语义，使用专用实现。
 
 后端检查工具的固定版本与 `.github/workflows/backend.yaml` 一致：
 
@@ -49,13 +49,17 @@ go run ./apps/server/cmd/sqlc-schema -check -output apps/server/internal/storage
 sqlc diff -f apps/server/sqlc.yaml
 ```
 
-`sqlc-schema -check` 验证六类数据库快照与真实 migration 或 Crossref 工作集初始化定义一致，`sqlc diff` 验证 Go 产物与 schema、查询及生成配置一致，两者都不会改写生成文件。完整流程为「改 migration／工作集初始化定义 → 更新 schema 快照 → 写查询 → 生成」，具体命令和手写 SQL 边界见[数据库参考](../reference/database.md#sqlc-查询生成)。`.golangci.yml` 启用 errcheck、govet、ineffassign、unused、staticcheck、gocritic 和 modernize。staticcheck 使用 `checks: [all]`，覆盖 SA、S、ST 与 QF；gocritic 和 modernize 使用各自默认规则。生成代码继续排除，sqlc 产物由生成一致性检查守门。Go 标识符遵循 ID、HTTP、URL 等 initialism 命名，JSON tag、SQL 列名及公开错误响应保持独立的契约。上面的 lint 范围与 backend CI 一致，只覆盖根包和 `apps/server/...`；client CI 在构建出 `frontend/dist` 后，分别以 web 的 `server,production`、Windows 的 `production`/`production,smoke` 和 Android 的 `android,production` 标签检查 `apps/client/...`。Android 使用同构建的 NDK、arm64 目标和 cgo。对全模块运行（如 `./apps/...`）也需要先准备客户端的 `frontend/dist` 嵌入资源。
+`sqlc-schema -check` 验证六类数据库快照与真实 migration 或 Crossref 工作集初始化定义一致，`sqlc diff` 验证 Go 产物与 schema、查询及生成配置一致，两者都不会改写生成文件。完整流程为「改 migration／工作集初始化定义 → 更新 schema 快照 → 写查询 → 生成」，具体命令和手写 SQL 边界见[数据库参考](../reference/database.md#sqlc-查询生成)。
+
+`.golangci.yml` 启用 errcheck、govet、ineffassign、unused、staticcheck、gocritic 和 modernize。staticcheck 使用 `checks: [all]`，覆盖 SA、S、ST 与 QF；gocritic 和 modernize 使用各自默认规则。生成代码被排除，sqlc 产物由生成一致性检查守门。Go 标识符遵循 ID、HTTP、URL 等 initialism 命名，JSON tag、SQL 列名及公开错误响应保持独立的契约。
+
+上面的 lint 范围与 backend CI 一致，只覆盖根包和 `apps/server/...`。client CI 在构建出 `frontend/dist` 后，分别以 web 的 `server,production`、Windows 的 `production`/`production,smoke` 和 Android 的 `android,production` 标签检查 `apps/client/...`；Android 使用同构建的 NDK、arm64 目标和 cgo。对全模块运行（如 `./apps/...`）也需要先准备客户端的 `frontend/dist` 嵌入资源。
 
 Backend CI 只在 regular lane 中运行服务端 lint 和上述两项生成检查，race lane 不安装这些工具；工具二进制缓存按操作系统、架构、Go 版本及工具版本隔离。
 
 ## 初始准备
 
-以下 Bash 命令在仓库根目录执行，除非步骤明确要求进入 `apps/client/frontend/`。Windows 可使用 WSL Bash，或把命令改为当前 PowerShell 的等价语法；标为 PowerShell 的画像命令需要 PowerShell 7。
+以下 Bash 命令在仓库根目录执行，除非步骤明确要求进入 `apps/client/frontend/`。Windows 可使用 WSL Bash，或把命令改为当前 PowerShell 的等价语法。
 
 ### 部署密钥
 
@@ -73,8 +77,9 @@ wc -c secrets/litradar.key
 
 ### 前端依赖
 
+在仓库根目录安装 pnpm workspace 依赖；根目录 `pnpm-lock.yaml` 是唯一的前端 lockfile：
+
 ```bash
-cd apps/client/frontend
 npm install --global pnpm@12.16.1
 pnpm install --frozen-lockfile
 ```
@@ -115,7 +120,7 @@ go run -mod=readonly ./apps/server serve \
 
 服务端始终只托管 API、认证、健康检查、接口文档、MCP 与内嵌任务；直接访问页面路径返回 404。`--development` 只允许 loopback，且不能与 `--require-secure-cookies` 组合；不传该参数也不需要 UI 构建。
 
-服务端默认把 JSON Lines 写入 stderr；请求终态使用匹配 route、status、outcome、duration 和服务器生成的 request ID，不记录 query。成功健康检查的终态事件被抑制。日志格式和 filter 是管理员“运行配置”中的持久设置，不接受进程环境覆盖：首次按默认 JSON 启动，登录管理页把 `log_format` 改为 `compact`，按需把 `log_filter` 改为例如 `warn,litradar=debug,litradar_api=debug`，再重启进程。配置、实际终端样式和隐私边界见[日志运维](../operations/logging.md)。
+服务端默认把 JSON Lines 写入 stderr。日志格式和 filter 是管理员“运行配置”中的持久设置，不接受进程环境覆盖：首次按默认 JSON 启动，登录管理页把 `log_format` 改为 `compact`，按需把 `log_filter` 改为例如 `warn,litradar=debug,litradar_api=debug`，再重启进程。事件字段、终端样式和隐私边界见[日志运维](../operations/logging.md)。
 
 ### 首个管理员
 
@@ -148,7 +153,7 @@ pnpm dev
 
 默认地址为 `http://localhost:8000`。`vite.config.ts` 将 `/api`、`/mcp`、`/docs`、`/openapi.json`、`/openapi.yaml` 与 `/health` 代理到内部 Go 8001。生产部署由 Caddy 执行同源路由。
 
-在根目录执行 `pnpm build` 生成 `apps/client/frontend/dist`；`node apps/server/scripts/build-go.mjs` 仅构建服务端，不读取客户端产物。Web 客户端在 `apps/client` 执行 `task build:server`，输出 `bin/litradar-client-web`，`task package:web` 再打包为 `bin/litradar-client-web_<version>_linux_amd64.tar.gz`；Windows 执行 `task package:windows`，Android 执行 `task package:android`。平台与签名要求见[发布说明](../operations/releases.md)。
+在根目录执行 `pnpm build` 生成 `apps/client/frontend/dist`；`node apps/server/scripts/build-go.mjs` 仅构建服务端，不读取客户端产物。Web、Windows 和 Android 客户端在 `apps/client` 用 Task 构建，任务与产物见[客户端包说明](../../apps/client/README.md#任务)，平台与签名要求见[发布说明](../operations/releases.md)。
 
 ### 索引和投递
 
@@ -165,28 +170,28 @@ go run -mod=readonly ./apps/server notify \
   --dry-run
 ```
 
-Scholarly 索引需要先在管理后台配置 Crossref 联系邮箱、OpenAlex 和 Semantic Scholar 密钥池，字段说明见[运行配置](../reference/configuration.md)。管理员页按已发现的 CSV 或数据库名称提供索引 Provider 单选，以及摘要页、全文的继承、排序和显式禁用控件；选项由后端能力目录过滤。
+Scholarly 索引需要先在管理后台配置 Crossref 联系邮箱、OpenAlex 和 Semantic Scholar 密钥池，字段说明见[运行配置](../reference/configuration.md)。
 
 通知 dry-run 仍会调用配置的 AI Endpoint，但不会发送 PushPlus 或写入收藏；完全确定性的开发检查应使用现有 fixture 测试。
 
 ## 修改位置
 
-| 任务                 | 主要位置                                                             |
-| -------------------- | -------------------------------------------------------------------- |
-| 进程入口与生命周期   | `apps/server/`、`apps/server/internal/cli/`、`apps/server/internal/runtime/`                |
-| REST 路由或 OpenAPI  | `apps/server/internal/api/`、`apps/server/internal/openapi/`                                 |
-| 普通 CRUD 查询（sqlc） | `apps/server/internal/storage/sqlc/queries/`、`apps/server/sqlc.yaml`                    |
-| 认证                 | `apps/server/internal/domain/auth/`、`apps/server/internal/storage/auth/`                    |
-| 业务存储             | `apps/server/internal/storage/`                                                  |
-| 数据库迁移与内容定义 | `apps/server/internal/storage/migrations/auth/`、`apps/server/internal/storage/indexschema/` |
-| 索引执行与控制状态   | `apps/server/internal/index/`                                                    |
-| 上游数据源           | `apps/server/internal/sources/`                                                  |
-| 推荐、通知和调度     | `apps/server/internal/delivery/`、`apps/server/internal/scheduler/`                          |
-| 前端 API facade      | `apps/client/frontend/lib/api/`、`apps/client/frontend/lib/api.tsx`                                    |
-| 前端路由与 URL 状态  | `apps/client/frontend/src/router.tsx`、`apps/client/frontend/lib/search-params.tsx`             |
-| 前端页面和组件       | `apps/client/frontend/src/routes/`、`apps/client/frontend/components/`                                        |
-| 前端样式 token       | `apps/client/frontend/lib/theme.stylex.tsx`                                                    |
-| 前端测试             | `apps/client/frontend/tests/`                                                         |
+| 任务                   | 主要位置                                                                                     |
+| ---------------------- | -------------------------------------------------------------------------------------------- |
+| 进程入口与生命周期     | `apps/server/`、`apps/server/internal/cli/`、`apps/server/internal/runtime/`                 |
+| REST 路由或 OpenAPI    | `apps/server/internal/api/`、`apps/server/internal/openapi/`                                 |
+| 普通 CRUD 查询（sqlc） | `apps/server/internal/storage/sqlc/queries/`、`apps/server/sqlc.yaml`                        |
+| 认证                   | `apps/server/internal/domain/auth/`、`apps/server/internal/storage/auth/`                    |
+| 业务存储               | `apps/server/internal/storage/`                                                              |
+| 数据库迁移与内容定义   | `apps/server/internal/storage/migrations/auth/`、`apps/server/internal/storage/indexschema/` |
+| 索引执行与控制状态     | `apps/server/internal/index/`                                                                |
+| 上游数据源             | `apps/server/internal/sources/`                                                              |
+| 推荐、通知和调度       | `apps/server/internal/delivery/`、`apps/server/internal/scheduler/`                          |
+| 前端 API facade        | `apps/client/frontend/lib/api/`、`apps/client/frontend/lib/api.tsx`                          |
+| 前端路由与 URL 状态    | `apps/client/frontend/src/router.tsx`、`apps/client/frontend/lib/search-params.tsx`          |
+| 前端页面和组件         | `apps/client/frontend/src/routes/`、`apps/client/frontend/components/`                       |
+| 前端样式 token         | `apps/client/frontend/lib/theme.stylex.tsx`                                                  |
+| 前端测试               | `apps/client/frontend/tests/`                                                                |
 
 ## OpenAPI 与前端类型
 
@@ -221,6 +226,12 @@ pnpm generate:api:check
 
 `apps/server/internal/index` 使用共享内容定义初始化和写入新库，storage 负责既有库的迁移与预检。兼容版本、显式离线优化和控制库边界见[数据库参考](../reference/database.md)。
 
+## 后端 JSON 与受管文件
+
+固定的 Go 1.27.3 工具链提供 `encoding/json/v2`。导入 Go 1.27 JSON API 的文件声明 `//go:build go1.27`，模块的 `go` 与 `toolchain` 指令保持原值。优先使用类型化对象和标准数值转换，不编写额外的兼容解码层；`apps/server/internal/platform/jsonobject` 只补充标准解码器不提供的必填字段与非 null 校验。外部 JSON tag 与 SQL 列名是契约，修改时需同步对应接口或 schema。
+
+受管目录中的文件通过已打开的 `os.Root` 和相对名称访问。保留 SQLite 原生 VFS 及其 NOFOLLOW 策略、领域所有权检查和回滚关卡。`apps/server/internal/platform/rootfile` 只在 `os.Root` 缺少临时文件 API 的地方适配父目录句柄与随机独占临时文件名。批量修改后端时先运行受影响的包，最终关卡再运行一次完整模块测试。
+
 ## 调度变更
 
 定时任务是带 `kind` 的结构化 job，只允许 `index`、`notify` 和 `push`。内嵌调度器把已验证字段转换为当前 `litradar` 可执行文件加规范子命令的完整 argv，不调用 shell。
@@ -237,40 +248,20 @@ pnpm generate:api:check
 
 ## Go 检查
 
-日常从仓库根选择最低充分的统一入口；完整职责和聚焦命令见[测试系统](testing.md)：
+日常从仓库根选择最低充分的统一入口：
 
 ```bash
 node tests/test.mjs fast
 node tests/test.mjs integration
 node tests/test.mjs all
+node apps/server/scripts/check-go.mjs
 ```
 
-Backend CI 在 Windows 和 Linux 执行 `node apps/server/scripts/check-go.mjs`，固定 Go 1.27.3，运行格式、模块/补丁完整性、vet、无缓存常规和 race 测试，以及 go-sdk 补丁依赖在自身模块和根模块中的测试。常规检查使用 `CGO_ENABLED=0`，不需要 C 编译器；race 检查使用 `CGO_ENABLED=1`，需要 C 编译器。全模块常规与 race 测试每条最多 25 分钟（单包 `-timeout=20m`），其他命令每条最多 15 分钟；失败即停止，不会自动重试。
-
-覆盖率只在每周/手动诊断中分别生成 Go 和前端报告，不设阈值：
-
-```bash
-node tests/test.mjs diagnostics
-```
+各命令的精确职责、`check-go.mjs` 的检查范围与时限、覆盖率诊断和报告路径见[测试系统](testing.md#统一命令)。
 
 ## 前端检查
 
-聚焦前端时可在 `apps/client/frontend/` 直接运行：
-
-```bash
-cd apps/client/frontend
-pnpm generate:api:check
-pnpm check
-pnpm knip
-pnpm test:unit
-pnpm exec playwright install --with-deps chromium
-pnpm test:browser-components
-pnpm test:e2e:fixtures
-pnpm test:e2e:full-stack
-pnpm build
-```
-
-`pnpm check` 即 `vp check`，一次完成 Oxfmt 格式检查、Oxlint 检查与 TypeScript 7 类型检查；`pnpm check:fix` 自动格式化并应用可修复的 lint 建议；`pnpm knip` 检查未使用的文件、依赖与导出，CI 要求结果为空。Vitest/jsdom 使用显式 MSW 场景；Browser Mode 验证焦点、Clipboard、IntersectionObserver 和动效等原生语义。Playwright fixture 项目负责拦截式 UI 冒烟测试；full-stack 项目构建前端，通过真实 Go 监听器、HttpOnly Cookie 和临时 SQLite 验证关键旅程。具体覆盖以[测试系统](testing.md)和当前测试文件为准。CI 最多重试 Playwright 一次以取得 trace/video，但重试后通过仍按不稳定测试判定失败。
+前端检查序列和各项含义见[前端包说明](../../apps/client/frontend/README.md#质量检查)，与统一命令的关系见[测试系统](testing.md#统一命令)。
 
 ## 部署检查
 
@@ -283,15 +274,9 @@ docker build -f apps/server/Dockerfile --tag litradar:test .
 node apps/server/tests/container-smoke.mjs litradar:test
 ```
 
-服务端 Dockerfile 仅构建 Go 服务端及原生辅助程序；Web 客户端使用 `apps/client/build/docker/Dockerfile.server`，构建前先在根目录执行 `pnpm build`。Compose 包含 server、client-web、gateway；只有 server 访问数据和密钥。
+服务端 Dockerfile 仅构建 Go 服务端及原生辅助程序；Web 客户端镜像使用 `apps/client/build/docker/Dockerfile.server`，构建前先在根目录执行 `pnpm build`。Compose 服务拓扑与安全边界见 [Docker 部署](../operations/docker.md)，冒烟探针的断言见[测试系统](testing.md#统一命令)。
 
-日志或请求路径变更还应使用隔离 fixture 运行 off/on 门禁：
-
-```powershell
-pwsh ./apps/server/tests/profiling/profile_logging.ps1 -DataPath ./output/logging-fixture -Rounds 3 -RequestCount 300 -Concurrency 4
-```
-
-脚本验证 JSON schema、请求事件完整性、零丢失、p95 延迟差，并复用 Docker warm-idle 内存画像。它会迁移和写入传入目录，不能指向正在运行的真实数据。
+日志或请求路径变更的性能门禁和镜像画像见[性能剖析](profiling.md)。
 
 ## 测试边界
 
@@ -312,24 +297,10 @@ pwsh ./apps/server/tests/profiling/profile_logging.ps1 -DataPath ./output/loggin
 - 前端 API 始终同源；本地 Go 服务需要监听固定的 `127.0.0.1:8001` 才能被 `pnpm dev` 代理。
 - 全局 scholarly key 池与用户级 AI/PushPlus 设置是两套不同配置。
 
-<a id="weekly-manifest-cache-verification"></a>
-
 ## 每周更新缓存验证
 
-API 在汇总与文章分页请求之间共享解析后的每周更新清单。缓存最多保存 64 份发布清单和 1,000,000 个文章 ID，条目在 60 秒后过期，复用前核对规范路径、文件长度和时间戳。文件变化或损坏时不会返回旧缓存；超大清单仍可读取，但不会驻留缓存。缓存只含来源元数据，不含账号凭据。
-
-修改相关逻辑时，在仓库根运行正确性与确定性过期测试：
+每周更新清单缓存的容量、过期和失效规则见 [API 参考](../reference/api.md#健康公告与索引读取)。修改相关逻辑时，在仓库根运行正确性与确定性过期测试：
 
 ```bash
 go test -count=1 -race -mod=readonly ./apps/server/internal/storage/weekly ./apps/server/internal/storage/query
 ```
-
-Go 版本的容器性能画像使用 `node apps/server/tests/profiling/go-image.mjs`，要求已构建 `litradar:go-test-amd64`。
-
-历史记录中，2026-09-05 的一次本地 Windows release 测试使用 8 个目录、每个目录 10,000 篇文章。10 次未缓存的续页请求总计 267.83 ms，预热缓存后为 198.03 ms；预热后的系列在初始 8 次解析之外没有新增解析。这是单次合成测试结果，仅说明当时的测试表现，不构成线上延迟承诺。目录元数据检查、成员分组和每次查询的临时 SQLite 成员表仍有开销。
-
-### Backend JSON and managed files
-
-The pinned Go 1.27.3 toolchain provides `encoding/json/v2`. Files importing the Go 1.27 JSON APIs declare `//go:build go1.27`; the module's existing `go` and `toolchain` directives are unchanged. Prefer typed objects and standard numeric conversion over serde compatibility code. `jsonobject` adds only required-field and non-null validation that the standard decoder does not supply. Preserve external JSON tags and SQL column names.
-
-Use an opened `os.Root` and relative names for files inside a managed directory. Retain SQLite's native VFS and its NOFOLLOW policy, plus domain ownership checks and rollback gates. `rootfile` only adapts parent handles and random exclusive temporary names where `os.Root` lacks a temp-file API. During backend batch work, run affected packages first and the complete module suite once at the final gate.

@@ -47,9 +47,9 @@
 
 `selected_databases=[]` 表示所有数据库。没有非空 keyword/direction、设置未启用、数据库未被选中或没有可用 AI key/model 时，该用户会被跳过。
 
-`delivery_method=folder` 的最终设置必须存在当前追踪文件夹。`delivery_method=pushplus` 必须有非空 token；启用 `sync_to_tracking_folder` 时还必须存在当前追踪文件夹。省略或空白 secret 表示保留事务开始时的当前值，显式 `null` 表示清除。服务在同一个 `BEGIN IMMEDIATE` 中解析最终 token、检查追踪文件夹并写入设置；删除被 folder 投递或 PushPlus 同步依赖的追踪文件夹也使用同一写锁并返回固定 `400`。因此并发的设置保存、secret 清除和文件夹删除无论按何顺序提交，都不会留下缺 token 或缺文件夹的 active subscriber；发现手工损坏的旧状态时投递读取会 fail closed。
+`delivery_method=folder` 的最终设置必须存在当前追踪文件夹。`delivery_method=pushplus` 必须有非空 token；启用 `sync_to_tracking_folder` 时还必须存在当前追踪文件夹。秘密字段按下文规则保留、替换或清除，最终值以事务开始时的当前值为基础解析。服务在同一个 `BEGIN IMMEDIATE` 中解析最终 token、检查追踪文件夹并写入设置；删除被 folder 投递或 PushPlus 同步依赖的追踪文件夹也使用同一写锁并返回固定 `400`。因此并发的设置保存、secret 清除和文件夹删除无论按何顺序提交，都不会留下缺 token 或缺文件夹的 active subscriber；发现手工损坏的旧状态时投递读取会 fail closed。
 
-普通用户不能输入任意 base URL。设置页只展示管理员运行配置 `ai_allowed_base_urls` 中的准确 HTTPS Endpoint；目录默认为空。API 保存时在事务内复核目录，worker 在每次实际 AI 请求前重新读取目录，因此运行中被管理员移除的 Endpoint 不会用于后续尝试。
+普通用户不能输入任意 base URL。设置页只展示管理员运行配置 `ai_allowed_base_urls` 中的准确 HTTPS Endpoint。API 保存时在事务内复核目录，worker 在每次实际 AI 请求前重新读取目录，因此运行中被管理员移除的 Endpoint 不会用于后续尝试。
 
 `ai_retry_attempts` 的写入范围为 `1..=10`；超出范围的 API 更新会被拒绝。历史或被手工修改的值在读取时归一到该范围，不会触发自动数据库更新。
 
@@ -72,7 +72,7 @@
 - API key 没有可用的全局 fallback，用户必须配置
 - 只有用户填写了任一备用字段时才构建备用 endpoint
 
-CLI `--retries` 的范围是 `1..=10`、默认值是 3（首次请求外最多再重试 N 次）；用户 `ai_retry_attempts` 的范围是 `1..=10`。AI 请求只对连接失败、单次请求超时以及 `429/502/503/504` 重试；`400/401/403`、配置错误和响应结构错误不会网络重试。AI 退避使用 `1/2/4/8/8...` 秒上限内的 full jitter；数值 `Retry-After` 优先使用并封顶 60 秒。只有成功的 2xx 响应明确表现出输出格式不兼容时，才从 `json_schema` 降级到 `json_object` 或普通 JSON。PushPlus 的独立 no-replay 规则见下方“副作用顺序”。
+CLI `--retries` 的范围与默认值见 [CLI 参考](../reference/cli.md#notify-和-push)。AI 请求只对连接失败、单次请求超时以及 `429/502/503/504` 重试；`400/401/403`、配置错误和响应结构错误不会网络重试。AI 退避使用 `1/2/4/8/8...` 秒上限内的 full jitter；数值 `Retry-After` 优先使用并封顶 60 秒。只有成功的 2xx 响应明确表现出输出格式不兼容时，才从 `json_schema` 降级到 `json_object` 或普通 JSON。PushPlus 的独立 no-replay 规则见下方“副作用顺序”。
 
 手动任务另有跨主备 Endpoint、格式和摘要请求共享的 8 次 AI HTTP 总预算，以及持久化的 10 分钟绝对 deadline。每次请求 timeout 同时受 120 秒默认值和任务剩余时间限制；这些边界不改变独立 CLI `notify`/`push` 的参数语义。
 
@@ -144,7 +144,7 @@ PushPlus 传输只在连接建立明确失败、请求尚未发送时使用受�
 - 从 `data/push_state/*.changes.json` 读取最新候选
 - 把 job、绝对 deadline、取消标志和终态写入 `data/auth.sqlite`，以 `202` 立即返回
 - 同一用户已有 queued/running job 时返回该现有状态和 job id，不启动第二份工作
-- 不同用户进入实例级有界队列；默认最多同时监管 2 个子进程，可通过 `delivery_worker_concurrency` 配置为 `1..=16`
+- 不同用户进入实例级有界队列，并发上限由 `delivery_worker_concurrency` 控制（见[运行配置](../reference/configuration.md#用户通知配置)）
 - 通过 `GET /api/tracking/push-weekly/status` 轮询
 - 可通过 `GET /api/tracking/push-weekly/runs/{run_id}` 恢复指定任务，通过 `POST .../{run_id}/cancel` 请求取消；owner 和管理员可访问
 - `unknown` 时普通启动仍返回 `409`；只有 owner 检查投递记录后，才可通过 `POST /api/tracking/push-weekly/runs/{run_id}/acknowledge` 显式确认并排入一个新任务
@@ -155,24 +155,15 @@ Unknown 确认在一个 `BEGIN IMMEDIATE` 中复核目标属于当前用户、�
 
 ## 索引侧 manifest 与 notify 恢复
 
-`index --update` 的 catalog finalization 是项目 batch 的持久 phase，而不是 Provider 成功后的单次尾调用：
+`index --update` 先把精确 manifest payload、相对目标路径和 outbox cursor 持久化到项目 batch ledger，再原子发布文件并确认 outbox；配置 `--notify` 时，父进程在启动 notify child 前持久化 attempt ID。任一步中止后，默认 resume 重放相同的 manifest 字节，不再次访问已完成的 Provider journal。attempt 只改变外层 scheduled run 身份，文章级 Confirmed/Unknown 去重跨 attempt 保留，因此已确认或不确定的文章不会重发。
 
-1. 从内容库 outbox 构造确定性的 JSON，并把精确 UTF-8 payload、相对目标路径和 inclusive through-event cursor 写入 `index-batches.sqlite` 的 `manifest_prepared` 状态。
-2. 通过同目录临时文件、flush/fsync 和 rename 发布精确 payload。
-3. 幂等删除 `article_change_events.event_id <= cursor`，再进入 `manifest_published`。
-4. 配置了 `index --notify` 时先进入 `notifying`，在 child 启动前持久化 attempt ID；只有 compact handoff JSON 的 typed success 与 exit 0 一致时才把 catalog 标为 completed。
+child 结果为 `unknown` 或输出不可信时，默认 resume 不再启动 child。审核认证库中的 delivery run、subscriber item 与 dedupe 后，在原 `--resume --update --notify` 命令上增加 `--acknowledge-unknown-notify` 确认并建立新 attempt；存在待完成的已发布 notify manifest 时，`--no-resume` 会失败。handoff 状态判定、attempt 复用和 64 KiB 输出上限见 [CLI 参考](../reference/cli.md#实时恢复与增量同步)。
 
-因此在 payload 持久化、rename、outbox acknowledgement 或 phase 写入任一点中止，默认 resume 都会重放相同 manifest 字节，不再次访问已经完成的 Provider journal。notify attempt 是 32 位十六进制稳定 ID，并进入 scheduled delivery run 身份：父进程在 attempt 落盘后、结果落盘前中止时，恢复复用同一 ID，已终态的内层 run 只返回状态，仍 active 的 run 走既有 lease 恢复。
-
-父进程最多保留并解析 64 KiB child stdout，同时继续排空管道；只接受字段集合、protocol version、attempt、workflow、mode、status 和 db 全部匹配的一份 JSON。`idle/completed/skipped + exit 0` 是成功；`failed/cancelled/timed_out + nonzero` 在下一次调用创建新 attempt；`running + nonzero` 保留并复用当前 attempt。`unknown`、缺失/畸形/超大输出、上下文不匹配、无退出码或 status/exit 不一致一律持久化为 Unknown，默认 resume 不再启动 child。
-
-审核认证库中的 delivery run、subscriber item 与 dedupe 后，operator 可在原 `--resume --update --notify` 命令上增加 `--acknowledge-unknown-notify`。batch ledger 在一个 transaction 中记录被确认的 Unknown attempt 与时间，再建立一个新 attempt；文章级 Confirmed/Unknown dedupe 不变，所以旧副作用不会自动重发，而 manifest 中尚未处理的新文章仍可执行。每次父进程 invocation 对每个 catalog 至多启动一个 notify child。若已存在待完成的已发布 notify manifest，`--no-resume` 会失败，不允许通过放弃 batch 静默跳过 handoff。
-
-如果新 batch 的 outbox 为空，而目标已有一个大小受限、可解析且 `db_name` 匹配的 manifest，索引会保留现有文件、返回无新 manifest，并跳过内联 notify；不会用空 payload 覆盖尚待消费的候选。删除项目 batch ledger 会失去这些 phase/intent 证明，文件与 SQLite 的通用边界仍按至少一次对待。
+如果新 batch 的 outbox 为空，而目标已有一个大小受限、可解析且 `db_name` 匹配的 manifest，索引会保留现有文件、返回无新 manifest，并跳过内联 notify；不会用空 payload 覆盖尚待消费的候选。删除项目 batch ledger 会失去这些 phase 与 intent 证明，此后文件与 SQLite 之间按至少一次语义处理。
 
 ## 持久状态与旧文件
 
-认证库 v10 提供 `delivery_checkpoints`、`delivery_runs`、`delivery_run_items`、`delivery_dedupe` 和 `delivery_leases`。这些表通过唯一约束、owner lease 和单调 revision 为多进程投递提供事务边界；外部发送已经开始但结果不明确时使用 `unknown`，不能自动重放。
+认证库的 `delivery_checkpoints`、`delivery_runs`、`delivery_run_items`、`delivery_dedupe` 和 `delivery_leases` 表结构见[数据库参考](../reference/database.md#持久投递状态)。这些表通过唯一约束、owner lease 和单调 revision 为多进程投递提供事务边界；外部发送已经开始但结果不明确时使用 `unknown`，不能自动重放。
 
 文件边界如下：
 
