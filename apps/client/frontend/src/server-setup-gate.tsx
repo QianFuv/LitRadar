@@ -133,7 +133,7 @@ function ServerSetupForm({
       <div {...stylex.props(styles.serverSetupFormDiv)}>
         <div {...stylex.props(styles.serverSetupFormDiv2)}>
           <img
-            src="/litradar-logo.png"
+            src="/litradar-icon.svg"
             alt=""
             width={40}
             height={40}

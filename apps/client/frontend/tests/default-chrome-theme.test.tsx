@@ -255,9 +255,9 @@ function retainsSemanticColorsAndRasterAssets(): void {
     }
   }
 
-  expect(existsSync(path.resolve(PROJECT_ROOT, 'public/litradar-logo.png'))).toBe(true);
-  expect(readProjectFile('components/shell/app-frame.tsx')).toContain('/litradar-logo.png');
-  expect(readProjectFile('src/routes/login-client.tsx')).toContain('/litradar-logo.png');
+  expect(existsSync(path.resolve(PROJECT_ROOT, 'public/litradar-icon.svg'))).toBe(true);
+  expect(readProjectFile('components/shell/app-frame.tsx')).toContain('/litradar-icon.svg');
+  expect(readProjectFile('src/routes/login-client.tsx')).toContain('/litradar-icon.svg');
 }
 
 /** Calculate relative luminance for a six-digit sRGB token. */

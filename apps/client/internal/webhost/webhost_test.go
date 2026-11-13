@@ -16,7 +16,7 @@ func newTestHost(t *testing.T, config Config) http.Handler {
 		"assets/index-abc123.js":   {Data: []byte("console.log(1)")},
 		"assets/font-def456.woff2": {Data: []byte("wOF2")},
 		"theme-init.js":            {Data: []byte("(function(){})()")},
-		"litradar-logo.png":        {Data: []byte("\x89PNG")},
+		"litradar-icon.svg":        {Data: []byte("<svg/>")},
 	}
 	handler, err := NewHandler(dist)
 	if err != nil {
@@ -58,7 +58,7 @@ func TestHandlerCachesAssetsByName(t *testing.T) {
 		{"/assets/index-abc123.js", cacheImmutable, "text/javascript; charset=utf-8"},
 		{"/assets/font-def456.woff2", cacheImmutable, "font/woff2"},
 		{"/theme-init.js", cacheRevalidate, "text/javascript; charset=utf-8"},
-		{"/litradar-logo.png", cacheStatic, "image/png"},
+		{"/litradar-icon.svg", cacheStatic, "image/svg+xml"},
 	}
 	for _, testCase := range cases {
 		response := serve(host, http.MethodGet, testCase.target)

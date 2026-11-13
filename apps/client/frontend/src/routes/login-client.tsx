@@ -51,7 +51,7 @@ function AuthBrand() {
   return (
     <div {...stylex.props(styles.authBrandDiv)} aria-label="LitRadar">
       <img
-        src="/litradar-logo.png"
+        src="/litradar-icon.svg"
         alt=""
         width={40}
         height={40}
@@ -113,7 +113,7 @@ function AuthShowcase() {
     <aside aria-hidden="true" {...stylex.props(styles.authShowcaseAside)}>
       <div {...stylex.props(styles.authShowcaseDiv)}>
         <img
-          src="/litradar-logo.png"
+          src="/litradar-icon.svg"
           alt=""
           width={40}
           height={40}

@@ -160,7 +160,7 @@ apps/client/frontend/
 
 Web Storage helper 会容忍 SSR、隐私模式和 quota 错误；调用方不应假定写入必然成功。读取的 JSON 值（搜索历史、退出撤销提示、检索构建器与关系图会话快照）经 `parseStoredJson` 用 Zod 校验，不符合的值按缺失处理。
 
-站点图标、导航轨与登录页品牌图像使用 `public/litradar-logo.png` 本地静态资源，不依赖第三方图片域名。
+站点图标、导航轨与登录页品牌图像使用 `public/litradar-icon.svg` 本地静态资源，不依赖第三方图片域名。
 
 ## 浏览器错误日志
 

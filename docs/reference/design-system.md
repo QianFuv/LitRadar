@@ -87,7 +87,7 @@ ThemeProvider 使用 `attribute="class"`、`defaultTheme="system"` 和 `enableSy
 | `destructiveHover`                    | `#a10006`                     | `#ff6467`                     | 危险按钮悬停                   |
 | `destructiveRing`                     | destructive 20%               | destructive 40%               | 无效输入与危险按钮的焦点环     |
 
-`successBorder` 和 `warningBorder` 提供配套状态边框。`globals.css` 只能写字面量的规则（`body` 底色与文字、默认边框色、滚动条、skip link）重复对应 token 的 `light-dark()` 值，`tests/default-chrome-theme.test.tsx` 保证两边一致。滚动条保持中性灰。`public/litradar-logo.png` 是品牌图像，出现在导航轨顶部、登录页与 favicon；账号头像使用用户名首字母。CNKI 二维码属于内容资产，保持原色与必要的白底。独立根错误页不能依赖失效的根样式，使用对应深色值作为内联后备。
+`successBorder` 和 `warningBorder` 提供配套状态边框。`globals.css` 只能写字面量的规则（`body` 底色与文字、默认边框色、滚动条、skip link）重复对应 token 的 `light-dark()` 值，`tests/default-chrome-theme.test.tsx` 保证两边一致。滚动条保持中性灰。`public/litradar-icon.svg` 是品牌图像，出现在导航轨顶部、登录页与 favicon；账号头像使用用户名首字母。CNKI 二维码属于内容资产，保持原色与必要的白底。独立根错误页不能依赖失效的根样式，使用对应深色值作为内联后备。
 
 ## 圆角
 

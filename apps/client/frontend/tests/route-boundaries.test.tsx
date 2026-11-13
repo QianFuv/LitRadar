@@ -86,7 +86,7 @@ async function exposesRouteMetadata(): Promise<void> {
   const indexHtml = readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf8');
   expect(indexHtml).toContain('<title>LitRadar | QianFuv</title>');
   expect(indexHtml).toContain('<meta name="description" content="检索、收藏并追踪学术文献。" />');
-  expect(indexHtml).toContain('<link rel="icon" href="/litradar-logo.png" />');
+  expect(indexHtml).toContain('<link rel="icon" href="/litradar-icon.svg" type="image/svg+xml" />');
   expect(indexHtml).toContain('<script src="/theme-init.js"></script>');
 
   const loginView = await renderWithQuery(<LoginPage />, { url: '/login' });

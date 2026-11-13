@@ -108,7 +108,7 @@ function AppRail() {
         {...stylex.props(styles.appRailLink)}
       >
         <img
-          src="/litradar-logo.png"
+          src="/litradar-icon.svg"
           alt=""
           width={36}
           height={36}
