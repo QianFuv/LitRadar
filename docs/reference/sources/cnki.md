@@ -19,7 +19,7 @@ CNKI 元数据只使用国内 NZKPT 实现：
 | `sources.LiveCnkiAccessRegistration` / API live domestic adapter | `provider.ArticleAbstract` | `serve` API 每次在线精确定位；读取同一加密 runtime secret                               |
 | `sources.ZjlibFullTextRegistration`（API）                       | `provider.ArticleFullText` | `serve` API 只读取当前用户已有的 active ZJLib CNKI 会话                                 |
 
-`cnki` 注册国内索引与摘要页访问，管理能力目录报告 `index_content + article_abstract`。 国内 `cnki` **没有** fulltext。`zjlib` 是唯一内置全文 Provider。默认 `chinese_journals` 路由到 `cnki`；摘要默认 `scholarly → cnki`；全文默认 `zjlib`。
+`cnki` 注册国内索引与摘要页访问，管理能力目录报告 `index_content + article_abstract`。国内 `cnki` 没有全文能力；`zjlib` 是唯一内置全文 Provider。默认路由与 Provider 顺序见[运行配置](../configuration.md#provider-路由语法)。
 
 ## 托管代理归属
 
@@ -50,8 +50,6 @@ Incremental 从远端当前最新 `year_issue_id` 向旧扫描到 committed anch
 
 基础站点为 `https://navi.cnki.net` 与 `https://kns.cnki.net`。Transport 对初始 URL、Referer、challenge、每个 redirect hop 和最终 URL 使用同一规则：只允许这两个精确主机的 HTTPS 默认端口，拒绝 userinfo、IP literal、自定义端口、协议降级和跨域跳转。当前私有请求路径包括 journal 搜索、详情、year list、papers、article abstract 和 captcha verify API；这些路径不是内容契约。
 
-<a id="captcha"></a>
-
 ### 验证码处理
 
 国内请求可能返回 `blockPuzzle` 验证。LitRadar 使用 jfbym 通用双图滑块（type `20111`）：
@@ -62,13 +60,7 @@ Incremental 从远端当前最新 `year_issue_id` 向旧扫描到 committed anch
 4. AES-128-ECB PKCS7 加密 `pointJson` 后 `verify-api/web/check`；
 5. 内存保留 `captchaId`，重试原请求；即使 challenge 出现在最后一次普通尝试，也会执行一次受预算限制的已认证重放。
 
-密钥通过加密 runtime secret `cnki_captcha_token` 配置；数据库值为空时，单次索引探测可用 `LITRADAR_CNKI_CAPTCHA_TOKEN`。父进程解析该值后会从 child 环境移除变量；worker request JSON 不含 token 或代理 URL，只有 `provider_name=cnki` 的 worker 在构造 Provider 前通过版本化 stdin bootstrap 收到 captcha token，只有当前 Provider 开关启用的 worker 才在同一 bootstrap 收到代理 URL。后续同一管道继续传输 durable ACK。token、代理 URL、secretKey、captchaId 与图片不得进入 request 文件、参数、环境、日志、格式化输出、内容库或控制库。
-
-<a id="retired-overseas-provider"></a>
-
-## 已退役的海外 Provider
-
-海外运行时实现已移除。认证库 v19 把已保存的 `cnki_oversea` 选择迁移为 `cnki`，保留顺序、显式空覆盖和已有国内代理选择。控制库 v5 丢弃海外租约、成功边界和检查点，不能通过国内传输恢复这些状态；历史批次账本保持不变。
+密钥通过加密 runtime secret `cnki_captcha_token` 配置；数据库值为空时，单次索引探测可用 `LITRADAR_CNKI_CAPTCHA_TOKEN`（见[运行配置](../configuration.md)）。多进程索引中只有 `provider_name=cnki` 的 worker 通过 stdin bootstrap 收到 captcha token，传递边界见[索引与 Provider 契约](../index-provider-contract.md#provider-托管代理边界)。token、代理 URL、secretKey、captchaId 与图片不得进入 request 文件、参数、环境、日志、格式化输出、内容库或控制库。
 
 ## 规范字段映射
 
@@ -112,11 +104,11 @@ CNKI filename、`pykm`、`pCode`、数据库代码、详情路径、search URL�
 
 papers 页必须含 `articleCount`，其值必须等于解析出的文章行数。计数为 10 时 checkpoint 指向同一期下一页；其他结构完整的计数进入下一稳定期次或完成，因为 CNKI 的历史期次可能在单页返回超过 10 条文章。总数正好为 10 的倍数时，必须再读取一个结构有效的空终止页；后续页的 `该刊数据正在更新中，请耐心等待` 是已确认的越界终止占位响应，可按 0-count 处理，但首个 papers 页出现同一响应仍然失败。空白、登录页、缺 marker 或局部行页面都是失败，不推进 checkpoint。
 
-国内 CNKI Provider 读取详情页后，合并详情与 papers 行的作者字段，并规范化详情 DOI。仅当作者仍为空且 DOI 也为空时才排除该记录；标题和栏目不参与内容类型判断，因此带 DOI 的征稿启事以及有作者的书评会被保留。被排除的行不生成 `ArticleDraft`，但页面计数与 checkpoint 仍按原始响应推进。已有内容库不会因规则变更自动恢复之前排除的记录，应用新规则时应删除对应内容库和控制库再完整重建。
+国内 CNKI Provider 读取详情页后，合并详情与 papers 行的作者字段，并规范化详情 DOI。仅当作者仍为空且 DOI 也为空时才排除该记录；标题和栏目不参与内容类型判断，因此带 DOI 的征稿启事以及有作者的书评会被保留。被排除的行不生成 `ArticleDraft`，但页面计数与 checkpoint 仍按原始响应推进。该规则只作用于实际抓取的页面；已有内容库中此前被排除的记录不会自动补回，需要补回时删除对应内容库和控制库后完整重建。
 
-页面是最小提交和重放单元。边界期次即使跨页或文章数正好是 10 的倍数，也必须读完其有效空终止页后才能 Complete。只有 HTTP 404/410 或明确“记录已删除/文献不存在”的详情页会记录不含 URL/凭据的 ordinal/status 事件并跳过；网络错误、429、5xx、captcha 或结构错误会中止整个 batch，不返回新 checkpoint。控制库删除或更换 Provider 后没有可信 anchor，会从头读取；内容 writer 依靠规范 identity alias 幂等复用已有 ID。Provider 不能把 anchor/checkpoint 嵌入 `ArticleDraft`。
+页面是最小提交和重放单元。边界期次即使跨页或文章数正好是 10 的倍数，也必须读完其有效空终止页后才能 Complete。只有 HTTP 404/410 或明确“记录已删除/文献不存在”的详情页会记录不含 URL/凭据的 ordinal/status 事件并跳过；网络错误、429、5xx、captcha 或结构错误在下述请求级和整页重试预算用尽后中止整个 batch，不返回新 checkpoint。控制库删除或更换 Provider 后没有可信 anchor，会从头读取；内容 writer 依靠规范 identity alias 幂等复用已有 ID。Provider 不能把 anchor/checkpoint 嵌入 `ArticleDraft`。
 
-可重试的国内页面失败保留最多 3 次尝试，以及会话和连接池重置。每次重试都重新获取并验证 papers 页面；只在同一次 `fetch` 调用中，目录、期次和完整有序页面都不变时，才复用成功转换的记录及有效过滤结果。任意行增删、重排、替换，或 URL、令牌、元数据变化都会清空整页缓存。在传播第一个页面错误前，先收集全部已完成的成功详情，包括序号在错误之后的成功项。
+整页 batch 遇到临时不可用或无效响应时最多尝试 3 次，每次重试前重置会话和连接池；单个请求自身的重试预算见[重试和可观测性](#重试和可观测性)。每次重试都重新获取并验证 papers 页面；只在同一次 `fetch` 调用中，目录、期次和完整有序页面都不变时，才复用成功转换的记录及有效过滤结果。任意行增删、重排、替换，或 URL、令牌、元数据变化都会清空整页缓存。在传播第一个页面错误前，先收集全部已完成的成功详情，包括序号在错误之后的成功项。
 
 请求或转换错误、永久 404/410 缺失不缓存，缓存命中不增加 `SourceAttempt`。分页始终由新页面计数决定，最终失败不返回部分批次或新检查点。调用返回即销毁缓存，其他调用、页面、更新或重启仍正常刷新详情；期刊和年期树的较长生命周期快照不变。例如，同一双文章页面首次有一个详情失败时，papers 仍请求两次，详情调用可由 4 次降至 3 次。
 
@@ -144,7 +136,7 @@ ZJLib 全文能力与 CNKI 索引 Provider 无关：
 5. 下载前规范化比较候选题名、作者和期刊；三项不匹配就拒绝 PDF。
 6. 匹配 PDF 必须非空、`application/pdf` 且不超过 32 MiB，随后以 no-store attachment 返回。
 
-HTTP 会话路径可能仍使用历史 `/api/cnki/*` 前缀，但 runtime Provider 名称是 `zjlib`。全文动作不会把更新后的 client Cookie 写回 session，不更新 `updated_at`/`last_used_at`，也不缓存 PDF 或新增文件。API 不返回 token、Cookie、代理 URL 或 transport 错误详情；start、timeout、login 和 warm-up 失败只返回固定 code/phase/message。上游 `success=false` JSON 中的 `desc`/`message` 会在 source 边界丢弃，即使该上游刚收到 BFF token，也不能借错误响应把自由文本带回客户端或日志。
+登录与会话路由为 `/api/cnki/session`、`/api/cnki/login/start` 和 `/api/cnki/login/poll`，但 runtime Provider 名称是 `zjlib`。全文动作不会把更新后的 client Cookie 写回 session，不更新 `updated_at`/`last_used_at`，也不缓存 PDF 或新增文件。API 不返回 token、Cookie、代理 URL 或 transport 错误详情；start、timeout、login 和 warm-up 失败只返回固定 code/phase/message。上游 `success=false` JSON 中的 `desc`/`message` 会在 source 边界丢弃，即使该上游刚收到 BFF token，也不能借错误响应把自由文本带回客户端或日志。
 
 登录 start 在网络调用前预留单调递增的 session generation，并在同一原子语句中清空旧 QR UUID；poll 绑定读取时的 generation 与 QR UUID。只有仍匹配的请求才能提交网络结果。新的 start 或 DELETE clear 会使所有更早的 start/poll 完成失效；等待新 start 网络结果时仍保留既有 active 会话材料，但旧 QR 已无法进入 poll。clear 保存加密空 tombstone 以保留该栅栏，同时对读取接口表现为未配置。陈旧完成固定返回 HTTP 409，错误码为 `cnki_login_superseded`，且不会恢复或覆盖凭据。
 
@@ -160,15 +152,15 @@ HTTP 传输错误在转换为业务错误前移除完整 URL。需要诊断的�
 
 ## 重试和可观测性
 
-国内 CNKI 的普通响应最多尝试 5 次，无响应传输最多尝试 8 次，使用有界指数退避；验证码识别与重放保留 5 次尝试预算。每个逻辑元数据请求使用一个 180 秒截止时间，并受调用方更早截止时间约束，覆盖重试、验证码锁等待、冷却和验证码网络工作。持续失败不生成空内容或新检查点。
+国内 CNKI 的单个请求对普通响应最多尝试 5 次，对无响应传输最多尝试 8 次，使用有界指数退避；验证码识别与重放保留 5 次尝试预算。每个逻辑元数据请求使用一个 180 秒截止时间，并受调用方更早截止时间约束，覆盖重试、验证码锁等待、冷却和验证码网络工作。持续失败不生成空内容或新检查点。
 
 HTTP 429 在读取或分类验证码正文之前处理。`Retry-After` 接受整数秒和 HTTP 日期；克隆的国内客户端共享观察到的最长冷却，临时会话重置也不会清除。429 不触发新验证码重放或识别，challenge GET 和验证 POST 也先发布 429 冷却，再继续后续验证码工作。等待时释放冷却锁，发送前重新检查；剩余时间不足以容纳必需等待时立即失败，不提前重试。正文超大或不可读不会清除已观察的状态与响应头，其他大小和永久缺失规则仍适用，ZJLib 重试行为不变。
 
-CNKI Domestic 和 ZJLib 的 HTML/JSON 响应解压后上限均为 2 MiB，JFBYM JSON 为 256 KiB。读取先检查可用的 Content-Length，再对透明解压后的流最多保留 `limit + 1` 字节；因此 chunked 响应和 gzip 高压缩比都不能绕过上限。超限是固定分类的不可重试无效响应，不保留正文。PDF 仍使用独立的 32 MiB 有界读取。
+国内 CNKI 和 ZJLib 的 HTML/JSON 响应解压后上限均为 2 MiB，JFBYM JSON 为 256 KiB。读取先检查可用的 Content-Length，再对透明解压后的流最多保留 `limit + 1` 字节；因此 chunked 响应和 gzip 高压缩比都不能绕过上限。超限是固定分类的不可重试无效响应，不保留正文。PDF 仍使用独立的 32 MiB 有界读取。
 
 请求尝试只汇总到结构化 `index.provider.attempts` 或文章访问 fallback 事件。内容库没有 API/path statistics 表，也不保存 URL、响应正文、查询参数或解码器样本。
 
-国内 CNKI 默认 6 个详情工作线程和 1 个期刊执行器。2026 年 9 月 17 日的一次有界线上传输检查分别在并发 1、2、4、6 下完成 2、4、8、12 个详情任务，共享会话准备后未出现额外 429 或验证码挑战。该历史结果只支持被测账号和网络下的默认值，不是普遍的 CNKI 配额，也不是本次编辑的新测试。显式数量仍为 `1..=32`，聚合容量最多 32；期刊解析、期次遍历、页面组装、检查点和 SQLite 写入保持有序。配置值与实际执行器报告见[CLI 参考](../cli.md)。详情任务重叠不等于物理 HTTP 重叠，辅助验证码和识别请求不计入 `SourceAttempt`。
+国内 CNKI 默认 6 个详情工作线程和 1 个期刊执行器。该默认值来自 2026 年 9 月 17 日在被测账号和网络下的有界线上检查（并发 1、2、4、6 下分别完成 2、4、8、12 个详情任务，共享会话准备后未出现额外 429 或验证码挑战），不代表普遍的 CNKI 配额。显式数量为 `1..=32`，聚合容量最多 32；期刊解析、期次遍历、页面组装、检查点和 SQLite 写入保持有序。配置值与实际执行器报告见[CLI 参考](../cli.md)。详情任务重叠不等于物理 HTTP 重叠，辅助验证码和识别请求不计入 `SourceAttempt`。
 
 ## 维护测试
 

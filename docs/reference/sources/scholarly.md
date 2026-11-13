@@ -15,7 +15,7 @@ Scholarly 是内置数据源适配器（Provider），负责连接上游与规�
 
 [运行配置](../configuration.md)中的 `scholarly` 代理开关只覆盖索引 adapter 发出的 Crossref、OpenAlex 和 Semantic Scholar HTTP，包括 source 查找、分页、DOI/batch 增强、重试和 Provider-local fallback。关闭时这些 client 明确忽略系统代理变量并受管直连；打开时只使用共用 `provider_proxy_url`，代理失败不会改成直连。
 
-在线摘要 adapter 不发出 HTTP：它只根据已有 DOI 或 PMID 在本地生成受 host allowlist 约束的 HTTPS redirect，再由浏览器访问目的地。因此 `scholarly` 开关不代理该 redirect，也不影响 AI、通知/PushPlus 或其他非 Provider client。多进程索引通过 protocol-v8 stdin bootstrap 把代理 URL、OpenAlex/Semantic Scholar key pool 和 Crossref mailto pool 一次性传给对应 worker；持久 request JSON、参数、环境、日志和格式化输出均不包含这些值。Scholarly worker 还从 bootstrap 接收 core 构造的工作集根路径，其他 Provider 不接收该字段。启动新 worker 前只会清理文件名与 JSON 元数据一致、早于索引 lease 且协议版本低于 8 的普通遗留 request 文件；新文件、无效文件和链接不会被删除。
+在线摘要 adapter 不发出 HTTP：它只根据已有 DOI 或 PMID 在本地生成受 host allowlist 约束的 HTTPS redirect，再由浏览器访问目的地。因此 `scholarly` 开关不代理该 redirect，也不影响 AI、通知/PushPlus 或其他非 Provider client。多进程索引中，Scholarly worker 从 stdin bootstrap 额外接收 OpenAlex/Semantic Scholar key pool、Crossref mailto pool 和 core 构造的工作集根路径；这些值不进入 request JSON、参数、环境、日志或格式化输出，通用边界见[索引与 Provider 契约](../index-provider-contract.md#provider-托管代理边界)。启动新 worker 前只会清理文件名与 JSON 元数据一致、早于索引 lease 且协议版本低于 8 的普通遗留 request 文件；新文件、无效文件和链接不会被删除。
 
 ## 索引上游职责
 
@@ -71,7 +71,7 @@ Provider 不返回 PDF URL、landing page、permalink 或 content location。在
 
 ## Crossref 分页
 
-[2026-08 官方公告](https://community.crossref.org/t/changes-to-cursors-filtering-and-sorting-in-the-rest-api/16246)及其 [8 月 24 日上线确认](https://community.crossref.org/t/changes-to-cursors-filtering-and-sorting-in-the-rest-api/16246/4)说明：新 cursor 不再过期，也不再固定结果集；`cursor` 与 `published` 等出版日期排序组合会被拒绝，每次续页必须重复相同查询参数。旧文档中 `sort=published&cursor=*` 或五分钟过期示例不再作为当前合同依据。
+[2026-08 官方公告](https://community.crossref.org/t/changes-to-cursors-filtering-and-sorting-in-the-rest-api/16246)及其 [8 月 24 日上线确认](https://community.crossref.org/t/changes-to-cursors-filtering-and-sorting-in-the-rest-api/16246/4)说明：cursor 不会过期，也不固定结果集；`cursor` 与 `published` 等出版日期排序组合会被拒绝，每次续页必须重复相同查询参数。
 
 LitRadar 采用官方建议的“小窗口、created 条件、小结果单响应、核对首响应总数、大结果无排序后本地整理”。保留 update 条件并遍历完整 created 历史，符合[官方技术团队的组合过滤建议](https://community.crossref.org/t/date-range-search-of-index-changes-seems-to-retrieve-too-many-records/1468/8)；自动二分、去重和分片树守卫是本项目的实现方式。
 
@@ -87,11 +87,11 @@ LitRadar 采用官方建议的“小窗口、created 条件、小结果单响应
 
 无更新过滤的发现请求若恰好返回 1 条有效完整记录，会通过既有收集校验与存储路径复用该响应，在一个事务中提交 Discovery 与 Ready、推进一次序号，省去第二次 Crossref 请求。带更新过滤、总数更大、响应不完整或无效的情况仍必须进入收集流程。
 
-225 条沿用既有的单次请求规模。[官方允许的最大 rows 为 1000](https://github.com/CrossRef/rest-api-doc#rows)，无需使用最大值才能采用单响应与计数校验方案。较小阈值可能增加分片和请求数，不新增 `rows=0` 探测或超限回退。已验证的旧版完整叶片可以继续复用，已有游标仍以相同的 225 条参数恢复；新产生的 226–1000 条单秒游标状态不能交给仍要求总数大于 1000 的旧二进制恢复。
+单次请求固定为 225 条。[官方允许的最大 rows 为 1000](https://github.com/CrossRef/rest-api-doc#rows)，单响应与计数校验方案不需要使用最大值；较小阈值可能增加分片和请求数，但不使用 `rows=0` 探测或超限回退。
 
 日期边界采用官方支持的[包含式 UTC 秒精度](https://community.crossref.org/t/query-the-rest-api-with-hour-minute-second-resolution/13821)。有界 Incremental 在每个分片附加相同的 `from-update-date:<anchor 年份的 1 月 1 日>` 和 `until-update-date:T`，创建日期则始终覆盖整刊历史。因此早年创建、最近修改的 DOI 不会因创建年份早于更新下界而被排除。无 anchor、FullRescan 或同源无界重放去掉全部 update 条件，只保留完整 created 范围和同一 `T`；无界重放还保留已经冻结的 candidate。
 
-重复、短页与计数矛盾或记录越界时，未发布的叶片最多重取一次，保留其他已验证片；父子/全局计数漂移最多重建一代。预算持久化，重试不改变 `C/T`，持续异常明确失败，不推进成功 anchor。普通 HTTP/transport 重试仍按后文的有限预算处理，HTTP 500 不再触发更换 cursor，240 秒过期重扫已移除。
+重复、短页与计数矛盾或记录越界时，未发布的叶片最多重取一次，保留其他已验证片；父子/全局计数漂移最多重建一代。预算持久化，重试不改变 `C/T`，持续异常明确失败，不推进成功 anchor。普通 HTTP/transport 重试按后文的有限预算处理，HTTP 500 不会触发更换 cursor 或整片重扫。
 
 created 不变只能稳定分片归属，不能冻结文章字段或 update 条件的成员资格。跨出固定 update 上限、等量替换、journal/type 变更和延迟入索引仍可能影响结果，部分情况无法由计数发现。固定 cursor、`T`、本地缓存和计数相等都不是远端快照保证；本流程也不会因为远端本次未返回某篇文章而删除已有内容。
 
@@ -119,13 +119,13 @@ OpenAlex `/sources` 以 ISSN 精确查询优先，题名 search 只作为 fallba
 
 某些 OpenAlex 套餐拒绝 `from_created_date`。客户端只对明确的 plan-restriction 错误启用一次 Provider-local fallback：清除日期 filter 和旧 query cursor，从 source 头部重放；核心模式和控制协议不变化。普通 429 仍然失败，不会被误判为套餐 fallback。
 
-2026 年 9 月 16 日的历史在线检查中，所配置免费 OpenAlex 密钥返回每密钥 `30 req/s` 的限制。LitRadar 使用跨进程 40 ms 槽位（每密钥每秒启动 25 次）：进程 `p` 拥有 `epoch + p * 40 ms + n * actual_process_count * 40 ms`。执行器数量只重新分配槽位，不放大密钥预算；账号实际响应优先于通用文档，本配置不假定拥有 100 RPS 权限。该历史观察不是本次编辑的新测试。
+2026 年 9 月 16 日的在线检查中，所配置免费 OpenAlex 密钥返回每密钥 `30 req/s` 的限制。LitRadar 使用跨进程 40 ms 槽位（每密钥每秒启动 25 次）：进程 `p` 拥有 `epoch + p * 40 ms + n * actual_process_count * 40 ms`。执行器数量只重新分配槽位，不放大密钥预算；账号实际响应优先于通用文档，本配置不假定拥有 100 RPS 权限。
 
 所有健康 OpenAlex 密钥参与调度，只有成功响应和明确的每日额度响应更新额度估计；每秒速率 429 的头字段不能把密钥错误地耗尽到午夜。额度未知时，每个密钥、每个进程允许一次探测。默认每个执行器 6 个工作线程、3 个期刊执行器，共 18 个 DOI 任务；显式上限分别为 32、3，聚合容量 96。每日预留公式为 `max(total_inflight_capacity * list_cost, actual_process_count * search_cost)`，初始 `list_cost=1`、`search_cost=10`，因此 `6 × 1`、`6 × 3`、`32 × 3` 分别预留 10、30、96 个积分。可信的更高成本只上调对应估计；内部 `source_search` 使用搜索类别，DOI、来源 ISSN 和来源作品使用列表类别。
 
-[OpenAlex deprecation 说明](https://developers.openalex.org/guides/deprecations)记录其自 2026 年 2 月起忽略 mailto。LitRadar 的 source、source search、source works 和 DOI 请求均不发送 Crossref mailto，URL 长度预算也只计入 OpenAlex key。
+[OpenAlex deprecation 说明](https://help.openalex.org/guides/deprecations)记录其自 2026 年 2 月起忽略 mailto。LitRadar 的 source、source search、source works 和 DOI 请求均不发送 Crossref mailto，URL 长度预算也只计入 OpenAlex key。
 
-当前 source-works fallback 仍请求 `per-page=200`，而现有上游文档的公开上限是 100。这只影响 Crossref 对全部 ISSN 均无可用清单后的 OpenAlex source 清单路径。代码任务修复该偏差时必须同时调整分页终止条件和 fixtures；本文不把 200 描述为受上游保证的值。
+已知限制：source-works fallback 请求 `per-page=200`，超过 [OpenAlex 分页说明](https://help.openalex.org/guides/page-through-results)支持的上限 100；上游目前仅把 200 作为已弃用的 legacy 行为接受，不保证继续可用。该限制只影响全部 ISSN 都没有可用 Crossref 清单时的 OpenAlex source 清单路径；改为 100 时需要同步调整分页终止条件和 fixtures。
 
 ## Issue anchor、fallback 与能力边界
 
@@ -137,11 +137,11 @@ Scholarly anchor v1 使用 Provider 私有 JSON，保存规范 issue fingerprint
 
 Crossref Incremental 在整个工作集验证后，才从本地首个有效期次组冻结 candidate head。输出范围包含 candidate 与 base 的组内最大日期之间的全部期次组，也完整包含两端同日平局的其他组；只有最后一个选中组全部输出才 Complete。按组内最大日期严格晚于冻结 candidate 的新组不参与本次输出。base 缺失、candidate 可证明旧于 base、日期区间倒置或 fingerprint 不足以确定边界时，切换同源无 update 条件的完整收集。无界模式保留冻结 candidate，重取后 candidate 消失则失败。
 
-OpenAlex 继续使用原有有序分页与整期边界停止规则；套餐拒绝日期 filter 时保留既有无过滤重放。两条路径的 next anchor 都取冻结 candidate，不因恢复时出现新 head 而重新计算。日期 filter 不能替代期次边界校验。
+OpenAlex 使用有序分页与整期边界停止规则；套餐拒绝日期 filter 时改为无过滤重放。两条路径的 next anchor 都取冻结 candidate，不因恢复时出现新 head 而重新计算。日期 filter 不能替代期次边界校验。
 
-新 traversal checkpoint 为 v2，保存冻结窗口、Crossref token/收集阶段/计数或本地输出位置，仍受 65,536 字节上限约束。严格读取有效 v1：旧 Crossref cursor 被丢弃，在原 base/candidate 约束下建立新查询；旧 OpenAlex cursor 和既有恢复语义保留。未知版本、无版本或损坏状态、mode/base 不匹配直接拒绝。成功 anchor 仍为 v1，遍历格式独立于内容库、控制库和批次账本版本；无需因此清空正式数据库。当前存储版本见[数据库参考](../database.md#连接和版本)。开始写入 v2 后，不应直接用不能识别它的旧二进制恢复。
+traversal checkpoint 为 v2，保存冻结窗口、Crossref token/收集阶段/计数或本地输出位置，受 65,536 字节上限约束。恢复时只接受 v2；其他版本、无版本或损坏状态会报 `scholarly checkpoint is invalid or obsolete; restart the indexing run`，处理见 [CLI 参考](../cli.md#无效的-traversal-checkpoint)。成功 anchor 为 v1；遍历格式独立于内容库、控制库和批次账本版本，存储版本见[数据库参考](../database.md#连接和版本)。
 
-同次中断恢复可复用已验证片和当前有效 cursor，不再因 240 秒或 HTTP 500 重扫。下一次独立 `--update` 必须新建查询和 `T`，保留成功边界整期补查，才能收录上次期次后来追加的文章；终点 cursor 不是永久变更水位。当前规则没有固定回看 7 天或 30 天的窗口。
+同次中断恢复可复用已验证片和当前有效 cursor。下一次独立 `--update` 必须新建查询和 `T`，保留成功边界整期补查，才能收录上次期次后来追加的文章；终点 cursor 不是永久变更水位。当前规则没有固定回看 7 天或 30 天的窗口。
 
 这条边界增量能发现新期次和成功边界期次后续追加的文章，但不保证发现更早历史期次的补录，也不保证刷新边界以前文章的摘要、OA、作者或撤稿关系。需要核对历史回填和旧元数据时运行 `--full-rescan`；该模式扫描完整 source 历史且不生成 changes JSON。
 
@@ -165,7 +165,7 @@ Scholarly 在线 adapter 不请求或读取索引时保存的 URL：
 
 该摘要能力使用上述规范目的地。注册的精确 allowlist 只有 `doi.org` 和 `pubmed.ncbi.nlm.nih.gov`；API 再执行统一 HTTPS/host 校验并返回 no-store 307。生成 URL 不写回数据库。前端文章详情弹窗展示本地已存元数据，不调用该 adapter。
 
-默认摘要顺序中的 `scholarly → cnki` 是请求时 fallback：有 DOI/PMID 时 scholarly 通常先返回，否则或解析失败时继续 CNKI。管理员可以按 CSV/database stem 继承默认顺序、完整替换顺序或用空列表禁用；这不改变 `index_provider_routes`。
+在默认摘要顺序中，scholarly 在有 DOI/PMID 时通常先返回，否则或解析失败时由后续 Provider 继续处理；顺序配置与 `index_provider_routes` 相互独立，见[运行配置](../configuration.md#provider-路由语法)。
 
 ## 重试、日志与秘密
 
@@ -199,6 +199,6 @@ Crossref、OpenAlex 和 Semantic Scholar 共用的 HTTP client 禁止自动重�
 - 不同上游 payload 产生相同规范文章；
 - 规范 batch 中没有 Provider/source/URL 字段；
 - DOI/PMID 在线动作、缺失标识和 host allowlist；
-- v1/v2 traversal、缓存超前、缓存丢失/损坏、内容提交后控制失败、路径拒绝和磁盘容量错误；
+- v2 traversal 与旧版本拒绝、缓存超前、缓存丢失/损坏、内容提交后控制失败、路径拒绝和磁盘容量错误；
 - traversal checkpoint 重放不复制内容、重复生成相同变更事件或改变 ID；
 - 受管直连、显式代理无直连 fallback，以及多进程代理秘密边界。

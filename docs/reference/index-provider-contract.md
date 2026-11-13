@@ -132,7 +132,7 @@ project batch admission + ordered catalog phase
 
 最终内容已提交而控制事务失败时，旧 anchor 保持不变；下次运行重放冻结窗口并由稳定 identity/upsert 收敛。
 
-Crossref 私有工作集不是 core ACK 的替代品：缓存超前时先重放未确认步骤；缓存缺失或可识别的自有文件损坏时按原冻结范围重新收集，不能只续旧 cursor 而缺少前半结果。Complete 前清理缓存也不能证明内容或 anchor 已提交。路径和归属不匹配必须拒绝，不能猜测文件位置。
+Provider 私有缓存（例如 Scholarly 的 Crossref 工作集）不能替代 core ACK：进度以 core 已提交的 checkpoint 为准，缓存的恢复规则见 [Scholarly](sources/scholarly.md#本地工作集与排序)。
 
 ### 内置 Provider 的统一语义映射
 
@@ -164,8 +164,7 @@ bibliographic fingerprint 包含目录、规范题名、由 `publication_year` �
 
 `provider.Descriptor` 包含：
 
-- 2 至 64 个字符的小写 ASCII 运行时名称；允许数字及非首位的 `_`、`-`；
-- `Name`：上述运行时名称；
+- `Name`：2 至 64 个字符的小写 ASCII 运行时名称；允许数字及非首位的 `_`、`-`；
 - `Capabilities`：三个显式 capability 布尔值 `IndexContent`、`ArticleAbstract`、`ArticleFullText`，在管理能力目录中显示为 `index_content`、`article_abstract`、`article_full_text`；
 - `AllowedRedirectHosts`：只用于运行时响应校验。
 
@@ -231,6 +230,8 @@ API 用 `307 Temporary Redirect` 或文档响应返回结果，并设置 `Cache-
 | `data/index-control/<catalog>.sqlite`     | 可丢弃   | v5 Provider-scoped lease、batch-aware 成功 anchor 和运行 traversal checkpoint                     |
 | `data/index-work/scholarly/`              | 可丢弃   | 私有 Crossref 分片、必要书目字段、完整性计数和本地排序工作集；不是内容或提交权威                  |
 
+各库的表结构与版本见[数据库参考](database.md#连接和版本)。
+
 成功 anchor 与运行 checkpoint 分表保存，并分别带可空 `completed_batch_id` / `batch_id`。成功行存在但 anchor 为 NULL 表示“完整成功但没有可复用边界”，不同于成功行缺失；它只有在完成标记属于 active batch 时才能跳过，否则新 batch 安全完整覆盖。删除控制状态会失去 batch、成功边界和恢复进度，并依靠 alias/upsert 收敛，不会改变内容身份。
 
 每次目录运行在构造 Provider、分配 worker 或发出请求之前完成期刊身份预检。当前目录的 catalog ID、退役 catalog alias 和全部 ISSN 必须唯一归属于同一个规范 catalog ID；已有规范 journal 的标题、别名、ISSN、领域、排名及 listing/FTS 投影会在同一内容事务中收敛。即使当前 catalog ID 已有成功 anchor 行，这一步仍会执行，随后 Bootstrap 才可能以零 Provider 请求跳过该期刊。空内容库只登记身份键，不创建 journal 壳。
@@ -238,8 +239,6 @@ API 用 `307 Temporary Redirect` 或文档响应返回结果，并设置 `Cache-
 旧 catalog alias 若在任意 Provider namespace 下仍有 anchor 或 run checkpoint，运行固定失败；系统不会把 opaque 状态搬到当前 catalog ID。旧 alias journal 只有在不存在 issue、article、listing 和 outbox 历史时才可由事务清理。非空旧实体、身份所有权冲突和确定性 ID 冲突都在 Provider 请求前原子失败；内容 batch 写入时还会复核所有权。
 
 内容库禁止 Provider 名称、路由、检查点、lease、运行统计、上游 ID 和 URL。控制库禁止规范文章内容；batch ledger 不保存 Provider opaque state、代理或凭据。备份明确排除整个 `data/index-control` 和 `data/index-work`。工作集只允许保存消费字段与中间进度，不保存凭据或资源 URL，也不参与内容发现。
-
-<a id="conformance-流程"></a>
 
 ## 契约一致性验证
 
@@ -272,29 +271,8 @@ go vet ./apps/server/internal/provider/... ./apps/server/internal/sources/... ./
 5. 备份内容库；控制库无需迁移。
 6. 运行索引并检查共享 alias 的 ID/count 对比。
 
-不需要替换受支持的 v6/v7/v8/v9/v10 内容库；精确 v4/v5 内容库会原子迁移到 v10。不要把旧 Provider anchor 或 traversal checkpoint 复制给新 Provider；两个 namespace 可同时存在于可丢弃控制库，新 Provider 首次运行安全完整覆盖。摘要页和全文 Provider 顺序独立配置，不必跟随索引 Provider 一起切换。
+更换 Provider 不需要替换内容库。不要把旧 Provider anchor 或 traversal checkpoint 复制给新 Provider；两个 namespace 可同时存在于可丢弃控制库，新 Provider 首次运行安全完整覆盖。摘要页和全文 Provider 顺序独立配置，不必跟随索引 Provider 一起切换。
 
-## v9 分词升级、v10 查询索引与旧版本重建
+## 旧内容库版本
 
-应用只接受：
-
-- 不存在的新文件；
-- 完全空的 v0 SQLite；
-- schema 精确匹配、可在一个事务内迁移的 v4 或 v5 内容库；
-- schema 精确匹配的 v6/v7/v8/v9/v10 内容库。
-
-v4 会先增加 `journal_identity_keys` 及其索引，再与 v5 一样完成后续迁移到 v10。历史 v5 到 v6 步骤把撤稿关系规范化为 `article_retraction_dois`，不携带旧单值 `articles.retraction_doi`；v7 使用 contentless-delete FTS，v8 删除重复的 outbox 主键索引。这些步骤不重映射内容 ID，并保留 projection 和 outbox 记录。v9 曾改用关闭拼音别名的 `simple 0`；当前 v10 改为 Go 切词加 FTS5 `ascii` 声明。运行时 preflight 发现 `article_search` 声明不是当前形式时（v6/v7/v8 的 `unicode61`、旧 v9/v10 的 `simple 0`），在一个事务内迁移到 v10，流式重建 FTS 投影并保留规范原文、ID 和 outbox。v0 非空库及 v1–v3 索引库不会迁移到 v10。
-
-Schema v10 adds covering DOI/PMID indexes to `article_listing`. Migration to v10 rebuilds an obsolete FTS projection; fresh databases and offline storage optimization produce v10.
-
-只有需要重建 v1–v3 时，才在执行任何移动或删除前确认以下影响：旧内容不会导入 v10；重建会使用新的规范身份空间；旧 favorite/tracking 中的 article ID 可能变成陈旧引用。应用不会自动删除、重命名或改写旧库，也不会迁移或清理这些引用。
-
-遇到 rebuild-required 错误时使用以下顺序：
-
-1. 停止 `litradar serve` 和所有独立索引写入进程。
-2. 创建并验证包含旧内容库的备份。
-3. 记录错误中给出的确切文件路径和可用于重建后比较的期刊/文章数量。
-4. 优先把该确切旧索引文件移动到备份位置；确认不再需要回退时才删除。不要使用目录级通配删除。
-5. 从未改名的维护目录重新运行索引。
-6. 验证 v10 schema、目录期刊数、文章数和抽样内容，再恢复服务。
-7. 明确决定保留、导出或清理无法解析的旧 favorite/tracking 引用；LitRadar 不会代替运维人员作此决定。
+内容库可接受的 schema 版本、FTS 声明迁移以及非空 v0、v1–v3 旧库的重建步骤见[数据库参考](database.md#内容库破坏性切换)。受支持的迁移不重映射内容 ID；重建旧库会使用新的规范身份空间，旧 favorite/tracking 中的 article ID 可能成为陈旧引用，LitRadar 不会代为删除旧库或清理这些引用。

@@ -19,11 +19,12 @@ Caddy gateway -> client-web (Wails Server Build + Vite SPA)
    |       +-- current executable -> litradar push   (transient child)
    |
    +-- data/auth.sqlite
+   +-- data/telemetry.sqlite                     (disposable load telemetry)
    +-- data/index/*.sqlite
    +-- data/index-control/index-batches.sqlite  (disposable project batch/catalog ledger)
    +-- data/index-control/<catalog>.sqlite       (disposable provider anchors/run checkpoints/leases)
-   +-- data/push_state/*.json
-   +-- data/folder_push_state/*.json
+   +-- data/index-work/scholarly/                (disposable Crossref workset)
+   +-- data/push_state/*.changes.json
 
 /usr/share/litradar/meta  (immutable image bundle)
               |
@@ -35,7 +36,7 @@ Caddy gateway -> client-web (Wails Server Build + Vite SPA)
 
 服务端 `apps/server` 是根 Go 模块中的 API/任务入口，不包含 UI。`apps/client` 与服务端共用根 Go 模块，使用 Wails v3，唯一前端为 `apps/client/frontend`；Vite 生成的 `dist` 仅嵌入客户端。Node.js 只参与开发与构建，服务端和 Web 客户端运行镜像均不需要 Node.js。
 
-浏览器通过 Caddy 同源访问页面与 API。Windows x64、Android arm64-v8a 原生客户端连接用户配置的服务端 URL，通过个人令牌认证。发布不覆盖 iOS、macOS 或 Linux 桌面端；Wails v3 的 Android 支持为官方实验性功能。
+浏览器通过 Caddy 同源访问页面与 API。Windows x64、Android arm64-v8a 原生客户端连接用户配置的服务端 URL，使用账号密码或 OIDC 登录后换取 90 天有效的 `device:` 设备令牌，见[客户端与登录](../guides/clients.md)。发布不覆盖 iOS、macOS 或 Linux 桌面端；Wails v3 的 Android 支持为官方实验性功能。
 
 ## 运行进程
 
@@ -47,16 +48,16 @@ Caddy gateway -> client-web (Wails Server Build + Vite SPA)
 | `litradar notify`    | 按需或调度 | AI 选择后发送 PushPlus                                      |
 | `litradar push`      | 按需或调度 | AI 选择后写入用户追踪文件夹                                 |
 | `litradar scheduler` | 按需       | 校验任务或立即执行一个已保存的类型化任务                    |
-| `litradar admin`     | 按需、本机 | 初始化管理员、维护密文、备份和离线恢复                      |
+| `litradar admin`     | 按需、本机 | 初始化管理员、维护密文、备份、离线恢复和索引存储优化        |
 | `litradar openapi`   | 按需       | 把由 Go 类型生成的 OpenAPI 3.1 输出到 stdout 或文件         |
 
-Docker Compose 运行 `server`、`client-web` 和 `gateway`。只有 `server` 挂载数据与密钥；`client-web` 只连接内部前端网络。Caddy 把 `/api`、`/api/*`、`/mcp`、`/mcp/*`、`/docs`、`/docs/*`、`/openapi.json`、`/openapi.yaml`、`/health/*` 转发到 `server`，其他页面交给客户端；`/wails` 与 `/wails/*` 直接返回 404，因为 Wails Server Build 的运行时端点没有认证，Web host 不注册任何服务。MCP 使用 `flush_interval -1`。服务端子任务仍通过同一 `litradar` 可执行文件运行，辅助程序仍为 Obscura 和 `pdftotext`。
+Docker Compose 运行 `server`、`client-web` 和 `gateway`。只有 `server` 挂载数据与密钥；`client-web` 只连接内部前端网络。Caddy 把 API、MCP、文档、OpenAPI 和健康检查路径转发到 `server`，其他页面交给客户端，并对未认证的 Wails 运行时端点 `/wails` 返回 404；完整路由见 [Docker 部署](../operations/docker.md)。服务端子任务通过同一 `litradar` 可执行文件运行，外部辅助程序为 Obscura 和 `pdftotext`。
 
 SIGINT 或 SIGTERM 会同时通知 HTTP 与调度组件。若计划任务子进程正在运行，调度器先终止并等待该子进程，将运行状态持久化为 `cancelled`，且不再启动剩余步骤。HTTP、心跳或调度组件意外退出时，组合根会关闭另一组件并以非零状态退出，避免半可用进程继续运行。
 
 ## 日志流
 
-服务端二进制在分发子命令前从 `data/auth.sqlite.runtime_settings` 只读加载 `log_format` 和 `log_filter`，再安装一个进程级 Go slog 日志处理器。数据库或表尚不存在时使用安全默认值；已存在但非法的值会让进程在业务工作前失败。所有包 只产生结构化事件，不各自初始化日志处理器 或写应用日志文件：
+服务端二进制在分发子命令前从 `data/auth.sqlite.runtime_settings` 只读加载 `log_format` 和 `log_filter`，再安装一个进程级 Go slog 日志处理器。数据库或表尚不存在时使用安全默认值；已存在但非法的值会让进程在业务工作前失败。所有包只产生结构化事件，不各自初始化日志处理器或写应用日志文件：
 
 ```text
 process / request / workflow spans
@@ -73,7 +74,7 @@ application stderr (JSON Lines by default)
 browser boundary -> allowlisted console.error object -> local DevTools only
 ```
 
-HTTP 外层先移除不受信的 `X-Request-Id`，再生成并返回服务器 UUID；请求内的异步和 blocking 工作重新进入同一 span。成功健康检查不产生逐请求终态事件。调度 span 使用 `run_id` 关联任务；父进程把该值作为经过校验的隐藏内部参数交给规范子进程，应用在公共命令解析前移除参数并记录 `parent_run_id`。它不出现在 help 中，也不是运维配置。子进程 `stderr` 直接继承到同一容器 sink，`stdout` 仍保留给结构化业务结果。
+HTTP 外层先移除不受信的 `X-Request-Id`，再生成并返回服务器 UUID；请求内交给执行器或后台 goroutine 的工作重新进入同一 span。成功健康检查不产生逐请求终态事件。调度 span 使用 `run_id` 关联任务；父进程把该值作为经过校验的隐藏内部参数交给规范子进程，应用在公共命令解析前移除参数并记录 `parent_run_id`。它不出现在 help 中，也不是运维配置。子进程 `stderr` 直接继承到同一容器 sink，`stdout` 仍保留给结构化业务结果。
 
 队列饱和时业务线程不等待；正常关闭最多等待 1 秒排空队列，并直接报告精确丢失行数。浏览器静态客户端没有日志采集端点，只在本地控制台记录不含错误消息和内容的白名单对象。完整字段、配置、保留、隐私和事故流程以[日志运维](../operations/logging.md)为准。
 
@@ -83,20 +84,22 @@ HTTP 外层先移除不受信的 `X-Request-Id`，再生成并返回服务器 UU
 
 ## Go 包
 
-| 包 | 职责 |
-| --- | --- |
-| `apps/server` | 应用可执行文件与公开命令分发 |
-| `apps/server/internal/runtime` | 服务组装、信号、调度和进程监督 |
-| `apps/client` | 共用根 Go 模块的 Wails 客户端；原生端与 Web host 共享 Vite UI |
-| `apps/server/internal/api`、`apps/server/internal/mcp`、`apps/server/internal/openapi` | HTTP/MCP 契约、认证边界和 schema；REST 操作经 huma（`humago`）注册到标准库 `ServeMux`，OpenAPI 由 Go 类型生成 |
-| `apps/server/internal/auth`、`apps/server/internal/cli` | 身份服务与命令编排 |
-| `apps/server/internal/domain`、`apps/server/internal/provider` | 领域值、Provider 接口和能力注册表 |
-| `apps/server/internal/index`、`apps/server/internal/sources`、`apps/server/internal/transport` | 索引执行、上游适配器和出站 HTTP |
-| `apps/server/internal/recommend`、`apps/server/internal/delivery`、`apps/server/internal/scheduler` | 推荐、持久投递和定时任务 |
-| `apps/server/internal/cfp`、`apps/server/internal/citation` | 征稿采集与引用导出 |
-| `apps/server/internal/storage`、`apps/server/internal/platform` | 持久化与平台设施；普通 CRUD 查询由 sqlc 生成到 `apps/server/internal/storage/sqlc/`，FTS 与动态 SQL 手写 |
+| 包                                                                                                  | 职责                                                                                                                                                                  |
+| --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/server`                                                                                       | 应用可执行文件与公开命令分发                                                                                                                                          |
+| `apps/server/internal/runtime`                                                                      | 服务组装、信号、调度和进程监督；`runtime/observability`、`runtime/logfilter` 提供进程级日志处理与过滤                                                                 |
+| `apps/client`                                                                                       | 共用根 Go 模块的 Wails 客户端；原生端与 Web host 共享 Vite UI                                                                                                         |
+| `apps/server/internal/api`、`apps/server/internal/mcp`、`apps/server/internal/openapi`              | HTTP/MCP 契约、认证边界和 schema；REST 操作经 huma（`humago`）注册到标准库 `ServeMux`，OpenAPI 由 Go 类型生成                                                         |
+| `apps/server/internal/auth`、`apps/server/internal/cli`                                             | 身份服务与命令编排                                                                                                                                                    |
+| `apps/server/internal/domain`、`apps/server/internal/provider`                                      | 领域值、Provider 接口和能力注册表                                                                                                                                     |
+| `apps/server/internal/index`、`apps/server/internal/sources`、`apps/server/internal/transport`      | 索引编排与多进程 worker、上游适配器（`sources/cnki`、`jfbym`、`scholarly`、`zjlib`）和出站 HTTP                                                                       |
+| `apps/server/internal/recommend`、`apps/server/internal/delivery`、`apps/server/internal/scheduler` | 推荐、持久投递和定时任务                                                                                                                                              |
+| `apps/server/internal/cfp`、`apps/server/internal/citation`                                         | 征稿采集与引用导出                                                                                                                                                    |
+| `apps/server/internal/telemetry`                                                                    | 负载遥测：采集路由/MCP 负载与检索形态，写入本地 `data/telemetry.sqlite`                                                                                               |
+| `apps/server/internal/storage`、`apps/server/internal/platform`                                     | 持久化与平台设施；`storage/index` 负责稳定 ID、合并、内容/控制库事务和 outbox；普通 CRUD 查询由 sqlc 生成到 `apps/server/internal/storage/sqlc/`，FTS 与动态 SQL 手写 |
+| `apps/server/internal/compat`、`apps/server/internal/testkit`                                       | `compat/jsonvalue` 把标准 JSON 编码适配为持久化字符串值；`testkit` 只供测试和 `litradar-fixture` 使用                                                                 |
 
-应用只有一个公开可执行文件。测试夹具命令单独位于 `apps/server/cmd/litradar-fixture`，sqlc schema 快照生成器位于 `apps/server/cmd/sqlc-schema`，两者都不随发行包分发。原生辅助程序仍是显式的运行时依赖。
+应用只有一个公开可执行文件。测试夹具命令单独位于 `apps/server/cmd/litradar-fixture`，sqlc schema 快照生成器位于 `apps/server/cmd/sqlc-schema`，两者都不随发行包分发。原生辅助程序是显式的运行时依赖。
 
 ## 持久化边界
 
@@ -108,30 +111,9 @@ HTTP 外层先移除不受信的 `X-Request-Id`，再生成并返回服务器 UU
 
 ### 受管目录生命周期
 
-发布镜像把不可变官方源文件和 `bundle-manifest.json` 固定放在 `/usr/share/litradar/meta`。二进制发行包则把它们放在可执行文件旁的 `assets/meta`。应用依次查找这两个位置的 manifest 并使用第一个存在的 bundle，不接受环境变量或 CLI 路径覆盖。运行时只在持久的 `<project-root>/data/meta` 中创建或替换副本；不会修改镜像 bundle。清单使用格式 `litradar-meta-bundle`、正整数版本以及每个当前文件和已知官方旧版的规范 SHA-256。已应用版本和 hash 记录在 `data/auth.sqlite.managed_meta_catalogs`，因此认证库迁移总是在准备之前完成。
+发布镜像（`/usr/share/litradar/meta`）或二进制发行包（可执行文件旁的 `assets/meta`）携带不可变的官方 CSV 与 `bundle-manifest.json`。`litradar serve` 和普通 `litradar index` 在认证库迁移之后、验证密钥和加载运行设置之前，把 bundle 准备到持久的 `<project-root>/data/meta`：缺失文件写入，已知旧版升级，用户自定义的同名文件保留并报告冲突，清单外文件不读也不改。已应用版本记录在 `data/auth.sqlite.managed_meta_catalogs`，认证库记录的版本高于当前 bundle 时拒绝降级启动。多进程索引 worker 不重复准备；本地构建没有 manifest 时该步骤为 no-op。
 
-每个清单文件独立分类：
-
-| 持久目录状态                                           | 准备行为                                     |
-| ------------------------------------------------------ | -------------------------------------------- |
-| 文件缺失                                               | 原子写入当前官方文件并记录受管状态           |
-| 文件等于当前官方 hash，但没有当前状态                  | 接管并记录状态，不重写文件                   |
-| 文件等于清单中的已知旧版 hash，或仍等于上次已应用 hash | 原子升级到当前官方文件                       |
-| 同名普通文件具有其他内容，包括非 UTF-8 内容            | 视为用户自定义，保留文件和旧状态，并报告冲突 |
-| 文件名不在当前清单中                                   | 完全不读取、不替换、不删除                   |
-
-符号链接、目录或特殊文件占用受管目标路径时会作为不安全布局失败。一次准备在 `BEGIN IMMEDIATE` 事务中更新状态，并为文件替换保留回滚副本；文件或状态写入失败会恢复本次已经替换的文件。若认证库记录的 bundle 版本高于当前镜像版本，应用会在修改目录前拒绝降级启动。这使镜像回滚成为显式数据兼容决策，不能靠覆盖文件绕过。
-
-从清单退役或改名的旧文件不会自动删除，相关状态行也会保留。运维人员应先创建并验证包含完整 Meta 树的 v2 备份，再确认没有索引任务引用旧文件，最后手工清理明确选中的路径；未知文件不能批量删除。
-
-准备入口和后续顺序保持一致：
-
-- `litradar serve`：迁移认证库和现有索引库，准备 Meta，验证密钥并加载运行设置，构建 HTTP 服务，然后启动内嵌调度。
-- 普通 `litradar index`：迁移数据库，准备 Meta，验证密钥并加载 Provider 运行设置，然后进入下述现有 Meta 期刊预检和索引流程。
-- 多进程索引的内部 worker 请求不重复准备；它使用父进程已经准备和预检的持久目录。
-- 本地构建通常没有固定路径下的 manifest，因此受管发现返回 no-op；`data/meta` 目录缺失时索引明确失败，目录存在但没有选中的 CSV 时返回 `skipped`。
-
-准备结果产生 `storage.managed_meta.prepared` 结构化事件；索引命令的 stdout JSON 契约不变。该步骤只管理打包清单声明的文件，不替代下面的逐 CSV 身份和数据库投影预检。
+查找顺序、逐文件分类、降级和退役文件处理见[运行配置](../reference/configuration.md#官方-meta-打包路径)。该步骤只管理打包清单声明的文件，不替代下面的逐 CSV 身份和数据库投影预检。
 
 ### 规范目录与 Provider 路由
 
@@ -146,7 +128,7 @@ freeze ordered CSV selection -> validate catalog contracts
         |
         +-- catalog stem -> runtime index_provider_routes -> registered provider.IndexContent
         |
-        +-- data/index/<stem>.sqlite         (content v10; v6/v7/v8/v9 compatible)
+        +-- data/index/<stem>.sqlite         (content v10)
         +-- data/index-control/<stem>.sqlite (disposable control v5)
                     |
                     v
@@ -162,32 +144,35 @@ acquire provider-scoped lease
 
 batch compatibility 包含 CSV 的选择方式、顺序和精确内容、Provider route、同步模式、遗留 issue-batch 恢复值以及 notify 选项；worker/process 数、timeout、代理和凭据不参与。issue-batch 继续存在只是为了匹配旧 active batch 和既有 fingerprint，当前 Provider 不读取它来决定请求、分批、并发或内存。任一 correctness input 改变都会在 Provider 访问前 fail closed。`--no-resume` 是显式放弃 active batch：只清理该 batch 自有的运行 checkpoint，再从既有 committed anchor 创建新 batch；不会删除内容、anchor、outbox 或已经发布的 manifest。
 
-崩溃恢复按 durable phase 前进：`indexing` 先跳过同 batch 已提交 anchor，再接管匹配 checkpoint；`manifest_prepared` 重发持久化的精确字节并重做 through-cursor acknowledgement；`manifest_published` 只进入 notify 或完成；`notifying` 由 schema v2 的 attempt ID、typed status、exit code 和 Unknown acknowledgement 驱动。结果尚未持久化或状态为 Running 时复用同一 attempt；Failed/Cancelled/TimedOut 在下一次 invocation 建立新 attempt；Unknown 与任何不可信 child protocol 结果都要求显式 `--acknowledge-unknown-notify`。父进程严格解析最多保留 64 KiB 的 compact JSON 并交叉检查退出类别，每个 invocation 每个 catalog 最多启动一个 child。若 journal anchor 已提交但 catalog phase 尚未推进，same-batch marker 会阻止 Provider 重放；若文件 rename 或 outbox acknowledgement 已完成但 phase 尚未推进，重放仍使用同一 manifest intent。待完成的已发布 notify handoff 不能通过 `--no-resume` 放弃。
+崩溃恢复按 durable phase 前进：`indexing` 先跳过同 batch 已提交 anchor，再接管匹配 checkpoint；`manifest_prepared` 重发持久化的精确字节；`manifest_published` 只进入 notify 或完成；`notifying` 由持久化的 attempt ID 和 typed handoff 状态驱动，Unknown 结果需要 operator 显式确认。若 journal anchor 已提交但 catalog phase 尚未推进，same-batch marker 会阻止 Provider 重放；若文件 rename 或 outbox acknowledgement 已完成但 phase 尚未推进，重放仍使用同一 manifest intent。notify handoff 的状态判定、attempt 复用和 `--acknowledge-unknown-notify` 规则见 [CLI 参考](../reference/cli.md#实时恢复与增量同步)。
 
 目录验证在 Provider 请求前拒绝未知列、重复/非法 `catalog_id`、非法 ISSN、重复别名和不规范文本。索引路由来自 `auth.sqlite.runtime_settings.index_provider_routes`；摘要页和全文顺序分别来自带 default 与 catalog overrides 的运行设置。内容库和目录都不知道实际 Provider。
 
 “分进程注册”只表示同一个 `litradar` 二进制在不同命令边界构造不同的内存注册表：`index` 进程注册索引实现，`serve` 的 API 进程注册摘要页/全文实现。它不是多服务部署，也不表示 Provider 自动回退。管理 API 按相同逻辑名称聚合这些注册，形成供前端过滤选项的 capability 目录。
 
-多进程索引使用私有 worker protocol v8，把同步模式、Provider-opaque 的 committed anchor 和 traversal checkpoint 随 journal assignment 写入可丢弃 request JSON；worker 不解析这些值，父进程仍独占 SQLite、batch ID 和提交顺序。项目 batch ID 不进入 `IndexFetchContext` 或 worker request JSON，Provider 内容契约保持 v3；私有工作进程协议为 v8，二者分别演进。国内 CNKI captcha token 和共用 Provider 代理 URL 都不属于该文件、进程参数或 child 环境：父进程启动 child 后移除继承的探测环境变量，再通过 stdin 发送一次版本化 bootstrap。只有 `provider_name=cnki` 的 worker 可以收到 captcha token，只有自身逻辑 Provider 的代理开关已启用时才能收到代理 URL。worker 在 Provider 构造前验证协议版本和 worker ID，随后同一管道继续接收 parent 的 durable commit ACK；相关格式化输出、错误和日志只保留固定脱敏字段。
+多进程索引使用私有 worker protocol v8，把同步模式、Provider-opaque 的 committed anchor 和 traversal checkpoint 随 journal assignment 写入可丢弃 request JSON；worker 不解析这些值，父进程独占 SQLite、batch ID 和提交顺序。worker 所需的秘密（captcha token、代理 URL、Scholarly key pool）不进入该文件、进程参数或 child 环境，只通过一次版本化 stdin bootstrap 交给对应 worker；同一管道随后传输 parent 的 durable commit ACK。秘密边界见[索引与 Provider 契约](../reference/index-provider-contract.md#provider-托管代理边界)。
 
-Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 `ProviderProgress`。`Continue` 携带下一 traversal checkpoint；`Complete` 携带可空的 next anchor。两个字符串都保持 Provider-scoped、opaque，核心不解析 CNKI issue ID、Scholarly fingerprint 或上游 cursor。`apps/server/internal/index` 负责校验、稳定 ID、合并、SQLite 事务和 outbox。内容先提交、控制状态后提交；控制提交失败时旧 anchor 保持不变，重跑依靠冻结窗口和规范 alias 幂等收敛。
+在 Linux 上，独立进程组中的索引 worker 通过私有环境变量 `LITRADAR_WORKER_PARENT_PID` 获得启动者 PID。读取 worker 请求前，它校验归属与进程组隔离，随后由独立 goroutine 每 100 ms 检查一次父进程；父进程消失时，即使 Provider I/O 仍在阻塞，也会终止 worker 的整个进程组。正常完成时停止并等待该监视器。Windows 依靠父进程持有的 Job Object 监督。
+
+Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 `ProviderProgress`。`Continue` 携带下一 traversal checkpoint；`Complete` 携带可空的 next anchor。两个字符串都保持 Provider-scoped、opaque，核心不解析 CNKI issue ID、Scholarly fingerprint 或上游 cursor。`apps/server/internal/index` 负责编排、契约校验和 worker 调度；`apps/server/internal/storage/index` 负责稳定 ID、合并、SQLite 事务和 outbox。内容先提交、控制状态后提交；控制提交失败时旧 anchor 保持不变，重跑依靠冻结窗口和规范 alias 幂等收敛。
 
 ### 索引数据库
 
-每个 CSV 对应 `data/index/<csv_stem>.sqlite`。当前 v10 内容库只包含规范期刊、期次、文章、identity aliases、撤稿关系、查询/FTS 投影和事务性文章变更 outbox。v10 沿用 contentless FTS 布局：Go 先折叠重音和大小写，再按 `simple 0` 的字节规则切词并以空格连接，FTS5 内置的 `ascii` 分词器只按空格拆分；检索仍走全字段 FTS MATCH，查询操作数经过同一流程，原始元数据保持不变。启动预检仍接受精确 v6/v7/v8/v9 内容库；FTS 声明不是当前 `ascii` 声明的内容库（v6/v7/v8 的 `unicode61`、旧 v9/v10 的 `simple 0`）会在一个事务内迁移到 v10 并重建检索投影。内容库不包含 Provider、URL、anchor、checkpoint、lease 或运行统计。
+每个 CSV 对应 `data/index/<csv_stem>.sqlite`。当前 v10 内容库只包含规范期刊、期次、文章、identity aliases、撤稿关系、查询/FTS 投影和事务性文章变更 outbox。v10 沿用 contentless FTS 布局：Go 先折叠重音和大小写，再按 `simple 0` 的字节规则切词并以空格连接，FTS5 内置的 `ascii` 分词器只按空格拆分；检索走全字段 FTS MATCH，查询操作数经过同一流程，原始元数据保持不变。内容库不包含 Provider、URL、anchor、checkpoint、lease 或运行统计。可接受的旧版本与 FTS 迁移见[数据库参考](../reference/database.md#内容库破坏性切换)，FTS 声明见 [`article_search`](../reference/database.md#article_search)。
 
 分词不依赖 SQLite 扩展：连接上不注册自定义分词器，SQL 扩展加载保持关闭。
 
-`data/index-control/index-batches.sqlite` 是项目级可丢弃 batch schema v2；`data/index-control/<csv_stem>.sqlite` 是 Provider-scoped v5 控制库。前者保存冻结输入指纹、catalog phase/outcome、精确 manifest intent、typed notify handoff/Unknown acknowledgement 和全局 lease，后者把成功 anchor 与运行中的 traversal checkpoint 分表保存并绑定 batch ID。v1 active Notifying 行迁移为保守 Unknown，不丢弃 manifest。删除全部控制状态后没有可信 batch、成功边界、handoff 或 traversal，下一次运行安全退回完整抓取，但不会改变内容 ID 或复制已有文章；operator 也同时承担失去待完成 handoff 证明的风险。切换 Provider 使用新的 namespace，同样从无 anchor 状态开始。内容库需要备份，两类控制库都明确不备份。详见[数据库参考](../reference/database.md)。
+`data/index-control/index-batches.sqlite` 是项目级可丢弃 batch schema v2；`data/index-control/<csv_stem>.sqlite` 是 Provider-scoped v5 控制库。前者保存冻结输入指纹、catalog phase/outcome、精确 manifest intent、typed notify handoff/Unknown acknowledgement 和全局 lease，后者把成功 anchor 与运行中的 traversal checkpoint 分表保存并绑定 batch ID。删除全部控制状态后没有可信 batch、成功边界、handoff 或 traversal，下一次运行安全退回完整抓取，但不会改变内容 ID 或复制已有文章；operator 也同时承担失去待完成 handoff 证明的风险。切换 Provider 使用新的 namespace，同样从无 anchor 状态开始。内容库需要备份，两类控制库都明确不备份。详见[数据库参考](../reference/database.md)。
 
 ### 认证与业务数据库
 
 `data/auth.sqlite` 保存：
 
-- 用户、会话和访问令牌
-- CNKI 用户会话
-- 收藏夹和收藏文章
+- 用户、会话、访问令牌、邀请码和 OIDC 身份绑定（`user_identities`）
+- 浙江图书馆（ZJLib）CNKI 用户会话（`cnki_sessions`）
+- 收藏夹、收藏文章和关系图收藏（`relation_graph_favorites`）
 - 通知/追踪设置
+- 只追加的安全审计（`security_audit_events`）
 - 全局运行配置，包括 Provider 路由、服务器安全和日志设置
 - 类型化定时任务、运行槽和心跳
 - 投递 checkpoint、run、item、dedupe 和 workflow lease
@@ -206,23 +191,27 @@ Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 `
 
 变更清单是新文章分发的输入，不是可从文章日期实时重建的视图。读取方只以必填的 `db_name` 识别目标数据库，不使用保存的文件系统路径作为身份回退。可变投递状态只存在于 `auth.sqlite`；运行时不会写 `<db>.json` 或固定 `.tmp`。
 
+### 负载遥测库
+
+`data/telemetry.sqlite` 只保存按小时聚合的匿名负载：HTTP 路由模板、MCP 工具调用和检索形态（入口、模式、词数桶等），不保存用户身份、IP、原始路径或检索文本。`litradar serve` 在 `telemetry_enabled` 开启时于内存聚合并定期写入，管理员在管理面板的“负载”分区查看。该库可删除后重建，备份始终排除它。表结构见[数据库参考](../reference/database.md#负载遥测库)，设置见[运行配置](../reference/configuration.md#负载遥测设置)。
+
 ## 主要数据流
 
 ### Scholarly 索引
 
 1. `index_provider_routes` 为该目录选择 `scholarly` 索引能力。
-2. Provider 接收 contract v3 的规范 `JournalCatalogEntry` 与同步 context；Crossref 按 ISSN 和出版日期降序提供文章主列表，并跳过 404；没有可复用 anchor 的完整扫描还会跳过空作品页并继续尝试其他 ISSN。
-3. Crossref 对所有 ISSN 均返回 404，或没有可复用 anchor 的完整扫描只得到空作品页时，OpenAlex 解析 source 并作为文章列表 fallback。
-4. OpenAlex 按 DOI 增强元数据；Semantic Scholar 增强 OA 和缺失摘要；所有上游 URL 在映射边界丢弃。
-5. 增量运行从远端头部扫描到成功 anchor 的规范期次 fingerprint，并完整包含该边界；日期 filter 只用于缩小候选，不能替代边界证明。
-6. Provider 返回规范 batch 和 Continue/Complete 进度，`apps/server/internal/index` 写入关系表、`article_listing` 和 `article_search`，整刊完成后才推进 anchor。
+2. Provider 接收 contract v3 的规范 `JournalCatalogEntry` 与同步 context；Crossref 按 ISSN 以 created 日期分片收集完整清单（不排序、每次 225 条），计数校验通过后在本地工作集中按期次排序；整刊 404 或为空时尝试下一个 ISSN。
+3. 全部 ISSN 都没有可用 Crossref 清单时，OpenAlex 解析 source 并作为文章列表 fallback。
+4. 对当前输出页先按 DOI 批量请求 Semantic Scholar，再只为仍缺字段的记录请求 OpenAlex；所有上游 URL 在映射边界丢弃。
+5. 增量运行覆盖从冻结的远端头部到成功 anchor 的规范期次，并完整包含该边界期次；update 日期条件只缩小候选，不能替代边界证明。
+6. Provider 返回规范 batch 和 Continue/Complete 进度，`apps/server/internal/storage/index` 写入关系表、`article_listing` 和 `article_search`，整刊完成后才推进 anchor。
 7. `--update` 生成变更清单；`--full-rescan` 覆盖完整历史但不生成该清单。
 
 具体请求和字段优先级见 [Scholarly 数据源](../reference/sources/scholarly.md)。
 
 ### CNKI 索引和全文
 
-默认国内 `cnki` 元数据 Provider 使用 NZKPT 的 `navi.cnki.net` / `kns.cnki.net` 页面和接口生成规范内容；海外运行时实现已移除。页面 filename、详情 URL 和 captcha 状态只存在于一次适配调用中。按用户全文获取是独立的 `zjlib` 在线能力，使用当前用户已有的浙江图书馆会话，与索引 Provider 无关。详见 [CNKI 数据源](../reference/sources/cnki.md)。
+默认国内 `cnki` 元数据 Provider 使用 NZKPT 的 `navi.cnki.net` / `kns.cnki.net` 页面和接口生成规范内容。页面 filename、详情 URL 和 captcha 状态只存在于一次适配调用中。按用户全文获取是独立的 `zjlib` 在线能力，使用当前用户已有的浙江图书馆会话，与索引 Provider 无关。详见 [CNKI 数据源](../reference/sources/cnki.md)。
 
 ### 征稿追踪
 
@@ -240,7 +229,7 @@ browser -> stable LitRadar action URL -> load ArticleLocator
         -> 307/PDF + Cache-Control: private, no-store
 ```
 
-全新安装的默认 `scholarly → cnki` 是摘要能力的有序 fallback：先尝试 scholarly，遇到超时、未找到、临时失败或无效结果才继续国内 CNKI；它不是索引来源映射。由旧认证库升级时，v8 会先物化旧有效默认值再把旧 `cnki` token 重写为 `cnki_oversea`，随后 v19 将海外选择迁移到国内 `cnki`，保留有效顺序并去重。catalog override 完整替换默认顺序，显式空数组禁用该 CSV 的动作。上游目的地不会出现在 `/access`、文章响应或索引库中。动作调用也不更新文章、outbox、checkpoint、认证会话或文件缓存。Provider 注册携带精确的运行时跳转域名 allowlist，API 不按 Provider 名称硬编码域名。
+每个顺序是请求时的有序 fallback，不是索引来源映射；catalog override 完整替换默认顺序，显式空数组禁用该 CSV 的动作。默认值与语法见[运行配置](../reference/configuration.md#provider-路由语法)。上游目的地不会出现在 `/access`、文章响应或索引库中。动作调用也不更新文章、outbox、checkpoint、认证会话或文件缓存。Provider 注册携带精确的运行时跳转域名 allowlist，API 不按 Provider 名称硬编码域名。
 
 前端的“文章详情”是展示已经存入 LitRadar 的题名、作者、期刊、摘要等本地元数据的弹窗，不是第三种在线 Provider capability，也没有 `/detail` 动作路由。“查看摘要页”才会触发上述在线解析和外部跳转。
 
@@ -250,33 +239,24 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 2. API 根据可选 `db` 选择一个 `data/index/*.sqlite`。
 3. 列表与过滤使用 `article_listing`，详情从规范关系表读取。
 4. `q` 默认先转义为一个 FTS5 字面短语再使用 `article_search MATCH`；只有显式 `search_mode=advanced` 才解释 FTS5 运算符，非法表达式作为可纠正的 400 输入错误返回。
-5. API 把 64 位文章和期刊 ID 序列化为十进制字符串。
+5. API 把文章、期刊和期次的 63 位正整数哈希 ID 序列化为十进制字符串，格式见 [API 参考](../reference/api.md#id-与分页)。
 
 ### 认证
 
-浏览器登录后使用 `HttpOnly` 的 `litradar_session` Cookie。外部客户端使用用户创建的 Bearer 访问令牌。首个管理员只能通过本机 `litradar admin bootstrap` 创建；公开注册始终要求邀请码。
+浏览器登录后使用 `HttpOnly` 的 `litradar_session` Cookie；服务端配置 OIDC 时，浏览器也可通过 OIDC 单点登录。原生客户端用账号密码或 OIDC 换取 `device:` 设备令牌；MCP 等外部客户端使用用户在设置中创建的 Bearer 访问令牌。首个管理员只能通过本机 `litradar admin bootstrap` 创建；公开注册始终要求邀请码。OIDC 部署见 [authentik 单点登录](../operations/authentik.md)，原生登录见[客户端与登录](../guides/clients.md)。
 
 ### 通知和追踪
 
-1. 以 `(workflow, db_name)` 认领 SQLite run 与 workflow lease；旧 owner 未过期时另一个进程不能进入候选选择。
-2. 从 `.changes.json` 或 `delivery_checkpoints.snapshot_json` 差异建立持久 run item，再读取候选文章。
-3. 按用户的数据库、关键词和方向偏好缩小候选，并使用用户级 OpenAI 兼容凭据做主备 AI 选择。
-4. 在副作用前以唯一约束建立 article dedupe reservation；文件夹写入保持幂等，PushPlus 前把 subscriber item 标记为 `sending`。
-5. 已知结果把 subscriber item 与全部 dedupe 在同一 transaction 中落为 success/confirmed；不确定结果落为 unknown，禁止自动重放。
-6. run 终态、checkpoint CAS 和 lease 释放在同一 transaction 中提交；崩溃后的新 owner 只重试 pre-send claimed 工作。
-
-`index --notify` 在这层外增加 parent-owned attempt：attempt 参与 scheduled run external ID，但不参与 article dedupe identity。新 attempt 因而能恢复已知 pre-send 失败，同时 Confirmed/Unknown article 仍跨 attempt 保持 no-replay。Unknown parent handoff 只有在 operator 审核并把确认 ID/时间写入 batch ledger 后才允许新 attempt。
-
-完整行为见[通知与追踪](../guides/notifications.md)。
+`notify`、`push` 和手动周报按 `(workflow, db_name)` 认领 SQLite run 与 workflow lease，从变更清单或 checkpoint 快照差异建立持久 run item，再用用户级偏好和主备 AI 选择文章。外部副作用前先以唯一约束预留文章去重；结果不明确时落为 `unknown` 且不会自动重放。`index --notify` 的 parent attempt 只改变外层 run 身份，不改变文章去重身份。副作用顺序与恢复规则见[通知与追踪](../guides/notifications.md#副作用顺序)。
 
 ## 配置层次
 
 系统使用多种明确分离的配置来源：
 
 - CLI 参数：`litradar` 子命令的路径、端口、并发和一次运行覆盖
-- `runtime_settings`：外部元数据 key 池、按 CSV 的索引/在线 Provider 路由、CORS、MCP、Cookie 和日志策略
+- `runtime_settings`：外部元数据 key 池、Provider 代理、按 CSV 的索引/在线 Provider 路由、OIDC、CORS、MCP、Cookie、审计保留、AI Endpoint 目录、投递并发、负载遥测和日志策略
 - `notification_settings`：每个用户的 AI、PushPlus 和追踪偏好
-- 固定前端网络边界：浏览器同源，开发服务器（`vp dev`）固定代理到 `127.0.0.1:8001`，发布构建输出由 Web host 嵌入的静态 `dist/`
+- 前端网络边界：浏览器同源；开发服务器（`vp dev`）默认代理到 `127.0.0.1:8001`，可用 `LITRADAR_BACKEND_URL` 覆盖；发布构建输出由 Web host 嵌入的静态 `dist/`
 - 部署密钥文件：只用于认证和解密数据库中的秘密值
 
 部署后的应用不把 LitRadar 自定义环境变量作为通用配置中心。固定镜像路径和隐藏父子进程关联参数都是不可配置的内部协议；CLI 路径/监听/并发参数、部署密钥文件和测试工具输入仍保留各自边界。数据库 token 为空时，`LITRADAR_CNKI_CAPTCHA_TOKEN` 是国内 CNKI 单次索引探测的唯一来源凭据例外，并在父进程解析后从 child 环境移除。
@@ -287,23 +267,19 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 
 正式子命令在业务访问前完成各自需要的存储准备：先解析路径和参数，检查 `PRAGMA user_version`，再执行受支持的迁移或结构预检。认证库按版本在独立的 `BEGIN IMMEDIATE` 事务中迁移；普通查询仓库不负责数据定义操作。
 
-新建内容库使用 v10。精确匹配的 v4/v5 可事务迁移到 v10；现有 v6/v7/v8/v9/v10 在普通启动时做结构预检；FTS 声明不是当前 `ascii` 声明时，在一个事务内迁移到 v10 并重建检索投影。非空 v0 及 v1 至 v3 要求先备份，再按错误中点名的文件执行重建。内容库、项目批次账本和目录控制库分别维护版本，当前版本与迁移边界统一见[数据库参考](../reference/database.md#连接和版本)。
+认证库、内容库、项目批次账本、目录控制库和负载遥测库分别维护版本；当前版本与迁移边界见[数据库参考](../reference/database.md#连接和版本)，需要重建的旧内容库处理步骤见[内容库破坏性切换](../reference/database.md#内容库破坏性切换)。
 
 项目批次账本与目录控制库可以重建，但删除它们会丢失恢复进度和已发布通知的交接记录。遇到未来版本或迁移失败时，命令会退出，不会自动删除文件。`serve` 完成存储迁移、密钥验证和 HTTP 准备后，才启动监听器及首轮调度。
 
-## 同步工作与异步服务
+## 有界执行器与后台服务
 
 SQLite、密码派生、HTTP 和文件系统操作通过有界 Go 执行器运行。API 分别限制存储、上游请求和密码派生任务，容量分别为 8、4、2，排队超时为 30 秒；取消和关闭通过 context 与显式生命周期管理。定义见[运行时准备](../../apps/server/internal/runtime/prepare.go)与 `apps/server/internal/platform/executor`。内嵌调度与手动投递由运行时监督器管理。
 
 手动周报通过 SQLite 持久任务排队，API 返回 `202` 后由独立的[投递监督器](../../apps/server/internal/runtime/manual_delivery.go)启动子进程。同一用户重复启动会复用当前排队或活动任务；不同用户可以排队并在实例容量内并行。并发池由 `delivery_worker_concurrency` 控制，租约、版本比较和去重仍由存储层保证。状态、取消和不确定结果的确认规则见[API 参考](../reference/api.md#收藏与追踪)，配置见[运行配置](../reference/configuration.md#用户通知配置)。
 
-<a id="scheduled-execution-across-service-ticks"></a>
-
 ### 跨调度轮次的任务执行
 
-Cron 使用五字段 crontab 规则：日期和星期字段同时受限时，任一匹配即可触发；通配的日期字段仍保留自身的步长限制；星期范围先应用步长，再把 0 和 7 视为星期日。
-
-内嵌调度器最多保留 4 个活动执行。长时间索引不会阻止发现后续到期任务：每轮先把到期时段持久化，再按空闲执行槽认领任务。多余工作保持待处理状态，不会提前取得认领租约；每个任务仍最多有一次活动运行。
+Cron 表达式语法见 [API 参考](../reference/api.md#管理接口)。内嵌调度器最多保留 4 个活动执行。长时间索引不会阻止发现后续到期任务：每轮先把到期时段持久化，再按空闲执行槽认领任务。多余工作保持待处理状态，不会提前取得认领租约；每个任务仍最多有一次活动运行。
 
 手动与自动运行对每个任务共享同一个持久活动认领边界。手动历史与 cron 时段身份分开保存，不推进合并水位。
 
@@ -311,8 +287,6 @@ Cron 使用五字段 crontab 规则：日期和星期字段同时受限时，任
 
 服务负责活动执行集合，并在关闭或基础设施故障时协同取消、回收所有子进程。每次运行的心跳和进程树监督保持有效。一次性 `scheduler` 命令会等待自己已接纳的运行完成；每轮摘要汇总上一轮以来收集的结果，单次运行的终态事件则立即记录。
 
-在 Linux 上，独立进程组中的索引抓取 worker 通过私有环境变量 `LITRADAR_WORKER_PARENT_PID` 获得启动者 PID。读取 worker 请求前，它会校验归属与进程组隔离，随后由独立 goroutine 每 100 ms 检查一次父进程。父进程消失时，即使 Provider I/O 仍在阻塞，也会终止 worker 的整个进程组；正常完成时停止并等待该监视器。Windows 继续依靠 Job Object 监督。
-
 ## 部署边界
 
-默认 Compose 只运行一个非 root、只读根文件系统且丢弃全部 Linux capabilities 的 `litradar` 容器，并把唯一 HTTP 入口 `127.0.0.1:8000` 发布到宿主机 loopback。对外访问时必须增加 TLS 反向代理和共享限流，不能把默认端口直接改为所有网卡。详见 [Docker 部署](../operations/docker.md)和[安全说明](../operations/security.md)。
+默认 Compose 运行 `server`、`client-web`、`gateway` 三个容器，均使用只读根文件系统和 `no-new-privileges`；`server` 与 `client-web` 丢弃全部 Linux capabilities，网关只保留 `NET_BIND_SERVICE`。只有 Caddy 网关把 HTTP 入口发布到宿主机，默认 `127.0.0.1:8000`（`LITRADAR_BIND_ADDRESS`、`LITRADAR_PORT` 可改）；`server` 与 `client-web` 不发布端口。对外访问时必须启用 TLS 和共享限流，不能把默认 loopback 入口直接改为所有网卡。详见 [Docker 部署](../operations/docker.md)和[安全说明](../operations/security.md)。
