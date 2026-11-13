@@ -1,14 +1,8 @@
-# Strict text decoding data
+# 严格文本解码数据
 
-The runtime uses the pinned Go `x/text` decoders. `gb18030.bin` contains
-big-endian `(encoded unit uint32, Unicode scalar int32)` corrections derived
-from encoding_rs 0.8.41. A negative scalar indicates malformed input. The Mozilla
-MIT license is retained alongside the data.
+运行时使用固定版本的 Go `x/text` 解码器。`gb18030.bin` 保存从 encoding_rs 0.8.41 派生的修正表，每项为大端序的 `(编码单元 uint32, Unicode 标量 int32)`；标量为负表示输入格式错误。Mozilla 的 MIT 许可证与数据文件一同保留。
 
-The 16,552-byte table contains 2,067 two-byte corrections and two four-byte
-corrections. SHA-256:
-`4edf16a14b921f7cd6a4f64cd93b7384fbaf437bcdbd0f45ba1cdfca5aa17060`.
+该表共 16,552 字节，包含 2,067 条双字节修正和 2 条四字节修正，SHA-256 为：
+`4edf16a14b921f7cd6a4f64cd93b7384fbaf437bcdbd0f45ba1cdfca5aa17060`。
 
-GBK labels use the same decoder as GB18030. Invalid syntax is rejected before
-table lookup. Changes to the decoder or table require explicit review of the
-supported encodings and malformed-input behavior.
+GBK 标签与 GB18030 共用同一解码器。语法无效的输入在查表前即被拒绝。修改解码器或修正表时，必须显式复核支持的编码范围以及对格式错误输入的处理。

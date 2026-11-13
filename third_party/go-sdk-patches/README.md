@@ -1,29 +1,26 @@
-# LitRadar MCP compatibility patch
+# LitRadar MCP 兼容补丁
 
-Upstream: modelcontextprotocol/go-sdk v1.8.0, commit `3f3b699b2b67e1ed033a63d6651671dab53c2d32`. The source copy and original MIT license are retained under `../go-sdk`. `upstream.json` identifies every original byte; `patched.json` identifies the bounded changed/new files and `compatibility.patch`.
+上游为 modelcontextprotocol/go-sdk v1.8.0，提交 `3f3b699b2b67e1ed033a63d6651671dab53c2d32`。源码副本与原始 MIT 许可证保存在 `../go-sdk`。`upstream.json` 标识每个原始字节；`patched.json` 标识受控范围内的改动/新增文件以及 `compatibility.patch`。
 
-The opt-in mode adapts the existing SDK HTTP transport, session timers and streams to the application protocol contract. It does not add a second JSON-RPC dispatcher, session manager or event store. The SDK's default mode remains covered by its upstream suite. The application authenticates each request, validates Host/Origin and carries trusted version/principal context through public SDK middleware.
+## 补丁范围
 
-The helper normalizes JSON syntax and classifies envelopes to preserve observable malformed-request HTTP diagnostics. Independent Go and raw-client tests cover these application boundaries alongside the upstream transport suite.
+- 可选启用的兼容模式让现有 SDK HTTP 传输、会话计时器和流适配应用协议契约，不额外引入第二套 JSON-RPC 分发器、会话管理器或事件存储。SDK 默认模式仍由上游测试套件覆盖。
+- 应用对每个请求进行认证，校验 Host/Origin，并通过 SDK 公共中间件传递可信的版本与主体上下文。
+- 辅助函数规范化 JSON 语法并对信封分类，以保留可观察的畸形请求 HTTP 诊断。独立的 Go 测试与原始客户端测试覆盖这些应用边界，与上游传输测试并行运行。
+- 同一会话内并发重复的请求 ID 会以 HTTP 400 / JSON-RPC -32600 拒绝，保留原响应并避免重复执行。已完成的 ID 可以复用，会话之间互相独立。
 
-The application rejects a concurrent duplicate request ID within one session with HTTP 400 / JSON-RPC -32600, preserving the original response and avoiding duplicate execution. Completed IDs can be reused; sessions are independent.
+## SSE 写入与请求体上限
 
-## Verification and updates
+- 每个兼容 SSE 事件、keepalive 及其 flush 共享 10 秒写入期限，完成后清除，因此健康的流可以超过该期限和 15 秒 keepalive 周期持续运行。重放/预热写入失败会关闭所属租约。SDK 默认传输不受影响。
+- 运行时关闭时，先单独开始 30 秒的网络排空预算，再等待 MCP 关闭；到期强制关闭套接字，并在释放借用资源前等待处理器结束。该期限不约束已接纳的数据库写入。
+- 应用适配层在解码前把原始 MCP 请求体限制为 4 MiB（超出返回 HTTP 413），旧版 JSON 规范化后最多允许该大小的 6 倍。认证以及 Host/Origin/请求头的优先级保持不变。兼容字节标识从同一固定上游归档重新生成。
 
-Resource subscription tests and the runnable example wait for the protocol acknowledgement before emitting
-updates. The upstream handler callback runs before the subscription is registered,
-so observing that callback alone can lose updates under concurrent scheduling.
-This test-only change preserves update, subscription identity and unsubscribe
-assertions; production subscription behavior is unchanged.
+## 校验与升级
 
-Run `node apps/server/scripts/verify-go-dependency.mjs go-sdk` from the repository root. It verifies the hash-pinned upstream archive, every original and added file, unchanged upstream module manifests/license, patch hashes, and exact patch reconstruction. An unrelated edit or extra file fails this check. The downloaded archive is evidence input; its absence is an error, not a skipped check.
+资源订阅测试和可运行示例会等待协议确认后再发出更新。上游处理器回调先于订阅注册执行，只观察回调会在并发调度下丢失更新。这是仅限测试的改动，保留了更新、订阅标识和取消订阅断言，生产环境订阅行为不变。
 
-Run both regular and race MCP tests inside the SDK's original module and under the application's build list, with `GOWORK=off`, on Windows and Linux. `node apps/server/scripts/check-go.mjs` executes both configurations. Application-boundary and independent raw-client tests remain required in addition to upstream tests.
+在仓库根目录运行 `node apps/server/scripts/verify-go-dependency.mjs go-sdk`。它校验按哈希固定的上游归档、每个原始与新增文件、未改动的上游模块清单与许可证、补丁哈希以及补丁的精确重建。任何无关修改或多余文件都会导致校验失败。下载的归档是证据输入，缺失时报错而不是跳过。
 
-For a security upgrade, inspect upstream changes, rebase only the approved patch files, regenerate identities deliberately, and rerun the same integrity, default-mode, compatibility and application-build-list gates. Upstream release activity does not establish that this patch can be removed. Do not update the copied upstream `go.mod` or `go.sum` to make a test pass.
+常规与 race 两种 MCP 测试都需要在 SDK 原始模块内以及应用构建列表下运行（`GOWORK=off`），覆盖 Windows 与 Linux。`node apps/server/scripts/check-go.mjs` 会执行这两种配置。除上游测试外，应用边界测试与独立原始客户端测试同样必需。
 
-## Go optimization round 1
-
-The approved optimization contract adds a 10-second deadline to each compatibility SSE event, keepalive, and flush. Writes and their flush share a budget, cleared after completion so healthy streams can outlive it and the 15-second keepalive cadence. Failed replay/priming writes close the owning lease. The default SDK transport remains unchanged. Runtime shutdown starts a separate 30-second network-drain budget before joining MCP close, forces socket closure on expiry, and joins handlers before releasing borrowed resources. This is not a deadline for admitted database writes.
-
-The application adapter separately limits original MCP request bodies to 4 MiB (HTTP 413 on overflow), before decoding, and allows at most six times that size after legacy JSON normalization. Authentication and Host/Origin/header precedence remain intact. Compatibility byte identities are regenerated from the same fixed upstream archive.
+安全升级时：审阅上游变更，只对已批准的补丁文件变基，有意识地重新生成标识，再重跑同样的完整性、默认模式、兼容性和应用构建列表关卡。上游发布活动并不意味着可以移除本补丁。不要为了让测试通过而修改复制的上游 `go.mod` 或 `go.sum`。
