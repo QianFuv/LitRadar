@@ -71,6 +71,9 @@ jobs:
       SOURCE_SHA: ${{ needs.context.outputs.source }}
       RELEASE_VERSION: ${{ needs.context.outputs.version }}
     steps:
+      - name: Keep LF line endings
+        id: keep_lf_line_endings
+        run: git config --global core.autocrlf input
       - name: Checkout exact product source
         id: checkout_exact_product_source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

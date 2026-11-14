@@ -51,6 +51,10 @@ jobs:
       RELEASE_VERSION: ${{ inputs.version }}
       GOLANGCI_LINT_VERSION: v2.15.0
     steps:
+      - name: Keep LF line endings
+        id: keep_lf_line_endings
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf input
       - name: Checkout exact product source
         id: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

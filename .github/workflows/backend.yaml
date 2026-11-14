@@ -32,6 +32,10 @@ jobs:
         os: [ubuntu-26.04, windows-latest]
         lane: [regular, race]
     steps:
+      - name: Keep LF line endings
+        id: keep_lf_line_endings
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf input
       - name: Checkout source
         id: checkout_source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
