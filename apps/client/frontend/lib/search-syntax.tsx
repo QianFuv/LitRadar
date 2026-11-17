@@ -7,7 +7,7 @@
  */
 
 /** Article search mode understood by the article list endpoint. */
-export type SearchSyntaxMode = 'simple' | 'advanced';
+export type SearchSyntaxMode = 'keywords' | 'advanced';
 
 /** Searchable FTS5 column exposed to users. */
 type SearchFieldOption = {
@@ -37,7 +37,7 @@ const INITIAL_TOKEN_PATTERN = /(^|[\s(:])\^[^\s]/;
  * Check whether a query uses FTS5 syntax that needs the advanced search mode.
  *
  * Operators must be upper-case and standalone, matching FTS5 itself, so ordinary words such as
- * "and" or "Not" keep the forgiving simple mode.
+ * "and" or "Not" stay in keywords mode, where every whitespace-separated word must match.
  *
  * @param query - Raw query text.
  * @returns True when the query contains advanced syntax.
@@ -62,10 +62,10 @@ export function isAdvancedSearchQuery(query: string): boolean {
  * Choose the search mode for a query.
  *
  * @param query - Raw query text.
- * @returns Advanced when the query contains FTS5 syntax, otherwise simple.
+ * @returns Advanced when the query contains FTS5 syntax, otherwise keywords.
  */
 export function getSearchSyntaxMode(query: string): SearchSyntaxMode {
-  return isAdvancedSearchQuery(query) ? 'advanced' : 'simple';
+  return isAdvancedSearchQuery(query) ? 'advanced' : 'keywords';
 }
 
 /**

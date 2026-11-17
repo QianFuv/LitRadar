@@ -20,9 +20,9 @@ UPDATE articles SET title='RESUME ETUDES',abstract_text='ÉMILE' WHERE article_i
 		query string
 		mode  domain.SearchMode
 	}{
-		{"resume", domain.SearchSimple},
-		{"RÉSUMÉ", domain.SearchSimple},
-		{"emile", domain.SearchSimple},
+		{"resume", domain.SearchKeywords},
+		{"RÉSUMÉ", domain.SearchKeywords},
+		{"emile", domain.SearchKeywords},
 		{`title:résumé AND "ÉTUDES"`, domain.SearchAdvanced},
 		{`authors:emile`, domain.SearchAdvanced},
 	} {
@@ -59,8 +59,8 @@ UPDATE articles SET title='RESUME ETUDES',abstract_text='ÉMILE' WHERE article_i
 	}
 }
 
-// TestSimpleBlankProjectionKeepsSearch prevents discarded punctuation from admitting all rows.
-func TestSimpleBlankProjectionKeepsSearch(t *testing.T) {
+// TestKeywordBlankProjectionKeepsSearch prevents discarded punctuation from admitting all rows.
+func TestKeywordBlankProjectionKeepsSearch(t *testing.T) {
 	configuration, _ := queryFixture(t)
 	for _, query := range []string{"!!!", "😀", "\u0301"} {
 		params := DefaultArticleListParams()

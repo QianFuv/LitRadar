@@ -1936,7 +1936,7 @@
           "is_error": { "type": "boolean" },
           "kind": { "enum": ["http", "mcp", "search"], "type": "string" },
           "method": { "type": "string" },
-          "mode": { "enum": ["simple", "advanced"], "type": "string" },
+          "mode": { "enum": ["keywords", "advanced"], "type": "string" },
           "name": { "type": "string" },
           "p50_ms": { "format": "double", "minimum": 0, "type": "number" },
           "p95_ms": { "format": "double", "minimum": 0, "type": "number" },
@@ -5538,13 +5538,13 @@
             "schema": { "description": "Full-text query.", "maxLength": 2048, "type": "string" }
           },
           {
-            "description": "Full-text query interpretation mode; defaults to simple.",
+            "description": "Full-text query interpretation mode; defaults to keywords (all whitespace-separated words must match).",
             "explode": false,
             "in": "query",
             "name": "search_mode",
             "schema": {
-              "description": "Full-text query interpretation mode; defaults to simple.",
-              "enum": ["simple", "advanced"],
+              "description": "Full-text query interpretation mode; defaults to keywords (all whitespace-separated words must match).",
+              "enum": ["keywords", "advanced"],
               "type": "string"
             }
           },
@@ -16669,12 +16669,12 @@
             "schema": { "description": "RFC3339 fixed weekly window end.", "type": "string" }
           },
           {
-            "description": "Optional simple full-text phrase.",
+            "description": "Optional full-text keywords; all whitespace-separated words must match.",
             "explode": false,
             "in": "query",
             "name": "q",
             "schema": {
-              "description": "Optional simple full-text phrase.",
+              "description": "Optional full-text keywords; all whitespace-separated words must match.",
               "maxLength": 2048,
               "type": "string"
             }

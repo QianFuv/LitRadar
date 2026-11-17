@@ -15,7 +15,7 @@ import type {
 import { parseAnnouncementList } from '@/lib/api-contract';
 import { isAdvancedSearchQuery } from '@/lib/search-syntax';
 
-const DEFAULT_ARTICLE_SEARCH_MODE: ArticleSearchMode = 'simple';
+const DEFAULT_ARTICLE_SEARCH_MODE: ArticleSearchMode = 'keywords';
 
 /** Article search filters accepted by `GET /api/articles`. */
 export type ArticleSearchQuery = NonNullable<operations['list_articles']['parameters']['query']>;

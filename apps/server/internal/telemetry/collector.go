@@ -18,7 +18,7 @@ type Dimensions struct {
 	Method        string `json:"method,omitempty" required:"false" nullable:"false"`
 	StatusClass   string `json:"status_class,omitempty" required:"false" nullable:"false" enum:"2xx,3xx,4xx,5xx"`
 	IsError       bool   `json:"is_error" nullable:"false"`
-	Mode          string `json:"mode,omitempty" required:"false" nullable:"false" enum:"simple,advanced"`
+	Mode          string `json:"mode,omitempty" required:"false" nullable:"false" enum:"keywords,advanced"`
 	Database      string `json:"database,omitempty" required:"false" nullable:"false"`
 	TermCount     string `json:"term_count,omitempty" required:"false" nullable:"false" enum:"0,1,2-4,5-9,10+"`
 	UsesPrefix    bool   `json:"uses_prefix" nullable:"false"`

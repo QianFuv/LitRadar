@@ -174,8 +174,8 @@ type ListArticlesInput struct {
 	PMID optional[string] `query:"pmid" nullable:"false" maxLength:"2048" doc:"PubMed identifier filter."`
 	// Q describes full-text query.
 	Q optional[string] `query:"q" nullable:"false" maxLength:"2048" doc:"Full-text query."`
-	// SearchMode describes full-text query interpretation mode; defaults to simple.
-	SearchMode optional[domain.SearchMode] `query:"search_mode" nullable:"false" enum:"simple,advanced" doc:"Full-text query interpretation mode; defaults to simple."`
+	// SearchMode describes full-text query interpretation mode; defaults to keywords.
+	SearchMode optional[domain.SearchMode] `query:"search_mode" nullable:"false" enum:"keywords,advanced" doc:"Full-text query interpretation mode; defaults to keywords (all whitespace-separated words must match)."`
 	// Sort describes sort expression.
 	Sort optional[string] `query:"sort" nullable:"false" maxLength:"2048" doc:"Sort expression."`
 	// Limit describes page size.
@@ -657,8 +657,8 @@ type GetWeeklyUpdateArticlesInput struct {
 	JournalID contentID `query:"journal_id" required:"true" nullable:"false" doc:"Positive journal identifier."`
 	// WindowEnd describes rFC3339 fixed weekly window end.
 	WindowEnd string `query:"window_end" required:"true" nullable:"false" doc:"RFC3339 fixed weekly window end."`
-	// Q describes optional simple full-text phrase.
-	Q optional[string] `query:"q" nullable:"false" maxLength:"2048" doc:"Optional simple full-text phrase."`
+	// Q describes optional full-text keywords that must all match.
+	Q optional[string] `query:"q" nullable:"false" maxLength:"2048" doc:"Optional full-text keywords; all whitespace-separated words must match."`
 	// Limit describes page size from 1 through 200.
 	Limit optional[int64] `query:"limit" nullable:"false" minimum:"1" maximum:"200" format:"int64" doc:"Page size from 1 through 200."`
 	// Cursor describes descending date|article_id cursor.

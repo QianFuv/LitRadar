@@ -158,7 +158,7 @@ Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 `
 
 ### 索引数据库
 
-每个 CSV 对应 `data/index/<csv_stem>.sqlite`。当前 v10 内容库只包含规范期刊、期次、文章、identity aliases、撤稿关系、查询/FTS 投影和事务性文章变更 outbox。v10 沿用 contentless FTS 布局：Go 先折叠重音和大小写，再按 `simple 0` 的字节规则切词并以空格连接，FTS5 内置的 `ascii` 分词器只按空格拆分；检索走全字段 FTS MATCH，查询操作数经过同一流程，原始元数据保持不变。内容库不包含 Provider、URL、anchor、checkpoint、lease 或运行统计。可接受的旧版本与 FTS 迁移见[数据库参考](../reference/database.md#内容库破坏性切换)，FTS 声明见 [`article_search`](../reference/database.md#article_search)。
+每个 CSV 对应 `data/index/<csv_stem>.sqlite`。当前 v10 内容库只包含规范期刊、期次、文章、identity aliases、撤稿关系、查询/FTS 投影和事务性文章变更 outbox。v10 沿用 contentless FTS 布局：Go 先折叠重音和大小写，再按字节切词并以空格连接：连续 ASCII 字母和连续数字分别成词，非 ASCII 字符逐字成词，FTS5 内置的 `ascii` 分词器只按空格拆分；检索走全字段 FTS MATCH，查询操作数经过同一流程，原始元数据保持不变。内容库不包含 Provider、URL、anchor、checkpoint、lease 或运行统计。可接受的旧版本与 FTS 迁移见[数据库参考](../reference/database.md#内容库破坏性切换)，FTS 声明见 [`article_search`](../reference/database.md#article_search)。
 
 分词不依赖 SQLite 扩展：连接上不注册自定义分词器，SQL 扩展加载保持关闭。
 
@@ -238,7 +238,7 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 1. 浏览器通过 Caddy 加载 Wails Web host 提供的 Vite 前端，并通过 `apps/client/frontend/lib/api/` 同源调用 `/api/*`。
 2. API 根据可选 `db` 选择一个 `data/index/*.sqlite`。
 3. 列表与过滤使用 `article_listing`，详情从规范关系表读取。
-4. `q` 默认先转义为一个 FTS5 字面短语再使用 `article_search MATCH`；只有显式 `search_mode=advanced` 才解释 FTS5 运算符，非法表达式作为可纠正的 400 输入错误返回。
+4. `q` 默认使用 `search_mode=keywords`，按空白拆分输入，每段经过折叠和切词后转义为 FTS5 字面短语，各短语以隐式 AND 连接，再使用 `article_search MATCH`；只有显式 `search_mode=advanced` 才解释 FTS5 运算符，非法表达式作为可纠正的 400 输入错误返回。
 5. API 把文章、期刊和期次的 63 位正整数哈希 ID 序列化为十进制字符串，格式见 [API 参考](../reference/api.md#id-与分页)。
 
 ### 认证

@@ -168,20 +168,20 @@ func TestSearchPrivacyInStoredRows(t *testing.T) {
 	}
 }
 
-// TestSearchShapeSemantics distinguishes literal simple text and quoted advanced operators.
+// TestSearchShapeSemantics distinguishes literal keyword text and quoted advanced operators.
 func TestSearchShapeSemantics(t *testing.T) {
 	for _, scenario := range []struct {
 		text, mode, terms string
 		prefix, boolean   bool
 	}{
-		{`alpha AND beta*`, "simple", "2-4", false, false},
+		{`alpha AND beta*`, "keywords", "2-4", false, false},
 		{`"AND star*"`, "advanced", "1", false, false},
 		{`"AND"`, "advanced", "1", false, false},
 		{`title:alpha`, "advanced", "1", false, false},
 		{`NEAR(alpha beta) OR gamma*`, "advanced", "2-4", true, true},
 	} {
 		shape := SearchShape("articles", scenario.mode, "catalog.sqlite", scenario.text)
-		if shape.TermCount != scenario.terms || shape.UsesPrefix != scenario.prefix || shape.UsesBoolean != scenario.boolean {
+		if shape.Mode != scenario.mode || shape.TermCount != scenario.terms || shape.UsesPrefix != scenario.prefix || shape.UsesBoolean != scenario.boolean {
 			t.Fatal(shape)
 		}
 	}

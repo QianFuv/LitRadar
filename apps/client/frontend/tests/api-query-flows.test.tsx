@@ -128,7 +128,7 @@ async function serializesArticleQuery(): Promise<void> {
   expect(url.searchParams.getAll('abs_rating')).toEqual(['4', '4*']);
   expect(url.searchParams.getAll('fms_rating')).toEqual(['A']);
   expect(url.searchParams.get('q')).toBe('rust async');
-  expect(url.searchParams.get('search_mode')).toBe('simple');
+  expect(url.searchParams.get('search_mode')).toBe('keywords');
   expect(url.searchParams.get('cursor')).toBe('cursor-token');
   expect(url.searchParams.get('include_total')).toBe('true');
   expect(url.searchParams.get('db')).toBe('fixture.sqlite');
@@ -141,10 +141,13 @@ async function selectsAdvancedModeForSyntax(): Promise<void> {
   server.use(http.get('http://localhost/api/articles', captureArticleRequest));
   for (const [query, mode] of [
     ['title:graph AND "neural network"', 'advanced'],
-    ['graph neural network', 'simple'],
+    ['graph neural network', 'keywords'],
+    ['meta-analysis outcomes', 'keywords'],
   ] as const) {
     await getArticles({ q: query }, null, 'fixture.sqlite');
-    expect(new URL(capturedArticleUrl).searchParams.get('search_mode')).toBe(mode);
+    const searchMode = new URL(capturedArticleUrl).searchParams.get('search_mode');
+    expect(searchMode).toBe(mode);
+    expect(searchMode).not.toBe('simple');
   }
 }
 

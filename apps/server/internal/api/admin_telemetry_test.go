@@ -62,6 +62,39 @@ func httpTelemetryHandler(handlers *adminHandlers) *Handler {
 	return &Handler{mux: fixtureMux(handlers.routes()[:1])}
 }
 
+// TestAdminTelemetryReadsHistoricalSimpleMode covers persisted dimensions after the enum change.
+func TestAdminTelemetryReadsHistoricalSimpleMode(t *testing.T) {
+	auth, _, token := authFixture(t)
+	ctx, now := context.Background(), time.Now().UTC().Truncate(time.Hour)
+	collector, err := telemetry.Open(ctx, filepath.Join(t.TempDir(), "telemetry.sqlite"), 90)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer collector.Close()
+	collector.Record(now, telemetry.Dimensions{Kind: "search", Name: "articles", Mode: "simple"}, time.Millisecond)
+	if err := collector.Flush(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	handlers := adminHandlers{auth: auth, telemetry: collector}
+	response := authRequest(httpTelemetryHandler(&handlers), "GET", "/api/admin/telemetry?kind=search", "", token)
+	if response.Code != 200 {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	var report telemetry.Report
+	if err := json.Unmarshal(response.Body.Bytes(), &report); err != nil || len(report.Series) != 1 || report.Series[0].Mode != "simple" || report.Series[0].Calls != 1 {
+		t.Fatal(report, err)
+	}
+	hasHistoricalMode := false
+	for _, distribution := range report.SearchShapes {
+		if distribution.Feature == "mode" && distribution.Value == "simple" && distribution.Calls == 1 {
+			hasHistoricalMode = true
+		}
+	}
+	if !hasHistoricalMode {
+		t.Fatal("historical mode missing from distributions", report.SearchShapes)
+	}
+}
+
 // TestHttpSearchTelemetryPrivacyStoredRows exercises real auth, routes and MATCH execution before inspecting SQLite.
 func TestHttpSearchTelemetryPrivacyStoredRows(t *testing.T) {
 	auth, _, token := authFixture(t)

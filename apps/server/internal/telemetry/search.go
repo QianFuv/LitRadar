@@ -22,13 +22,13 @@ func Magnitude(count int64) string {
 }
 
 // SearchShape discards query text after extracting coarse lexical features.
-// Simple mode treats operators and stars literally. Advanced mode recognizes
+// Keywords mode treats operators and stars literally. Advanced mode recognizes
 // operators and prefix stars only outside quoted phrases.
 func SearchShape(endpoint, mode, database, text string) Dimensions {
 	shape := Dimensions{Kind: "search", Name: endpoint, Mode: mode, Database: database, HitCountBasis: "returned"}
 	count := 0
 	if mode != "advanced" {
-		shape.Mode = "simple"
+		shape.Mode = "keywords"
 		count = len(strings.Fields(text))
 	} else {
 		isQuoted, isColumnGroup, isDistance := false, false, false

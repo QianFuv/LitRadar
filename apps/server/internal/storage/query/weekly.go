@@ -252,7 +252,7 @@ func WeeklyArticles(ctx context.Context, configuration config.Config, params Wee
 	if params.Query != nil && strings.TrimSpace(*params.Query) != "" {
 		if collector := telemetry.FromContext(ctx); collector != nil {
 			started := time.Now()
-			shape := telemetry.SearchShape("weekly", "simple", name, *params.Query)
+			shape := telemetry.SearchShape("weekly", "keywords", name, *params.Query)
 			defer func() {
 				shape.IsError = failure != nil
 				shape.Hits = telemetry.Magnitude(int64(len(result.Items)))

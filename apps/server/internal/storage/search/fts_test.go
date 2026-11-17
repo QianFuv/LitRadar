@@ -123,3 +123,25 @@ func TestPrepareQueryMatchesPrefixAndBooleanPhrases(t *testing.T) {
 		}
 	}
 }
+
+// TestKeywordsCannotBecomeFtsSyntax checks literal syntax characters and empty-token chunks.
+func TestKeywordsCannotBecomeFtsSyntax(t *testing.T) {
+	connection, ctx := searchFixture(t)
+	if _, err := connection.ExecContext(ctx, "DROP TABLE article_search;"+indexschema.SearchTable); err != nil {
+		t.Fatal(err)
+	}
+	if err := Rebuild(ctx, connection); err != nil {
+		t.Fatal(err)
+	}
+	queries := []string{`"(){}:*^,+ OR NOT AND NEAR`, `alpha "late`, "😀 !!! \u0301", "meta-analysis R&D"}
+	for character := range rune(128) {
+		queries = append(queries, "alpha "+string(character)+" beta")
+	}
+	for _, text := range queries {
+		var count int
+		prepared := PrepareQuery(text, domain.SearchKeywords)
+		if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM article_search WHERE article_search MATCH ?", prepared).Scan(&count); err != nil {
+			t.Fatalf("keywords %q prepared as %q: %v", text, prepared, err)
+		}
+	}
+}

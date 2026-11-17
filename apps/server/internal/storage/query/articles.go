@@ -52,10 +52,10 @@ type ArticleListParams struct {
 	IncludeTotal *bool                 `json:"include_total"`
 }
 
-// DefaultArticleListParams supplies the original repository's article-specific defaults.
+// DefaultArticleListParams supplies keyword search and article pagination defaults.
 func DefaultArticleListParams() ArticleListParams {
 	sort := "date:desc"
-	return ArticleListParams{Limit: 50, Sort: &sort, SearchMode: domain.SearchSimple}
+	return ArticleListParams{Limit: 50, Sort: &sort, SearchMode: domain.SearchKeywords}
 }
 
 func validateCharacters(label, value string, maximum int) error {
@@ -133,6 +133,7 @@ func (filter *filter) optionalBoolean(clause string, value *bool) {
 	}
 }
 
+// preparedMatch prepares article and weekly filters with the selected query interpretation.
 func preparedMatch(params ArticleListParams) string {
 	if params.Query == nil {
 		return ""
@@ -141,10 +142,7 @@ func preparedMatch(params ArticleListParams) string {
 	if query == "" {
 		return ""
 	}
-	if params.SearchMode == domain.SearchAdvanced {
-		return search.PrepareQuery(query, domain.SearchAdvanced)
-	}
-	return search.Phrase(query)
+	return search.PrepareQuery(query, params.SearchMode)
 }
 
 func classifySearchError(err error, params ArticleListParams) error {

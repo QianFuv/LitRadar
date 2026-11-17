@@ -9,7 +9,8 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-// Tokenize implements Simple's byte classes with truncated characters clamped to the input.
+// Tokenize groups ASCII letters and digits separately and emits other characters individually.
+// Truncated multibyte characters are clamped to the input.
 // Only ASCII letters are folded; non-ASCII bytes retain their original spelling.
 func Tokenize(value string) []string {
 	tokens := []string{}
@@ -103,19 +104,25 @@ func projectionRune(character rune) rune {
 // PrepareText folds canonical text and joins byte tokens for the ASCII FTS tokenizer.
 func PrepareText(value string) string { return strings.Join(Tokenize(FoldText(value)), " ") }
 
-// Phrase quotes a simple operand, retaining nonblank input whose folded projection is blank.
+// Phrase quotes one folded, tokenized operand, retaining raw text when its fold is blank.
 func Phrase(value string) string {
-	return `"` + strings.ReplaceAll(PrepareQuery(value, domain.SearchSimple), `"`, `""`) + `"`
+	folded := FoldText(value)
+	if strings.TrimSpace(folded) == "" && strings.TrimSpace(value) != "" {
+		folded = value
+	}
+	return `"` + strings.ReplaceAll(strings.Join(Tokenize(folded), " "), `"`, `""`) + `"`
 }
 
-// PrepareQuery folds and tokenizes operands while preserving advanced syntax and simple blank fallback.
+// PrepareQuery joins whitespace-separated keyword phrases with AND or preserves advanced syntax.
 func PrepareQuery(value string, mode domain.SearchMode) string {
 	if mode != domain.SearchAdvanced {
-		folded := FoldText(value)
-		if strings.TrimSpace(folded) == "" && strings.TrimSpace(value) != "" {
-			folded = value
+		phrases := make([]string, 0)
+		for chunk := range strings.FieldsSeq(value) {
+			if phrase := Phrase(chunk); phrase != `""` {
+				phrases = append(phrases, phrase)
+			}
 		}
-		return strings.Join(Tokenize(folded), " ")
+		return strings.Join(phrases, " ")
 	}
 	return prepareAdvancedQuery(value)
 }

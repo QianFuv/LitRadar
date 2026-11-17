@@ -63,7 +63,7 @@ OpenAPI 由 Go 类型生成：`apps/server/internal/api/` 用 huma 注册各操�
 - cursor 请求显式传 `include_total=true` 时，`total` 是不含 cursor/offset 条件的完整过滤结果总数。
 - 精确的默认值、上限和过滤字段以 OpenAPI schema 为准。
 
-全文查询 `q` 默认使用 `search_mode=simple`，把完整输入转义为一个 FTS5 字面短语，引号和 `OR` 等符号不会被解释为运算符。输入先按[检索分词](database.md#article_search)折叠重音和大小写并切词，因此 `resume` 能命中 `Résumé`，中文按字组成短语。只有显式设置 `search_mode=advanced` 才启用 FTS5 查询语法，其中每个操作数同样在 Go 中切成短语，`AND`/`OR`/`NOT`、`NEAR`、列限定和前缀 `*` 保持 FTS5 语义；非法高级表达式返回 `400 Invalid search expression`。REST、MCP 与 storage 均限制搜索文本最多 2,048 个 Unicode 字符、重复 `journal_id`/`area` 与期刊评级过滤值合计最多 500 项。
+全文查询 `q` 默认使用 `search_mode=keywords`，按空白拆分输入，每段按[检索分词](database.md#article_search)折叠重音和大小写并切词后转义为一个 FTS5 字面短语，各短语以隐式 AND 连接，所有词段都必须匹配。例如 `goal orientation passion` 不要求相邻或固定顺序，`meta-analysis` 和 `R&D` 分别匹配短语 `meta analysis` 和 `r d`；引号和 `OR` 等符号不会被解释为运算符。`resume` 能命中 `Résumé`，单个中文词段按字组成短语。周报的 `q` 筛选使用相同的关键词语义。只有显式设置 `search_mode=advanced` 才启用 FTS5 查询语法，其中每个操作数同样在 Go 中切成短语，`AND`/`OR`/`NOT`、`NEAR`、列限定和前缀 `*` 保持 FTS5 语义；非法高级表达式返回 `400 Invalid search expression`。REST、MCP 与 storage 均限制搜索文本最多 2,048 个 Unicode 字符、重复 `journal_id`/`area` 与期刊评级过滤值合计最多 500 项。
 
 ### 期刊评级筛选
 

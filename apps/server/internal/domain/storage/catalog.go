@@ -21,10 +21,12 @@ type FavoriteCitation struct {
 	Doi          *string     `json:"doi"`
 }
 
-// SearchMode selects escaped literal search or the original FTS5 expression grammar.
+// SearchMode selects keyword conjunctions or the original FTS5 expression grammar.
 type SearchMode string
 
 const (
-	SearchSimple   SearchMode = "simple"
+	// SearchKeywords requires every whitespace-separated keyword phrase to match.
+	SearchKeywords SearchMode = "keywords"
+	// SearchAdvanced interprets FTS5 operators and query syntax.
 	SearchAdvanced SearchMode = "advanced"
 )

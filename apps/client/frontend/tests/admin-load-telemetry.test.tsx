@@ -99,6 +99,8 @@ function createReport(): TelemetryResponse {
       { feature: 'hits', value: '0', calls: 5 },
       { feature: 'hits', value: '10-99', calls: 25 },
       { feature: 'mode', value: 'advanced', calls: 30 },
+      { feature: 'mode', value: 'keywords', calls: 3 },
+      { feature: 'mode', value: 'simple', calls: 2 },
       { feature: 'term_count', value: '2-4', calls: 30 },
       { feature: 'uses_boolean', value: 'true', calls: 30 },
       { feature: 'uses_prefix', value: 'true', calls: 30 },
@@ -191,6 +193,10 @@ async function rendersReportAndRequestsFilters(): Promise<void> {
     screen.getByRole('region', { name: '命中量级 · 本页返回条数（无总数）' }),
   ).toBeInTheDocument();
   expect(screen.getByRole('region', { name: '命中计数口径' })).toHaveTextContent('总命中数');
+  const modes = screen.getByRole('region', { name: '检索模式' });
+  expect(modes).toHaveTextContent('高级检索');
+  expect(modes).toHaveTextContent('关键词检索');
+  expect(modes).toHaveTextContent('simple');
 
   await user.click(screen.getByRole('radio', { name: '7 天' }));
   await waitFor(() => expect(queries.at(-1)).toBe('?period=7d'));

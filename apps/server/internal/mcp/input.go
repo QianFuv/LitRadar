@@ -356,10 +356,10 @@ func (input *toolInput) articleSearchMode(params *query.ArticleListParams) {
 			}
 		}
 		switch string(value) {
-		case "simple", "advanced":
+		case "keywords", "advanced":
 			params.SearchMode = domain.SearchMode(value)
 		default:
-			input.fail("search_mode must be simple or advanced")
+			input.fail("search_mode must be keywords or advanced")
 		}
 	}
 

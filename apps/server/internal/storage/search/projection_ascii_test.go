@@ -59,18 +59,24 @@ func TestPrepareTextFoldsBeforeTokenization(t *testing.T) {
 	}
 }
 
-// TestPrepareSimpleQueryBlankProjection retains the original operand before raw tokenization.
-func TestPrepareSimpleQueryBlankProjection(t *testing.T) {
+// TestPrepareKeywordQueryBlankProjection retains each original chunk before raw tokenization.
+func TestPrepareKeywordQueryBlankProjection(t *testing.T) {
 	for _, scenario := range []struct{ input, expected string }{
-		{"!!!", "! ! !"},
-		{"😀", "😀"},
-		{"\u0301", "\u0301"},
-		{"a!", "a"},
-		{"Émile", "emile"},
+		{"!!!", `"! ! !"`},
+		{"😀", `"😀"`},
+		{"\u0301", "\"\u0301\""},
+		{"a!", `"a"`},
+		{"Émile", `"emile"`},
+		{"goal orientation passion", `"goal" "orientation" "passion"`},
+		{"meta-analysis R&D 中文", `"meta analysis" "r d" "中 文"`},
+		{"Émile\u2003résumé", `"emile" "resume"`},
+		{"!!! resume 😀", `"! ! !" "resume" "😀"`},
+		{"\x00 resume \x7f", `"resume"`},
+		{`"`, `""""`},
 		{" \t\n", ""},
 	} {
 		if actual := PrepareQuery(scenario.input, ""); actual != scenario.expected {
-			t.Errorf("simple query %q: got %q, want %q", scenario.input, actual, scenario.expected)
+			t.Errorf("keywords query %q: got %q, want %q", scenario.input, actual, scenario.expected)
 		}
 	}
 }

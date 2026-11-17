@@ -83,7 +83,7 @@ function detectsAdvancedSyntax(): void {
     'note: draft',
   ]) {
     expect(isAdvancedSearchQuery(query), query).toBe(false);
-    expect(getSearchSyntaxMode(query)).toBe('simple');
+    expect(getSearchSyntaxMode(query)).toBe('keywords');
   }
 }
 
@@ -308,7 +308,7 @@ beforeEach(() => {
 });
 
 describe('advanced search', () => {
-  test('detects FTS5 syntax and keeps ordinary text simple', detectsAdvancedSyntax);
+  test('detects FTS5 syntax and keeps ordinary text in keywords mode', detectsAdvancedSyntax);
   test('builds draft rewrites', buildsRewrites);
   test('describes invalid expressions', describesSyntaxErrors);
   test('compiles builder conditions into valid FTS5', compilesConditions);

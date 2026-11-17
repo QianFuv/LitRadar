@@ -5,6 +5,24 @@ import (
 	"testing"
 )
 
+// TestArticleSearchModesRejectRemovedAndUnknownValues checks mode validation and ASCII folding.
+func TestArticleSearchModesRejectRemovedAndUnknownValues(t *testing.T) {
+	for _, mode := range []string{"simple", "SIMPLE", "semantic"} {
+		input := &toolInput{fields: map[string]any{"search_mode": mode}}
+		input.articles()
+		if input.err == nil || input.err.Error() != "search_mode must be keywords or advanced" {
+			t.Fatalf("mode %q: %v", mode, input.err)
+		}
+	}
+	for _, mode := range []string{"keywords", "KEYWORDS", "advanced", "ADVANCED"} {
+		input := &toolInput{fields: map[string]any{"search_mode": mode}}
+		input.articles()
+		if input.err != nil {
+			t.Fatalf("mode %q: %v", mode, input.err)
+		}
+	}
+}
+
 func TestIssueFilterPreserves63BitDecimalID(t *testing.T) {
 	const decimal = "9223361829786370983"
 	schema := declaredInputSchema(t, "search_articles")

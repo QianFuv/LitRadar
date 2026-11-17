@@ -3001,7 +3001,7 @@ export interface components {
       kind: 'http' | 'mcp' | 'search';
       method?: string;
       /** @enum {string} */
-      mode?: 'simple' | 'advanced';
+      mode?: 'keywords' | 'advanced';
       name: string;
       /** Format: double */
       p50_ms: number;
@@ -6405,8 +6405,8 @@ export interface operations {
         pmid?: string;
         /** @description Full-text query. */
         q?: string;
-        /** @description Full-text query interpretation mode; defaults to simple. */
-        search_mode?: 'simple' | 'advanced';
+        /** @description Full-text query interpretation mode; defaults to keywords (all whitespace-separated words must match). */
+        search_mode?: 'keywords' | 'advanced';
         /** @description Sort expression. */
         sort?: string;
         /** @description Repeated exact UTD grades; OR within a system and AND across systems/other filters. Blank values are invalid; all filter items share a 500-item bound. */
@@ -17309,7 +17309,7 @@ export interface operations {
         journal_id: string;
         /** @description Page size from 1 through 200. */
         limit?: number;
-        /** @description Optional simple full-text phrase. */
+        /** @description Optional full-text keywords; all whitespace-separated words must match. */
         q?: string;
         /** @description RFC3339 fixed weekly window end. */
         window_end: string;

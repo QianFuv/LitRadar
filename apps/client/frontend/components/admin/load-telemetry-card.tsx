@@ -98,7 +98,7 @@ const HIT_BASIS_LABELS: Readonly<Record<HitCountBasis, string>> = {
 const MODE_LABELS = new Map(
   Object.entries({
     advanced: '高级检索',
-    simple: '简单检索',
+    keywords: '关键词检索',
   }),
 );
 
