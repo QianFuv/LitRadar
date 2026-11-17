@@ -2,18 +2,25 @@ package query
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
-	"sync"
+	"fmt"
 	"testing"
 	"time"
 
 	native "modernc.org/sqlite"
 )
 
+// relatedCancellationAttempts bounds how many samples may absorb runner scheduling stalls.
+const relatedCancellationAttempts = 3
+
 // TestRelatedCancellationInterruptsActiveRanking waits until bm25 reads its first
-// document length, then checks that SQLite stops and releases the physical connection. The
+// document length, then checks that SQLite stops and releases the physical connection. Each
 // interruption is compared with a complete ranking on the same connection rather than a fixed
-// bound, so slow runners such as race-enabled Windows CI cannot fail it.
+// bound. A single sample on a loaded runner can stall for longer than a whole ranking, so the
+// test passes once any of a few attempts shows the interruption; a broken cancellation runs every
+// ranking to completion and still fails all of them.
 func TestRelatedCancellationInterruptsActiveRanking(t *testing.T) {
 	_, database := queryFixture(t)
 	if _, err := database.Exec(`WITH RECURSIVE documents(id) AS (
@@ -23,16 +30,35 @@ INSERT INTO article_search(rowid,title,abstract_text)
  SELECT 100000+id,'common','common common' FROM documents;`); err != nil {
 		t.Fatal(err)
 	}
+	samples := make([]string, 0, relatedCancellationAttempts)
+	for attempt := range int64(relatedCancellationAttempts) {
+		interrupted, complete := measureRelatedCancellation(t, database, attempt+1)
+		if interrupted <= complete/2 {
+			t.Logf("active ranking interrupted in %s; complete ranking takes %s; earlier samples %v", interrupted, complete, samples)
+			return
+		}
+		samples = append(samples, fmt.Sprintf("interrupted %s, complete %s", interrupted, complete))
+	}
+	t.Fatal("SQLite continued ranking after cancellation in every attempt", samples)
+}
+
+// measureRelatedCancellation cancels one active ranking on a fresh physical connection and
+// times a complete one for the same source identifier, which keeps every attempt outside the
+// related result cache. FTS5 caches its document-length statement per connection, so only a
+// new connection prepares it again and signals the start of ranking.
+func measureRelatedCancellation(t *testing.T, database *sql.DB, id int64) (time.Duration, time.Duration) {
+	t.Helper()
+	started := make(chan struct{})
+	isSignaled := false
 	connection, err := database.Conn(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	started := make(chan struct{})
-	var once sync.Once
 	if err := connection.Raw(func(raw any) error {
 		return raw.(native.AuthorizerRegisterer).RegisterAuthorizer(func(operation native.AuthorizerActionCode, table, column, database, trigger string) native.AuthorizerReturnCode {
-			if operation == native.AuthRead && table == "article_search_docsize" {
-				once.Do(func() { close(started) })
+			if operation == native.AuthRead && table == "article_search_docsize" && !isSignaled {
+				isSignaled = true
+				close(started)
 			}
 			return native.AuthorizerOK
 		})
@@ -46,7 +72,7 @@ INSERT INTO article_search(rowid,title,abstract_text)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := relatedArticleIds(ctx, database, "", "common", 1, 30)
+		_, err := relatedArticleIds(ctx, database, "", "common", id, 30)
 		done <- err
 	}()
 	select {
@@ -63,12 +89,16 @@ INSERT INTO article_search(rowid,title,abstract_text)
 	}
 	interrupted := time.Since(stopped)
 	ranked := time.Now()
-	if _, err := relatedArticleIds(t.Context(), database, "", "common", 1, 30); err != nil {
+	if _, err := relatedArticleIds(t.Context(), database, "", "common", id, 30); err != nil {
 		t.Fatal("interrupted query retained or poisoned the only connection", err)
 	}
 	complete := time.Since(ranked)
-	if interrupted > complete/2 {
-		t.Fatal("SQLite continued ranking after cancellation", interrupted, "complete ranking", complete)
+	connection, err = database.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Logf("active ranking interrupted in %s; complete ranking takes %s", interrupted, complete)
+	if err := connection.Raw(func(any) error { return driver.ErrBadConn }); !errors.Is(err, driver.ErrBadConn) {
+		t.Fatal("measured connection was not discarded", err)
+	}
+	return interrupted, complete
 }
