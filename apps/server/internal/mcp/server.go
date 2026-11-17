@@ -2,7 +2,6 @@
 package mcp
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -234,6 +233,7 @@ func (services Services) favoriteWork(ctx context.Context, request *sdk.CallTool
 	return work, nil
 }
 
+// encodeToolPayload emits compact JSON while preserving complete tool data and timestamp wires.
 func encodeToolPayload(payload any) (string, error) {
 	type folderWire struct {
 		favorites.Folder
@@ -261,12 +261,7 @@ func encodeToolPayload(payload any) (string, error) {
 		}
 		payload = favoriteWire{value, encoded}
 	}
-	encoded, err := jsonvalue.EncodeJSON(payload)
-	var pretty bytes.Buffer
-	if err == nil {
-		err = json.Indent(&pretty, []byte(encoded), "", "  ")
-	}
-	return pretty.String(), err
+	return jsonvalue.EncodeJSON(payload)
 }
 
 var errFavoriteNotFound = errors.New("favorite not found")

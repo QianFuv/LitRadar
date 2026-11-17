@@ -2,8 +2,10 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,5 +37,23 @@ func TestAmbiguousDatabaseToolErrorListsSelectableStems(t *testing.T) {
 		if !result.IsError || result.Content[0].(*sdk.TextContent).Text != "Multiple databases found; set db to one of: alpha, beta, gamma" {
 			t.Fatalf("tool %s: %#v", name, result)
 		}
+	}
+}
+
+// TestToolPayloadIsCompactAndPreservesAbstract checks size reduction without content loss.
+func TestToolPayloadIsCompactAndPreservesAbstract(t *testing.T) {
+	abstract := strings.Repeat("Complete abstract with a newline.\n", 100)
+	payload := map[string]any{"items": []any{map[string]any{"abstract_text": abstract}}}
+	encoded, err := encodeToolPayload(payload)
+	if err != nil || !json.Valid([]byte(encoded)) || strings.Contains(encoded, "\n") {
+		t.Fatalf("compact payload: %q %v", encoded, err)
+	}
+	var decoded struct {
+		Items []struct {
+			Abstract string `json:"abstract_text"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(encoded), &decoded); err != nil || len(decoded.Items) != 1 || decoded.Items[0].Abstract != abstract {
+		t.Fatalf("abstract changed: %#v %v", decoded, err)
 	}
 }

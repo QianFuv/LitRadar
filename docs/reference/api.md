@@ -425,7 +425,7 @@ Web host 对 `/assets/*` 哈希资源使用长期 immutable 缓存，SPA HTML �
 | 更新   | `get_weekly_updates`                                                                         |
 | 收藏   | `list_folders`、`add_favorite`、`remove_favorite`                                            |
 
-工具结果的 text content 是 JSON 字符串。推荐先调用 `list_databases`，再指定 `db` 调用 `search_articles`，最后用 `get_article` 读取单条记录。`db` 使用库文件去掉 `.sqlite` 的名称；省略 `db` 且存在多个库时，工具错误会列出可选名称。收藏工具始终使用当前认证用户 ID，不能访问其他用户的数据。所有 MCP 字符串参数最多 2,048 个 Unicode 字符，数组参数最多 500 项；超限作为 tool-level error 返回，不进入 SQLite 查询。
+工具结果的 text content 是紧凑 JSON 字符串，摘要保留完整内容。推荐先调用 `list_databases`，再指定 `db` 调用 `search_articles`，最后用 `get_article` 读取单条记录。`db` 使用库文件去掉 `.sqlite` 的名称；省略 `db` 且存在多个库时，工具错误会列出可选名称。收藏工具始终使用当前认证用户 ID，不能访问其他用户的数据。所有 MCP 字符串参数最多 2,048 个 Unicode 字符，数组参数最多 500 项；超限作为 tool-level error 返回，不进入 SQLite 查询。
 
 MCP 的 Host／Origin 语法由 `net/url` 解析；Host 禁止 userinfo、非法 IPv6 和无效端口（包括带 `+` 的端口）。Origin 按 scheme、host 和端口匹配，path/query/fragment 不参与匹配。Host 白名单、Origin 白名单、端口限制和 DNS rebinding 防护始终启用。
 

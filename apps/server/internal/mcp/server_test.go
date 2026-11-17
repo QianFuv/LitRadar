@@ -261,7 +261,7 @@ func assertAuthenticatedFavoriteOwnership(t *testing.T, client *wireClient, acto
 	assertCurrentToolIdentity(t, client, actors.readerToken.Token)
 	args := map[string]any{"folder_id": readerFolder.ID, "article_id": "9007199254740993", "db_name": "fixture"}
 	added := client.call(actors.readerToken.Token, "add_favorite", args)
-	if added["isError"] == true || !strings.Contains(toolText(t, added), `"article_id": "9007199254740993"`) {
+	if added["isError"] == true || !strings.Contains(toolText(t, added), `"article_id":"9007199254740993"`) {
 		t.Fatal(added)
 	}
 	denied := client.call(actors.adminToken.Token, "remove_favorite", args)
@@ -269,7 +269,7 @@ func assertAuthenticatedFavoriteOwnership(t *testing.T, client *wireClient, acto
 		t.Fatal("favorite mutation crossed user boundary", denied)
 	}
 	removed := client.call(actors.readerToken.Token, "remove_favorite", args)
-	if removed["isError"] == true || toolText(t, removed) != "{\n  \"ok\": true\n}" {
+	if removed["isError"] == true || toolText(t, removed) != `{"ok":true}` {
 		t.Fatal(removed)
 	}
 	if missing := client.call(actors.readerToken.Token, "remove_favorite", args); toolText(t, missing) != "Favorite not found" || missing["isError"] != true {
@@ -292,7 +292,7 @@ func assertDatabaseToolBasenames(t *testing.T, client *wireClient, configuration
 	}
 
 	databases := client.call(token, "list_databases", map[string]any{})
-	if toolText(t, databases) != "[\n  \"metadata.sqlite\"\n]" {
+	if toolText(t, databases) != `["metadata.sqlite"]` {
 		t.Fatal("database tool leaked paths", databases)
 	}
 }
