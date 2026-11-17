@@ -99,7 +99,7 @@ func TestPrepareQueryMatchesPrefixAndBooleanPhrases(t *testing.T) {
 	if err := Rebuild(ctx, connection); err != nil {
 		t.Fatal(err)
 	}
-	for expression, expected := range map[string]string{`"RÉSUMÉ 中文!"`: "1", `title:rés*`: "1", `"中文" OR "second"`: "1,2", `"中文" AND "second"`: "", `NEAR("中" "文", 0)`: "1", `authors:emile`: "1", `journal_title:JÖURNAL`: "1,2"} {
+	for expression, expected := range map[string]string{`"RÉSUMÉ 中文!"`: "1", `title:rés*`: "1", `"中文" OR "second"`: "1,2", `"中文" AND "second"`: "", `NEAR("中" "文", 0)`: "1", `authors:emile`: "1", `journal_title:JÖURNAL`: "1,2", `- title:emile`: "1", `- "title":emile`: "1", `- {title abstract_text}:emile`: "1"} {
 		rows, err := connection.QueryContext(ctx, "SELECT rowid FROM article_search WHERE article_search MATCH ? ORDER BY rowid", PrepareQuery(expression, domain.SearchAdvanced))
 		if err != nil {
 			t.Fatal(err)

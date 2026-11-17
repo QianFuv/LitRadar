@@ -135,21 +135,51 @@ type advancedQuery struct {
 	isColumnSet bool
 }
 
-// isAdvancedOperand preserves the original ASCII and unrestricted non-ASCII operand admission.
+// isAdvancedOperand admits bytes outside ASCII whitespace and FTS5 syntax delimiters.
 func isAdvancedOperand(character byte) bool {
-	return asciiAlphanumeric(character) || character == '_' || character == 0x1a || character > 127
+	return !isAdvancedSpace(character) && !strings.ContainsRune(`"(){}:*^,+`, rune(character))
 }
 
-// isColumn looks past only ASCII whitespace while preserving boolean column-set state.
+// isAdvancedSpace recognizes ASCII query whitespace without changing text projection rules.
+func isAdvancedSpace(character byte) bool {
+	return asciiSpace(character) || character == '\v'
+}
+
+// isColumn looks past ASCII query whitespace while preserving boolean column-set state.
 func (query *advancedQuery) isColumn() bool {
 	if query.isColumnSet {
 		return true
 	}
 	position := query.position
-	for position < len(query.characters) && asciiSpace(query.characters[position]) {
+	for position < len(query.characters) && isAdvancedSpace(query.characters[position]) {
 		position++
 	}
 	return position < len(query.characters) && query.characters[position] == ':'
+}
+
+// hasColumnFilter recognizes a column name or set following a standalone exclusion minus.
+func (query *advancedQuery) hasColumnFilter() bool {
+	lookahead := advancedQuery{characters: query.characters, position: query.position}
+	for lookahead.position < len(lookahead.characters) && isAdvancedSpace(lookahead.characters[lookahead.position]) {
+		lookahead.position++
+	}
+	if lookahead.position == len(lookahead.characters) {
+		return false
+	}
+	switch lookahead.characters[lookahead.position] {
+	case '{':
+		return true
+	case '"':
+		lookahead.position++
+		if _, isClosed := lookahead.readQuotedOperand(); !isClosed {
+			return false
+		}
+	default:
+		for lookahead.position < len(lookahead.characters) && isAdvancedOperand(lookahead.characters[lookahead.position]) {
+			lookahead.position++
+		}
+	}
+	return lookahead.isColumn()
 }
 
 // quote emits the original FTS escaped operand spelling.
@@ -204,7 +234,8 @@ func (query *advancedQuery) writeBareOperand() {
 	normalized := PrepareText(operand)
 	isOperator := operand == "AND" || operand == "OR" || operand == "NOT"
 	isNear := operand == "NEAR" && strings.HasPrefix(strings.TrimLeft(query.characters[query.position:], " \t\n\r\f\v"), "(")
-	if query.isColumn() || isOperator || isNear || isNearDistance(query.characters, start) {
+	isColumnExclusion := operand == "-" && query.hasColumnFilter()
+	if query.isColumn() || isOperator || isNear || isColumnExclusion || isNearDistance(query.characters, start) {
 		query.output.WriteString(operand)
 	} else {
 		query.quote(normalized)
@@ -241,7 +272,7 @@ func prepareAdvancedQuery(value string) string {
 // isNearDistance leaves the numeric distance after a NEAR comma as syntax.
 func isNearDistance(characters string, start int) bool {
 	position := start - 1
-	for position >= 0 && asciiSpace(characters[position]) {
+	for position >= 0 && isAdvancedSpace(characters[position]) {
 		position--
 	}
 	return position >= 0 && characters[position] == ','
