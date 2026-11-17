@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
@@ -101,7 +102,7 @@ func (services Services) call(ctx context.Context, request *sdk.CallToolRequest,
 		return nil, &jsonrpc.Error{Code: -32603, Message: "LitRadar backend is temporarily unavailable"}
 	}
 	if result.err != nil {
-		return toolError(publicError(result.err)), nil
+		return toolError(services.publicError(result.err)), nil
 	}
 	text, err := encodeToolPayload(result.payload)
 	if err != nil {
@@ -274,7 +275,18 @@ func toolError(message string) *sdk.CallToolResult {
 	return &sdk.CallToolResult{IsError: true, Content: []sdk.Content{&sdk.TextContent{Text: message}}}
 }
 
-func publicError(err error) string {
+// publicError maps storage failures to tool errors and lists selectable names for ambiguous databases.
+func (services Services) publicError(err error) string {
+	if errors.Is(err, config.ErrMultipleDatabases) {
+		paths, listErr := services.Storage.ListIndexDatabases()
+		if listErr != nil {
+			return "Internal Server Error"
+		}
+		for index, path := range paths {
+			paths[index] = strings.TrimSuffix(filepath.Base(path), ".sqlite")
+		}
+		return "Multiple databases found; set db to one of: " + strings.Join(paths, ", ")
+	}
 	var invalid query.InvalidInput
 	var missing query.NotFound
 	var sort query.UnsupportedSortField
@@ -282,7 +294,7 @@ func publicError(err error) string {
 	if errors.As(err, &invalid) || errors.As(err, &missing) || errors.As(err, &sort) || errors.As(err, &business) {
 		return err.Error()
 	}
-	for _, known := range []error{config.ErrNoDatabases, config.ErrNotFound, config.ErrMultipleDatabases, config.ErrInvalidName, query.ErrInvalidCursor, query.ErrInvalidSearchExpression, query.ErrUnsupportedArticleSort, query.ErrLegacyWeeklyLimit, favorites.ErrFolderNotFound, errFavoriteNotFound} {
+	for _, known := range []error{config.ErrNoDatabases, config.ErrNotFound, config.ErrInvalidName, query.ErrInvalidCursor, query.ErrInvalidSearchExpression, query.ErrUnsupportedArticleSort, query.ErrLegacyWeeklyLimit, favorites.ErrFolderNotFound, errFavoriteNotFound} {
 		if errors.Is(err, known) {
 			switch known.Error() {
 			case "favorite not found":
@@ -291,8 +303,6 @@ func publicError(err error) string {
 				return "No SQLite databases found"
 			case "database not found":
 				return "Database not found"
-			case "multiple databases found, specify ?db=<name>":
-				return "Multiple databases found, specify ?db=<name>"
 			case "database name is not a safe catalog stem":
 				return "Database name is not a safe catalog stem"
 			case "invalid cursor":

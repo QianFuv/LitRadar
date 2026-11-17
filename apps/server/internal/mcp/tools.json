@@ -30,6 +30,7 @@
           "type": "string"
         },
         "db": {
+          "description": "Database name from list_databases (omit .sqlite); required when multiple databases exist.",
           "type": ["string", "null"]
         }
       },
@@ -44,6 +45,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
         "db": {
+          "description": "Database name from list_databases (omit .sqlite); required when multiple databases exist.",
           "type": ["string", "null"]
         },
         "journal_id": {
@@ -69,6 +71,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
         "db": {
+          "description": "Database name from list_databases (omit .sqlite); required when multiple databases exist.",
           "type": ["string", "null"]
         }
       },
@@ -98,6 +101,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
         "db": {
+          "description": "Database name from list_databases (omit .sqlite); required when multiple databases exist.",
           "type": ["string", "null"]
         }
       },
@@ -111,6 +115,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
         "db": {
+          "description": "Database name from list_databases (omit .sqlite); required when multiple databases exist.",
           "type": ["string", "null"]
         }
       },
@@ -134,6 +139,7 @@
           "type": ["string", "null"]
         },
         "db": {
+          "description": "Database name from list_databases (omit .sqlite); required when multiple databases exist.",
           "type": ["string", "null"]
         },
         "fms_rating": {
@@ -186,6 +192,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
         "db": {
+          "description": "Database name from list_databases (omit .sqlite); required when multiple databases exist.",
           "type": ["string", "null"]
         }
       },
@@ -215,7 +222,7 @@
   },
   {
     "name": "search_articles",
-    "description": "Search articles in the LitRadar index.",
+    "description": "Search articles: list_databases, then search_articles with db, then get_article for one record. Default keywords requires all words to match; advanced supports FTS5 AND/OR/NOT, \"exact phrase\", NEAR(), title: column filters and prefix*.",
     "inputSchema": {
       "$defs": {
         "StringOrStrings": {
@@ -252,6 +259,7 @@
           ]
         },
         "cursor": {
+          "description": "Opaque next_cursor from the previous page; keep the same filters and sort.",
           "type": ["string", "null"]
         },
         "date_from": {
@@ -261,6 +269,7 @@
           "type": ["string", "null"]
         },
         "db": {
+          "description": "Database name from list_databases (omit .sqlite); required when multiple databases exist.",
           "type": ["string", "null"]
         },
         "doi": {
@@ -284,6 +293,7 @@
           "type": ["boolean", "null"]
         },
         "include_total": {
+          "description": "Include the full filtered total count; defaults to true on the first page and false with a cursor.",
           "type": ["boolean", "null"]
         },
         "issue_id": {
@@ -301,6 +311,7 @@
           ]
         },
         "limit": {
+          "description": "Maximum articles per page (1-200); defaults to 50.",
           "format": "int64",
           "type": ["integer", "null"]
         },
@@ -315,12 +326,17 @@
           "type": ["string", "null"]
         },
         "q": {
+          "description": "Full-text query (max 2048 characters); keywords matches all whitespace-separated chunks, advanced interprets FTS5 syntax.",
           "type": ["string", "null"]
         },
         "search_mode": {
+          "description": "Query mode; defaults to keywords. Use advanced for explicit FTS5 syntax.",
+          "enum": ["keywords", "advanced"],
           "type": ["string", "null"]
         },
         "sort": {
+          "description": "Publication date order; defaults to date:desc.",
+          "enum": ["date:desc", "date:asc"],
           "type": ["string", "null"]
         },
         "utd_rating": {
