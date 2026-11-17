@@ -92,7 +92,6 @@ function buildsRewrites(): void {
   const multiWord = buildRewriteSuggestions('graph neural');
   expect(multiWord.map((item) => item.value)).toEqual([
     '"graph neural"',
-    'graph AND neural',
     'graph OR neural',
     'title:"graph neural"',
     'authors:"graph neural"',

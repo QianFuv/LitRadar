@@ -127,7 +127,6 @@ export function buildRewriteSuggestions(draft: string): SearchRewriteSuggestion[
   const suggestions: SearchRewriteSuggestion[] = [];
   if (isPlain && words.length > 1) {
     suggestions.push({ id: 'phrase', label: '作为精确短语', value: quotePhrase(text) });
-    suggestions.push({ id: 'all', label: '全部词都要出现', value: words.join(' AND ') });
     suggestions.push({ id: 'any', label: '任一词出现即可', value: words.join(' OR ') });
   }
   if (isPlain && words.length === 1 && !text.endsWith('*')) {
